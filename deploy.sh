@@ -178,6 +178,7 @@ DEPLOY_ARGS=(
     "--set-env-vars" "ENVIRONMENT=$ENVIRONMENT"
     "--gen2"
     "--cpu" "1"
+    "--service-timeout" "600"
 )
 
 if [[ "$ALLOW_UNAUTHENTICATED" == "true" ]]; then
