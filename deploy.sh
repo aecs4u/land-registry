@@ -175,7 +175,7 @@ DEPLOY_ARGS=(
     "--memory" "$MEMORY"
     "--timeout" "$TIMEOUT"
     "--max-instances" "$MAX_INSTANCES"
-    "--set-env-vars" "ENVIRONMENT=$ENVIRONMENT,PORT=8080"
+    "--set-env-vars" "ENVIRONMENT=$ENVIRONMENT"
     "--gen2"
     "--cpu" "1"
 )
