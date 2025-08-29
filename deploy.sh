@@ -213,14 +213,12 @@ if gcloud "${DEPLOY_ARGS[@]}"; then
     print_success "Function deployed at: $FUNCTION_URL"
     print_status "Health check: curl $FUNCTION_URL/health"
     
-    # Test the deployment with longer timeout for Cloud Run Gen2
-    print_status "Testing deployment (allowing time for cold start)..."
-    sleep 5  # Give Cloud Run some time to initialize
-    if curl -s -f --max-time 30 "$FUNCTION_URL/health" > /dev/null; then
+    # Test the deployment 
+    print_status "Testing deployment..."
+    if curl -s -f "$FUNCTION_URL/health" > /dev/null; then
         print_success "Health check passed!"
     else
         print_warning "Health check failed. The function might still be initializing."
-        print_status "Try manual health check: curl $FUNCTION_URL/health"
     fi
     
 else

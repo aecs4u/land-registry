@@ -26,10 +26,23 @@ app = FastAPI()
 
 root_folder = os.path.dirname(__file__)
 
-# Serve static files (HTML, CSS, JS)
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
+# Get absolute paths for static files and templates
+static_dir = os.path.join(root_folder, "static")
+templates_dir = os.path.join(root_folder, "templates")
 
-templates = Jinja2Templates(directory="app/templates")
+# Ensure directories exist
+if not os.path.exists(static_dir):
+    print(f"Warning: Static directory not found at {static_dir}")
+if not os.path.exists(templates_dir):
+    print(f"Warning: Templates directory not found at {templates_dir}")
+
+# Serve static files (HTML, CSS, JS) with absolute path
+if os.path.exists(static_dir):
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+else:
+    print("Static files directory not found - static content will not be served")
+
+templates = Jinja2Templates(directory=templates_dir)
 
 
 @app.get("/health")

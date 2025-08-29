@@ -45,8 +45,9 @@ dist/
 tests/
 test_*
 
-# Large data files that aren't needed
-data/
+# Large data files that aren't needed (but keep essential JSON files)
+data/*.qpkg
+data/*.gpkg
 *.qpkg
 *.gpkg
 
