@@ -1,73 +1,67 @@
 """
 Google Cloud Functions entry point for Land Registry Service.
 
-This module provides a simple HTTP function that can be deployed to Cloud Functions.
+This module serves the full FastAPI application from app/land_registry_app.py
+using Mangum to adapt ASGI to Cloud Functions.
 """
 
 import functions_framework
-import json
+from mangum import Mangum
+from app.land_registry_app import app
+
+
+# Create Mangum adapter for FastAPI app
+handler = Mangum(app, lifespan="off")
 
 
 @functions_framework.http
 def land_registry(request):
     """
-    Cloud Functions HTTP entry point for Land Registry service.
+    Cloud Functions HTTP entry point that serves the full FastAPI application.
     
-    Simple HTTP function that provides basic endpoints.
+    Uses Mangum to adapt the FastAPI ASGI app to work with Cloud Functions.
     
     Args:
         request: The HTTP request object from Cloud Functions
         
     Returns:
-        JSON response
+        Response from FastAPI application
     """
     try:
-        # Handle different paths
-        path = request.path
-        method = request.method
+        # Convert Cloud Functions request to ASGI event format
+        event = {
+            'httpMethod': request.method,
+            'path': request.path,
+            'pathParameters': None,
+            'queryStringParameters': dict(request.args) if request.args else None,
+            'headers': dict(request.headers),
+            'body': request.get_data(as_text=True) if request.get_data() else None,
+            'isBase64Encoded': False
+        }
         
-        # Root endpoint serves as health check and service info
-        if path == '/' and method == 'GET':
-            return {
-                "status": "healthy",
-                "message": "Land Registry Service",
-                "service": "land-registry",
-                "version": "1.0.0",
-                "endpoints": {
-                    "/": "Service health and information",
-                    "/api": "API documentation"
-                }
-            }
+        context = {}
         
-        # Health check endpoint (alias for root)
-        if path == '/health':
-            return {
-                "status": "healthy", 
-                "service": "land-registry",
-                "version": "1.0.0"
-            }
+        # Use Mangum handler
+        response = handler(event, context)
         
-        # API info endpoint  
-        if path == '/api' or path == '/api/':
-            return {
-                "api": "Land Registry API",
-                "version": "1.0.0",
-                "description": "Land Registry Service API",
-                "endpoints": [
-                    {"path": "/", "method": "GET", "description": "Service health and information (primary endpoint)"},
-                    {"path": "/health", "method": "GET", "description": "Health check (alias)"},
-                    {"path": "/api", "method": "GET", "description": "API documentation"}
-                ]
-            }
-        
-        # Default response for unknown paths
-        return {
-            "message": f"Land Registry Service - Path '{path}' not found",
-            "method": method,
-            "path": path,
-            "available_endpoints": ["/", "/health", "/api"]
-        }, 404
+        # Convert Mangum response back to Cloud Functions format
+        if isinstance(response, dict):
+            status_code = response.get('statusCode', 200)
+            headers = response.get('headers', {})
+            body = response.get('body', '')
             
+            # Create Flask response
+            from flask import Response
+            flask_response = Response(
+                body,
+                status=status_code,
+                headers=headers,
+                mimetype=headers.get('content-type', 'application/json')
+            )
+            return flask_response
+        
+        return response
+        
     except Exception as e:
         print(f"Error in Cloud Function: {e}")
         import traceback
