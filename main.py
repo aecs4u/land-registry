@@ -26,24 +26,25 @@ def land_registry(request):
         path = request.path
         method = request.method
         
-        # Health check endpoint
+        # Root endpoint serves as health check and service info
+        if path == '/' and method == 'GET':
+            return {
+                "status": "healthy",
+                "message": "Land Registry Service",
+                "service": "land-registry",
+                "version": "1.0.0",
+                "endpoints": {
+                    "/": "Service health and information",
+                    "/api": "API documentation"
+                }
+            }
+        
+        # Health check endpoint (alias for root)
         if path == '/health':
             return {
                 "status": "healthy", 
                 "service": "land-registry",
                 "version": "1.0.0"
-            }
-        
-        # Root endpoint
-        if path == '/' and method == 'GET':
-            return {
-                "message": "Land Registry Service",
-                "service": "land-registry", 
-                "endpoints": {
-                    "/health": "Health check endpoint",
-                    "/": "Service information"
-                },
-                "status": "running"
             }
         
         # API info endpoint  
@@ -53,9 +54,9 @@ def land_registry(request):
                 "version": "1.0.0",
                 "description": "Land Registry Service API",
                 "endpoints": [
-                    {"path": "/health", "method": "GET", "description": "Health check"},
-                    {"path": "/", "method": "GET", "description": "Service info"},
-                    {"path": "/api", "method": "GET", "description": "API information"}
+                    {"path": "/", "method": "GET", "description": "Service health and information (primary endpoint)"},
+                    {"path": "/health", "method": "GET", "description": "Health check (alias)"},
+                    {"path": "/api", "method": "GET", "description": "API documentation"}
                 ]
             }
         
