@@ -36,11 +36,6 @@ venv/
 *.md
 README*
 
-# Docker files (not needed for Functions)
-Dockerfile
-.dockerignore
-deploy-cloudrun.sh
-
 # Build artifacts
 build/
 dist/
