@@ -32,6 +32,12 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
 
 
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for Cloud Run"""
+    return {"status": "healthy", "service": "land-registry"}
+
+
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
     """Serve the main map application"""

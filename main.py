@@ -1,7 +1,7 @@
 """
-Google Cloud Functions entry point for Ocular OCR Service.
+Google Cloud Functions entry point for Land Registry Service.
 
-This module adapts the FastAPI application to run on Google Cloud Functions
+This module adapts the FastAPI application to run on Google Cloud Functions/Cloud Run
 using Mangum ASGI adapter for reliable FastAPI integration.
 """
 
@@ -24,7 +24,7 @@ from app.land_registry_app import app
 @functions_framework.http
 def land_registry(request):
     """
-    Cloud Functions HTTP entry point for Ocular OCR service.
+    Cloud Functions HTTP entry point for Land Registry service.
     
     Creates an asyncio event loop and uses Mangum ASGI adapter for FastAPI integration.
     
@@ -137,9 +137,9 @@ def land_registry(request):
     class Context:
         def __init__(self):
             self.aws_request_id = "cloud-functions-request"
-            self.function_name = "ocular-ocr-service"
+            self.function_name = "land-registry-service"
             self.memory_limit_in_mb = "2048"
-            self.invoked_function_arn = "arn:aws:lambda:region:account:function:ocular-ocr-service"
+            self.invoked_function_arn = "arn:aws:lambda:region:account:function:land-registry-service"
         
         def get_remaining_time_in_millis(self):
             return 540000  # 9 minutes
@@ -216,6 +216,6 @@ def land_registry(request):
 
 # For local testing with functions-framework-python
 if __name__ == "__main__":
-    # Run with: functions-framework --target=ocular_ocr --debug
+    # Run with: functions-framework --target=land_registry --debug
     print("Cloud Function ready for local testing")
-    print("Use: functions-framework --target=ocular_ocr --debug")
+    print("Use: functions-framework --target=land_registry --debug")

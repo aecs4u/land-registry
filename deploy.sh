@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Ocular OCR Service - Google Cloud Functions Deployment Script
-# This script helps deploy the Ocular app to Google Cloud Functions
+# Land Registry Service - Google Cloud Functions Deployment Script
+# This script helps deploy the Land Registry app to Google Cloud Functions
 
 set -e  # Exit on any error
 
@@ -14,7 +14,7 @@ NC='\033[0m' # No Color
 
 # Default values
 PROJECT_ID=""
-REGION="us-central1"
+REGION="europe-west1"
 FUNCTION_NAME="land-registry-service"
 MEMORY="2GB"
 TIMEOUT="540s"
@@ -44,12 +44,12 @@ show_usage() {
     cat << EOF
 Usage: $0 [OPTIONS]
 
-Deploy Ocular OCR Service to Google Cloud Functions
+Deploy Land REgistry Service to Google Cloud Functions
 
 OPTIONS:
     -p, --project PROJECT_ID     Google Cloud Project ID (required)
-    -r, --region REGION         Deployment region (default: us-central1)
-    -n, --name FUNCTION_NAME    Function name (default: ocular-ocr-service)
+    -r, --region REGION         Deployment region (default: europe-west1)
+    -n, --name FUNCTION_NAME    Function name (default: land-registry-service)
     -m, --memory MEMORY         Memory allocation (default: 2GB)
     -t, --timeout TIMEOUT       Timeout in seconds (default: 540s)
     -i, --instances MAX_INST    Max instances (default: 10)
@@ -164,18 +164,20 @@ else
     print_warning "No .env file found. Make sure to configure environment variables."
 fi
 
-# Prepare deployment command
+# Prepare deployment command with Cloud Run Gen2 settings
 DEPLOY_ARGS=(
     "functions" "deploy" "$FUNCTION_NAME"
     "--source" "."
-    "--entry-point" "ocular_ocr"
+    "--entry-point" "land_registry"
     "--runtime" "python311"
     "--trigger-http"
     "--region" "$REGION"
     "--memory" "$MEMORY"
     "--timeout" "$TIMEOUT"
     "--max-instances" "$MAX_INSTANCES"
-    "--set-env-vars" "ENVIRONMENT=$ENVIRONMENT"
+    "--set-env-vars" "ENVIRONMENT=$ENVIRONMENT,PORT=8080"
+    "--gen2"
+    "--cpu" "1"
 )
 
 if [[ "$ALLOW_UNAUTHENTICATED" == "true" ]]; then
@@ -213,12 +215,14 @@ if gcloud "${DEPLOY_ARGS[@]}"; then
     print_success "Function deployed at: $FUNCTION_URL"
     print_status "Health check: curl $FUNCTION_URL/health"
     
-    # Test the deployment
-    print_status "Testing deployment..."
-    if curl -s -f "$FUNCTION_URL/health" > /dev/null; then
+    # Test the deployment with longer timeout for Cloud Run Gen2
+    print_status "Testing deployment (allowing time for cold start)..."
+    sleep 5  # Give Cloud Run some time to initialize
+    if curl -s -f --max-time 30 "$FUNCTION_URL/health" > /dev/null; then
         print_success "Health check passed!"
     else
         print_warning "Health check failed. The function might still be initializing."
+        print_status "Try manual health check: curl $FUNCTION_URL/health"
     fi
     
 else
