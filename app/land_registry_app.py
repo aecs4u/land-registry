@@ -192,6 +192,119 @@ async def get_cadastral_structure():
         raise HTTPException(status_code=500, detail=f"Error reading cadastral structure: {str(e)}")
 
 
+@app.get("/cadastral-data", response_class=HTMLResponse)
+async def show_cadastral_data(request: Request):
+    """Display the Italian cadastral data structure in a readable HTML format"""
+    try:
+        cadastral_file_path = os.path.join(root_folder, "../data/cadastral_structure.json")
+        
+        if not os.path.exists(cadastral_file_path):
+            raise HTTPException(status_code=404, detail="Cadastral structure file not found")
+        
+        with open(cadastral_file_path, 'r', encoding='utf-8') as f:
+            cadastral_data = json.load(f)
+        
+        # Generate HTML content
+        html_content = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Italian Cadastral Data Structure</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #2c3e50; text-align: center; }
+        h2 { color: #34495e; border-bottom: 2px solid #3498db; padding-bottom: 5px; }
+        h3 { color: #7f8c8d; margin-top: 20px; }
+        .region { margin-bottom: 30px; border: 1px solid #bdc3c7; border-radius: 5px; padding: 15px; }
+        .province { margin-left: 20px; margin-bottom: 20px; }
+        .comune { margin-left: 40px; margin-bottom: 10px; padding: 8px; background-color: #ecf0f1; border-radius: 3px; }
+        .comune-name { font-weight: bold; color: #2980b9; }
+        .comune-code { color: #7f8c8d; font-size: 0.9em; }
+        .files { margin-left: 10px; font-size: 0.85em; color: #555; }
+        .stats { background-color: #3498db; color: white; padding: 10px; border-radius: 5px; margin-bottom: 20px; text-align: center; }
+        .search-box { margin-bottom: 20px; padding: 10px; background: #ecf0f1; border-radius: 5px; }
+        .search-box input { width: 100%; padding: 8px; border: 1px solid #bdc3c7; border-radius: 3px; font-size: 14px; }
+    </style>
+    <script>
+        function searchData() {
+            const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+            const comunes = document.getElementsByClassName('comune');
+            
+            for (let comune of comunes) {
+                const text = comune.textContent.toLowerCase();
+                if (text.includes(searchTerm) || searchTerm === '') {
+                    comune.style.display = 'block';
+                } else {
+                    comune.style.display = 'none';
+                }
+            }
+        }
+    </script>
+</head>
+<body>
+    <div class="container">
+        <h1>Italian Cadastral Data Structure</h1>
+        
+        <div class="search-box">
+            <input type="text" id="searchInput" placeholder="Search for comune name or code..." onkeyup="searchData()">
+        </div>
+        
+"""
+        
+        # Calculate statistics
+        total_regions = len(cadastral_data)
+        total_provinces = sum(len(region.values()) for region in cadastral_data.values())
+        total_comunes = sum(
+            len(province) for region in cadastral_data.values() 
+            for province in region.values()
+        )
+        total_files = sum(
+            len(comune['files']) for region in cadastral_data.values()
+            for province in region.values()
+            for comune in province.values()
+        )
+        
+        html_content += f"""
+        <div class="stats">
+            <strong>Total: {total_regions} Regions | {total_provinces} Provinces | {total_comunes} Comunes | {total_files} Files</strong>
+        </div>
+        """
+        
+        # Generate content for each region
+        for region_name, provinces in cadastral_data.items():
+            html_content += f'<div class="region"><h2>{region_name}</h2>'
+            
+            for province_code, comunes in provinces.items():
+                html_content += f'<div class="province"><h3>Province: {province_code}</h3>'
+                
+                for comune_key, comune_data in comunes.items():
+                    html_content += f"""
+                    <div class="comune">
+                        <div class="comune-name">{comune_data['name']}</div>
+                        <div class="comune-code">Code: {comune_data['code']}</div>
+                        <div class="files">Files: {', '.join(comune_data['files'])}</div>
+                    </div>
+                    """
+                
+                html_content += '</div>'  # Close province
+            
+            html_content += '</div>'  # Close region
+        
+        html_content += """
+        </div>
+    </body>
+    </html>
+        """
+        
+        return HTMLResponse(content=html_content)
+        
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=500, detail=f"Error parsing cadastral structure file: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error reading cadastral structure: {str(e)}")
+
+
 class CadastralFileRequest(BaseModel):
     files: List[str]  # List of file paths to load
 

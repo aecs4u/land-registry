@@ -12,6 +12,10 @@
     <div class="container">
         <div class="sidebar">
             <h1>Catasto Viewer</h1>
+            
+            <div class="navigation-links">
+                <a href="/cadastral-data" target="_blank" class="nav-link">📊 Browse All Cadastral Data</a>
+            </div>
       
             <div class="upload-section">
                 <div class="upload-tabs">
@@ -2563,7 +2567,7 @@
                 console.log('Files to load:', filesToLoad.map(f => f.path));
 
                 // Load files via API
-                const response = await fetch('/load-cadastral-files/', {
+                const response = await fetch('./cadastral-files/', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
