@@ -102,7 +102,7 @@ async def read_root(request: Request):
                 width: 100%;
                 height: 100%;
                 background: rgba(0,0,0,0.7);
-                display: {'none' if has_data else 'block'};
+                display: none;
                 z-index: 10000;
                 backdrop-filter: blur(3px);
             }}
@@ -198,15 +198,15 @@ async def read_root(request: Request):
             {controls_html}
         </div>
 
-        <!-- File upload overlay -->
-        <div id="file-upload-overlay" class="upload-overlay">
+        <!-- File upload overlay (hidden by default, can be shown if needed) -->
+        <div id="file-upload-overlay" class="upload-overlay" style="display: none;">
             <div class="upload-box">
                 <h3>🗺️ Upload Land Registry Data</h3>
                 <p>Upload QPKG or GPKG files to visualize cadastral data</p>
                 <input type="file" id="file-input" accept=".qpkg,.gpkg">
                 <div>
                     <button onclick="uploadFile()">📁 Upload File</button>
-                    <button onclick="closeUpload()">❌ Cancel</button>
+                    <button onclick="window.closeUpload && window.closeUpload()">❌ Cancel</button>
                 </div>
             </div>
         </div>
@@ -338,6 +338,22 @@ async def read_root(request: Request):
                     map.fitBounds(currentGeoJsonLayer.getBounds());
                 }}
 
+                // Add drawing event handlers
+                map.on('draw:created', function(e) {{
+                    drawnItems.addLayer(e.layer);
+                    console.log('Shape created');
+                }});
+
+                map.on('draw:drawstart', function(e) {{
+                    document.getElementById('startDrawing').disabled = true;
+                    document.getElementById('stopDrawing').disabled = false;
+                }});
+
+                map.on('draw:drawstop', function(e) {{
+                    document.getElementById('startDrawing').disabled = false;
+                    document.getElementById('stopDrawing').disabled = true;
+                }});
+
                 // Initialize Python controls integration
                 initializePythonControlsIntegration();
             }}
@@ -365,51 +381,173 @@ async def read_root(request: Request):
                 }};
 
             window.startDrawingMode = function() {{
-                console.log('Start drawing mode');
+                if (drawControl && map) {{
+                    // Enable drawing mode by showing polygon drawing option
+                    const polygonButton = document.querySelector('.leaflet-draw-draw-polygon');
+                    if (polygonButton) {{
+                        polygonButton.click();
+                    }}
+                    document.getElementById('startDrawing').disabled = true;
+                    document.getElementById('stopDrawing').disabled = false;
+                }}
             }};
 
             window.stopDrawingMode = function() {{
-                console.log('Stop drawing mode');
+                if (map) {{
+                    // Cancel any active drawing
+                    map.fire('draw:canceled');
+                    document.getElementById('startDrawing').disabled = false;
+                    document.getElementById('stopDrawing').disabled = true;
+                }}
             }};
 
             window.clearAllDrawings = function() {{
-                console.log('Clear all drawings');
+                if (drawnItems) {{
+                    drawnItems.clearLayers();
+                    console.log('All drawings cleared');
+                }}
             }};
 
             window.toggleLegend = function() {{
-                console.log('Toggle legend');
+                const legend = document.querySelector('.leaflet-control-layers');
+                if (legend) {{
+                    legend.style.display = legend.style.display === 'none' ? 'block' : 'none';
+                }}
             }};
 
             window.toggleSelectionInfo = function() {{
-                console.log('Toggle selection info');
+                // Toggle selection info panel
+                console.log('Toggle selection info - feature to be implemented');
             }};
 
             window.togglePolygonsVisibility = function() {{
-                console.log('Toggle polygons visibility');
+                if (currentGeoJsonLayer) {{
+                    if (map.hasLayer(currentGeoJsonLayer)) {{
+                        map.removeLayer(currentGeoJsonLayer);
+                    }} else {{
+                        map.addLayer(currentGeoJsonLayer);
+                    }}
+                }}
+                // Also toggle drawn items
+                if (drawnItems) {{
+                    if (map.hasLayer(drawnItems)) {{
+                        map.removeLayer(drawnItems);
+                    }} else {{
+                        map.addLayer(drawnItems);
+                    }}
+                }}
             }};
 
             window.toggleBasemapVisibility = function() {{
-                console.log('Toggle basemap visibility');
+                // This function switches between basemap layers
+                const layerControl = document.querySelector('.leaflet-control-layers');
+                if (layerControl && !layerControl.classList.contains('leaflet-control-layers-expanded')) {{
+                    layerControl.click(); // Open layer control for user to select
+                }}
             }};
 
             window.saveDrawingsToJSON = function() {{
-                console.log('Save drawings to JSON');
+                if (drawnItems && drawnItems.getLayers().length > 0) {{
+                    const drawnData = {{
+                        type: "FeatureCollection",
+                        features: []
+                    }};
+
+                    drawnItems.eachLayer(function(layer) {{
+                        if (layer.toGeoJSON) {{
+                            drawnData.features.push(layer.toGeoJSON());
+                        }}
+                    }});
+
+                    const blob = new Blob([JSON.stringify(drawnData, null, 2)], {{type: 'application/json'}});
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `drawn_polygons_${{new Date().toISOString().split('T')[0]}}.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                }} else {{
+                    alert('No drawings to save');
+                }}
             }};
 
             window.triggerLoadDrawings = function() {{
-                console.log('Load drawings');
+                // Create a file input and trigger it
+                const fileInput = document.createElement('input');
+                fileInput.type = 'file';
+                fileInput.accept = '.qpkg,.gpkg,.json,.geojson';
+                fileInput.style.display = 'none';
+
+                fileInput.onchange = function(e) {{
+                    const file = e.target.files[0];
+                    if (!file) return;
+
+                    const formData = new FormData();
+                    formData.append('file', file);
+
+                    // Determine endpoint based on file type
+                    const endpoint = file.name.toLowerCase().endsWith('.qpkg') || file.name.toLowerCase().endsWith('.gpkg')
+                        ? '/upload-qpkg/'
+                        : '/load-drawings/';
+
+                    fetch(endpoint, {{
+                        method: 'POST',
+                        body: formData
+                    }})
+                    .then(response => response.json())
+                    .then(data => {{
+                        if (data.geojson || data.success) {{
+                            location.reload(); // Reload to show new data
+                        }}
+                    }})
+                    .catch(error => console.error('Upload error:', error));
+                }};
+
+                document.body.appendChild(fileInput);
+                fileInput.click();
+                document.body.removeChild(fileInput);
             }};
 
             window.exportSelection = function() {{
-                console.log('Export selection');
+                // Export selected polygons (if any selection mechanism is implemented)
+                if (currentGeoJsonLayer) {{
+                    const geojsonData = currentGeoJsonLayer.toGeoJSON();
+                    const blob = new Blob([JSON.stringify(geojsonData, null, 2)], {{type: 'application/json'}});
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `selected_polygons_${{new Date().toISOString().split('T')[0]}}.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                }} else {{
+                    alert('No data to export');
+                }}
             }};
 
             window.importSelection = function() {{
-                console.log('Import selection');
+                // Same as triggerLoadDrawings for now
+                triggerLoadDrawings();
             }};
 
             window.switchBasemap = function() {{
-                console.log('Switch basemap');
+                // Get the basemap selector value and switch layers
+                const selector = document.getElementById('basemapSelector');
+                if (selector) {{
+                    const selectedValue = selector.value;
+                    console.log('Switching to basemap:', selectedValue);
+                    // The layer control handles this automatically via the dropdown
+                }}
+            }};
+
+            window.fitToSelected = function() {{
+                // Fit map to selected features
+                if (currentGeoJsonLayer) {{
+                    map.fitBounds(currentGeoJsonLayer.getBounds());
+                }}
             }};
 
             // File upload functionality
@@ -435,7 +573,17 @@ async def read_root(request: Request):
             }};
 
             window.closeUpload = function() {{
-                document.getElementById('file-upload-overlay').style.display = 'none';
+                const overlay = document.getElementById('file-upload-overlay');
+                if (overlay) {{
+                    overlay.style.display = 'none';
+                }}
+            }};
+
+            window.showUpload = function() {{
+                const overlay = document.getElementById('file-upload-overlay');
+                if (overlay) {{
+                    overlay.style.display = 'block';
+                }}
             }};
 
             // Initialize map and Python controls
