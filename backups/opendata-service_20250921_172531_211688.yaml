@@ -1,0 +1,58 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  annotations:
+    run.googleapis.com/build-enable-automatic-updates: 'false'
+    run.googleapis.com/build-id: a0e8fa9e-11c5-4d4d-8405-f9d9abe84566
+    run.googleapis.com/build-image-uri: europe-west1-docker.pkg.dev/opendata-470722/cloud-run-source-deploy/opendata-service
+    run.googleapis.com/build-name: projects/368345252298/locations/europe-west1/builds/a0e8fa9e-11c5-4d4d-8405-f9d9abe84566
+    run.googleapis.com/build-source-location: gs://run-sources-opendata-470722-europe-west1/services/opendata-service/1758366347.00193-cea11aa2bc0d4eb1a651678fc711b735.zip#1758366373220606
+    run.googleapis.com/ingress: all
+    run.googleapis.com/ingress-status: all
+    run.googleapis.com/urls: '["https://opendata-service-368345252298.europe-west1.run.app","https://opendata-service-ed6ddarifa-ew.a.run.app"]'
+  labels:
+    cloud.googleapis.com/location: europe-west1
+  name: opendata-service
+  namespace: '368345252298'
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/maxScale: '1'
+        run.googleapis.com/client-name: gcloud
+        run.googleapis.com/client-version: 538.0.0
+        run.googleapis.com/cpu-throttling: 'false'
+        run.googleapis.com/execution-environment: gen2
+        run.googleapis.com/startup-cpu-boost: 'true'
+      labels:
+        client.knative.dev/nonce: pnqeiyleun
+        run.googleapis.com/startupProbeType: Default
+    spec:
+      containerConcurrency: 1000
+      containers:
+      - env:
+        - name: GOOGLE_CLOUD_FUNCTION
+          value: '1'
+        - name: PYTHONPATH
+          value: /app
+        - name: LOGFIRE_TOKEN
+          value: pylf_v1_eu_xkTRxwtgdTG7Ncb77zlDNhp6Tw4gG6RJxP58rf58GkRR
+        image: europe-west1-docker.pkg.dev/opendata-470722/cloud-run-source-deploy/opendata-service@sha256:c4549d37b4fd3771a539b5a587baab2086c7efa6620134ec0accbb35d1231f22
+        ports:
+        - containerPort: 8080
+          name: http1
+        resources:
+          limits:
+            cpu: '2'
+            memory: 2Gi
+        startupProbe:
+          failureThreshold: 1
+          periodSeconds: 240
+          tcpSocket:
+            port: 8080
+          timeoutSeconds: 240
+      serviceAccountName: 368345252298-compute@developer.gserviceaccount.com
+      timeoutSeconds: 600
+  traffic:
+  - latestRevision: true
+    percent: 100

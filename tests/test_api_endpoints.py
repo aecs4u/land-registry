@@ -46,7 +46,7 @@ class TestCadastralStructureEndpoints:
         mock_exists.return_value = True
         mock_file.return_value.read.return_value = json.dumps(sample_cadastral_structure)
 
-        response = client.get("/get-cadastral-structure/")
+        response = client.get("/api/v1/get-cadastral-structure/")
         assert response.status_code == 200
         assert response.json() == sample_cadastral_structure
     
@@ -61,7 +61,7 @@ class TestCadastralStructureEndpoints:
 
         mock_exists.return_value = False
 
-        response = client.get("/get-cadastral-structure/")
+        response = client.get("/api/v1/get-cadastral-structure/")
         assert response.status_code == 404
         assert "Cadastral structure file not found" in response.json()["detail"]
     
@@ -77,7 +77,7 @@ class TestCadastralStructureEndpoints:
 
         mock_exists.return_value = True
 
-        response = client.get("/get-cadastral-structure/")
+        response = client.get("/api/v1/get-cadastral-structure/")
         assert response.status_code == 500
         assert "Error parsing cadastral structure file" in response.json()["detail"]
     
@@ -113,7 +113,7 @@ class TestFileUploadEndpoints:
             temp_file.seek(0)
             
             response = client.post(
-                "/upload-qpkg/",
+                "/api/v1/upload-qpkg/",
                 files={"file": ("test.qpkg", temp_file, "application/octet-stream")}
             )
         
@@ -128,7 +128,7 @@ class TestFileUploadEndpoints:
             temp_file.seek(0)
             
             response = client.post(
-                "/upload-qpkg/",
+                "/api/v1/upload-qpkg/",
                 files={"file": ("test.txt", temp_file, "text/plain")}
             )
         
@@ -145,7 +145,7 @@ class TestFileUploadEndpoints:
             temp_file.seek(0)
             
             response = client.post(
-                "/upload-qpkg/",
+                "/api/v1/upload-qpkg/",
                 files={"file": ("test.qpkg", temp_file, "application/octet-stream")}
             )
         
@@ -164,7 +164,7 @@ class TestAdjacentPolygonsEndpoint:
         mock_get_gdf.return_value = sample_gdf
         mock_find_adjacent.return_value = [1]  # Adjacent to feature 1
         
-        response = client.post("/get-adjacent-polygons/", json=polygon_selection_data)
+        response = client.post("/api/v1/get-adjacent-polygons/", json=polygon_selection_data)
         
         assert response.status_code == 200
         data = response.json()
@@ -178,7 +178,7 @@ class TestAdjacentPolygonsEndpoint:
         """Test adjacent polygons when no data loaded."""
         mock_get_gdf.return_value = None
         
-        response = client.post("/get-adjacent-polygons/", json=polygon_selection_data)
+        response = client.post("/api/v1/get-adjacent-polygons/", json=polygon_selection_data)
         
         assert response.status_code == 400
         assert "No data loaded" in response.json()["detail"]
@@ -187,7 +187,7 @@ class TestAdjacentPolygonsEndpoint:
         """Test adjacent polygons with invalid input."""
         invalid_data = {"feature_id": "invalid"}
         
-        response = client.post("/get-adjacent-polygons/", json=invalid_data)
+        response = client.post("/api/v1/get-adjacent-polygons/", json=invalid_data)
         
         assert response.status_code == 422  # Validation error
 
@@ -200,7 +200,7 @@ class TestAttributesEndpoint:
         """Test successful attributes retrieval."""
         mock_get_gdf.return_value = sample_gdf
         
-        response = client.get("/get-attributes/")
+        response = client.get("/api/v1/get-attributes/")
         
         assert response.status_code == 200
         data = response.json()
@@ -214,7 +214,7 @@ class TestAttributesEndpoint:
         """Test attributes endpoint when no data loaded."""
         mock_get_gdf.return_value = None
         
-        response = client.get("/get-attributes/")
+        response = client.get("/api/v1/get-attributes/")
         
         assert response.status_code == 400
         assert "No data loaded" in response.json()["detail"]
@@ -227,7 +227,7 @@ class TestSaveDrawnPolygonsEndpoint:
     @patch("builtins.open", new_callable=mock_open)
     def test_save_drawn_polygons_success(self, mock_file, mock_mkdir, client, drawn_polygons_data):
         """Test successful saving of drawn polygons."""
-        response = client.post("/save-drawn-polygons/", json=drawn_polygons_data)
+        response = client.post("/api/v1/save-drawn-polygons/", json=drawn_polygons_data)
         
         assert response.status_code == 200
         data = response.json()
@@ -240,7 +240,7 @@ class TestSaveDrawnPolygonsEndpoint:
         """Test save drawn polygons with invalid input."""
         invalid_data = {"invalid": "data"}
         
-        response = client.post("/save-drawn-polygons/", json=invalid_data)
+        response = client.post("/api/v1/save-drawn-polygons/", json=invalid_data)
         
         assert response.status_code == 422  # Validation error
 
@@ -250,7 +250,7 @@ class TestControlsEndpoints:
     
     def test_get_controls_success(self, client):
         """Test successful controls retrieval."""
-        response = client.get("/get-controls/")
+        response = client.get("/api/v1/get-controls/")
         
         assert response.status_code == 200
         data = response.json()
@@ -262,7 +262,7 @@ class TestControlsEndpoints:
         update_data = {"control_id": "test_control", "enabled": True}
         
         with patch("land_registry.app.map_controls.update_control_state", return_value=True):
-            response = client.post("/update-control-state/", json=update_data)
+            response = client.post("/api/v1/update-control-state/", json=update_data)
         
         assert response.status_code == 200
         assert response.json()["success"] is True
@@ -272,7 +272,7 @@ class TestControlsEndpoints:
         update_data = {"control_id": "nonexistent_control", "enabled": True}
         
         with patch("land_registry.app.map_controls.update_control_state", return_value=False):
-            response = client.post("/update-control-state/", json=update_data)
+            response = client.post("/api/v1/update-control-state/", json=update_data)
         
         assert response.status_code == 404
         assert "not found" in response.json()["detail"]
@@ -295,7 +295,7 @@ class TestGenerateMapEndpoint:
             temp_file.seek(0)
             
             response = client.post(
-                "/generate-map/",
+                "/api/v1/generate-map/",
                 files={"file": ("test.qpkg", temp_file, "application/octet-stream")}
             )
         
@@ -310,7 +310,7 @@ class TestGenerateMapEndpoint:
             temp_file.seek(0)
             
             response = client.post(
-                "/generate-map/",
+                "/api/v1/generate-map/",
                 files={"file": ("test.txt", temp_file, "text/plain")}
             )
         
@@ -325,7 +325,7 @@ class TestLoadCadastralFilesEndpoint:
         """Test load cadastral files with no files specified."""
         request_data = {"files": []}
         
-        response = client.post("/load-cadastral-files/", json=request_data)
+        response = client.post("/api/v1/load-cadastral-files/", json=request_data)
         
         assert response.status_code == 400
         assert "No files specified" in response.json()["detail"]
@@ -334,7 +334,7 @@ class TestLoadCadastralFilesEndpoint:
         """Test load cadastral files with invalid input."""
         invalid_data = {"invalid": "data"}
         
-        response = client.post("/load-cadastral-files/", json=invalid_data)
+        response = client.post("/api/v1/load-cadastral-files/", json=invalid_data)
 
         assert response.status_code == 422  # Validation error
 
@@ -350,7 +350,7 @@ class TestS3Endpoints:
         mock_storage.list_files.return_value = ["ITALIA/test1.shp", "ITALIA/test2.shp"]
         mock_configure.return_value = mock_storage
 
-        response = client.post("/configure-s3/", json=s3_config_request)
+        response = client.post("/api/v1/configure-s3/", json=s3_config_request)
 
         assert response.status_code == 200
         data = response.json()
@@ -367,7 +367,7 @@ class TestS3Endpoints:
         mock_storage.list_files.side_effect = Exception("Connection failed")
         mock_configure.return_value = mock_storage
 
-        response = client.post("/configure-s3/", json=s3_config_request)
+        response = client.post("/api/v1/configure-s3/", json=s3_config_request)
 
         assert response.status_code == 200
         data = response.json()
@@ -379,7 +379,7 @@ class TestS3Endpoints:
         """Test S3 configuration with invalid input."""
         invalid_data = {"bucket_name": ""}  # Invalid empty bucket name
 
-        response = client.post("/configure-s3/", json=invalid_data)
+        response = client.post("/api/v1/configure-s3/", json=invalid_data)
 
         assert response.status_code == 422  # Validation error
 
@@ -396,7 +396,7 @@ class TestS3Endpoints:
         mock_storage.list_files.return_value = ["file1.shp", "file2.shp"]
         mock_get_storage.return_value = mock_storage
 
-        response = client.get("/s3-status/")
+        response = client.get("/api/v1/s3-status/")
 
         assert response.status_code == 200
         data = response.json()
@@ -419,7 +419,7 @@ class TestS3Endpoints:
         mock_storage.list_files.side_effect = Exception("Connection failed")
         mock_get_storage.return_value = mock_storage
 
-        response = client.get("/s3-status/")
+        response = client.get("/api/v1/s3-status/")
 
         assert response.status_code == 200
         data = response.json()
@@ -440,7 +440,7 @@ class TestS3IntegratedEndpoints:
         mock_storage.get_cadastral_structure.return_value = sample_cadastral_structure
         mock_get_storage.return_value = mock_storage
 
-        response = client.get("/get-cadastral-structure/")
+        response = client.get("/api/v1/get-cadastral-structure/")
 
         assert response.status_code == 200
         assert response.json() == sample_cadastral_structure
@@ -460,7 +460,7 @@ class TestS3IntegratedEndpoints:
         mock_exists.return_value = True
         mock_file.return_value.read.return_value = json.dumps(sample_cadastral_structure)
 
-        response = client.get("/get-cadastral-structure/")
+        response = client.get("/api/v1/get-cadastral-structure/")
 
         assert response.status_code == 200
         assert response.json() == sample_cadastral_structure
@@ -483,7 +483,7 @@ class TestS3IntegratedEndpoints:
         mock_get_storage.return_value = mock_storage
 
         request_data = {"files": ["test_file.shp"]}
-        response = client.post("/load-cadastral-files/", json=request_data)
+        response = client.post("/api/v1/load-cadastral-files/", json=request_data)
 
         assert response.status_code == 200
         data = response.json()
@@ -500,7 +500,7 @@ class TestS3IntegratedEndpoints:
         mock_get_storage.return_value = mock_storage
 
         request_data = {"files": ["invalid_file.shp"]}
-        response = client.post("/load-cadastral-files/", json=request_data)
+        response = client.post("/api/v1/load-cadastral-files/", json=request_data)
 
         assert response.status_code == 400
         assert "No valid geospatial files could be loaded from S3" in response.json()["detail"]

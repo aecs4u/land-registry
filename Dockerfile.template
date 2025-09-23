@@ -1,0 +1,47 @@
+# Use configured base image
+FROM {{BASE_IMAGE}}
+
+# Set working directory
+WORKDIR {{WORKING_DIR}}
+
+# Install system dependencies needed for geospatial libraries and Rust compilation
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    gdal-bin \
+    libgdal-dev \
+    libproj-dev \
+    libgeos-dev \
+    curl \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust (required for tiktoken and other packages)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
+    && echo 'source $HOME/.cargo/env' >> $HOME/.bashrc
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Copy requirements first for better caching
+COPY requirements.txt .
+
+# Upgrade pip and install Python dependencies
+RUN pip install --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt
+
+# Copy application code and data
+COPY . .
+
+# Ensure static files and templates are properly accessible
+RUN mkdir -p {{WORKING_DIR}}/{{WORKING_DIR}}/static {{WORKING_DIR}}/{{WORKING_DIR}}/templates {{WORKING_DIR}}/data
+
+# Set environment variables
+ENV GOOGLE_CLOUD_FUNCTION=1
+ENV PYTHONPATH={{WORKING_DIR}}
+ENV GDAL_DATA={{GDAL_DATA}}
+ENV PROJ_LIB={{PROJ_LIB}}
+
+# Expose port (Cloud Run will set PORT env var)
+EXPOSE {{EXPOSED_PORT}}
+
+# Start the application using the main-cloudrun.py entry point
+CMD exec python main-cloudrun.py

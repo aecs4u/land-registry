@@ -1,0 +1,39 @@
+# Example deployment configuration for Land Registry
+# Copy this file to deploy-config.yaml and customize for your project
+
+gcp:
+  project_id: "your-project-id"           # Required: Your GCP project ID
+  region: "europe-west1"                  # Required: Deployment region
+  service_name: "land-registry-service"   # Required: Cloud Run service name
+
+cloudrun:
+  memory: "2Gi"                          # Required: Memory allocation
+  cpu: "2"                               # Required: CPU allocation (1, 2, 4, etc.)
+  min_instances: "0"                     # Required: Minimum instances
+  max_instances: "10"                    # Required: Maximum instances
+  concurrency: "1000"                    # Required: Max concurrent requests per instance
+  execution_environment: "gen2"          # Required: gen1 or gen2
+  allow_unauthenticated: "true"          # Required: true or false
+  vpc_connector: ""                      # Optional: VPC connector name
+  session_affinity: "false"             # Optional: Enable session affinity
+  startup_probe_timeout: "600"          # Required: Startup probe timeout (60-3600 seconds)
+
+docker:
+  base_image: "python:3.11-slim"        # Required: Base Docker image
+  working_dir: "/app"                    # Required: Working directory in container
+  exposed_port: "8080"                   # Required: Port to expose
+  docker_env:
+    GDAL_DATA: "/usr/share/gdal"         # Optional: GDAL data directory
+    PROJ_LIB: "/usr/share/proj"          # Optional: PROJ library directory
+
+# Environment variables (secrets should be managed via Google Secret Manager)
+environment:
+  ENVIRONMENT: "production"
+  LOG_LEVEL: "INFO"
+
+# S3 Configuration (these should ideally be secrets)
+# Note: Use Google Secret Manager for sensitive values in production
+s3:
+  bucket_name: "your-cadastral-bucket"
+  region: "eu-central-1"
+  # Don't put credentials in config file - use Secret Manager or IAM roles

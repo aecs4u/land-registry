@@ -20,6 +20,9 @@ dependencies = [
     "requests>=2.25.0",
     "pydantic>=2.0.0",
     "python-multipart>=0.0.6",
+    # AWS S3 integration
+    "boto3>=1.34.0",
+    "pydantic-settings>=2.0.0",
 ]
 
 [tool.black]
@@ -51,7 +54,9 @@ dev = [
     "pytest-cov>=5.0.0",
     "pytest-mock>=3.12.0",
     "pytest-asyncio>=0.23.0",
-    "coverage>=7.6.0"
+    "coverage>=7.6.0",
+    "moto[s3]>=4.2.0",
+    "httpx>=0.25.0"
 ]
 
 test = [
@@ -73,7 +78,7 @@ addopts = [
     "--strict-config", 
     "--verbose",
     "--tb=short",
-    "--cov=invoices",
+    "--cov=land_registry",
     "--cov-report=html:htmlcov",
     "--cov-report=term-missing",
     "--cov-report=xml",
@@ -94,7 +99,7 @@ filterwarnings = [
 ]
 
 [tool.coverage.run]
-source = ["invoices"]
+source = ["land_registry"]
 omit = [
     "*/tests/*",
     "*/test_*",

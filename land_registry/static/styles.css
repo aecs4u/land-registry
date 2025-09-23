@@ -17,14 +17,42 @@ body {
     overflow-y: auto;
 }
 
-.map-container {
+.main-content {
     flex: 1;
+    position: relative;
+    height: 100%;
+}
+
+.view-content {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    position: absolute;
+    top: 0;
+    left: 0;
+}
+
+.view-content.active {
+    display: block !important;
+    visibility: visible !important;
+    z-index: 10;
+}
+
+.view-content:not(.active) {
+    display: none !important;
+}
+
+.map-container {
+    height: 100%;
+    width: 100%;
     position: relative;
 }
 
-#map { 
-    height: 100%; 
+#map {
+    height: 100%;
     width: 100%;
+    min-height: 600px;
+    z-index: 1;
 }
 
 .navigation-links {
@@ -377,21 +405,21 @@ button:hover {
     z-index: 1000;
     display: flex;
     gap: 0;
-    box-shadow: 0 6px 20px rgba(0,0,0,0.15);
-    border-radius: 16px;
-    background: rgba(255,255,255,0.98);
-    backdrop-filter: blur(15px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.12);
+    border-radius: 20px;
+    background: rgba(255,255,255,0.95);
+    backdrop-filter: blur(20px);
     overflow: hidden;
     cursor: move;
     user-select: none;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    border: 1px solid rgba(255,255,255,0.4);
+    border: 1px solid rgba(255,255,255,0.6);
 }
 
 .view-toggle:hover {
-    box-shadow: 0 8px 30px rgba(0,0,0,0.2);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.18);
     background: rgba(255,255,255,1);
-    transform: translateY(-2px);
+    transform: translateY(-3px) scale(1.02);
 }
 
 .view-toggle.dragging {
@@ -681,29 +709,56 @@ button:hover {
     padding: 20px;
 }
 
-/* Enhanced map controls styling */
+/* Enhanced map controls styling - Minimal compact design */
 .map-controls {
     position: absolute;
     z-index: 1000;
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    box-shadow: 0 6px 20px rgba(0,0,0,0.15);
-    border-radius: 16px;
-    background: rgba(255,255,255,0.98);
-    backdrop-filter: blur(15px);
-    padding: 12px;
+    gap: 3px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    border-radius: 8px;
+    background: rgba(255,255,255,0.95);
+    backdrop-filter: blur(10px);
+    padding: 4px;
     cursor: move;
     user-select: none;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    border: 1px solid rgba(255,255,255,0.4);
-    max-width: 220px;
+    border: 1px solid rgba(255,255,255,0.6);
+    width: auto;
+    min-width: auto;
+}
+
+/* Specific positioning for each control group to avoid overlap */
+#navigationControls {
+    top: 15px;
+    right: 15px;
+}
+
+#selectionDrawingControls {
+    top: 15px;
+    left: 15px;
+}
+
+#viewDisplayControls {
+    top: 200px;
+    left: 15px;
+}
+
+#dataOperationsControls {
+    bottom: 15px;
+    right: 15px;
+}
+
+#basemapControls {
+    bottom: 15px;
+    left: 200px;
 }
 
 .map-controls:hover {
-    box-shadow: 0 8px 30px rgba(0,0,0,0.2);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.18);
     background: rgba(255,255,255,1);
-    transform: translateY(-2px);
+    transform: translateY(-3px) scale(1.02);
 }
 
 .map-controls.dragging {
@@ -715,17 +770,17 @@ button:hover {
 .control-group-header {
     background: linear-gradient(135deg, #007cba, #005a8b);
     color: white;
-    padding: 8px 16px;
-    margin: -12px -12px 10px -12px;
-    border-radius: 16px 16px 10px 10px;
-    font-size: 12px;
+    padding: 4px 8px;
+    margin: -4px -4px 3px -4px;
+    border-radius: 8px 8px 4px 4px;
+    font-size: 10px;
     font-weight: 600;
     text-align: center;
-    letter-spacing: 0.8px;
+    letter-spacing: 0.3px;
     text-transform: uppercase;
     cursor: move;
     position: relative;
-    box-shadow: 0 2px 8px rgba(0,124,186,0.3);
+    box-shadow: 0 1px 4px rgba(0,124,186,0.25);
 }
 
 .control-group-header::after {
@@ -738,23 +793,70 @@ button:hover {
     opacity: 0.7;
 }
 
+/* Button grid layout for organized controls */
+.control-button-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin: 8px 0;
+}
+
+.control-button-row {
+    display: flex;
+    gap: 8px;
+    justify-content: space-between;
+    margin: 8px 0;
+}
+
 .map-controls button {
-    width: 44px;
-    height: 44px;
-    border: 2px solid #007cba;
+    width: 28px;
+    height: 28px;
+    border: 1px solid #007cba;
     background: white;
     color: #007cba;
     cursor: pointer;
-    border-radius: 12px;
-    font-size: 18px;
+    border-radius: 6px;
+    font-size: 14px;
     display: flex;
     align-items: center;
     justify-content: center;
     transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-    box-shadow: 0 3px 8px rgba(0,124,186,0.15);
-    margin: 3px;
+    box-shadow: 0 1px 4px rgba(0,124,186,0.15);
+    margin: 1px;
     position: relative;
     overflow: hidden;
+    font-weight: 500;
+    padding: 0;
+}
+
+.map-controls button.wide {
+    grid-column: span 2;
+    width: auto;
+    min-width: 80px;
+    font-size: 14px;
+    padding: 0 16px;
+}
+
+.map-controls button.full-width {
+    grid-column: span 3;
+    width: auto;
+    font-size: 14px;
+    padding: 0 16px;
+}
+
+/* Compact selects for map controls */
+.map-controls select {
+    width: auto;
+    min-width: 120px;
+    max-width: 150px;
+    height: 28px;
+    padding: 2px 4px;
+    margin: 1px;
+    border: 1px solid #007cba;
+    border-radius: 6px;
+    font-size: 11px;
+    background: white;
+    color: #007cba;
 }
 
 .map-controls button::before {
@@ -817,33 +919,42 @@ button:hover {
 /* Map info controls (left side) */
 .map-info-controls {
     position: absolute;
-    top: 120px;
+    bottom: 15px;
     left: 15px;
     z-index: 1000;
     display: flex;
-    flex-direction: column;
-    gap: 8px;
+    flex-direction: row;
+    gap: 6px;
     background: rgba(255,255,255,0.95);
-    backdrop-filter: blur(10px);
-    border-radius: 16px;
-    padding: 10px;
-    box-shadow: 0 6px 20px rgba(0,0,0,0.15);
-    border: 1px solid rgba(255,255,255,0.4);
+    backdrop-filter: blur(15px);
+    border-radius: 12px;
+    padding: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    border: 1px solid rgba(255,255,255,0.6);
+    cursor: move;
+    user-select: none;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.map-info-controls:hover {
+    box-shadow: 0 12px 40px rgba(0,0,0,0.18);
+    background: rgba(255,255,255,1);
+    transform: translateY(-3px) scale(1.02);
 }
 
 .map-info-controls button {
-    width: 48px;
-    height: 48px;
-    border: 2px solid #007cba;
+    width: 36px;
+    height: 36px;
+    border: 1px solid #007cba;
     background: white;
     color: #007cba;
     cursor: pointer;
-    border-radius: 12px;
-    font-size: 20px;
+    border-radius: 8px;
+    font-size: 16px;
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 3px 8px rgba(0,124,186,0.15);
+    box-shadow: 0 2px 8px rgba(0,124,186,0.15);
     transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
     position: relative;
     overflow: hidden;
@@ -1059,62 +1170,210 @@ button:hover {
     display: none;
 }
 
-/* Responsive design for mobile and tablet */
+/* Enhanced control organization */
+.control-section {
+    background: rgba(248, 249, 250, 0.8);
+    border-radius: 12px;
+    padding: 12px;
+    margin: 8px 0;
+    border: 1px solid rgba(222, 226, 230, 0.5);
+}
+
+.control-section-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: #495057;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+    text-align: center;
+    border-bottom: 1px solid rgba(222, 226, 230, 0.3);
+    padding-bottom: 4px;
+}
+
+/* Collapsible control groups */
+.control-group-collapsible {
+    position: relative;
+}
+
+.control-group-toggle {
+    position: absolute;
+    top: 8px;
+    right: 12px;
+    background: none;
+    border: none;
+    color: white;
+    font-size: 16px;
+    cursor: pointer;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    transition: all 0.2s ease;
+}
+
+.control-group-toggle:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.control-group-content {
+    transition: all 0.3s ease;
+    overflow: hidden;
+}
+
+.control-group-content.collapsed {
+    max-height: 0;
+    opacity: 0;
+    margin: 0;
+    padding: 0;
+}
+
+/* Status indicators for controls */
+.control-status-indicator {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 2px solid white;
+    font-size: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.control-status-indicator.active {
+    background: #28a745;
+}
+
+.control-status-indicator.warning {
+    background: #ffc107;
+}
+
+.control-status-indicator.error {
+    background: #dc3545;
+}
+
+/* Improved responsive design for mobile and tablet */
 @media (max-width: 768px) {
     .container {
         flex-direction: column;
     }
-    
+
     .sidebar {
         width: 100%;
         height: auto;
-        max-height: 40vh;
+        max-height: 35vh;
         order: 1;
+        overflow-y: auto;
     }
-    
+
     .map-container {
         order: 2;
-        height: 60vh;
+        height: 65vh;
     }
-    
+
     .map-controls {
-        max-width: 180px;
-        padding: 8px;
-        gap: 6px;
+        padding: 3px;
+        gap: 2px;
     }
-    
-    .map-controls button {
-        width: 36px;
-        height: 36px;
-        font-size: 16px;
-    }
-    
-    .map-info-controls {
-        padding: 8px;
-        gap: 6px;
-    }
-    
-    .map-info-controls button {
-        width: 40px;
-        height: 40px;
-        font-size: 18px;
-    }
-    
-    .map-panel {
-        min-width: 240px;
-        max-width: calc(100vw - 40px);
-        left: 20px;
-        top: 80px;
-    }
-    
-    .view-toggle {
+
+    /* Mobile positioning - stack controls more efficiently */
+    #navigationControls {
         top: 10px;
         right: 10px;
     }
-    
-    .view-toggle button {
-        padding: 8px 12px;
+
+    #selectionDrawingControls {
+        top: 10px;
+        left: 10px;
+    }
+
+    #viewDisplayControls {
+        top: 120px;
+        left: 10px;
+    }
+
+    #dataOperationsControls {
+        bottom: 10px;
+        right: 10px;
+    }
+
+    #basemapControls {
+        bottom: 10px;
+        left: 10px;
+        max-width: 140px;
+    }
+
+    .map-controls button {
+        width: 24px;
+        height: 24px;
         font-size: 12px;
+    }
+
+    .map-controls select {
+        min-width: 100px;
+        max-width: 120px;
+        height: 24px;
+        font-size: 10px;
+    }
+
+    .control-button-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 6px;
+    }
+
+    .map-controls button.wide {
+        grid-column: span 2;
+        font-size: 12px;
+        padding: 0 12px;
+    }
+
+    .map-controls button.full-width {
+        grid-column: span 2;
+        font-size: 12px;
+        padding: 0 12px;
+    }
+
+    .map-info-controls {
+        padding: 6px;
+        gap: 4px;
+        bottom: 10px;
+        left: 10px;
+        flex-direction: row;
+    }
+
+    .map-info-controls button {
+        width: 32px;
+        height: 32px;
+        font-size: 14px;
+    }
+
+    .map-panel {
+        min-width: 240px;
+        max-width: calc(100vw - 30px);
+        left: 15px;
+        top: 70px;
+    }
+
+    .view-toggle {
+        top: 10px;
+        right: 10px;
+        border-radius: 16px;
+    }
+
+    .view-toggle button {
+        padding: 10px 14px;
+        font-size: 11px;
+    }
+
+    .control-group-header {
+        font-size: 9px;
+        padding: 3px 6px;
+        margin: -3px -3px 2px -3px;
     }
 }
 
@@ -1151,4 +1410,334 @@ button:hover {
     .panel-content {
         padding: 12px;
     }
+}
+
+/* Custom Leaflet Controls Styling */
+.leaflet-control-navigation,
+.leaflet-control-tools,
+.leaflet-control-display,
+.leaflet-control-data {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    padding: 8px;
+    margin: 5px;
+    min-width: 120px;
+}
+
+.control-group-header {
+    font-size: 11px;
+    color: #666;
+    font-weight: bold;
+    text-align: center;
+    margin-bottom: 8px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid #eee;
+}
+
+.leaflet-control-navigation button,
+.leaflet-control-tools button,
+.leaflet-control-display button,
+.leaflet-control-data button {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 6px 8px;
+    margin: 2px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+    display: inline-block;
+    min-width: 30px;
+}
+
+.leaflet-control-navigation button:hover,
+.leaflet-control-tools button:hover,
+.leaflet-control-display button:hover,
+.leaflet-control-data button:hover {
+    background: #f5f5f5;
+    border-color: #007cba;
+}
+
+.leaflet-control-navigation button:disabled,
+.leaflet-control-tools button:disabled,
+.leaflet-control-display button:disabled,
+.leaflet-control-data button:disabled {
+    background: #f9f9f9;
+    color: #ccc;
+    cursor: not-allowed;
+    border-color: #eee;
+}
+
+.control-separator {
+    border-top: 1px solid #eee;
+    margin: 6px 2px;
+}
+
+/* Position adjustments */
+.leaflet-control-navigation {
+    margin-top: 80px;
+}
+
+.leaflet-control-tools {
+    margin-top: 10px;
+}
+
+.leaflet-control-display {
+    margin-top: 10px;
+}
+
+.leaflet-control-data {
+    margin-bottom: 10px;
+}
+
+/* Right-align stat numbers */
+.stat-number {
+    text-align: right;
+}
+
+/* View Container Styles */
+.table-container, .adjacency-container, .mapping-container {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    background: white;
+}
+
+.table-header, .adjacency-header, .mapping-header {
+    padding: 20px;
+    background: #f8f9fa;
+    border-bottom: 1px solid #dee2e6;
+    flex-shrink: 0;
+}
+
+.table-header h2, .adjacency-header h2, .mapping-header h2 {
+    margin: 0 0 10px 0;
+    color: #333;
+    font-size: 1.5em;
+}
+
+.attribute-table {
+    flex: 1;
+    overflow: auto;
+    padding: 20px;
+}
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+    background: white;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.data-table th {
+    background: #007cba;
+    color: white;
+    padding: 12px 8px;
+    text-align: left;
+    font-weight: 600;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.data-table td {
+    padding: 10px 8px;
+    border-bottom: 1px solid #dee2e6;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.data-table tr:nth-child(even) {
+    background-color: #f8f9fa;
+}
+
+.data-table tr:hover {
+    background-color: #e3f2fd;
+    cursor: pointer;
+}
+
+.no-data-message {
+    text-align: center;
+    color: #666;
+    font-style: italic;
+    padding: 60px 20px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    margin: 20px;
+}
+
+/* Adjacency View Styles */
+.adjacency-results {
+    flex: 1;
+    overflow: auto;
+    padding: 20px;
+}
+
+.adjacency-section {
+    margin-bottom: 30px;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    overflow: hidden;
+}
+
+.adjacency-section h3 {
+    background: #007cba;
+    color: white;
+    margin: 0;
+    padding: 15px 20px;
+    font-size: 1.2em;
+}
+
+.polygon-info {
+    padding: 20px;
+    color: #666;
+}
+
+/* Mapping View Styles */
+.mapping-container {
+    padding: 20px;
+}
+
+.drawing-controls {
+    flex: 1;
+    overflow: auto;
+}
+
+.drawing-section {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.drawing-section h3 {
+    margin: 0 0 15px 0;
+    color: #007cba;
+    font-size: 1.2em;
+}
+
+.drawn-polygons-list {
+    max-height: 200px;
+    overflow-y: auto;
+    margin-bottom: 15px;
+    padding: 10px;
+    background: #f8f9fa;
+    border-radius: 4px;
+    border: 1px solid #dee2e6;
+}
+
+.drawn-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.drawn-list li {
+    padding: 8px 12px;
+    margin: 4px 0;
+    background: white;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.drawn-list li:hover {
+    background: #e3f2fd;
+}
+
+.drawing-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.drawing-actions button {
+    flex: 1;
+    padding: 10px 16px;
+    border: 1px solid #007cba;
+    background: #007cba;
+    color: white;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background-color 0.2s;
+}
+
+.drawing-actions button:hover {
+    background: #005a8b;
+}
+
+.mapping-stats {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    padding: 20px;
+    display: flex;
+    justify-content: space-around;
+    gap: 20px;
+}
+
+.mapping-stats .stat-item {
+    text-align: center;
+}
+
+.mapping-stats .stat-label {
+    display: block;
+    font-size: 14px;
+    color: #666;
+    margin-bottom: 5px;
+}
+
+.mapping-stats .stat-value {
+    display: block;
+    font-size: 24px;
+    font-weight: bold;
+    color: #007cba;
+}
+
+.mapping-info {
+    color: #666;
+    margin-bottom: 20px;
+}
+
+/* Cadastral Selection Summary Styles */
+.selection-summary {
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    padding: 15px;
+    margin-top: 15px;
+}
+
+.selection-summary h4 {
+    margin: 0 0 10px 0;
+    color: #007cba;
+    font-size: 1.1em;
+}
+
+.files-breakdown {
+    margin-top: 10px;
+    padding: 10px;
+    background: white;
+    border-radius: 4px;
+    border: 1px solid #dee2e6;
+}
+
+.files-breakdown strong {
+    color: #007cba;
+}
+
+.no-files {
+    color: #666;
+    font-style: italic;
+    text-align: center;
+    padding: 10px;
 }

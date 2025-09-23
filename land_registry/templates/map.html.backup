@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Land Registry Viewer - Direct Leaflet with All Map Providers</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <!-- Leaflet Draw CSS -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
+    <!-- Leaflet Fullscreen CSS -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.fullscreen/2.4.0/Control.FullScreen.css" />
+    <!-- Leaflet Measure CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-measure@3.1.0/dist/leaflet-measure.css" />
+    <style>
+        html, body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+        }
+
+        /* Upload overlay styling (hidden by default) */
+        .upload-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.7);
+            display: none;
+            z-index: 10000;
+            backdrop-filter: blur(3px);
+        }
+
+        .upload-box {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            text-align: center;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            max-width: 400px;
+            width: 90%;
+        }
+
+        .upload-box h3 {
+            margin: 0 0 20px 0;
+            color: #333;
+            font-size: 20px;
+        }
+
+        .upload-box input[type="file"] {
+            margin: 10px 0;
+            padding: 8px;
+            border: 2px dashed #007cba;
+            border-radius: 6px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        .upload-box button {
+            margin: 5px;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background-color 0.3s;
+        }
+
+        .upload-box button:first-of-type {
+            background: #007cba;
+            color: white;
+        }
+
+        .upload-box button:first-of-type:hover {
+            background: #005a8b;
+        }
+
+        .upload-box button:last-of-type {
+            background: #f0f0f0;
+            color: #333;
+        }
+
+        .upload-box button:last-of-type:hover {
+            background: #e0e0e0;
+        }
+
+        /* Map container */
+        #map {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+
+        /* Python controls sidebar */
+        #controls-sidebar {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            z-index: 1000;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            max-width: 280px;
+            max-height: calc(100vh - 40px);
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <!-- Direct Leaflet map -->
+    <div id="map"></div>
+
+    <!-- Python-generated controls sidebar -->
+    <div id="controls-sidebar">
+        {{ controls_html|safe }}
+    </div>
+
+    <!-- File upload overlay (hidden by default, can be shown if needed) -->
+    <div id="file-upload-overlay" class="upload-overlay" style="display: none;">
+        <div class="upload-box">
+            <h3>🗺️ Upload Land Registry Data</h3>
+            <p>Upload QPKG or GPKG files to visualize cadastral data</p>
+            <input type="file" id="file-input" accept=".qpkg,.gpkg">
+            <div>
+                <button onclick="uploadFile()">📁 Upload File</button>
+                <button onclick="closeUpload()">❌ Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Leaflet Draw JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+    <!-- Leaflet Fullscreen JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.fullscreen/2.4.0/Control.FullScreen.js"></script>
+    <!-- Leaflet Measure JS -->
+    <script src="https://cdn.jsdelivr.net/npm/leaflet-measure@3.1.0/dist/leaflet-measure.js"></script>
+
+    <script>
+        // Initialize Leaflet map with all map providers
+        let map, currentGeoJsonLayer, drawnItems, drawControl;
+
+        // Initialize the map
+        function initializeMap() {
+            // Create map centered on Italy
+            map = L.map('map').setView([41.8719, 12.5674], 6);
+
+            // Define all map providers
+            const mapProviders = {
+                'OpenStreetMap': L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '© OpenStreetMap contributors'
+                }),
+                '📍 Google Maps': L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+                    attribution: '© Google'
+                }),
+                '🛰️ Google Satellite': L.tileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+                    attribution: '© Google'
+                }),
+                '⛰️ Google Terrain': L.tileLayer('https://mt1.google.com/vt/lyrs=p&x={x}&y={y}&z={z}', {
+                    attribution: '© Google'
+                }),
+                '🌍 Google Hybrid': L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+                    attribution: '© Google'
+                }),
+                '🚌 Google Transit': L.tileLayer('https://mt1.google.com/vt/lyrs=m,transit&x={x}&y={y}&z={z}', {
+                    attribution: '© Google'
+                }),
+                '🚗 Google Traffic': L.tileLayer('https://mt1.google.com/vt/lyrs=m,traffic&x={x}&y={y}&z={z}', {
+                    attribution: '© Google'
+                }),
+                '🌐 ESRI World Imagery': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                    attribution: '© ESRI'
+                }),
+                '🏔️ ESRI Terrain': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Terrain_Base/MapServer/tile/{z}/{y}/{x}', {
+                    attribution: '© ESRI'
+                }),
+                '⚪ CartoDB Light': L.tileLayer('https://cartodb-basemaps-{s}.global.ssl.fastly.net/light_all/{z}/{x}/{y}.png', {
+                    attribution: '© CartoDB'
+                }),
+                '⚫ CartoDB Dark': L.tileLayer('https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png', {
+                    attribution: '© CartoDB'
+                })
+            };
+
+            // Weather overlays
+            const weatherOverlays = {
+                '🌡️ Temperature': L.tileLayer('https://tile.openweathermap.org/map/temp_new/{z}/{x}/{y}.png?appid=b6907d289e10d714a6e88b30761fae22', {
+                    attribution: '© OpenWeatherMap'
+                }),
+                '🌧️ Precipitation': L.tileLayer('https://tile.openweathermap.org/map/precipitation_new/{z}/{x}/{y}.png?appid=b6907d289e10d714a6e88b30761fae22', {
+                    attribution: '© OpenWeatherMap'
+                }),
+                '💨 Wind Speed': L.tileLayer('https://tile.openweathermap.org/map/wind_new/{z}/{x}/{y}.png?appid=b6907d289e10d714a6e88b30761fae22', {
+                    attribution: '© OpenWeatherMap'
+                }),
+                '☁️ Cloud Coverage': L.tileLayer('https://tile.openweathermap.org/map/clouds_new/{z}/{x}/{y}.png?appid=b6907d289e10d714a6e88b30761fae22', {
+                    attribution: '© OpenWeatherMap'
+                })
+            };
+
+            // Add default layer
+            mapProviders['OpenStreetMap'].addTo(map);
+
+            // Add layer control
+            L.control.layers(mapProviders, weatherOverlays, {
+                position: 'topright',
+                collapsed: true
+            }).addTo(map);
+
+            // Add drawing controls
+            drawnItems = new L.FeatureGroup();
+            map.addLayer(drawnItems);
+
+            drawControl = new L.Control.Draw({
+                position: 'topleft',
+                draw: {
+                    polygon: true,
+                    circle: true,
+                    rectangle: true,
+                    polyline: true,
+                    marker: true
+                },
+                edit: {
+                    featureGroup: drawnItems
+                }
+            });
+            map.addControl(drawControl);
+
+            // Add fullscreen control
+            L.control.fullscreen({
+                position: 'topleft'
+            }).addTo(map);
+
+            // Add measure control
+            L.control.measure({
+                position: 'topleft'
+            }).addTo(map);
+
+            // Handle drawing events
+            map.on(L.Draw.Event.CREATED, function(e) {
+                const layer = e.layer;
+                drawnItems.addLayer(layer);
+            });
+
+            // Load existing data if available
+            {% if geojson_data %}
+            const geoJsonData = {{ geojson_data|safe }};
+            if (geoJsonData && geoJsonData.features && geoJsonData.features.length > 0) {
+                currentGeoJsonLayer = L.geoJSON(geoJsonData, {
+                    style: {
+                        color: '#3388ff',
+                        weight: 2,
+                        fillOpacity: 0.1
+                    },
+                    onEachFeature: function(feature, layer) {
+                        if (feature.properties) {
+                            let popupContent = '<strong>Feature Properties:</strong><br>';
+                            for (let key in feature.properties) {
+                                popupContent += `<strong>${key}:</strong> ${feature.properties[key]}<br>`;
+                            }
+                            layer.bindPopup(popupContent);
+                        }
+                    }
+                }).addTo(map);
+
+                // Fit map to data bounds
+                map.fitBounds(currentGeoJsonLayer.getBounds());
+            }
+            {% endif %}
+        }
+
+        // Function definitions for controls
+        window.zoomIn = function() {
+            map.zoomIn();
+        };
+
+        window.zoomOut = function() {
+            map.zoomOut();
+        };
+
+        window.fitToPolygons = function() {
+            if (currentGeoJsonLayer) {
+                map.fitBounds(currentGeoJsonLayer.getBounds());
+            }
+        };
+
+        window.fitToSelected = function() {
+            // Fit map to selected features
+            if (currentGeoJsonLayer) {
+                map.fitBounds(currentGeoJsonLayer.getBounds());
+            }
+        };
+
+        window.togglePolygonSelectionMode = function() {
+            // Toggle polygon selection mode
+            console.log('Polygon selection mode toggled');
+        };
+
+        window.startDrawingMode = function() {
+            // Enable drawing mode
+            const polygonBtn = document.querySelector('[title="Draw a polygon"]');
+            if (polygonBtn) {
+                polygonBtn.click();
+            }
+        };
+
+        window.stopDrawingMode = function() {
+            // Disable drawing mode
+            map.removeControl(drawControl);
+            map.addControl(drawControl);
+        };
+
+        window.clearAllDrawings = function() {
+            drawnItems.clearLayers();
+        };
+
+        window.toggleLegend = function() {
+            const legend = document.querySelector('.leaflet-control-layers');
+            if (legend) {
+                legend.style.display = legend.style.display === 'none' ? 'block' : 'none';
+            }
+        };
+
+        window.toggleSelectionInfo = function() {
+            // Toggle selection information panel
+            console.log('Selection info toggled');
+        };
+
+        window.togglePolygonsVisibility = function() {
+            if (currentGeoJsonLayer) {
+                if (map.hasLayer(currentGeoJsonLayer)) {
+                    map.removeLayer(currentGeoJsonLayer);
+                } else {
+                    map.addLayer(currentGeoJsonLayer);
+                }
+            }
+        };
+
+        window.toggleBasemapVisibility = function() {
+            // Switch basemap layers (handled by layer control)
+            const layerControl = document.querySelector('.leaflet-control-layers');
+            if (layerControl) {
+                layerControl.style.display = layerControl.style.display === 'none' ? 'block' : 'none';
+            }
+        };
+
+        window.saveDrawingsToJSON = function() {
+            const drawings = drawnItems.toGeoJSON();
+            const blob = new Blob([JSON.stringify(drawings, null, 2)], {type: 'application/json'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `drawn_polygons_${new Date().toISOString().split('T')[0]}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        };
+
+        window.triggerLoadDrawings = function() {
+            // Create a file input and trigger it
+            const fileInput = document.createElement('input');
+            fileInput.type = 'file';
+            fileInput.accept = '.qpkg,.gpkg,.json,.geojson';
+            fileInput.style.display = 'none';
+            fileInput.onchange = function(e) {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const formData = new FormData();
+                formData.append('file', file);
+
+                fetch('/upload-qpkg/', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.geojson || data.success) {
+                        location.reload(); // Reload to show new data
+                    }
+                })
+                .catch(error => console.error('Upload error:', error));
+            };
+
+            document.body.appendChild(fileInput);
+            fileInput.click();
+            document.body.removeChild(fileInput);
+        };
+
+        window.exportSelection = function() {
+            // Export selected polygons (if any selection mechanism is implemented)
+            if (currentGeoJsonLayer) {
+                const geojsonData = currentGeoJsonLayer.toGeoJSON();
+                const blob = new Blob([JSON.stringify(geojsonData, null, 2)], {type: 'application/json'});
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `selected_polygons_${new Date().toISOString().split('T')[0]}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            } else {
+                alert('No data to export');
+            }
+        };
+
+        window.importSelection = function() {
+            // Same as triggerLoadDrawings for now
+            triggerLoadDrawings();
+        };
+
+        window.switchBasemap = function() {
+            // Get the basemap selector value and switch layers
+            const selector = document.getElementById('basemapSelector');
+            if (selector) {
+                const selectedValue = selector.value;
+                console.log('Switching to basemap:', selectedValue);
+                // The layer control handles this automatically via the dropdown
+            }
+        };
+
+        // File upload functionality
+        window.uploadFile = function() {
+            const fileInput = document.getElementById('file-input');
+            const file = fileInput.files[0];
+            if (!file) return;
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            fetch('/upload-qpkg/', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.geojson) {
+                    location.reload(); // Reload to show new data
+                }
+            })
+            .catch(error => console.error('Upload error:', error));
+        };
+
+        // Fixed popup functions - defined immediately
+        window.closeUpload = function() {
+            const overlay = document.getElementById('file-upload-overlay');
+            if (overlay) {
+                overlay.style.display = 'none';
+            }
+        };
+
+        window.showUpload = function() {
+            const overlay = document.getElementById('file-upload-overlay');
+            if (overlay) {
+                overlay.style.display = 'block';
+            }
+        };
+
+        // Initialize map and Python controls when DOM is loaded
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeMap();
+
+            // Python controls JavaScript
+            {{ controls_js|safe }}
+
+            console.log('✅ Direct Leaflet map with all providers initialized');
+            console.log('✅ Python controls integrated with Leaflet map');
+        });
+    </script>
+</body>
+</html>

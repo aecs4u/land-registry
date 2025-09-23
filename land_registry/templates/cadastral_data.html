@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+
+{% block title %}Cadastral Data Structure - Land Registry Viewer{% endblock %}
+
+{% block external_css %}
+<!-- No external CSS libraries needed for this page -->
+{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="/static/cadastral_data.css" />
+{% endblock %}
+
+{% block content %}
+<a href="/" class="back-link">← Back to Map</a>
+
+<div class="header">
+    <h1>Italian Cadastral Data Structure</h1>
+</div>
+
+<!-- Filter Section -->
+<div class="filter-section">
+    <div class="filter-row">
+        <div class="filter-group">
+            <label for="regionFilter">Filter by Region:</label>
+            <input type="text" id="regionFilter" placeholder="Enter region name..." />
+        </div>
+        <div class="filter-group">
+            <label for="provinceFilter">Filter by Province:</label>
+            <input type="text" id="provinceFilter" placeholder="Enter province code..." />
+        </div>
+        <div class="filter-group">
+            <label for="municipalityFilter">Filter by Municipality:</label>
+            <input type="text" id="municipalityFilter" placeholder="Enter municipality name..." />
+        </div>
+        <div class="filter-actions">
+            <button class="filter-btn" onclick="applyFilters()">Apply Filters</button>
+            <button class="filter-btn secondary" onclick="clearFilters()">Clear All</button>
+        </div>
+    </div>
+    <div id="filterResultsInfo" class="filter-results-info" style="display: none;"></div>
+</div>
+
+{% if cadastral_data %}
+    <div class="stats">
+        <strong id="statsDisplay">📊 Statistics: {{ total_regions }} Regions | {{ total_provinces }} Provinces | {{ total_municipalities }} Municipalities | {{ total_files }} Files</strong>
+        {% if available_files is defined and missing_files is defined %}
+            <div class="file-availability">
+                <span class="available-files">✅ Available: {{ available_files }}</span>
+                <span class="missing-files">❌ Missing: {{ missing_files }}</span>
+                {% if total_files > 0 %}
+                    <span class="availability-percentage">📈 {{ "%.1f"|format((available_files / total_files * 100)) }}% Available</span>
+                {% endif %}
+                <button id="checkAvailabilityBtn" class="check-availability-btn" onclick="checkFileAvailability()">
+                    🔄 Check File Availability
+                </button>
+                <button id="clearCacheBtn" class="check-availability-btn secondary" onclick="clearAvailabilityCache()">
+                    🗑️ Clear Cache
+                </button>
+            </div>
+            <div id="availabilityStatus" class="availability-status" style="display: none;"></div>
+        {% endif %}
+    </div>
+
+    <div id="cadastralDataContainer">
+        {% for region_name, region_data in cadastral_data.items() %}
+            <div class="region" data-region="{{ region_name|lower }}">
+                <h2>🏛️ {{ region_name }}</h2>
+                <div class="region-content">
+                    {% for province_code, province_data in region_data.items() %}
+                        <div class="province" data-province="{{ province_code|lower }}">
+                            <h3>📍 Province: {{ province_code }}</h3>
+
+                            <div class="municipalities">
+                                {% for municipality_key, municipality_data in province_data.items() %}
+                                    <div class="municipality" data-municipality="{{ municipality_data.get('name', municipality_key)|lower }}">
+                                        <div class="municipality-name">
+                                            {% set municipality_name = municipality_data.get('name', municipality_key) %}
+                                            {% set flag_url = municipality_data.get('flag_url') %}
+                                            {% if flag_url %}
+                                                {% if flag_url.startswith('https://commons.wikimedia.org/wiki/File:') %}
+                                                    {% set img_url = 'https://commons.wikimedia.org/wiki/Special:FilePath/' + flag_url.split('File:')[1] + '?width=48' %}
+                                                {% else %}
+                                                    {% set img_url = flag_url %}
+                                                {% endif %}
+                                                <img src="{{ img_url }}"
+                                                     alt="{{ municipality_name }} flag"
+                                                     class="municipality-flag"
+                                                     onerror="this.src='https://upload.wikimedia.org/wikipedia/en/thumb/0/03/Flag_of_Italy.svg/330px-Flag_of_Italy.svg.png';">
+                                            {% else %}
+                                                <img src="https://upload.wikimedia.org/wikipedia/en/thumb/0/03/Flag_of_Italy.svg/330px-Flag_of_Italy.svg.png"
+                                                     alt="Italy flag"
+                                                     class="municipality-flag">
+                                            {% endif %}
+                                            {{ municipality_name }}
+                                            {% if flag_url %}
+                                                <a href="{{ flag_url }}" target="_blank" class="flag-link" title="View flag on Wikimedia Commons">🔗</a>
+                                            {% endif %}
+                                        </div>
+                                        <div class="municipality-code">
+                                            🏷️ Code: {{ municipality_data.get('code', 'N/A') }}
+                                        </div>
+                                        <div class="files">
+                                            📁 <strong>Files ({{ municipality_data.get('files', [])|length }}):</strong><br>
+                                            {% if municipality_data.get('files', []) %}
+                                                {% for file in municipality_data.get('files', [])[:5] %}
+                                                    <a href="https://catasto-2025.s3.amazonaws.com/ITALIA/{{ region_name }}/{{ province_code }}/{{ municipality_key }}/{{ file }}" target="_blank" class="file-link">{{ file }}</a>{% if not loop.last %}, {% endif %}
+                                                {% endfor %}
+                                                {% if municipality_data.get('files', [])|length > 5 %}
+                                                    ... (and {{ municipality_data.get('files', [])|length - 5 }} more)
+                                                {% endif %}
+                                            {% else %}
+                                                <em>No files available</em>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+        {% endfor %}
+    </div>
+
+    <!-- No Results Message -->
+    <div id="noResultsMessage" class="no-data" style="display: none;">
+        <h2>🔍 No Results Found</h2>
+        <p>No cadastral data matches your current filter criteria.</p>
+        <p>Please try adjusting your search terms or clear the filters to see all data.</p>
+    </div>
+{% else %}
+    <div class="no-data">
+        <h2>📄 No Cadastral Data Available</h2>
+        <p>The cadastral structure file could not be found or loaded.</p>
+        <p>Please ensure the cadastral data is properly configured.</p>
+    </div>
+{% endif %}
+{% endblock %}
+
+{% block external_js %}
+<!-- No external JavaScript libraries needed for this page -->
+{% endblock %}
+
+{% block app_js %}
+<script src="/static/cadastral_data.js"></script>
+{% endblock %}
