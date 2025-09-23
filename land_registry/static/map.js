@@ -1095,18 +1095,23 @@ async function loadCadastralData() {
 function populateRegionsSelect() {
     console.log('Populating regions select...');
     const regionsSelect = document.getElementById('cadastralRegions');
-    console.log('Regions select element found:', regionsSelect);
+    console.log('Regions select element found:', !!regionsSelect);
     console.log('Cadastral data available:', !!cadastralData);
 
     if (!regionsSelect) {
-        console.error('cadastralRegions select element not found!');
+        console.error('CRITICAL: cadastralRegions select element not found!');
+        console.log('Available elements with cadastral in ID:',
+            Array.from(document.querySelectorAll('[id*="cadastral"]')).map(el => el.id));
         return;
     }
 
     if (!cadastralData) {
-        console.error('No cadastral data available!');
+        console.error('CRITICAL: No cadastral data available!');
         return;
     }
+
+    console.log('Cadastral data keys:', Object.keys(cadastralData));
+    console.log('Sample region data:', cadastralData[Object.keys(cadastralData)[0]]);
 
     // Clear existing options
     regionsSelect.innerHTML = '';
@@ -1115,6 +1120,7 @@ function populateRegionsSelect() {
     // Add region options
     const regions = Object.keys(cadastralData).sort();
     console.log('Regions to add:', regions);
+    console.log('Number of regions:', regions.length);
 
     regions.forEach(regionName => {
         const option = document.createElement('option');
@@ -1254,6 +1260,37 @@ function setupCadastralEventListeners() {
 // Initialize map and controls when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DOM loaded, initializing map...');
+
+    // Debug: Check if key elements exist
+    const mapElement = document.getElementById('map');
+    const regionsSelect = document.getElementById('cadastralRegions');
+    const mapContainer = document.querySelector('.map-container');
+    console.log('Map element found:', !!mapElement);
+    console.log('Regions select found:', !!regionsSelect);
+    console.log('Map container found:', !!mapContainer);
+
+    if (!mapElement) {
+        console.error('CRITICAL: Map element not found!');
+        return;
+    }
+
+    // Add a manual test button for debugging
+    const testButton = document.createElement('button');
+    testButton.textContent = 'Test Initialize';
+    testButton.style.position = 'fixed';
+    testButton.style.top = '10px';
+    testButton.style.right = '10px';
+    testButton.style.zIndex = '10000';
+    testButton.style.backgroundColor = 'red';
+    testButton.style.color = 'white';
+    testButton.onclick = function() {
+        console.log('Manual test button clicked');
+        console.log('Triggering map initialization...');
+        initializeMap();
+        console.log('Triggering cadastral data load...');
+        loadCadastralData();
+    };
+    document.body.appendChild(testButton);
 
     // Initialize map first
     setTimeout(() => {
