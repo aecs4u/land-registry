@@ -301,6 +301,13 @@ function loadGeoJsonData() {
 // Initialize the map with all providers
 function initializeMap() {
     console.log('Initializing map...');
+
+    // Prevent multiple initializations
+    if (map) {
+        console.log('Map already initialized, skipping...');
+        return;
+    }
+
     const mapElement = document.getElementById('map');
     console.log('Map element found:', mapElement);
     console.log('Map element dimensions:', mapElement ? `${mapElement.offsetWidth}x${mapElement.offsetHeight}` : 'N/A');
@@ -610,6 +617,12 @@ window.loadCadastralSelection = async function() {
             const totalFeatures = loadedLayers.reduce((sum, layer) => sum + layer.feature_count, 0);
             alert(`Successfully loaded ${successfulLoads}/${filePaths.length} cadastral files with ${totalFeatures} features.`);
 
+            // Update table info if table view is active
+            const tableInfo = document.getElementById('tableInfo');
+            if (tableInfo) {
+                tableInfo.textContent = `${totalFeatures} features loaded`;
+            }
+
             // Switch to map view
             showMapView();
         } else {
@@ -792,12 +805,20 @@ function loadAttributeTable() {
     const tableContainer = document.getElementById('attributeTable');
     const tableInfo = document.getElementById('tableInfo');
 
-    if (currentGeoJsonLayer && window.geoJsonData) {
+    // Get features from currentGeoJsonLayer or window.geoJsonData
+    let features = null;
+    if (currentGeoJsonLayer) {
+        // Extract features from the Leaflet layer
+        const geoJsonData = currentGeoJsonLayer.toGeoJSON();
+        features = geoJsonData.features;
+    } else if (window.geoJsonData) {
+        features = window.geoJsonData.features;
+    }
+
+    if (features && features.length > 0) {
         try {
-            const features = window.geoJsonData.features;
-            if (features && features.length > 0) {
-                // Update info
-                tableInfo.textContent = `${features.length} features loaded`;
+            // Update info
+            tableInfo.textContent = `${features.length} features loaded`;
 
                 // Create table
                 let tableHTML = '<table class="data-table"><thead><tr>';
