@@ -14,12 +14,12 @@ from typing import Optional
 import asyncio
 
 from land_registry.cadastral_utils import load_cadastral_structure, get_cadastral_stats
-from land_registry.dashboard import STATE, TEMPLATE
+from land_registry.dashboard import TEMPLATE
 from land_registry.file_availability_db import file_availability_db
 from land_registry.map import get_current_gdf, get_current_layers, map_generator
 from land_registry.routers.api import api_router
 from land_registry.s3_storage import get_s3_storage
-from land_registry.settings import app_settings, get_cadastral_structure_path
+from land_registry.settings import app_settings
 
 # Configure logging
 logging.basicConfig(
