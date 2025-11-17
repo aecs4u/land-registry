@@ -30,6 +30,11 @@ class AppSettings(BaseSettings):
     default_map_center: List[float] = [41.8719, 12.5674]  # Italy center
     default_map_zoom: int = 6
 
+    # Authentication settings (Clerk)
+    clerk_publishable_key: Optional[str] = None
+    clerk_secret_key: Optional[str] = None
+    clerk_domain: Optional[str] = None
+
     class Config:
         env_prefix = "LAND_REGISTRY_"
         case_sensitive = False
@@ -77,6 +82,12 @@ class CadastralSettings(BaseSettings):
         "/app/data/cadastral_structure.json",  # Cloud Run
         "../data/cadastral_structure.json",  # Alternative
     ]
+
+    # Local cadastral data directory (used in development mode)
+    local_cadastral_data_path: Optional[str] = "data/catasto/ITALIA"
+
+    # Use local files instead of S3 (set automatically based on environment)
+    use_local_files: bool = False
 
     # Default file types for cadastral data
     default_file_types: List[str] = ["MAP", "PLE"]
@@ -138,7 +149,7 @@ def get_cadastral_structure_path() -> Optional[str]:
 
     for path in possible_paths:
         if os.path.exists(path):
-            return path
+            return os.path.abspath(path)
 
     return None
 
@@ -166,6 +177,34 @@ def get_drawn_polygons_directory() -> str:
 if os.getenv("ENVIRONMENT") == "production":
     app_settings.debug = False
     app_settings.reload = False
+    cadastral_settings.use_local_files = False  # Use S3 in production
 elif os.getenv("ENVIRONMENT") == "development":
     app_settings.debug = True
     app_settings.reload = True
+    cadastral_settings.use_local_files = True  # Use local files in development
+else:
+    # Auto-detect: if local cadastral data exists, use it (development mode)
+    root_folder = os.path.dirname(os.path.abspath(__file__))
+    local_path = os.path.join(root_folder, "..", cadastral_settings.local_cadastral_data_path or "")
+    if os.path.exists(local_path) and os.path.isdir(local_path):
+        cadastral_settings.use_local_files = True
+        app_settings.debug = True
+    else:
+        cadastral_settings.use_local_files = False
+
+
+def get_cadastral_data_root() -> Optional[str]:
+    """
+    Get the root path for cadastral data files.
+    Returns local path in development, None in production (use S3).
+    """
+    if not cadastral_settings.use_local_files:
+        return None
+
+    root_folder = os.path.dirname(os.path.abspath(__file__))
+    local_path = os.path.join(root_folder, "..", cadastral_settings.local_cadastral_data_path or "")
+
+    if os.path.exists(local_path) and os.path.isdir(local_path):
+        return os.path.abspath(local_path)
+
+    return None

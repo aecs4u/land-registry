@@ -547,13 +547,8 @@ class IntegratedMapGenerator:
             tiles=None  # We'll add Google Satellite as the first tile layer
         )
 
-        # Add all tile layers from map.js mapProviders (Google Satellite first as default)
+        # Add all tile layers from map.js mapProviders (Google Satellite last as default)
         tile_layers = [
-            {
-                'tiles': 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
-                'attr': '© Google',
-                'name': 'Google Satellite'
-            },
             {
                 'tiles': 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
                 'attr': '© Google',
@@ -598,10 +593,15 @@ class IntegratedMapGenerator:
                 'tiles': 'https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png',
                 'attr': '© CartoDB',
                 'name': 'CartoDB Dark Matter'
+            },
+            {
+                'tiles': 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+                'attr': '© Google',
+                'name': 'Google Satellite'
             }
         ]
 
-        # Add all tile layers to the map, with Google Satellite as the first (default) layer
+        # Add all tile layers to the map, with Google Satellite as the last (default) layer
         for i, layer_config in enumerate(tile_layers):
             tile_layer = folium.TileLayer(
                 tiles=layer_config['tiles'],
@@ -612,7 +612,7 @@ class IntegratedMapGenerator:
             )
             tile_layer.add_to(m)
 
-            # Note: Google Satellite is the first layer added, making it the default active base layer
+            # Note: Google Satellite is the last layer added, making it the default active base layer
 
         # Add weather overlays from map.js
         weather_overlays = [

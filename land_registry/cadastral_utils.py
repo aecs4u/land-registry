@@ -5,12 +5,14 @@ Provides centralized loading, caching, and statistics computation.
 
 import json
 import logging
+import os
 from typing import Optional, Dict, Any, Tuple
 from functools import lru_cache
+from pathlib import Path
 import time
 
 from land_registry.s3_storage import get_s3_storage
-from land_registry.settings import get_cadastral_structure_path
+from land_registry.settings import get_cadastral_structure_path, get_cadastral_data_root, cadastral_settings
 
 logger = logging.getLogger(__name__)
 
@@ -79,11 +81,83 @@ def _calculate_statistics(cadastral_data: Dict[str, Any]) -> Dict[str, int]:
     }
 
 
+def _scan_local_cadastral_directory(root_path: str) -> Dict[str, Any]:
+    """
+    Scan local cadastral directory and build the structure.
+    Expected structure: root_path/REGION/PROVINCE/MUNICIPALITY_CODE/files.gpkg
+    """
+    cadastral_data = {}
+    root = Path(root_path)
+
+    if not root.exists():
+        logger.warning(f"Local cadastral data path does not exist: {root_path}")
+        return {}
+
+    # Iterate through regions
+    for region_dir in sorted(root.iterdir()):
+        if not region_dir.is_dir():
+            continue
+
+        region_name = region_dir.name
+        cadastral_data[region_name] = {}
+
+        # Iterate through provinces
+        for province_dir in sorted(region_dir.iterdir()):
+            if not province_dir.is_dir():
+                continue
+
+            province_code = province_dir.name
+            cadastral_data[region_name][province_code] = {}
+
+            # Iterate through municipalities
+            for municipality_dir in sorted(province_dir.iterdir()):
+                if not municipality_dir.is_dir():
+                    continue
+
+                municipality_key = municipality_dir.name
+
+                # Extract municipality code and name from folder name
+                # Format: CODE_MUNICIPALITY_NAME (e.g., A018_ACCIANO)
+                parts = municipality_key.split('_')
+                if len(parts) >= 2:
+                    # First part is usually the code (like "A018")
+                    code = parts[0]
+                    # Rest is the name
+                    name = '_'.join(parts[1:])
+                else:
+                    code = municipality_key
+                    name = municipality_key
+
+                # List all .gpkg files in the municipality directory
+                files = [f.name for f in sorted(municipality_dir.glob('*.gpkg'))]
+
+                if files:  # Only add if there are files
+                    cadastral_data[region_name][province_code][municipality_key] = {
+                        'code': code,
+                        'name': name.replace('_', ' '),
+                        'files': files
+                    }
+
+    logger.info(f"Scanned local cadastral directory: {root_path}")
+    return cadastral_data
+
+
 def _load_cadastral_data_internal() -> Optional[Dict[str, Any]]:
-    """Load cadastral data from S3 or local file"""
+    """Load cadastral data from local files or S3"""
     cadastral_data = None
 
-    # Try S3 first (but handle credentials gracefully)
+    # Check if we should use local files (development mode)
+    local_data_root = get_cadastral_data_root()
+    if local_data_root and cadastral_settings.use_local_files:
+        try:
+            cadastral_data = _scan_local_cadastral_directory(local_data_root)
+            if cadastral_data:
+                logger.info(f"Loaded cadastral structure from local directory: {local_data_root}")
+                return cadastral_data
+        except Exception as e:
+            logger.error(f"Failed to scan local cadastral directory: {e}", exc_info=True)
+
+    # Try S3 (production mode or fallback)
     try:
         s3_storage = get_s3_storage()
         cadastral_data = s3_storage.get_cadastral_structure()
@@ -95,13 +169,13 @@ def _load_cadastral_data_internal() -> Optional[Dict[str, Any]]:
         if "credentials" not in str(s3_error).lower():
             logger.warning(f"S3 access failed: {s3_error}")
 
-    # Fallback to local file
+    # Fallback to cadastral_structure.json file
     cadastral_path = get_cadastral_structure_path()
     if cadastral_path:
         try:
             with open(cadastral_path, 'r', encoding='utf-8') as f:
                 cadastral_data = json.load(f)
-            logger.info(f"Loaded cadastral structure from local file: {cadastral_path}")
+            logger.info(f"Loaded cadastral structure from JSON file: {cadastral_path}")
             return cadastral_data
         except Exception as e:
             logger.error(f"Failed to load cadastral structure from {cadastral_path}: {e}")
