@@ -19,7 +19,7 @@ from land_registry.file_availability_db import file_availability_db
 from land_registry.map import get_current_gdf, get_current_layers, map_generator
 from land_registry.routers.api import api_router
 from land_registry.s3_storage import get_s3_storage
-from land_registry.settings import app_settings
+from land_registry.settings import app_settings, panel_settings
 
 # Configure logging
 logging.basicConfig(
@@ -28,38 +28,74 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Panel server configuration
-PANEL_HOST = "127.0.0.1"
-PANEL_PORT = 5006
+# Panel server configuration (from settings)
+PANEL_HOST = panel_settings.panel_host
+PANEL_PORT = panel_settings.panel_port
 PANEL_BASE_URL = f"http://{PANEL_HOST}:{PANEL_PORT}"
 PANEL_DASHBOARD_URL = f"{PANEL_BASE_URL}/dashboard"
 
-# Panel server thread reference
-_panel_thread: Optional[Thread] = None
+# Panel server task reference
+_panel_task: Optional[asyncio.Task] = None
+_panel_shutdown_event = asyncio.Event()
 
 
-def _run_panel():
-    """Run Panel server in a background thread"""
+async def _run_panel_server():
+    """
+    Run Panel server asynchronously.
+    Uses asyncio.to_thread to run the blocking Panel server in a thread pool.
+    """
     try:
         logger.info(f"Starting Panel server on {PANEL_HOST}:{PANEL_PORT}")
-        pn.serve(
+
+        # Build websocket origins list including main app port
+        websocket_origins = list(panel_settings.panel_websocket_origins)
+        websocket_origins.extend([
+            f"{PANEL_HOST}:{app_settings.port}",
+            f"localhost:{app_settings.port}"
+        ])
+
+        # Run Panel server in thread pool (non-blocking)
+        await asyncio.to_thread(
+            pn.serve,
             {"dashboard": TEMPLATE},
             port=PANEL_PORT,
             address=PANEL_HOST,
-            allow_websocket_origin=[
-                f"{PANEL_HOST}:{app_settings.port}",
-                f"localhost:{app_settings.port}",
-                "127.0.0.1:8000",
-                "localhost:8000",
-                "127.0.0.1:8001",  # Common dev port
-                "localhost:8001"   # Common dev port
-            ],
-            show=False,
-            threaded=True,
+            allow_websocket_origin=websocket_origins,
+            show=panel_settings.panel_show,
+            threaded=panel_settings.panel_threaded,
         )
     except Exception as e:
-        logger.error(f"Panel server failed to start: {e}", exc_info=True)
+        logger.error(f"Panel server failed: {e}", exc_info=True)
         raise
+
+
+async def _health_check_panel() -> bool:
+    """
+    Health check for Panel server with retry logic.
+    Returns True if Panel server is accessible, False otherwise.
+    """
+    import httpx
+
+    max_retries = int(panel_settings.panel_startup_timeout / panel_settings.panel_startup_retry_delay)
+
+    for attempt in range(max_retries):
+        try:
+            async with httpx.AsyncClient(timeout=panel_settings.panel_health_check_timeout) as client:
+                response = await client.get(PANEL_BASE_URL)
+                if response.status_code == 200:
+                    logger.info(f"Panel server health check passed (attempt {attempt + 1}/{max_retries})")
+                    logger.info(f"Panel server accessible at {PANEL_BASE_URL}")
+                    return True
+                else:
+                    logger.debug(f"Panel server returned status {response.status_code} (attempt {attempt + 1}/{max_retries})")
+        except Exception as e:
+            logger.debug(f"Panel health check attempt {attempt + 1}/{max_retries} failed: {e}")
+
+        if attempt < max_retries - 1:
+            await asyncio.sleep(panel_settings.panel_startup_retry_delay)
+
+    logger.error(f"Panel server health check failed after {max_retries} attempts")
+    return False
 
 
 @asynccontextmanager
@@ -68,34 +104,48 @@ async def lifespan(app: FastAPI):
     Lifespan context manager for FastAPI app.
     Manages Panel server startup/shutdown and resource cleanup.
     """
-    global _panel_thread
+    global _panel_task
 
-    # Startup
+    # ========== STARTUP ==========
     logger.info(f"Starting {app_settings.app_name} v{app_settings.app_version}")
 
-    # Start Panel server in background thread
-    _panel_thread = Thread(target=_run_panel, daemon=True, name="PanelServer")
-    _panel_thread.start()
+    # Start Panel server as async task
+    _panel_task = asyncio.create_task(_run_panel_server())
+    logger.info("Panel server task created")
 
-    # Wait briefly for Panel server to start
-    await asyncio.sleep(1)
+    # Wait for Panel server to be ready with health checks
+    panel_ready = await _health_check_panel()
 
-    # Verify Panel server is accessible
-    try:
-        import httpx
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(PANEL_BASE_URL)
-            if response.status_code == 200:
-                logger.info(f"Panel server started successfully at {PANEL_BASE_URL}")
-            else:
-                logger.warning(f"Panel server returned status {response.status_code}")
-    except Exception as e:
-        logger.warning(f"Could not verify Panel server status: {e}")
+    if not panel_ready:
+        logger.error("Failed to start Panel server - health checks failed")
+        # Cancel the task if health check failed
+        if _panel_task and not _panel_task.done():
+            _panel_task.cancel()
+            try:
+                await _panel_task
+            except asyncio.CancelledError:
+                logger.info("Panel task cancelled after failed health check")
+        raise RuntimeError("Panel server failed to start")
+
+    logger.info(f"Application startup complete - Panel server ready at {PANEL_DASHBOARD_URL}")
 
     yield
 
-    # Shutdown
+    # ========== SHUTDOWN ==========
     logger.info("Shutting down application...")
+
+    # Cancel Panel server task
+    if _panel_task and not _panel_task.done():
+        logger.info("Cancelling Panel server task...")
+        _panel_task.cancel()
+        try:
+            await asyncio.wait_for(_panel_task, timeout=5.0)
+        except asyncio.CancelledError:
+            logger.info("Panel server task cancelled successfully")
+        except asyncio.TimeoutError:
+            logger.warning("Panel server task cancellation timed out")
+        except Exception as e:
+            logger.error(f"Error cancelling Panel server: {e}", exc_info=True)
 
     # Close database connections
     try:

@@ -131,12 +131,40 @@ class MapControlsSettings(BaseSettings):
         case_sensitive = False
 
 
+class PanelServerSettings(BaseSettings):
+    """Panel server configuration"""
+
+    # Server settings
+    panel_host: str = "127.0.0.1"
+    panel_port: int = 5006
+    panel_threaded: bool = True
+    panel_show: bool = False
+
+    # WebSocket origins (dynamically populated based on main app port)
+    panel_websocket_origins: List[str] = [
+        "127.0.0.1:8000",
+        "localhost:8000",
+        "127.0.0.1:8001",
+        "localhost:8001"
+    ]
+
+    # Health check settings
+    panel_startup_timeout: int = 10  # seconds
+    panel_startup_retry_delay: float = 0.5  # seconds
+    panel_health_check_timeout: float = 5.0  # seconds
+
+    class Config:
+        env_prefix = "PANEL_"
+        case_sensitive = False
+
+
 # Global settings instances
 app_settings = AppSettings()
 s3_settings = S3Settings()
 db_settings = DatabaseSettings()
 cadastral_settings = CadastralSettings()
 map_controls_settings = MapControlsSettings()
+panel_settings = PanelServerSettings()
 
 
 def get_cadastral_structure_path() -> Optional[str]:
