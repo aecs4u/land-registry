@@ -12,6 +12,7 @@ from fastapi.security import HTTPBearer
 import geopandas as gpd
 from io import BytesIO
 import json
+import logging
 import os
 import pandas as pd
 from pathlib import Path
@@ -34,6 +35,9 @@ from land_registry.settings import (
     app_settings, s3_settings, db_settings, cadastral_settings,
     get_cadastral_structure_path
 )
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -103,7 +107,7 @@ async def get_user_from_token(authorization: str = Header(None)) -> Optional[str
         user_data = json.loads(payload)
         return user_data.get('sub')  # 'sub' is the user ID in JWT
     except Exception as e:
-        print(f"Error decoding token: {e}")
+        logger.error(f"Error decoding token: {e}")
         return None
 
 def get_user_directory(user_id: str) -> Path:
@@ -237,13 +241,13 @@ async def get_adjacent_polygons(selection: PolygonSelection):
         raise HTTPException(status_code=400, detail="No data loaded. Please upload a QPKG file first.")
 
     try:
-        print(f"Finding adjacent polygons for feature {selection.feature_id} using method {selection.touch_method}")
-        print(f"GeoDataFrame has {len(current_gdf)} features")
+        logger.info(f"Finding adjacent polygons for feature {selection.feature_id} using method {selection.touch_method}")
+        logger.debug(f"GeoDataFrame has {len(current_gdf)} features")
 
         # Find adjacent polygons
         adjacent_indices = find_adjacent_polygons(current_gdf, selection.feature_id, selection.touch_method)
 
-        print(f"Found {len(adjacent_indices)} adjacent polygons: {adjacent_indices}")
+        logger.info(f"Found {len(adjacent_indices)} adjacent polygons: {adjacent_indices}")
 
         # Include the selected polygon
         all_indices = [selection.feature_id] + adjacent_indices
@@ -446,7 +450,7 @@ async def load_public_geo_data(request: PublicGeoDataRequest):
         bucket = "catasto-2025"
         key = request.s3_key
 
-        print(f"Loading geo data from s3://{bucket}/{key}")
+        logger.info(f"Loading geo data from s3://{bucket}/{key}")
 
         # Get the object into memory
         obj = s3.get_object(Bucket=bucket, Key=key)
@@ -468,7 +472,7 @@ async def load_public_geo_data(request: PublicGeoDataRequest):
         # Convert to GeoJSON for response
         geojson_data = json.loads(gdf.to_json())
 
-        print(f"Successfully loaded {len(gdf)} features from {key}")
+        logger.info(f"Successfully loaded {len(gdf)} features from {key}")
 
         return {
             "success": True,
@@ -484,7 +488,7 @@ async def load_public_geo_data(request: PublicGeoDataRequest):
 
     except Exception as e:
         error_msg = f"Error loading geo data from s3://{bucket}/{key}: {str(e)}"
-        print(error_msg)
+        logger.error(error_msg)
         raise HTTPException(status_code=500, detail=error_msg)
 
 
@@ -511,7 +515,7 @@ async def load_cadastral_file(file_path: str):
         raise HTTPException(status_code=400, detail="No file path specified")
 
     try:
-        print(f"Starting load_cadastral_file with file: {file_path}")
+        logger.info(f"Starting load_cadastral_file with file: {file_path}")
 
         # Ensure proper S3 key format
         s3_key = file_path if file_path.startswith('ITALIA/') else f"ITALIA/{file_path}"
@@ -524,21 +528,21 @@ async def load_cadastral_file(file_path: str):
         s3_client = boto3.client("s3", config=Config(signature_version=UNSIGNED))
         bucket = s3_settings.s3_bucket_name
 
-        print(f"Loading from S3: {bucket}/{s3_key}")
+        logger.info(f"Loading from S3: {bucket}/{s3_key}")
 
         # Get the object from S3
         obj = s3_client.get_object(Bucket=bucket, Key=s3_key)
         body = obj["Body"]
-        print(f"Successfully retrieved S3 object, content length: {obj.get('ContentLength', 'unknown')}")
+        logger.info(f"Successfully retrieved S3 object, content length: {obj.get('ContentLength', 'unknown')}")
 
         # Save to an in-memory file-like object
         file_like = BytesIO(body.read())
-        print(f"Created BytesIO object, size: {file_like.tell()} bytes")
+        logger.debug(f"Created BytesIO object, size: {file_like.tell()} bytes")
         file_like.seek(0)  # Reset to beginning
 
-        print(f"Attempting to read with geopandas...")
+        logger.debug(f"Attempting to read with geopandas...")
         gdf = gpd.read_file(file_like, layer=0)
-        print(f"Successfully read GeoDataFrame with {len(gdf)} features, columns: {list(gdf.columns)}")
+        logger.info(f"Successfully read GeoDataFrame with {len(gdf)} features, columns: {list(gdf.columns)}")
 
         # Add feature IDs if not present
         if 'feature_id' not in gdf.columns:
@@ -546,7 +550,7 @@ async def load_cadastral_file(file_path: str):
 
         # Convert to GeoJSON
         geojson_data = json.loads(gdf.to_json())
-        print(f"Successfully converted to GeoJSON")
+        logger.info(f"Successfully converted to GeoJSON")
 
         # Update global current_gdf
         current_gdf = gdf
@@ -562,9 +566,9 @@ async def load_cadastral_file(file_path: str):
         }
 
     except Exception as e:
-        print(f"Error loading cadastral file: {type(e).__name__}: {e}")
+        logger.error(f"Error loading cadastral file: {type(e).__name__}: {e}")
         import traceback
-        print(f"Full traceback: {traceback.format_exc()}")
+        logger.debug(f"Full traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Error loading cadastral file: {str(e)}")
 
 
@@ -607,7 +611,7 @@ async def load_multiple_cadastral_files(request: dict):
         if not file_paths:
             raise HTTPException(status_code=400, detail="No file paths provided")
 
-        print(f"Loading {len(file_paths)} cadastral files as separate layers")
+        logger.info(f"Loading {len(file_paths)} cadastral files as separate layers")
 
         # Store individual layers
         layers_data = {}
@@ -626,7 +630,7 @@ async def load_multiple_cadastral_files(request: dict):
                 # Ensure proper S3 key format
                 s3_key = file_path if file_path.startswith('ITALIA/') else f"ITALIA/{file_path}"
 
-                print(f"Loading layer from S3: {bucket}/{s3_key}")
+                logger.info(f"Loading layer from S3: {bucket}/{s3_key}")
 
                 # Get the object from S3
                 obj = s3_client.get_object(Bucket=bucket, Key=s3_key)
@@ -661,10 +665,10 @@ async def load_multiple_cadastral_files(request: dict):
                 all_gdfs.append(gdf)
                 total_features += len(gdf)
 
-                print(f"Successfully loaded layer '{layer_name}' with {len(gdf)} features")
+                logger.info(f"Successfully loaded layer '{layer_name}' with {len(gdf)} features")
 
             except Exception as e:
-                print(f"Error loading file {file_path}: {e}")
+                logger.error(f"Error loading file {file_path}: {e}")
                 # Continue with other files instead of failing completely
                 layers_data[os.path.basename(file_path)] = {
                     "error": str(e),
@@ -679,7 +683,7 @@ async def load_multiple_cadastral_files(request: dict):
         combined_layers.update(layers_data)
 
         set_current_layers(combined_layers)
-        print(f"Added {len(layers_data)} new layers to existing {len(existing_layers)} layers")
+        logger.info(f"Added {len(layers_data)} new layers to existing {len(existing_layers)} layers")
 
         # Combine all GeoDataFrames and append to existing current_gdf (additive loading)
         if all_gdfs:
@@ -690,13 +694,13 @@ async def load_multiple_cadastral_files(request: dict):
                 # Append to existing data
                 combined_gdf = gpd.pd.concat([existing_gdf, new_combined_gdf], ignore_index=True)
                 set_current_gdf(combined_gdf)
-                print(f"Appended {len(new_combined_gdf)} new features to existing {len(existing_gdf)} features. Total: {len(combined_gdf)}")
+                logger.info(f"Appended {len(new_combined_gdf)} new features to existing {len(existing_gdf)} features. Total: {len(combined_gdf)}")
             else:
                 # No existing data, use new data
                 set_current_gdf(new_combined_gdf)
-                print(f"Created new current_gdf with {len(new_combined_gdf)} features")
+                logger.debug(f"Created new current_gdf with {len(new_combined_gdf)} features")
         else:
-            print("No new data loaded, keeping existing current_gdf")
+            logger.info("No new data loaded, keeping existing current_gdf")
 
         # Calculate totals for response
         final_gdf = get_current_gdf()
@@ -716,9 +720,9 @@ async def load_multiple_cadastral_files(request: dict):
         }
 
     except Exception as e:
-        print(f"Error loading multiple cadastral files: {e}")
+        logger.error(f"Error loading multiple cadastral files: {e}")
         import traceback
-        print(f"Full traceback: {traceback.format_exc()}")
+        logger.debug(f"Full traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Error loading cadastral files: {str(e)}")
 
 
@@ -1161,7 +1165,7 @@ async def get_drawn_polygons():
                             "feature_count": len(drawing_data.get("features", [])) if isinstance(drawing_data, dict) else 0
                         })
                 except Exception as e:
-                    print(f"Error reading drawing file {filename}: {e}")
+                    logger.error(f"Error reading drawing file {filename}: {e}")
 
         # Sort by creation time, newest first
         drawing_files.sort(key=lambda x: x["created"], reverse=True)
@@ -1454,7 +1458,7 @@ async def list_drawn_polygons():
                         "feature_count": len(data.get('features', []))
                     })
             except Exception as e:
-                print(f"Error reading {filepath}: {e}")
+                logger.error(f"Error reading {filepath}: {e}")
                 continue
 
         # Sort by creation time, newest first
@@ -1553,7 +1557,7 @@ async def list_user_drawings(user_id: str = Depends(get_user_from_token)):
                         "metadata": data.get('metadata', {})
                     })
             except Exception as e:
-                print(f"Error reading {filepath}: {e}")
+                logger.error(f"Error reading {filepath}: {e}")
                 continue
 
         # Sort by creation time, newest first
