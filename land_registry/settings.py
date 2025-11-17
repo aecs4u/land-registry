@@ -153,9 +153,22 @@ class PanelServerSettings(BaseSettings):
     panel_startup_retry_delay: float = 0.5  # seconds
     panel_health_check_timeout: float = 5.0  # seconds
 
+    # Panel application routes
+    # NOTE: Currently all tables use the same Panel dashboard
+    # Future work: Create separate Panel apps for each table type
+    panel_dashboard_route: str = "/dashboard"
+    panel_map_table_route: str = "/dashboard"  # TODO: Create /map_table Panel app
+    panel_adjacency_table_route: str = "/dashboard"  # TODO: Create /adjacency_table Panel app
+    panel_mapping_table_route: str = "/dashboard"  # TODO: Create /mapping_table Panel app
+
     class Config:
         env_prefix = "PANEL_"
         case_sensitive = False
+
+
+def get_panel_url(route: str = "") -> str:
+    """Helper to build Panel server URLs"""
+    return f"http://{panel_settings.panel_host}:{panel_settings.panel_port}{route}"
 
 
 # Global settings instances

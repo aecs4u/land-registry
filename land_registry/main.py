@@ -19,7 +19,7 @@ from land_registry.file_availability_db import file_availability_db
 from land_registry.map import get_current_gdf, get_current_layers, map_generator
 from land_registry.routers.api import api_router
 from land_registry.s3_storage import get_s3_storage
-from land_registry.settings import app_settings, panel_settings
+from land_registry.settings import app_settings, panel_settings, get_panel_url
 
 # Configure logging
 logging.basicConfig(
@@ -31,8 +31,13 @@ logger = logging.getLogger(__name__)
 # Panel server configuration (from settings)
 PANEL_HOST = panel_settings.panel_host
 PANEL_PORT = panel_settings.panel_port
-PANEL_BASE_URL = f"http://{PANEL_HOST}:{PANEL_PORT}"
-PANEL_DASHBOARD_URL = f"{PANEL_BASE_URL}/dashboard"
+PANEL_BASE_URL = get_panel_url()
+PANEL_DASHBOARD_URL = get_panel_url(panel_settings.panel_dashboard_route)
+
+# Panel table URLs (currently all point to same dashboard)
+PANEL_MAP_TABLE_URL = get_panel_url(panel_settings.panel_map_table_route)
+PANEL_ADJACENCY_TABLE_URL = get_panel_url(panel_settings.panel_adjacency_table_route)
+PANEL_MAPPING_TABLE_URL = get_panel_url(panel_settings.panel_mapping_table_route)
 
 # Panel server task reference
 _panel_task: Optional[asyncio.Task] = None
@@ -235,10 +240,11 @@ async def read_root(request: Request):
 
 @app.get("/map_table")
 def show_map_table(request: Request):
-    """Display map table using Panel"""
-    # Note: All tables currently use the same Panel dashboard
-    # TODO: Create separate Panel apps for each table type
-    tabulator = server_document(PANEL_DASHBOARD_URL)
+    """
+    Display map table using Panel.
+    Uses configured Panel route from settings (currently points to main dashboard).
+    """
+    tabulator = server_document(PANEL_MAP_TABLE_URL)
     return templates.TemplateResponse("tabulator.html", {
         "request": request,
         "tabulator": tabulator
@@ -247,10 +253,11 @@ def show_map_table(request: Request):
 
 @app.get("/adjacency_table")
 def show_adjacency_table(request: Request):
-    """Display adjacency analysis table using Panel"""
-    # Note: All tables currently use the same Panel dashboard
-    # TODO: Create separate Panel apps for each table type
-    tabulator = server_document(PANEL_DASHBOARD_URL)
+    """
+    Display adjacency analysis table using Panel.
+    Uses configured Panel route from settings (currently points to main dashboard).
+    """
+    tabulator = server_document(PANEL_ADJACENCY_TABLE_URL)
     return templates.TemplateResponse("tabulator.html", {
         "request": request,
         "tabulator": tabulator
@@ -259,10 +266,11 @@ def show_adjacency_table(request: Request):
 
 @app.get("/mapping_table")
 def show_mapping_table(request: Request):
-    """Display mapping/drawing table using Panel"""
-    # Note: All tables currently use the same Panel dashboard
-    # TODO: Create separate Panel apps for each table type
-    tabulator = server_document(PANEL_DASHBOARD_URL)
+    """
+    Display mapping/drawing table using Panel.
+    Uses configured Panel route from settings (currently points to main dashboard).
+    """
+    tabulator = server_document(PANEL_MAPPING_TABLE_URL)
     return templates.TemplateResponse("tabulator.html", {
         "request": request,
         "tabulator": tabulator
@@ -299,12 +307,12 @@ async def serve_index(request: Request):
     # Load cadastral statistics using utility
     stats = get_cadastral_stats()
 
-    # Get Panel table documents
-    # Note: All tables currently use the same Panel dashboard
-    # TODO: Create separate Panel apps for each table type
-    map_table = server_document(PANEL_DASHBOARD_URL)
-    adjacency_table = server_document(PANEL_DASHBOARD_URL)
-    mapping_table = server_document(PANEL_DASHBOARD_URL)
+    # Get Panel table documents (use configured routes from settings)
+    # NOTE: Currently all routes point to the same Panel dashboard
+    # Future work: Create separate Panel apps for unique table content
+    map_table = server_document(PANEL_MAP_TABLE_URL)
+    adjacency_table = server_document(PANEL_ADJACENCY_TABLE_URL)
+    mapping_table = server_document(PANEL_MAPPING_TABLE_URL)
 
     # Render template with context including server-generated Folium map and Tabulator
     return templates.TemplateResponse("index.html", {
