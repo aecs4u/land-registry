@@ -3,32 +3,37 @@ API Router for Land Registry Application
 Centralizes all API endpoints for better organization and maintainability
 """
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Request
-from fastapi.responses import HTMLResponse
-import geopandas as gpd
-import pandas as pd
-import json
-import os
-import tempfile
-from pathlib import Path
-from typing import Dict, Any, List, Optional
-from io import BytesIO
 import boto3
 from botocore import UNSIGNED
 from botocore.config import Config
+from fastapi import APIRouter, UploadFile, File, HTTPException, Request, Depends, Header
+from fastapi.responses import HTMLResponse
+from fastapi.security import HTTPBearer
+import geopandas as gpd
+from io import BytesIO
+import json
+import os
+import pandas as pd
+from pathlib import Path
+from pydantic import BaseModel
+import tempfile
+from typing import Dict, Any, List, Optional
+import base64
+import hashlib
 
-from land_registry.map import extract_qpkg_data, find_adjacent_polygons, get_current_gdf
-from land_registry.map import map_controls, ControlButton, ControlSelect
+from land_registry.dashboard import STATE
+from land_registry.map import (
+    ControlButton, ControlSelect,
+    extract_qpkg_data, find_adjacent_polygons,
+    get_current_gdf, set_current_gdf, set_current_layers, get_current_layers
+)
 from land_registry.s3_storage import get_s3_storage, S3Settings, configure_s3_storage
 from land_registry.file_availability_db import file_availability_db
 from land_registry.map import get_auction_properties_geojson, create_auction_properties_layer
 from land_registry.settings import (
     app_settings, s3_settings, db_settings, cadastral_settings,
-    map_controls_settings, get_cadastral_structure_path
+    get_cadastral_structure_path
 )
-
-# Import Pydantic models
-from pydantic import BaseModel
 
 
 # ============================================================================
@@ -68,11 +73,44 @@ class ControlStateUpdate(BaseModel):
     enabled: bool
 
 
+class FilterBody(BaseModel):
+    region: Optional[str] = None
+    province: Optional[str] = None
+
+
 # ============================================================================
 # API Router Setup
 # ============================================================================
 
 api_router = APIRouter()
+
+# Authentication utilities
+security = HTTPBearer()
+
+async def get_user_from_token(authorization: str = Header(None)) -> Optional[str]:
+    """Extract user ID from Clerk JWT token"""
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+
+    try:
+        token = authorization.replace("Bearer ", "")
+        # For demo purposes, we'll extract user ID from token payload
+        # In production, you should verify the JWT signature with Clerk's public key
+        payload_part = token.split('.')[1]
+        # Add padding if needed
+        payload_part += '=' * (4 - len(payload_part) % 4)
+        payload = base64.b64decode(payload_part)
+        user_data = json.loads(payload)
+        return user_data.get('sub')  # 'sub' is the user ID in JWT
+    except Exception as e:
+        print(f"Error decoding token: {e}")
+        return None
+
+def get_user_directory(user_id: str) -> Path:
+    """Get user-specific directory for storing drawings"""
+    # Create a hash of user_id for directory name (privacy)
+    user_hash = hashlib.sha256(user_id.encode()).hexdigest()[:16]
+    return Path("drawn_polygons") / f"user_{user_hash}"
 
 # Get root folder for file paths
 root_folder = os.path.dirname(__file__)
@@ -166,8 +204,8 @@ async def generate_map(file: UploadFile = File(...)):
             )
         ).add_to(m)
 
-        # Add Python-generated Folium controls
-        m = map_controls.generate_folium_controls(m)
+        # # Add Python-generated Folium controls
+        # m = map_controls.generate_folium_controls(m)
 
         # Fit bounds
         bounds = []
@@ -274,24 +312,22 @@ async def get_attributes():
 
 @api_router.get("/get-cadastral-structure/")
 async def get_cadastral_structure():
-    """Get the Italian cadastral data structure from local JSON file"""
+    """Get the Italian cadastral data structure (from local files, S3, or JSON)"""
     try:
-        # Use centralized settings to get cadastral structure path
-        cadastral_file_path = get_cadastral_structure_path()
+        # Use the centralized cadastral utils to load data
+        from land_registry.cadastral_utils import load_cadastral_structure
 
-        if not cadastral_file_path:
-            raise HTTPException(status_code=404, detail="Cadastral structure file not found locally")
+        cadastral = load_cadastral_structure()
 
-        with open(cadastral_file_path, 'r', encoding='utf-8') as f:
-            cadastral_data = json.load(f)
+        if not cadastral:
+            raise HTTPException(status_code=404, detail="Cadastral structure data not available")
 
-        print(f"Successfully loaded cadastral data from local file: {cadastral_file_path}")
-        return cadastral_data
+        return cadastral.data
 
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=500, detail=f"Error parsing cadastral structure file: {str(e)}")
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error reading cadastral structure: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error loading cadastral structure: {str(e)}")
 
 
 @api_router.get("/get-regions/")
@@ -559,6 +595,133 @@ async def save_drawn_polygons(request: DrawnPolygonsRequest):
         raise HTTPException(status_code=500, detail=f"Error saving drawn polygons: {str(e)}")
 
 
+@api_router.post("/load-cadastral-files/")
+async def load_multiple_cadastral_files(request: dict):
+    """Load multiple cadastral files from S3, creating separate layers for each file"""
+    global current_gdf
+
+    try:
+        file_paths = request.get('file_paths', [])
+        file_types = request.get('file_types', [])
+
+        if not file_paths:
+            raise HTTPException(status_code=400, detail="No file paths provided")
+
+        print(f"Loading {len(file_paths)} cadastral files as separate layers")
+
+        # Store individual layers
+        layers_data = {}
+        all_gdfs = []
+        total_features = 0
+
+        from io import BytesIO
+        import geopandas as gpd
+
+        # Create unsigned S3 client for public bucket access
+        s3_client = boto3.client("s3", config=Config(signature_version=UNSIGNED))
+        bucket = s3_settings.s3_bucket_name
+
+        for file_path in file_paths:
+            try:
+                # Ensure proper S3 key format
+                s3_key = file_path if file_path.startswith('ITALIA/') else f"ITALIA/{file_path}"
+
+                print(f"Loading layer from S3: {bucket}/{s3_key}")
+
+                # Get the object from S3
+                obj = s3_client.get_object(Bucket=bucket, Key=s3_key)
+                body = obj["Body"]
+
+                # Save to an in-memory file-like object
+                file_like = BytesIO(body.read())
+                file_like.seek(0)
+
+                # Read with geopandas
+                gdf = gpd.read_file(file_like, layer=0)
+
+                # Add layer identifier and feature IDs
+                layer_name = os.path.basename(file_path)
+                gdf['layer_name'] = layer_name
+                gdf['source_file'] = file_path
+
+                if 'feature_id' not in gdf.columns:
+                    gdf['feature_id'] = range(len(gdf))
+
+                # Convert to GeoJSON for this layer
+                layer_geojson = json.loads(gdf.to_json())
+
+                # Store layer data
+                layers_data[layer_name] = {
+                    "geojson": layer_geojson,
+                    "feature_count": len(gdf),
+                    "source_file": file_path,
+                    "layer_name": layer_name
+                }
+
+                all_gdfs.append(gdf)
+                total_features += len(gdf)
+
+                print(f"Successfully loaded layer '{layer_name}' with {len(gdf)} features")
+
+            except Exception as e:
+                print(f"Error loading file {file_path}: {e}")
+                # Continue with other files instead of failing completely
+                layers_data[os.path.basename(file_path)] = {
+                    "error": str(e),
+                    "source_file": file_path
+                }
+
+        # Append new layers to existing layers data (for efficiency)
+        existing_layers = get_current_layers() or {}
+
+        # Merge new layers with existing ones
+        combined_layers = existing_layers.copy()
+        combined_layers.update(layers_data)
+
+        set_current_layers(combined_layers)
+        print(f"Added {len(layers_data)} new layers to existing {len(existing_layers)} layers")
+
+        # Combine all GeoDataFrames and append to existing current_gdf (additive loading)
+        if all_gdfs:
+            new_combined_gdf = gpd.pd.concat(all_gdfs, ignore_index=True)
+            existing_gdf = get_current_gdf()
+
+            if existing_gdf is not None and not existing_gdf.empty:
+                # Append to existing data
+                combined_gdf = gpd.pd.concat([existing_gdf, new_combined_gdf], ignore_index=True)
+                set_current_gdf(combined_gdf)
+                print(f"Appended {len(new_combined_gdf)} new features to existing {len(existing_gdf)} features. Total: {len(combined_gdf)}")
+            else:
+                # No existing data, use new data
+                set_current_gdf(new_combined_gdf)
+                print(f"Created new current_gdf with {len(new_combined_gdf)} features")
+        else:
+            print("No new data loaded, keeping existing current_gdf")
+
+        # Calculate totals for response
+        final_gdf = get_current_gdf()
+        total_existing_features = len(final_gdf) if final_gdf is not None else 0
+        final_layers = get_current_layers() or {}
+
+        return {
+            "success": True,
+            "message": f"Successfully added {len([l for l in layers_data.values() if 'error' not in l])} new layers. Total layers: {len(final_layers)}",
+            "layers": layers_data,  # Only new layers for display
+            "total_layers": len(final_layers),  # Total including existing
+            "new_layers": len(file_paths),
+            "successful_layers": len([l for l in layers_data.values() if 'error' not in l]),
+            "failed_layers": len([l for l in layers_data.values() if 'error' in l]),
+            "features_count": total_features,  # New features added
+            "total_features_count": total_existing_features  # Total features including existing
+        }
+
+    except Exception as e:
+        print(f"Error loading multiple cadastral files: {e}")
+        import traceback
+        print(f"Full traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error loading cadastral files: {str(e)}")
+
+
 @api_router.get("/test-load-endpoint/{test_path:path}")
 async def test_load_endpoint(test_path: str):
     """Simple test endpoint to verify path parameter parsing"""
@@ -809,45 +972,45 @@ async def get_s3_status():
 # Control Management Endpoints
 # ============================================================================
 
-@api_router.get("/get-controls/")
-async def get_controls():
-    """Get current control definitions and states"""
-    controls_data = {
-        "groups": [
-            {
-                "id": group.id,
-                "title": group.title,
-                "position": group.position,
-                "controls": [
-                    {
-                        "id": ctrl.id,
-                        "title": ctrl.title,
-                        "enabled": ctrl.enabled,
-                        "tooltip": ctrl.tooltip,
-                        "type": "button" if isinstance(ctrl, ControlButton) else "select",
-                        "icon": getattr(ctrl, 'icon', None),
-                        "onclick": getattr(ctrl, 'onclick', None),
-                        "options": getattr(ctrl, 'options', None),
-                        "onchange": getattr(ctrl, 'onchange', None),
-                        "default_value": getattr(ctrl, 'default_value', None)
-                    }
-                    for ctrl in group.controls
-                ]
-            }
-            for group in map_controls.control_groups
-        ]
-    }
-    return controls_data
+# @api_router.get("/get-controls/")
+# async def get_controls():
+#     """Get current control definitions and states"""
+#     controls_data = {
+#         "groups": [
+#             {
+#                 "id": group.id,
+#                 "title": group.title,
+#                 "position": group.position,
+#                 "controls": [
+#                     {
+#                         "id": ctrl.id,
+#                         "title": ctrl.title,
+#                         "enabled": ctrl.enabled,
+#                         "tooltip": ctrl.tooltip,
+#                         "type": "button" if isinstance(ctrl, ControlButton) else "select",
+#                         "icon": getattr(ctrl, 'icon', None),
+#                         "onclick": getattr(ctrl, 'onclick', None),
+#                         "options": getattr(ctrl, 'options', None),
+#                         "onchange": getattr(ctrl, 'onchange', None),
+#                         "default_value": getattr(ctrl, 'default_value', None)
+#                     }
+#                     for ctrl in group.controls
+#                 ]
+#             }
+#             for group in map_controls.control_groups
+#         ]
+#     }
+#     return controls_data
 
 
-@api_router.post("/update-control-state/")
-async def update_control_state(update: ControlStateUpdate):
-    """Update the state of a specific control"""
-    success = map_controls.update_control_state(update.control_id, update.enabled)
-    if success:
-        return {"success": True, "message": f"Control {update.control_id} updated"}
-    else:
-        raise HTTPException(status_code=404, detail=f"Control {update.control_id} not found")
+# @api_router.post("/update-control-state/")
+# async def update_control_state(update: ControlStateUpdate):
+#     """Update the state of a specific control"""
+#     success = map_controls.update_control_state(update.control_id, update.enabled)
+#     if success:
+#         return {"success": True, "message": f"Control {update.control_id} updated"}
+#     else:
+#         raise HTTPException(status_code=404, detail=f"Control {update.control_id} not found")
 
 
 # ============================================================================
@@ -1171,3 +1334,232 @@ async def clear_file_availability_cache():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error clearing cache: {str(e)}")
+
+
+@api_router.post("/filters")
+def set_filters(body: FilterBody):
+    STATE.set_filters(region=body.region, province=body.province)
+    return {"ok": True, "region": STATE.region, "province": STATE.province}
+
+
+@api_router.get("/selection")
+def get_selection():
+    return {"selection": STATE.get_selection()}
+
+
+# Drawing Management API Endpoints
+
+class DrawingData(BaseModel):
+    geojson: dict
+    timestamp: str
+    user_id: Optional[str] = None
+
+@api_router.post("/save-drawn-polygons")
+async def save_drawn_polygons(
+    drawing_data: DrawingData,
+    user_id: str = Depends(get_user_from_token)
+):
+    """Save drawn polygons to a user-specific JSON file"""
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    try:
+        # Create user-specific directory
+        user_dir = get_user_directory(user_id)
+        user_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create filename with timestamp
+        timestamp = drawing_data.timestamp.replace(':', '-').replace('.', '-')
+        filename = f"drawings_{timestamp}.geojson"
+        filepath = user_dir / filename
+
+        # Add user_id to the geojson metadata
+        geojson_with_metadata = {
+            **drawing_data.geojson,
+            "metadata": {
+                "user_id": user_id,
+                "timestamp": drawing_data.timestamp,
+                "saved_at": timestamp
+            }
+        }
+
+        # Save GeoJSON data
+        with open(filepath, 'w') as f:
+            json.dump(geojson_with_metadata, f, indent=2)
+
+        # Also save as latest.geojson for easy loading
+        latest_filepath = user_dir / "latest.geojson"
+        with open(latest_filepath, 'w') as f:
+            json.dump(geojson_with_metadata, f, indent=2)
+
+        return {
+            "success": True,
+            "message": f"Saved {len(drawing_data.geojson.get('features', []))} drawings",
+            "filename": filename
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save drawings: {str(e)}")
+
+@api_router.get("/load-drawn-polygons")
+async def load_drawn_polygons(user_id: str = Depends(get_user_from_token)):
+    """Load the most recently saved drawn polygons for authenticated user"""
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    try:
+        # Try to load from user-specific directory
+        user_dir = get_user_directory(user_id)
+        latest_filepath = user_dir / "latest.geojson"
+
+        if latest_filepath.exists():
+            with open(latest_filepath, 'r') as f:
+                geojson_data = json.load(f)
+
+            # Remove metadata from response for cleaner frontend handling
+            if "metadata" in geojson_data:
+                del geojson_data["metadata"]
+
+            return {
+                "success": True,
+                "geojson": geojson_data,
+                "message": f"Loaded {len(geojson_data.get('features', []))} drawings"
+            }
+        else:
+            return {
+                "success": False,
+                "message": "No saved drawings found"
+            }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load drawings: {str(e)}")
+
+@api_router.get("/list-drawn-polygons")
+async def list_drawn_polygons():
+    """List all available saved drawing files"""
+    try:
+        drawings_dir = Path("drawn_polygons")
+
+        if not drawings_dir.exists():
+            return {"success": True, "files": []}
+
+        files = []
+        for filepath in drawings_dir.glob("drawings_*.geojson"):
+            try:
+                with open(filepath, 'r') as f:
+                    data = json.load(f)
+                    files.append({
+                        "filename": filepath.name,
+                        "created": filepath.stat().st_mtime,
+                        "feature_count": len(data.get('features', []))
+                    })
+            except Exception as e:
+                print(f"Error reading {filepath}: {e}")
+                continue
+
+        # Sort by creation time, newest first
+        files.sort(key=lambda x: x['created'], reverse=True)
+
+        return {"success": True, "files": files}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list drawings: {str(e)}")
+
+@api_router.delete("/clear-drawn-polygons")
+async def clear_drawn_polygons():
+    """Delete all saved drawing files"""
+    try:
+        drawings_dir = Path("drawn_polygons")
+
+        if not drawings_dir.exists():
+            return {"success": True, "message": "No drawings to clear"}
+
+        deleted_count = 0
+        for filepath in drawings_dir.glob("*.geojson"):
+            filepath.unlink()
+            deleted_count += 1
+
+        return {
+            "success": True,
+            "message": f"Cleared {deleted_count} drawing files"
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to clear drawings: {str(e)}")
+
+# User Profile and Dashboard Endpoints
+
+@api_router.get("/user/profile")
+async def get_user_profile(user_id: str = Depends(get_user_from_token)):
+    """Get user profile information and drawing statistics"""
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    try:
+        user_dir = get_user_directory(user_id)
+
+        # Count user's drawing files
+        drawing_count = 0
+        total_features = 0
+        latest_drawing = None
+
+        if user_dir.exists():
+            drawing_files = list(user_dir.glob("drawings_*.geojson"))
+            drawing_count = len(drawing_files)
+
+            # Get latest drawing info
+            if user_dir.joinpath("latest.geojson").exists():
+                with open(user_dir.joinpath("latest.geojson"), 'r') as f:
+                    latest_data = json.load(f)
+                    total_features = len(latest_data.get('features', []))
+                    if 'metadata' in latest_data:
+                        latest_drawing = latest_data['metadata'].get('timestamp')
+
+        return {
+            "success": True,
+            "profile": {
+                "user_id": user_id,
+                "drawing_sessions": drawing_count,
+                "total_features": total_features,
+                "latest_drawing": latest_drawing,
+                "storage_location": str(user_dir)
+            }
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get user profile: {str(e)}")
+
+@api_router.get("/user/drawings")
+async def list_user_drawings(user_id: str = Depends(get_user_from_token)):
+    """List all drawing sessions for authenticated user"""
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    try:
+        user_dir = get_user_directory(user_id)
+
+        if not user_dir.exists():
+            return {"success": True, "drawings": []}
+
+        drawings = []
+        for filepath in user_dir.glob("drawings_*.geojson"):
+            try:
+                with open(filepath, 'r') as f:
+                    data = json.load(f)
+                    drawings.append({
+                        "filename": filepath.name,
+                        "created": filepath.stat().st_mtime,
+                        "feature_count": len(data.get('features', [])),
+                        "metadata": data.get('metadata', {})
+                    })
+            except Exception as e:
+                print(f"Error reading {filepath}: {e}")
+                continue
+
+        # Sort by creation time, newest first
+        drawings.sort(key=lambda x: x['created'], reverse=True)
+
+        return {"success": True, "drawings": drawings}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list user drawings: {str(e)}")

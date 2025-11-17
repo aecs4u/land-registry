@@ -184,7 +184,9 @@ async def read_root(request: Request):
 @app.get("/map_table")
 def show_map_table(request: Request):
     """Display map table using Panel"""
-    tabulator = server_document(f"{PANEL_BASE_URL}/app_panel/map_table")
+    # Note: All tables currently use the same Panel dashboard
+    # TODO: Create separate Panel apps for each table type
+    tabulator = server_document(PANEL_DASHBOARD_URL)
     return templates.TemplateResponse("tabulator.html", {
         "request": request,
         "tabulator": tabulator
@@ -194,7 +196,9 @@ def show_map_table(request: Request):
 @app.get("/adjacency_table")
 def show_adjacency_table(request: Request):
     """Display adjacency analysis table using Panel"""
-    tabulator = server_document(f"{PANEL_BASE_URL}/app_panel/adjacency_table")
+    # Note: All tables currently use the same Panel dashboard
+    # TODO: Create separate Panel apps for each table type
+    tabulator = server_document(PANEL_DASHBOARD_URL)
     return templates.TemplateResponse("tabulator.html", {
         "request": request,
         "tabulator": tabulator
@@ -204,7 +208,9 @@ def show_adjacency_table(request: Request):
 @app.get("/mapping_table")
 def show_mapping_table(request: Request):
     """Display mapping/drawing table using Panel"""
-    tabulator = server_document(f"{PANEL_BASE_URL}/app_panel/mapping_table")
+    # Note: All tables currently use the same Panel dashboard
+    # TODO: Create separate Panel apps for each table type
+    tabulator = server_document(PANEL_DASHBOARD_URL)
     return templates.TemplateResponse("tabulator.html", {
         "request": request,
         "tabulator": tabulator
@@ -241,10 +247,12 @@ async def serve_index(request: Request):
     # Load cadastral statistics using utility
     stats = get_cadastral_stats()
 
-    # Get Panel table documents - use dedicated endpoints
-    map_table = server_document(f"{PANEL_BASE_URL}/app_panel/map_table")
-    adjacency_table = server_document(f"{PANEL_BASE_URL}/app_panel/adjacency_table")
-    mapping_table = server_document(f"{PANEL_BASE_URL}/app_panel/mapping_table")
+    # Get Panel table documents
+    # Note: All tables currently use the same Panel dashboard
+    # TODO: Create separate Panel apps for each table type
+    map_table = server_document(PANEL_DASHBOARD_URL)
+    adjacency_table = server_document(PANEL_DASHBOARD_URL)
+    mapping_table = server_document(PANEL_DASHBOARD_URL)
 
     # Render template with context including server-generated Folium map and Tabulator
     return templates.TemplateResponse("index.html", {
