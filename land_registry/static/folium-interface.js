@@ -175,16 +175,16 @@ function initializePolygonSelection() {
 
 // View switching functionality
 function showMapView() {
-    document.querySelectorAll('.view-content').forEach(el => el.style.display = 'none');
+    document.querySelectorAll('.view-content').forEach(el => el.classList.remove('active'));
     document.querySelectorAll('.view-toggle button').forEach(el => el.classList.remove('active'));
-    document.getElementById('mapView').style.display = 'block';
+    document.getElementById('mapView').classList.add('active');
     document.getElementById('mapViewBtn').classList.add('active');
 }
 
 function handleTableViewClick() {
-    document.querySelectorAll('.view-content').forEach(el => el.style.display = 'none');
+    document.querySelectorAll('.view-content').forEach(el => el.classList.remove('active'));
     document.querySelectorAll('.view-toggle button').forEach(el => el.classList.remove('active'));
-    document.getElementById('tableView').style.display = 'block';
+    document.getElementById('tableView').classList.add('active');
     document.getElementById('tableViewBtn').classList.add('active');
 }
 
