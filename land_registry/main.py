@@ -53,11 +53,14 @@ async def _run_panel_server():
     try:
         logger.info(f"Starting Panel server on {PANEL_HOST}:{PANEL_PORT}")
 
-        # Build websocket origins list including main app port
+        # Build websocket origins list including main app port and Panel server itself
         websocket_origins = list(panel_settings.panel_websocket_origins)
         websocket_origins.extend([
             f"{PANEL_HOST}:{app_settings.port}",
-            f"localhost:{app_settings.port}"
+            f"localhost:{app_settings.port}",
+            # Panel server must allow connections from itself
+            f"{PANEL_HOST}:{PANEL_PORT}",
+            f"localhost:{PANEL_PORT}"
         ])
 
         # Run Panel server in thread pool (non-blocking)
@@ -86,10 +89,11 @@ async def _health_check_panel() -> bool:
 
     for attempt in range(max_retries):
         try:
-            async with httpx.AsyncClient(timeout=panel_settings.panel_health_check_timeout) as client:
+            async with httpx.AsyncClient(timeout=panel_settings.panel_health_check_timeout, follow_redirects=True) as client:
                 response = await client.get(PANEL_BASE_URL)
-                if response.status_code == 200:
-                    logger.info(f"Panel server health check passed (attempt {attempt + 1}/{max_retries})")
+                # Accept 200 (OK), 302 (redirect), or 3xx (redirects) as success
+                if response.status_code in (200, 302) or (300 <= response.status_code < 400):
+                    logger.info(f"Panel server health check passed (attempt {attempt + 1}/{max_retries}, status {response.status_code})")
                     logger.info(f"Panel server accessible at {PANEL_BASE_URL}")
                     return True
                 else:
