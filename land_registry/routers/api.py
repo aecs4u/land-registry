@@ -35,6 +35,10 @@ from land_registry.settings import (
     app_settings, s3_settings, db_settings, cadastral_settings,
     get_cadastral_structure_path
 )
+from land_registry.models import (
+    TableDataResponse, CadastralCacheInfoResponse,
+    ServiceUnavailableResponse
+)
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -355,7 +359,7 @@ async def get_cadastral_structure(include_metadata: bool = False):
         raise HTTPException(status_code=500, detail=f"Error loading cadastral structure: {str(e)}")
 
 
-@api_router.get("/api/v1/cadastral-cache-info")
+@api_router.get("/api/v1/cadastral-cache-info", response_model=CadastralCacheInfoResponse)
 async def get_cadastral_cache_info():
     """
     Get information about the cadastral data cache.

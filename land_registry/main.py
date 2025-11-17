@@ -20,6 +20,7 @@ from land_registry.map import get_current_gdf, get_current_layers, map_generator
 from land_registry.routers.api import api_router
 from land_registry.s3_storage import get_s3_storage
 from land_registry.settings import app_settings, panel_settings, get_panel_url
+from land_registry.models import TableDataResponse, ServiceUnavailableResponse
 
 # Configure logging
 logging.basicConfig(
@@ -434,7 +435,7 @@ async def show_cadastral_data(request: Request):
         )
 
 
-@app.get("/api/v1/table-data")
+@app.get("/api/v1/table-data", response_model=TableDataResponse)
 async def get_table_data(
     page: int = 1,
     size: int = 100,
@@ -519,7 +520,11 @@ async def get_table_data(
         raise HTTPException(status_code=500, detail=f"Error fetching table data: {str(e)}")
 
 
-@app.get("/api/v1/adjacency-data")
+@app.get(
+    "/api/v1/adjacency-data",
+    response_model=TableDataResponse,
+    responses={503: {"model": ServiceUnavailableResponse}}
+)
 async def get_adjacency_data(
     page: int = 1,
     size: int = 100,
@@ -529,25 +534,25 @@ async def get_adjacency_data(
     filter_field: Optional[str] = None,
     filter_value: Optional[str] = None
 ):
-    """Get paginated adjacency analysis data with server-side filtering and sorting"""
-    try:
-        # For now, return empty data since adjacency analysis is not implemented in the current map.py
-        # This endpoint will be populated when adjacency analysis functionality is available
-        return {
-            "data": [],
-            "total": 0,
-            "page": page,
-            "size": size,
-            "total_pages": 0,
-            "columns": [],
-            "filtered_total": 0
-        }
-    except Exception as e:
-        logger.error(f"Error fetching adjacency data: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error fetching adjacency data: {str(e)}")
+    """
+    Get paginated adjacency analysis data with server-side filtering and sorting.
+
+    NOTE: This feature is currently not implemented.
+    """
+    # Adjacency analysis feature is not yet implemented
+    logger.info("Adjacency data endpoint called - feature not implemented")
+    raise HTTPException(
+        status_code=503,
+        detail="Adjacency analysis feature is not yet implemented. This endpoint will be available in a future release.",
+        headers={"Retry-After": ""}
+    )
 
 
-@app.get("/api/v1/mapping-data")
+@app.get(
+    "/api/v1/mapping-data",
+    response_model=TableDataResponse,
+    responses={503: {"model": ServiceUnavailableResponse}}
+)
 async def get_mapping_data(
     page: int = 1,
     size: int = 100,
@@ -557,19 +562,15 @@ async def get_mapping_data(
     filter_field: Optional[str] = None,
     filter_value: Optional[str] = None
 ):
-    """Get paginated mapping/drawing data with server-side filtering and sorting"""
-    try:
-        # For now, return empty data since drawn polygon storage is not implemented
-        # This endpoint will be populated when drawing functionality stores data properly
-        return {
-            "data": [],
-            "total": 0,
-            "page": page,
-            "size": size,
-            "total_pages": 0,
-            "columns": [],
-            "filtered_total": 0
-        }
-    except Exception as e:
-        logger.error(f"Error fetching mapping data: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error fetching mapping data: {str(e)}")
+    """
+    Get paginated mapping/drawing data with server-side filtering and sorting.
+
+    NOTE: This feature is currently not implemented.
+    """
+    # Mapping/drawing data storage feature is not yet implemented
+    logger.info("Mapping data endpoint called - feature not implemented")
+    raise HTTPException(
+        status_code=503,
+        detail="Mapping/drawing data storage feature is not yet implemented. This endpoint will be available in a future release.",
+        headers={"Retry-After": ""}
+    )
