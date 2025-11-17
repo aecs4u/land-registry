@@ -315,8 +315,13 @@ async def get_attributes():
 # ============================================================================
 
 @api_router.get("/get-cadastral-structure/")
-async def get_cadastral_structure():
-    """Get the Italian cadastral data structure (from local files, S3, or JSON)"""
+async def get_cadastral_structure(include_metadata: bool = False):
+    """
+    Get the Italian cadastral data structure (from local files, S3, or JSON)
+
+    Args:
+        include_metadata: If True, includes cache metadata and statistics in response
+    """
     try:
         # Use the centralized cadastral utils to load data
         from land_registry.cadastral_utils import load_cadastral_structure
@@ -326,12 +331,69 @@ async def get_cadastral_structure():
         if not cadastral:
             raise HTTPException(status_code=404, detail="Cadastral structure data not available")
 
-        return cadastral.data
+        if include_metadata:
+            # Return data with metadata
+            return {
+                'data': cadastral.data,
+                'metadata': {
+                    'cache': cadastral.cache_metadata(),
+                    'statistics': {
+                        'total_regions': cadastral.total_regions,
+                        'total_provinces': cadastral.total_provinces,
+                        'total_municipalities': cadastral.total_municipalities,
+                        'total_files': cadastral.total_files
+                    }
+                }
+            }
+        else:
+            # Return just the data (backward compatible)
+            return cadastral.data
 
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error loading cadastral structure: {str(e)}")
+
+
+@api_router.get("/api/v1/cadastral-cache-info")
+async def get_cadastral_cache_info():
+    """
+    Get information about the cadastral data cache.
+    Returns cache age, source (local/S3/JSON), statistics, and file availability.
+    """
+    try:
+        from land_registry.cadastral_utils import load_cadastral_structure
+
+        cadastral = load_cadastral_structure()
+
+        if not cadastral:
+            raise HTTPException(status_code=404, detail="Cadastral structure data not available")
+
+        # Get cache metadata
+        cache_info = cadastral.cache_metadata()
+
+        # Get statistics
+        stats = {
+            'total_regions': cadastral.total_regions,
+            'total_provinces': cadastral.total_provinces,
+            'total_municipalities': cadastral.total_municipalities,
+            'total_files': cadastral.total_files
+        }
+
+        # Get file availability stats
+        availability = cadastral.get_file_availability_stats()
+
+        return {
+            'cache': cache_info,
+            'statistics': stats,
+            'file_availability': availability
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting cadastral cache info: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error getting cache info: {str(e)}")
 
 
 @api_router.get("/get-regions/")
