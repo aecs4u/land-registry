@@ -6,7 +6,7 @@ from folium.plugins import (
     Draw, Fullscreen, LocateControl, MeasureControl,
     BeautifyIcon, FeatureGroupSubGroup, FloatImage,
     Geocoder, GroupedLayerControl, MarkerCluster, MiniMap,
-    MousePosition, OverlappingMarkerSpiderfier, ScrollZoomToggler, 
+    MousePosition, OverlappingMarkerSpiderfier, ScrollZoomToggler,
     Search, TagFilterButton,
     TimeSliderChoropleth, Timeline, TimelineSlider,
     TimestampedGeoJson
@@ -14,17 +14,20 @@ from folium.plugins import (
 from folium.plugins.treelayercontrol import TreeLayerControl
 import geopandas as gpd
 import json
+import logging
 import pandas as pd
 from pathlib import Path
 from pydantic_settings import BaseSettings
 import random
-from rich import print
 from shapely.geometry import Point
 import tempfile
 from typing import List, Dict, Any, Optional, Union
 import zipfile
 
 from land_registry.settings import map_controls_settings, app_settings
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 
 class ControlButton(BaseSettings):
@@ -152,20 +155,20 @@ def find_adjacent_polygons(gdf: gpd.GeoDataFrame, selected_idx: int, touch_metho
     Returns:
         List of indices of adjacent polygons
     """
-    print(f"Finding adjacent polygons: selected_idx={selected_idx}, method={touch_method}, gdf_len={len(gdf)}")
-    
+    logger.info(f"Finding adjacent polygons: selected_idx={selected_idx}, method={touch_method}, gdf_len={len(gdf)}")
+
     if selected_idx >= len(gdf):
-        print(f"Selected index {selected_idx} is out of bounds")
+        logger.warning(f"Selected index {selected_idx} is out of bounds (gdf length: {len(gdf)})")
         return []
-    
+
     selected_geom = gdf.iloc[selected_idx].geometry
-    print(f"Selected geometry type: {selected_geom.geom_type}")
+    logger.debug(f"Selected geometry type: {selected_geom.geom_type}")
     adjacent_indices = []
-    
+
     for idx, row in gdf.iterrows():
         if idx == selected_idx:
             continue
-            
+
         try:
             # Check spatial relationship
             if touch_method == "touches":
@@ -177,16 +180,16 @@ def find_adjacent_polygons(gdf: gpd.GeoDataFrame, selected_idx: int, touch_metho
             else:
                 # Default to touches
                 is_adjacent = selected_geom.touches(row.geometry)
-            
+
             if is_adjacent:
-                print(f"Found adjacent polygon at index {idx}")
+                logger.debug(f"Found adjacent polygon at index {idx}")
                 adjacent_indices.append(idx)
-                
+
         except Exception as e:
-            print(f"Error checking adjacency for polygon {idx}: {e}")
+            logger.error(f"Error checking adjacency for polygon {idx}: {e}")
             continue
-    
-    print(f"Total adjacent polygons found: {len(adjacent_indices)}")
+
+    logger.info(f"Total adjacent polygons found: {len(adjacent_indices)}")
     return adjacent_indices
 
 
@@ -271,7 +274,7 @@ def create_auction_properties_layer(auction_data: List[dict] = None):
     })
 
     auction_properties = auction_gdf
-    print(f"Created auction properties layer with {len(auction_gdf)} properties")
+    logger.info(f"Created auction properties layer with {len(auction_gdf)} properties")
 
     return auction_gdf
 
@@ -316,7 +319,7 @@ def filter_auction_properties(status: str = None, property_type: str = None,
     if max_price:
         filtered = filtered[filtered['starting_price'] <= max_price]
 
-    print(f"Filtered auction properties: {len(filtered)} of {len(auction_properties)} properties")
+    logger.info(f"Filtered auction properties: {len(filtered)} of {len(auction_properties)} properties")
     return filtered
 
 
@@ -336,7 +339,7 @@ def highlight_auction_properties_near_cadastral(distance_km: float = 1.0):
     global current_gdf, auction_properties
 
     if current_gdf is None or auction_properties is None:
-        print("No cadastral data or auction properties loaded")
+        logger.warning("No cadastral data or auction properties loaded")
         return None
 
     # Reproject to a projected CRS for distance calculations (UTM Zone 33N for Italy)
@@ -357,10 +360,10 @@ def highlight_auction_properties_near_cadastral(distance_km: float = 1.0):
 
     if nearby_auctions:
         result = auction_properties.iloc[nearby_auctions]
-        print(f"Found {len(result)} auction properties within {distance_km}km of cadastral data")
+        logger.info(f"Found {len(result)} auction properties within {distance_km}km of cadastral data")
         return result
     else:
-        print(f"No auction properties found within {distance_km}km of cadastral data")
+        logger.info(f"No auction properties found within {distance_km}km of cadastral data")
         return None
 
 
