@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 import geopandas as gpd
 from shapely.geometry import Polygon
 
-from land_registry.app import app
+from land_registry.main import app
 from land_registry.generate_cadastral_form import analyze_qgis_structure, generate_html_form, main
 
 
@@ -26,7 +26,7 @@ class TestCorrectedMockDecorators:
         client = TestClient(app)
 
         # When no S3 is configured, it should read from local file
-        with patch('land_registry.app.get_s3_storage', return_value=None):
+        with patch('land_registry.main.get_s3_storage', return_value=None):
             response = client.get("/api/v1/get-cadastral-structure/")
             assert response.status_code == 200
             data = response.json()
@@ -37,7 +37,7 @@ class TestCorrectedMockDecorators:
         client = TestClient(app)
 
         # Configure mocks without decorator parameter issues
-        with patch('land_registry.app.get_s3_storage', return_value=None):
+        with patch('land_registry.main.get_s3_storage', return_value=None):
             with patch('builtins.open', side_effect=FileNotFoundError("File not found")):
                 response = client.get("/api/v1/get-cadastral-structure/")
                 assert response.status_code == 404
@@ -46,12 +46,12 @@ class TestCorrectedMockDecorators:
         """Test invalid JSON with proper mock configuration."""
         client = TestClient(app)
 
-        with patch('land_registry.app.get_s3_storage', return_value=None):
+        with patch('land_registry.main.get_s3_storage', return_value=None):
             with patch('builtins.open', mock_open(read_data='invalid json{')):
                 response = client.get("/api/v1/get-cadastral-structure/")
                 assert response.status_code == 500
 
-    @patch('land_registry.app.extract_qpkg_data')
+    @patch('land_registry.main.extract_qpkg_data')
     def test_upload_qpkg_success_proper_mock(self, mock_extract):
         """Test QPKG upload with proper mock configuration."""
         client = TestClient(app)
@@ -61,7 +61,7 @@ class TestCorrectedMockDecorators:
         mock_extract.return_value = geojson_str
 
         # Mock get_current_gdf to avoid feature_id issues
-        with patch('land_registry.app.get_current_gdf') as mock_get_gdf:
+        with patch('land_registry.main.get_current_gdf') as mock_get_gdf:
             mock_gdf = MagicMock()
             mock_gdf.columns = ['geometry']  # No feature_id
             mock_get_gdf.return_value = mock_gdf
@@ -113,7 +113,7 @@ class TestCorrectedMockDecorators:
             'name': ['Feature 0', 'Feature 1']
         }, geometry=[polygon, polygon])
 
-        with patch('land_registry.app.get_current_gdf', return_value=gdf):
+        with patch('land_registry.main.get_current_gdf', return_value=gdf):
             # Request non-existent feature_id
             response = client.post("/api/v1/get-adjacent-polygons/", json={
                 "feature_id": 999,  # Non-existent
@@ -290,12 +290,12 @@ class TestCorrectedRootEndpoint:
         client = TestClient(app)
 
         # Mock the map_controls to avoid import issues
-        with patch('land_registry.app.map_controls') as mock_controls:
+        with patch('land_registry.main.map_controls') as mock_controls:
             mock_controls.generate_html.return_value = "<div>Controls HTML</div>"
             mock_controls.generate_javascript.return_value = "var controls = {};"
 
             # Mock the template response properly
-            with patch('land_registry.app.templates.TemplateResponse') as mock_template:
+            with patch('land_registry.main.templates.TemplateResponse') as mock_template:
                 # Configure the mock to return a proper response-like object
                 mock_response = MagicMock()
                 mock_response.status_code = 200

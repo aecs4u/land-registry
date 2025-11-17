@@ -10,7 +10,7 @@ from shapely.geometry import Polygon, Point
 import boto3
 from moto import mock_aws
 
-from land_registry.app import app
+from land_registry.main import app
 from land_registry.s3_storage import S3Settings, S3Storage
 
 

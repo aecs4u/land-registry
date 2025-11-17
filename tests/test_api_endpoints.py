@@ -6,7 +6,7 @@ from unittest.mock import patch, mock_open, MagicMock
 from fastapi.testclient import TestClient
 import geopandas as gpd
 
-from land_registry.app import app
+from land_registry.main import app
 
 
 class TestHealthEndpoint:
@@ -33,8 +33,8 @@ class TestRootEndpoint:
 class TestCadastralStructureEndpoints:
     """Tests for cadastral structure endpoints."""
     
-    @patch("land_registry.app.get_s3_storage")
-    @patch("land_registry.app.os.path.exists")
+    @patch("land_registry.main.get_s3_storage")
+    @patch("land_registry.main.os.path.exists")
     @patch("builtins.open", new_callable=mock_open)
     def test_get_cadastral_structure_success(self, mock_file, mock_exists, mock_get_storage, client, sample_cadastral_structure):
         """Test successful retrieval of cadastral structure."""
@@ -50,8 +50,8 @@ class TestCadastralStructureEndpoints:
         assert response.status_code == 200
         assert response.json() == sample_cadastral_structure
     
-    @patch("land_registry.app.get_s3_storage")
-    @patch("land_registry.app.os.path.exists")
+    @patch("land_registry.main.get_s3_storage")
+    @patch("land_registry.main.os.path.exists")
     def test_get_cadastral_structure_file_not_found(self, mock_exists, mock_get_storage, client):
         """Test cadastral structure endpoint when file not found."""
         # Mock S3 to return None, forcing fallback to local file
@@ -65,8 +65,8 @@ class TestCadastralStructureEndpoints:
         assert response.status_code == 404
         assert "Cadastral structure file not found" in response.json()["detail"]
     
-    @patch("land_registry.app.get_s3_storage")
-    @patch("land_registry.app.os.path.exists")
+    @patch("land_registry.main.get_s3_storage")
+    @patch("land_registry.main.os.path.exists")
     @patch("builtins.open", side_effect=json.JSONDecodeError("Invalid JSON", "", 0))
     def test_get_cadastral_structure_invalid_json(self, mock_file, mock_exists, mock_get_storage, client):
         """Test cadastral structure endpoint with invalid JSON."""
@@ -81,8 +81,8 @@ class TestCadastralStructureEndpoints:
         assert response.status_code == 500
         assert "Error parsing cadastral structure file" in response.json()["detail"]
     
-    @patch("land_registry.app.get_s3_storage")
-    @patch("land_registry.app.os.path.exists")
+    @patch("land_registry.main.get_s3_storage")
+    @patch("land_registry.main.os.path.exists")
     @patch("builtins.open", new_callable=mock_open)
     def test_cadastral_data_html_endpoint(self, mock_file, mock_exists, mock_get_storage, client, sample_cadastral_structure):
         """Test cadastral data HTML endpoint."""
@@ -103,7 +103,7 @@ class TestCadastralStructureEndpoints:
 class TestFileUploadEndpoints:
     """Tests for file upload endpoints."""
     
-    @patch("land_registry.app.extract_qpkg_data")
+    @patch("land_registry.main.extract_qpkg_data")
     def test_upload_qpkg_success(self, mock_extract, client, sample_geojson):
         """Test successful QPKG file upload."""
         mock_extract.return_value = json.dumps(sample_geojson)
@@ -135,7 +135,7 @@ class TestFileUploadEndpoints:
         assert response.status_code == 400
         assert "File must be a QPKG or GPKG file" in response.json()["detail"]
     
-    @patch("land_registry.app.extract_qpkg_data")
+    @patch("land_registry.main.extract_qpkg_data")
     def test_upload_qpkg_no_geospatial_data(self, mock_extract, client):
         """Test QPKG upload when no geospatial data found."""
         mock_extract.return_value = None
@@ -156,8 +156,8 @@ class TestFileUploadEndpoints:
 class TestAdjacentPolygonsEndpoint:
     """Tests for adjacent polygons endpoint."""
     
-    @patch("land_registry.app.get_current_gdf")
-    @patch("land_registry.app.find_adjacent_polygons")
+    @patch("land_registry.main.get_current_gdf")
+    @patch("land_registry.main.find_adjacent_polygons")
     def test_get_adjacent_polygons_success(self, mock_find_adjacent, mock_get_gdf, 
                                          client, sample_gdf, polygon_selection_data):
         """Test successful adjacent polygons retrieval."""
@@ -173,7 +173,7 @@ class TestAdjacentPolygonsEndpoint:
         assert data["adjacent_ids"] == [1]
         assert data["total_count"] == 2
     
-    @patch("land_registry.app.get_current_gdf")
+    @patch("land_registry.main.get_current_gdf")
     def test_get_adjacent_polygons_no_data_loaded(self, mock_get_gdf, client, polygon_selection_data):
         """Test adjacent polygons when no data loaded."""
         mock_get_gdf.return_value = None
@@ -195,7 +195,7 @@ class TestAdjacentPolygonsEndpoint:
 class TestAttributesEndpoint:
     """Tests for attributes endpoint."""
     
-    @patch("land_registry.app.get_current_gdf")
+    @patch("land_registry.main.get_current_gdf")
     def test_get_attributes_success(self, mock_get_gdf, client, sample_gdf):
         """Test successful attributes retrieval."""
         mock_get_gdf.return_value = sample_gdf
@@ -209,7 +209,7 @@ class TestAttributesEndpoint:
         assert "total_features" in data
         assert data["total_features"] == len(sample_gdf)
     
-    @patch("land_registry.app.get_current_gdf")
+    @patch("land_registry.main.get_current_gdf")
     def test_get_attributes_no_data_loaded(self, mock_get_gdf, client):
         """Test attributes endpoint when no data loaded."""
         mock_get_gdf.return_value = None
@@ -223,7 +223,7 @@ class TestAttributesEndpoint:
 class TestSaveDrawnPolygonsEndpoint:
     """Tests for save drawn polygons endpoint."""
     
-    @patch("land_registry.app.Path.mkdir")
+    @patch("land_registry.main.Path.mkdir")
     @patch("builtins.open", new_callable=mock_open)
     def test_save_drawn_polygons_success(self, mock_file, mock_mkdir, client, drawn_polygons_data):
         """Test successful saving of drawn polygons."""
@@ -261,7 +261,7 @@ class TestControlsEndpoints:
         """Test successful control state update."""
         update_data = {"control_id": "test_control", "enabled": True}
         
-        with patch("land_registry.app.map_controls.update_control_state", return_value=True):
+        with patch("land_registry.main.map_controls.update_control_state", return_value=True):
             response = client.post("/api/v1/update-control-state/", json=update_data)
         
         assert response.status_code == 200
@@ -271,7 +271,7 @@ class TestControlsEndpoints:
         """Test control state update when control not found."""
         update_data = {"control_id": "nonexistent_control", "enabled": True}
         
-        with patch("land_registry.app.map_controls.update_control_state", return_value=False):
+        with patch("land_registry.main.map_controls.update_control_state", return_value=False):
             response = client.post("/api/v1/update-control-state/", json=update_data)
         
         assert response.status_code == 404
@@ -281,8 +281,8 @@ class TestControlsEndpoints:
 class TestGenerateMapEndpoint:
     """Tests for generate map endpoint."""
     
-    @patch("land_registry.app.extract_qpkg_data")
-    @patch("land_registry.app.folium.Map")
+    @patch("land_registry.main.extract_qpkg_data")
+    @patch("land_registry.main.folium.Map")
     def test_generate_map_success(self, mock_map, mock_extract, client, sample_geojson):
         """Test successful map generation."""
         mock_extract.return_value = json.dumps(sample_geojson)
@@ -342,7 +342,7 @@ class TestLoadCadastralFilesEndpoint:
 class TestS3Endpoints:
     """Tests for S3-related endpoints."""
 
-    @patch("land_registry.app.configure_s3_storage")
+    @patch("land_registry.main.configure_s3_storage")
     def test_configure_s3_success(self, mock_configure, client, s3_config_request):
         """Test successful S3 configuration."""
         # Mock S3Storage instance
@@ -359,7 +359,7 @@ class TestS3Endpoints:
         assert data["region"] == s3_config_request["region"]
         assert "test_files_found" in data
 
-    @patch("land_registry.app.configure_s3_storage")
+    @patch("land_registry.main.configure_s3_storage")
     def test_configure_s3_connection_test_failure(self, mock_configure, client, s3_config_request):
         """Test S3 configuration with connection test failure."""
         # Mock S3Storage instance that fails on list_files
@@ -383,7 +383,7 @@ class TestS3Endpoints:
 
         assert response.status_code == 422  # Validation error
 
-    @patch("land_registry.app.get_s3_storage")
+    @patch("land_registry.main.get_s3_storage")
     def test_s3_status_success(self, mock_get_storage, client):
         """Test successful S3 status retrieval."""
         # Mock S3Storage instance
@@ -406,7 +406,7 @@ class TestS3Endpoints:
         assert data["connection_status"] == "connected"
         assert data["cadastral_files_found"] == 2
 
-    @patch("land_registry.app.get_s3_storage")
+    @patch("land_registry.main.get_s3_storage")
     def test_s3_status_connection_error(self, mock_get_storage, client):
         """Test S3 status with connection error."""
         # Mock S3Storage instance that fails on list_files
@@ -432,7 +432,7 @@ class TestS3Endpoints:
 class TestS3IntegratedEndpoints:
     """Tests for endpoints that use S3 integration."""
 
-    @patch("land_registry.app.get_s3_storage")
+    @patch("land_registry.main.get_s3_storage")
     def test_get_cadastral_structure_from_s3_success(self, mock_get_storage, client, sample_cadastral_structure):
         """Test cadastral structure retrieval from S3."""
         # Mock S3Storage instance
@@ -445,8 +445,8 @@ class TestS3IntegratedEndpoints:
         assert response.status_code == 200
         assert response.json() == sample_cadastral_structure
 
-    @patch("land_registry.app.get_s3_storage")
-    @patch("land_registry.app.os.path.exists")
+    @patch("land_registry.main.get_s3_storage")
+    @patch("land_registry.main.os.path.exists")
     @patch("builtins.open", new_callable=mock_open)
     def test_get_cadastral_structure_s3_fallback_to_local(self, mock_file, mock_exists,
                                                          mock_get_storage, client, sample_cadastral_structure):
@@ -465,7 +465,7 @@ class TestS3IntegratedEndpoints:
         assert response.status_code == 200
         assert response.json() == sample_cadastral_structure
 
-    @patch("land_registry.app.get_s3_storage")
+    @patch("land_registry.main.get_s3_storage")
     def test_load_cadastral_files_from_s3_success(self, mock_get_storage, client, sample_s3_files):
         """Test loading cadastral files from S3."""
         # Mock S3Storage instance
@@ -491,7 +491,7 @@ class TestS3IntegratedEndpoints:
         assert data["source"] == "S3"
         assert "layers" in data
 
-    @patch("land_registry.app.get_s3_storage")
+    @patch("land_registry.main.get_s3_storage")
     def test_load_cadastral_files_from_s3_no_valid_files(self, mock_get_storage, client):
         """Test loading cadastral files from S3 with no valid files."""
         # Mock S3Storage instance that returns empty list

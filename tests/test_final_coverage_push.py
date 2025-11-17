@@ -14,7 +14,7 @@ import geopandas as gpd
 from shapely.geometry import Polygon, Point
 import io
 
-from land_registry.app import app
+from land_registry.main import app
 from land_registry.s3_storage import S3Storage, S3Settings
 from land_registry.map import extract_qpkg_data, get_current_gdf, find_adjacent_polygons
 from land_registry.generate_cadastral_form import analyze_qgis_structure, generate_html_form, main
@@ -32,7 +32,7 @@ class TestFinalAppCoverage:
         assert data["status"] == "healthy"
         assert data["service"] == "land-registry"
 
-    @patch('land_registry.app.map_controls')
+    @patch('land_registry.main.map_controls')
     def test_get_controls_complete(self, mock_controls):
         """Test get controls endpoint completely."""
         client = TestClient(app)
@@ -49,7 +49,7 @@ class TestFinalAppCoverage:
         data = response.json()
         assert "groups" in data
 
-    @patch('land_registry.app.map_controls')
+    @patch('land_registry.main.map_controls')
     def test_update_control_state_success(self, mock_controls):
         """Test control state update success."""
         client = TestClient(app)
@@ -63,7 +63,7 @@ class TestFinalAppCoverage:
         data = response.json()
         assert data["success"] is True
 
-    @patch('land_registry.app.map_controls')
+    @patch('land_registry.main.map_controls')
     def test_update_control_state_failure(self, mock_controls):
         """Test control state update failure."""
         client = TestClient(app)
@@ -75,7 +75,7 @@ class TestFinalAppCoverage:
         })
         assert response.status_code == 404
 
-    @patch('land_registry.app.get_current_gdf')
+    @patch('land_registry.main.get_current_gdf')
     def test_get_attributes_success(self, mock_get_gdf):
         """Test get attributes success path."""
         client = TestClient(app)
@@ -98,7 +98,7 @@ class TestFinalAppCoverage:
         assert "data" in data
         assert len(data["data"]) == 2
 
-    @patch('land_registry.app.get_current_gdf')
+    @patch('land_registry.main.get_current_gdf')
     def test_get_attributes_no_data(self, mock_get_gdf):
         """Test get attributes with no data."""
         client = TestClient(app)
@@ -107,7 +107,7 @@ class TestFinalAppCoverage:
         response = client.get("/api/v1/get-attributes/")
         assert response.status_code == 400
 
-    @patch('land_registry.app.extract_qpkg_data')
+    @patch('land_registry.main.extract_qpkg_data')
     def test_upload_qpkg_success_path(self, mock_extract):
         """Test successful QPKG upload."""
         client = TestClient(app)
@@ -131,7 +131,7 @@ class TestFinalAppCoverage:
         response = client.post("/upload-qpkg/", files=files)
         assert response.status_code == 400
 
-    @patch('land_registry.app.extract_qpkg_data')
+    @patch('land_registry.main.extract_qpkg_data')
     def test_upload_qpkg_no_data_extracted(self, mock_extract):
         """Test upload QPKG when no data is extracted."""
         client = TestClient(app)
@@ -416,8 +416,8 @@ class TestFinalS3Storage:
 class TestFinalIntegration:
     """Final integration tests for maximum coverage."""
 
-    @patch('land_registry.app.get_current_gdf')
-    @patch('land_registry.app.find_adjacent_polygons')
+    @patch('land_registry.main.get_current_gdf')
+    @patch('land_registry.main.find_adjacent_polygons')
     def test_adjacent_polygons_workflow(self, mock_find_adjacent, mock_get_gdf):
         """Test complete adjacent polygons workflow."""
         client = TestClient(app)

@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 import geopandas as gpd
 from shapely.geometry import Polygon
 
-from land_registry.app import app
+from land_registry.main import app
 
 
 class TestCorrectedAPIEndpoints:
