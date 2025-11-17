@@ -50,7 +50,9 @@ def _run_panel():
                 f"{PANEL_HOST}:{app_settings.port}",
                 f"localhost:{app_settings.port}",
                 "127.0.0.1:8000",
-                "localhost:8000"
+                "localhost:8000",
+                "127.0.0.1:8001",  # Common dev port
+                "localhost:8001"   # Common dev port
             ],
             show=False,
             threaded=True,
