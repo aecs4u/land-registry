@@ -1,27 +1,67 @@
 
-import zipfile
-import geopandas as gpd
-from pathlib import Path
-import tempfile
-from typing import List, Dict, Any, Optional, Union
+from branca.element import Template, MacroElement
+import colorsys
 import folium
-from folium import plugins
 from folium.plugins import (
     Draw, Fullscreen, LocateControl, MeasureControl,
-    Search, BeautifyIcon, FeatureGroupSubGroup, FloatImage,
+    BeautifyIcon, FeatureGroupSubGroup, FloatImage,
     Geocoder, GroupedLayerControl, MarkerCluster, MiniMap,
-    MousePosition, OverlappingMarkerSpiderfier, TagFilterButton,
+    MousePosition, OverlappingMarkerSpiderfier, ScrollZoomToggler, 
+    Search, TagFilterButton,
     TimeSliderChoropleth, Timeline, TimelineSlider,
-    TimestampedGeoJson, TreeLayerControl
+    TimestampedGeoJson
 )
+from folium.plugins.treelayercontrol import TreeLayerControl
+import geopandas as gpd
 import json
-from branca.element import Template, MacroElement
+import pandas as pd
+from pathlib import Path
 from pydantic_settings import BaseSettings
+import random
+from rich import print
+from shapely.geometry import Point
+import tempfile
+from typing import List, Dict, Any, Optional, Union
+import zipfile
+
 from land_registry.settings import map_controls_settings
+
+
+class ControlButton(BaseSettings):
+    """Individual control button definition"""
+    id: str
+    title: str
+    icon: str
+    onclick: str
+    enabled: bool = True
+    tooltip: Optional[str] = None
+
+
+class ControlSelect(BaseSettings):
+    """Dropdown/select control definition"""
+    id: str
+    title: str
+    options: List[Dict[str, Any]]  # [{"value": "osm", "label": "OpenStreetMap"}, ...]
+    onchange: str
+    enabled: bool = True
+    tooltip: Optional[str] = None
+    default_value: Optional[str] = None
+
+
+class ControlGroup(BaseSettings):
+    """Group of related control buttons and selects"""
+    id: str
+    title: str
+    position: Dict[str, Any]  # e.g., {"top": "80px", "right": "10px"}
+    controls: List[Union[ControlButton, ControlSelect]]
+    draggable: bool = True
 
 
 # Global variable to store current geodataframe
 current_gdf = None
+
+# Global variable to store layer data for multi-layer support
+current_layers = {}
 
 # Global variable to store auction properties
 auction_properties = None
@@ -75,6 +115,29 @@ def extract_qpkg_data(file_path):
 def get_current_gdf():
     """Get the current GeoDataFrame"""
     return current_gdf
+
+
+def set_current_gdf(gdf):
+    """Set the current GeoDataFrame"""
+    global current_gdf
+    current_gdf = gdf
+
+
+def get_current_layers():
+    """Get the current layers data"""
+    return current_layers
+
+
+def set_current_layers(layers_data):
+    """Set the current layers data"""
+    global current_layers
+    current_layers = layers_data
+
+
+def clear_current_layers():
+    """Clear all current layers"""
+    global current_layers
+    current_layers = {}
 
 
 def find_adjacent_polygons(gdf: gpd.GeoDataFrame, selected_idx: int, touch_method: str = "touches") -> List[int]:
@@ -146,9 +209,6 @@ def create_auction_properties_layer(auction_data: List[dict] = None):
         ]
     """
     global auction_properties
-    import geopandas as gpd
-    from shapely.geometry import Point
-    import pandas as pd
 
     # Sample auction data if none provided
     if auction_data is None:
@@ -304,187 +364,13 @@ def highlight_auction_properties_near_cadastral(distance_km: float = 1.0):
         return None
 
 
-# ============================================================================
-# Merged Map Controls and Generator Classes
-# ============================================================================
-
-class ControlButton(BaseSettings):
-    """Individual control button definition"""
-    id: str
-    title: str
-    icon: str
-    onclick: str
-    enabled: bool = True
-    tooltip: Optional[str] = None
-
-
-class ControlSelect(BaseSettings):
-    """Dropdown/select control definition"""
-    id: str
-    title: str
-    options: List[Dict[str, Any]]  # [{"value": "osm", "label": "OpenStreetMap"}, ...]
-    onchange: str
-    enabled: bool = True
-    tooltip: Optional[str] = None
-    default_value: Optional[str] = None
-
-
-class ControlGroup(BaseSettings):
-    """Group of related control buttons and selects"""
-    id: str
-    title: str
-    position: Dict[str, Any]  # e.g., {"top": "80px", "right": "10px"}
-    controls: List[Union[ControlButton, ControlSelect]]
-    draggable: bool = True
-
-
 class MapControlsManager:
     """Unified map controls manager merging functionality from map_controls.py"""
 
     def __init__(self):
         self.settings = map_controls_settings
 
-    def generate_html(self) -> str:
-        """Generate HTML for map controls"""
-        html_parts = []
-
-        # Auction properties controls
-        html_parts.append('''
-        <div class="auction-controls">
-            <h4>🏠 Properties at Auction</h4>
-            <div class="control-row">
-                <button onclick="toggleAuctionLayer()" class="control-btn">Toggle Auctions</button>
-                <button onclick="filterActiveAuctions()" class="control-btn">Active Only</button>
-            </div>
-            <div class="control-row">
-                <select id="auctionTypeFilter" onchange="filterAuctionsByType()">
-                    <option value="">All Types</option>
-                    <option value="residential">Residential</option>
-                    <option value="commercial">Commercial</option>
-                    <option value="agricultural">Agricultural</option>
-                    <option value="industrial">Industrial</option>
-                </select>
-            </div>
-            <div class="control-row">
-                <label>Max Price: €</label>
-                <input type="number" id="maxPriceFilter" onchange="filterAuctionsByPrice()" placeholder="150000">
-            </div>
-        </div>
-        ''')
-
-        # Drawing controls
-        html_parts.append('''
-        <div class="drawing-controls">
-            <h4>✏️ Drawing Tools</h4>
-            <div class="control-row">
-                <button onclick="startDrawingMode()" class="control-btn">Draw Polygon</button>
-                <button onclick="clearAllDrawings()" class="control-btn">Clear All</button>
-            </div>
-        </div>
-        ''')
-
-        # Layer controls
-        html_parts.append('''
-        <div class="layer-controls">
-            <h4>🗂️ Layers</h4>
-            <div class="control-row">
-                <label><input type="checkbox" id="cadastralLayer" checked> Cadastral</label>
-                <label><input type="checkbox" id="auctionLayer" checked> Auctions</label>
-            </div>
-        </div>
-        ''')
-
-        return ''.join(html_parts)
-
-    def generate_javascript(self) -> str:
-        """Generate JavaScript for map controls"""
-        js_parts = []
-
-        # Auction properties JavaScript
-        js_parts.append('''
-        // Auction Properties Layer Management
-        let auctionMarkersGroup = null;
-
-        window.toggleAuctionLayer = function() {
-            if (auctionMarkersGroup) {
-                if (map.hasLayer(auctionMarkersGroup)) {
-                    map.removeLayer(auctionMarkersGroup);
-                } else {
-                    map.addLayer(auctionMarkersGroup);
-                }
-            } else {
-                loadAuctionProperties();
-            }
-        };
-
-        window.loadAuctionProperties = async function() {
-            try {
-                const response = await fetch('/api/v1/auction-properties/');
-                const data = await response.json();
-
-                if (data.geojson) {
-                    displayAuctionProperties(data.geojson);
-                }
-            } catch (error) {
-                console.error('Error loading auction properties:', error);
-            }
-        };
-
-        window.displayAuctionProperties = function(geojson) {
-            if (auctionMarkersGroup) {
-                map.removeLayer(auctionMarkersGroup);
-            }
-
-            auctionMarkersGroup = L.geoJSON(geojson, {
-                pointToLayer: function(feature, latlng) {
-                    const props = feature.properties;
-                    const color = props.marker_color || '#FF6B6B';
-                    const size = props.marker_size || 8;
-
-                    return L.circleMarker(latlng, {
-                        radius: size,
-                        fillColor: color,
-                        color: '#000',
-                        weight: 1,
-                        opacity: 1,
-                        fillOpacity: 0.8
-                    });
-                },
-                onEachFeature: function(feature, layer) {
-                    const props = feature.properties;
-                    const popupContent = `
-                        <div class="auction-popup">
-                            <h4>${props.description || props.property_id}</h4>
-                            <p><strong>Type:</strong> ${props.property_type}</p>
-                            <p><strong>Status:</strong> ${props.status}</p>
-                            <p><strong>Starting Price:</strong> €${props.starting_price?.toLocaleString()}</p>
-                            <p><strong>Auction Date:</strong> ${props.auction_date}</p>
-                        </div>
-                    `;
-                    layer.bindPopup(popupContent);
-                }
-            }).addTo(map);
-        };
-
-        window.filterActiveAuctions = function() {
-            // Filter to show only active auctions
-            console.log('Filtering active auctions');
-        };
-
-        window.filterAuctionsByType = function() {
-            const typeFilter = document.getElementById('auctionTypeFilter').value;
-            console.log('Filtering by type:', typeFilter);
-        };
-
-        window.filterAuctionsByPrice = function() {
-            const maxPrice = document.getElementById('maxPriceFilter').value;
-            console.log('Filtering by max price:', maxPrice);
-        };
-        ''')
-
-        return ''.join(js_parts)
-
-    def generate_folium_controls(self, map_instance: folium.Map):
+    def generate_folium_controls(self, map_instance: folium.Map, use_tree_control=True):
         """Generate Folium-based controls for server-side map generation"""
 
         # Add comprehensive plugins based on settings
@@ -510,46 +396,132 @@ class MapControlsManager:
                 secondary_length_unit='meters',
                 primary_area_unit='hectares'
             )
-            map_instance.add_child(measure)
+            measure.add_to(map_instance)
 
         # Add fullscreen control
-        fullscreen = Fullscreen(position=self.settings.fullscreen_position)
-        map_instance.add_child(fullscreen)
+        fullscreen = Fullscreen(position=self.settings.fullscreen_position,
+            title_title="Expand me",
+            title_cancel="Exit me",
+            force_separate_button=True,
+        )
+        fullscreen.add_to(map_instance)
 
-        # Add locate control
-        if self.settings.locate_position:
-            locate = LocateControl(position=self.settings.locate_position)
-            map_instance.add_child(locate)
+        # Add basic LayerControl for map providers (at the end after all layers are added)
+        # This will automatically detect all TileLayer objects on the map
+        basic_layer_control = folium.LayerControl(position='topleft')
+        basic_layer_control.add_to(map_instance)
 
-        # Add minimap if enabled
-        if self.settings.enable_minimap:
-            minimap = MiniMap(
-                position='bottomleft',
-                width=150,
-                height=150,
-                collapsed_width=25,
-                collapsed_height=25
-            )
-            map_instance.add_child(minimap)
+        # Add TreeLayerControl for geo data files only
+        overlay_tree = self._prepare_geo_data_tree(map_instance)
+        if overlay_tree:
+            tree_control = TreeLayerControl(overlay_tree=overlay_tree, position='topright')
+            tree_control.add_to(map_instance)
 
-        # Add mouse position if enabled
-        if self.settings.enable_mouse_position:
-            mouse_position = MousePosition(
-                position='bottomright',
-                separator=' | ',
-                empty_string='NaN',
-                lng_first=False,
-                num_digits=20,
-                prefix='Coordinates:'
-            )
-            map_instance.add_child(mouse_position)
+    def _prepare_geo_data_tree(self, map_instance: folium.Map):
+        """Prepare TreeLayerControl structure for geo data files only"""
 
-        # Add marker cluster if enabled
-        if self.settings.enable_marker_cluster:
-            marker_cluster = MarkerCluster(name="Clustered Markers")
-            map_instance.add_child(marker_cluster)
+        # Get current layers data to organize by geographic hierarchy
+        current_layers_data = get_current_layers()
 
-        return map_instance
+        if not current_layers_data:
+            # Fallback: Find all GeoJson layers if no structured cadastral data
+            geo_layers = []
+            for child in map_instance._children.values():
+                if hasattr(child, '_name') and 'GeoJson' in str(type(child)):
+                    layer_name = getattr(child, '_name', 'Data Layer')
+                    geo_layers.append({
+                        "label": layer_name,
+                        "layer": child
+                    })
+
+            if geo_layers:
+                return {
+                    "label": "Geo Data Layers",
+                    "selectAllCheckbox": "Un/select all",
+                    "children": geo_layers
+                }
+            return None
+
+        # Organize layers by Region > Province > Municipality structure
+        regions = {}
+
+        # Parse each layer's source_file path to extract hierarchy
+        for layer_name, layer_data in current_layers_data.items():
+            if 'geojson' in layer_data and 'source_file' in layer_data:
+                source_file = layer_data['source_file']
+
+                # Extract path components: ITALIA/Region/Province/Municipality/filename
+                path_parts = source_file.split('/')
+                if len(path_parts) >= 5 and path_parts[0] == 'ITALIA':
+                    region_name = path_parts[1]
+                    province_code = path_parts[2]
+                    municipality_code = path_parts[3]
+                    filename = path_parts[4]
+
+                    # Create hierarchical structure
+                    if region_name not in regions:
+                        regions[region_name] = {
+                            "label": region_name,
+                            "selectAllCheckbox": True,
+                            "children": []
+                        }
+
+                    # Find or create province
+                    region_node = regions[region_name]
+                    province_node = None
+                    for child in region_node["children"]:
+                        if child["label"] == f"Province {province_code}":
+                            province_node = child
+                            break
+
+                    if not province_node:
+                        province_node = {
+                            "label": f"Province {province_code}",
+                            "selectAllCheckbox": True,
+                            "children": []
+                        }
+                        region_node["children"].append(province_node)
+
+                    # Find or create municipality
+                    municipality_node = None
+                    for child in province_node["children"]:
+                        if child["label"] == f"Municipality {municipality_code}":
+                            municipality_node = child
+                            break
+
+                    if not municipality_node:
+                        municipality_node = {
+                            "label": f"Municipality {municipality_code}",
+                            "selectAllCheckbox": True,
+                            "children": []
+                        }
+                        province_node["children"].append(municipality_node)
+
+                    # Add the file layer to municipality
+                    # Find the actual layer object in the map
+                    for child in map_instance._children.values():
+                        if hasattr(child, '_name') and 'GeoJson' in str(type(child)):
+                            child_layer_name = getattr(child, '_name', '')
+                            if layer_name in child_layer_name:
+                                municipality_node["children"].append({
+                                    "label": filename,
+                                    "layer": child
+                                })
+                                break
+
+        # Convert regions dict to children list
+        cadastral_children = []
+        for region_name in sorted(regions.keys()):
+            cadastral_children.append(regions[region_name])
+
+        if cadastral_children:
+            return {
+                "label": "ITALIA - Cadastral Data",
+                "selectAllCheckbox": "Un/select all",
+                "children": cadastral_children
+            }
+
+        return None
 
 
 class IntegratedMapGenerator:
@@ -560,7 +532,7 @@ class IntegratedMapGenerator:
         self.default_zoom = 6
         self.controls_manager = MapControlsManager()
 
-    def create_comprehensive_map(self, cadastral_geojson=None, auction_geojson=None,
+    def create_comprehensive_map(self, cadastral_geojson=None, cadastral_layers=None, auction_geojson=None,
                                center=None, zoom=None) -> folium.Map:
         """Create a comprehensive map with all layers and controls"""
 
@@ -568,36 +540,164 @@ class IntegratedMapGenerator:
         map_center = center or self.default_center
         map_zoom = zoom or self.default_zoom
 
-        # Create base map
+        # Create base map with Google Satellite as default
         m = folium.Map(
             location=map_center,
             zoom_start=map_zoom,
-            tiles='OpenStreetMap'
+            tiles=None  # We'll add Google Satellite as the first tile layer
         )
 
-        # Add additional tile layers
-        folium.TileLayer(
-            tiles='https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
-            attr='Google Satellite',
-            name='🛰️ Google Satellite',
-            overlay=False,
-            control=True,
-            subdomains=['mt0', 'mt1', 'mt2', 'mt3']
-        ).add_to(m)
+        # Add all tile layers from map.js mapProviders (Google Satellite first as default)
+        tile_layers = [
+            {
+                'tiles': 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+                'attr': '© Google',
+                'name': 'Google Satellite'
+            },
+            {
+                'tiles': 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+                'attr': '© Google',
+                'name': 'Google Maps'
+            },
+            {
+                'tiles': 'https://mt1.google.com/vt/lyrs=p&x={x}&y={y}&z={z}',
+                'attr': '© Google',
+                'name': 'Google Terrain'
+            },
+            {
+                'tiles': 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+                'attr': '© Google',
+                'name': 'Google Hybrid'
+            },
+            {
+                'tiles': 'https://mt1.google.com/vt/lyrs=m,transit&x={x}&y={y}&z={z}',
+                'attr': '© Google',
+                'name': 'Google Maps with Transit'
+            },
+            {
+                'tiles': 'https://mt1.google.com/vt/lyrs=m,traffic&x={x}&y={y}&z={z}',
+                'attr': '© Google',
+                'name': 'Google Maps with Traffic'
+            },
+            {
+                'tiles': 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                'attr': '© ESRI',
+                'name': 'ESRI World Imagery'
+            },
+            {
+                'tiles': 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Terrain_Base/MapServer/tile/{z}/{y}/{x}',
+                'attr': '© ESRI',
+                'name': 'ESRI World Terrain'
+            },
+            {
+                'tiles': 'https://cartodb-basemaps-{s}.global.ssl.fastly.net/light_all/{z}/{x}/{y}.png',
+                'attr': '© CartoDB',
+                'name': 'CartoDB Positron (Light)'
+            },
+            {
+                'tiles': 'https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png',
+                'attr': '© CartoDB',
+                'name': 'CartoDB Dark Matter'
+            }
+        ]
 
-        folium.TileLayer(
-            tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-            attr='Esri WorldImagery',
-            name='🌍 Esri Satellite',
-            overlay=False,
-            control=True
-        ).add_to(m)
+        # Add all tile layers to the map, with Google Satellite as the first (default) layer
+        for i, layer_config in enumerate(tile_layers):
+            tile_layer = folium.TileLayer(
+                tiles=layer_config['tiles'],
+                attr=layer_config['attr'],
+                name=layer_config['name'],
+                overlay=False,
+                control=True
+            )
+            tile_layer.add_to(m)
 
-        # Add cadastral data if provided
-        if cadastral_geojson:
+            # Note: Google Satellite is the first layer added, making it the default active base layer
+
+        # Add weather overlays from map.js
+        weather_overlays = [
+            {
+                'tiles': 'https://tile.openweathermap.org/map/temp_new/{z}/{x}/{y}.png?appid=b6907d289e10d714a6e88b30761fae22',
+                'attr': '© OpenWeatherMap',
+                'name': 'Temperature Layer'
+            },
+            {
+                'tiles': 'https://tile.openweathermap.org/map/precipitation_new/{z}/{x}/{y}.png?appid=b6907d289e10d714a6e88b30761fae22',
+                'attr': '© OpenWeatherMap',
+                'name': 'Precipitation Layer'
+            },
+            {
+                'tiles': 'https://tile.openweathermap.org/map/wind_new/{z}/{x}/{y}.png?appid=b6907d289e10d714a6e88b30761fae22',
+                'attr': '© OpenWeatherMap',
+                'name': 'Wind Speed Layer'
+            },
+            {
+                'tiles': 'https://tile.openweathermap.org/map/clouds_new/{z}/{x}/{y}.png?appid=b6907d289e10d714a6e88b30761fae22',
+                'attr': '© OpenWeatherMap',
+                'name': 'Cloud Coverage Layer'
+            }
+        ]
+
+        # Add weather overlays to the map
+        for overlay_config in weather_overlays:
+            folium.TileLayer(
+                tiles=overlay_config['tiles'],
+                attr=overlay_config['attr'],
+                name=overlay_config['name'],
+                overlay=True,
+                control=True
+            ).add_to(m)
+
+        # Add cadastral data layers
+        if cadastral_layers:
+            # Multiple layers mode - add each layer separately with random colors
+
+            def generate_random_color():
+                """Generate a random color in hex format"""
+                hue = random.random()
+                saturation = 0.7 + random.random() * 0.3  # 70-100% saturation
+                lightness = 0.4 + random.random() * 0.3   # 40-70% lightness
+                rgb = colorsys.hsv_to_rgb(hue, saturation, lightness)
+                return '#{:02x}{:02x}{:02x}'.format(int(rgb[0]*255), int(rgb[1]*255), int(rgb[2]*255))
+
+            def generate_darker_color(hex_color):
+                """Generate a darker version of the given hex color"""
+                hex_color = hex_color.lstrip('#')
+                rgb = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+                darker_rgb = tuple(max(0, int(c * 0.7)) for c in rgb)
+                return '#{:02x}{:02x}{:02x}'.format(*darker_rgb)
+
+            for layer_name, layer_data in cadastral_layers.items():
+                if 'geojson' in layer_data:
+                    # Generate random color for this layer
+                    fill_color = generate_random_color()
+                    border_color = generate_darker_color(fill_color)
+
+                    folium.GeoJson(
+                        layer_data['geojson'],
+                        name=f'📁 {layer_name}',
+                        style_function=lambda feature, fill_color=fill_color, border_color=border_color: {
+                            'fillColor': fill_color,
+                            'color': border_color,
+                            'weight': 2,
+                            'fillOpacity': 0.6,
+                            'opacity': 0.8,
+                        },
+                        popup=folium.GeoJsonPopup(
+                            fields=['layer_name', 'source_file', 'feature_id'],
+                            labels=True
+                        ),
+                        tooltip=folium.GeoJsonTooltip(
+                            fields=['layer_name'],
+                            labels=True,
+                            sticky=True
+                        )
+                    ).add_to(m)
+        elif cadastral_geojson:
+            # Single layer mode (backward compatibility)
             folium.GeoJson(
                 cadastral_geojson,
-                name='Cadastral Data',
+                name='📊 Cadastral Data',
                 style_function=lambda feature: {
                     'fillColor': '#blue',
                     'color': '#darkblue',
@@ -614,8 +714,8 @@ class IntegratedMapGenerator:
         # Add all folium controls
         self.controls_manager.generate_folium_controls(m)
 
-        # Add layer control
-        folium.LayerControl().add_to(m)
+        # Only TreeLayerControl is used (added within generate_folium_controls)
+        # Basic LayerControl has been removed as requested
 
         return m
 
@@ -668,5 +768,5 @@ class IntegratedMapGenerator:
 # ============================================================================
 
 # Create global instances that can be imported elsewhere
-map_controls = MapControlsManager()
+# map_controls = MapControlsManager()
 map_generator = IntegratedMapGenerator()
