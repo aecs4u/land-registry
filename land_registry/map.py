@@ -683,6 +683,61 @@ class IntegratedMapGenerator:
         except Exception as e:
             logger.warning(f"Failed to load Italy regional borders: {e}")
 
+        # Add markers for Italian regional capitals
+        regional_capitals = [
+            {"name": "Roma", "region": "Lazio", "coords": [41.9028, 12.4964], "population": "2.8M"},
+            {"name": "Milano", "region": "Lombardia", "coords": [45.4642, 9.1900], "population": "1.4M"},
+            {"name": "Napoli", "region": "Campania", "coords": [40.8518, 14.2681], "population": "959K"},
+            {"name": "Torino", "region": "Piemonte", "coords": [45.0703, 7.6869], "population": "870K"},
+            {"name": "Palermo", "region": "Sicilia", "coords": [38.1157, 13.3615], "population": "663K"},
+            {"name": "Genova", "region": "Liguria", "coords": [44.4056, 8.9463], "population": "561K"},
+            {"name": "Bologna", "region": "Emilia-Romagna", "coords": [44.4949, 11.3426], "population": "391K"},
+            {"name": "Firenze", "region": "Toscana", "coords": [43.7696, 11.2558], "population": "367K"},
+            {"name": "Bari", "region": "Puglia", "coords": [41.1171, 16.8719], "population": "315K"},
+            {"name": "Catanzaro", "region": "Calabria", "coords": [38.9097, 16.5877], "population": "86K"},
+            {"name": "Venezia", "region": "Veneto", "coords": [45.4408, 12.3155], "population": "258K"},
+            {"name": "Trieste", "region": "Friuli-Venezia Giulia", "coords": [45.6495, 13.7768], "population": "203K"},
+            {"name": "Trento", "region": "Trentino-Alto Adige", "coords": [46.0664, 11.1257], "population": "118K"},
+            {"name": "Perugia", "region": "Umbria", "coords": [43.1107, 12.3908], "population": "165K"},
+            {"name": "Ancona", "region": "Marche", "coords": [43.6158, 13.5189], "population": "100K"},
+            {"name": "L'Aquila", "region": "Abruzzo", "coords": [42.3498, 13.3995], "population": "70K"},
+            {"name": "Campobasso", "region": "Molise", "coords": [41.5630, 14.6631], "population": "49K"},
+            {"name": "Potenza", "region": "Basilicata", "coords": [40.6389, 15.8056], "population": "67K"},
+            {"name": "Cagliari", "region": "Sardegna", "coords": [39.2238, 9.1217], "population": "150K"},
+            {"name": "Aosta", "region": "Valle d'Aosta", "coords": [45.7372, 7.3206], "population": "34K"},
+        ]
+
+        # Create a feature group for regional capitals
+        capitals_group = folium.FeatureGroup(name="Regional Capitals", show=True)
+
+        for capital in regional_capitals:
+            # Create a custom icon with a star marker
+            icon = folium.Icon(
+                color='red',
+                icon='star',
+                prefix='fa'
+            )
+
+            # Create popup with capital information
+            popup_html = f"""
+            <div style="font-family: Arial, sans-serif; width: 200px;">
+                <h4 style="margin: 0 0 10px 0; color: #0066cc;">{capital['name']}</h4>
+                <p style="margin: 5px 0;"><strong>Region:</strong> {capital['region']}</p>
+                <p style="margin: 5px 0;"><strong>Population:</strong> {capital['population']}</p>
+                <p style="margin: 5px 0; font-size: 11px; color: #666;">Regional Capital</p>
+            </div>
+            """
+
+            # Add marker
+            folium.Marker(
+                location=capital['coords'],
+                popup=folium.Popup(popup_html, max_width=250),
+                tooltip=f"{capital['name']} - {capital['region']}",
+                icon=icon
+            ).add_to(capitals_group)
+
+        capitals_group.add_to(m)
+
         # Add cadastral data layers
         if cadastral_layers:
             # Multiple layers mode - add each layer separately with random colors
