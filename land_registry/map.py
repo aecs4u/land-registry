@@ -24,7 +24,7 @@ import tempfile
 from typing import List, Dict, Any, Optional, Union
 import zipfile
 
-from land_registry.settings import map_controls_settings
+from land_registry.settings import map_controls_settings, app_settings
 
 
 class ControlButton(BaseSettings):
@@ -540,12 +540,25 @@ class IntegratedMapGenerator:
         map_center = center or self.default_center
         map_zoom = zoom or self.default_zoom
 
-        # Create base map with Google Satellite as default
+        # Define Italy's bounding box to restrict view (from settings)
+        italy_bounds = [
+            app_settings.italy_bounds_sw,  # South-west corner (Sicily)
+            app_settings.italy_bounds_ne   # North-east corner (Alps)
+        ]
+
+        # Create base map with Google Satellite as default, restricted to Italy
         m = folium.Map(
             location=map_center,
             zoom_start=map_zoom,
-            tiles=None  # We'll add Google Satellite as the first tile layer
+            tiles=None,  # We'll add Google Satellite as the first tile layer
+            max_bounds=True,  # Enable boundary restrictions
+            max_bounds_viscosity=1.0,  # How strongly to enforce the bounds
+            min_zoom=5,  # Prevent zooming out too far
+            max_zoom=18,  # Standard max zoom for satellite imagery
         )
+
+        # Set the bounds after map creation
+        m.fit_bounds(italy_bounds)
 
         # Add all tile layers from map.js mapProviders (Google Satellite last as default)
         tile_layers = [
@@ -647,6 +660,28 @@ class IntegratedMapGenerator:
                 overlay=True,
                 control=True
             ).add_to(m)
+
+        # Add Italy regional borders for visual reference
+        try:
+            italy_regions_url = "https://raw.githubusercontent.com/openpolis/geojson-italy/master/geojson/limits_IT_regions.geojson"
+            folium.GeoJson(
+                italy_regions_url,
+                name="Italy Regions",
+                style_function=lambda feature: {
+                    'fillColor': 'transparent',
+                    'color': '#0066cc',
+                    'weight': 2,
+                    'fillOpacity': 0,
+                    'opacity': 0.7,
+                },
+                tooltip=folium.GeoJsonTooltip(
+                    fields=['reg_name'],
+                    aliases=['Region:'],
+                    labels=True
+                )
+            ).add_to(m)
+        except Exception as e:
+            logger.warning(f"Failed to load Italy regional borders: {e}")
 
         # Add cadastral data layers
         if cadastral_layers:

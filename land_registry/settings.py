@@ -26,9 +26,13 @@ class AppSettings(BaseSettings):
     cadastral_structure_file: str = "cadastral_structure.json"
     drawn_polygons_dir: str = "drawn_polygons"
 
-    # Map settings
-    default_map_center: List[float] = [41.8719, 12.5674]  # Italy center
+    # Map settings (focused on Italy)
+    default_map_center: List[float] = [41.9, 12.5]  # Rome, Italy
     default_map_zoom: int = 6
+
+    # Italy bounding box (restricts map view)
+    italy_bounds_sw: List[float] = [35.0, 6.0]   # South-west (Sicily)
+    italy_bounds_ne: List[float] = [48.0, 19.0]  # North-east (Alps)
 
     # Authentication settings (Clerk)
     clerk_publishable_key: Optional[str] = None
