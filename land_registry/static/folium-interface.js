@@ -540,42 +540,23 @@ async function loadCadastralSelection() {
         if (response.ok) {
             const result = await response.json();
 
-            const tableInfo = document.getElementById('tableInfo');
-            if (tableInfo) {
-                const totalLayers = result.total_layers || 0;
-                const totalFeatures = result.total_features_count || 0;
-                tableInfo.textContent = `Total: ${totalFeatures} features across ${totalLayers} layers`;
-            }
-
             const newLayers = result.successful_layers || 0;
             const newFeatures = result.features_count || 0;
             const totalLayers = result.total_layers || 0;
             const totalFeatures = result.total_features_count || 0;
 
-            const successMessage = `Successfully added ${newLayers} new layers with ${newFeatures} new features.\n\n` +
-                `New layers:\n${Object.keys(result.layers || {})
+            const successMessage = `Successfully loaded ${newLayers} layers with ${newFeatures} features.\n\n` +
+                `Loaded layers:\n${Object.keys(result.layers || {})
                     .filter(layer => !result.layers[layer].error)
                     .map(layer => `- ${layer} (${result.layers[layer].feature_count} features)`)
                     .join('\n')}\n\n` +
-                `Total: ${totalFeatures} features across ${totalLayers} layers.\n` +
-                `New layers have been added to the existing map without removing current layers.`;
+                `Total: ${totalFeatures} features across ${totalLayers} layers.\n\n` +
+                `The page will now reload to display the updated map.`;
 
             alert(successMessage);
 
-            // Update UI state instead of reloading
-            updatePolygonManagementState();
-
-            // Auto-zoom to include new and existing polygons
-            setTimeout(function() {
-                if (typeof autoZoomToAllPolygons === 'function') {
-                    autoZoomToAllPolygons();
-                }
-            }, 1000);
-
-            // Update window data for compatibility
-            window.hasData = true;
-
-            console.log('Successfully loaded new cadastral layers without page reload');
+            // Reload the page to regenerate the Folium map with the new data
+            window.location.reload();
 
         } else {
             const errorData = await response.json();
