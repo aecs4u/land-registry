@@ -2,6 +2,466 @@
 // Initialize Leaflet map with all map providers
 let map, currentGeoJsonLayer, drawnItems, drawControl;
 
+// Selection management
+let selectedPolygons = new Set();
+let selectionEnabled = true;
+let adjacentPolygonsFound = false;
+let adjacentPolygonIndices = [];
+
+// Polyline management
+let drawnPolylines = [];
+let selectedPolyline = null;
+let polylineHistory = [];
+
+// Function to create SVG stripe patterns
+function createStripePattern(angle, color = '#3388ff') {
+    const patternId = `stripe-pattern-${angle}-${Math.random().toString(36).substring(2, 11)}`;
+
+    // Create SVG defs if it doesn't exist
+    let svgDefs = document.querySelector('#map-patterns defs');
+    if (!svgDefs) {
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.id = 'map-patterns';
+        svg.style.position = 'absolute';
+        svg.style.width = '0';
+        svg.style.height = '0';
+        svg.style.pointerEvents = 'none';
+
+        svgDefs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+        svg.appendChild(svgDefs);
+        document.body.appendChild(svg);
+    }
+
+    // Create pattern element
+    const pattern = document.createElementNS('http://www.w3.org/2000/svg', 'pattern');
+    pattern.id = patternId;
+    pattern.setAttribute('patternUnits', 'userSpaceOnUse');
+    pattern.setAttribute('width', '8');
+    pattern.setAttribute('height', '8');
+    pattern.setAttribute('patternTransform', `rotate(${angle})`);
+
+    // Create background rectangle for better visibility
+    const background = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    background.setAttribute('width', '8');
+    background.setAttribute('height', '8');
+    background.setAttribute('fill', color);
+    background.setAttribute('fill-opacity', '0.1');
+
+    // Create stripe lines
+    const line1 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line1.setAttribute('x1', '0');
+    line1.setAttribute('y1', '0');
+    line1.setAttribute('x2', '0');
+    line1.setAttribute('y2', '8');
+    line1.setAttribute('stroke', color);
+    line1.setAttribute('stroke-width', '1');
+
+    const line2 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line2.setAttribute('x1', '4');
+    line2.setAttribute('y1', '0');
+    line2.setAttribute('x2', '4');
+    line2.setAttribute('y2', '8');
+    line2.setAttribute('stroke', color);
+    line2.setAttribute('stroke-width', '1');
+
+    pattern.appendChild(background);
+    pattern.appendChild(line1);
+    pattern.appendChild(line2);
+    svgDefs.appendChild(pattern);
+
+    return patternId;
+}
+
+// Function to get random angle in 45-degree steps
+function getRandomStripeAngle() {
+    const angles = [0, 45, 90, 135, 180, 225, 270, 315];
+    return angles[Math.floor(Math.random() * angles.length)];
+}
+
+// Selection functions
+function togglePolygonSelection(layer) {
+    console.log('togglePolygonSelection called. Selection enabled:', selectionEnabled);
+
+    if (!selectionEnabled) {
+        console.log('Selection is disabled, returning');
+        return;
+    }
+
+    const layerId = L.Util.stamp(layer);
+    console.log('Toggling polygon with ID:', layerId);
+
+    if (selectedPolygons.has(layerId)) {
+        // Deselect
+        selectedPolygons.delete(layerId);
+        applyDefaultStyle(layer);
+        console.log('Deselected polygon. Total selected:', selectedPolygons.size);
+    } else {
+        // Select
+        selectedPolygons.add(layerId);
+        applySelectedStyle(layer);
+        console.log('Selected polygon. Total selected:', selectedPolygons.size);
+    }
+
+    updateSelectionCounter();
+}
+
+function applySelectedStyle(layer) {
+    const pathElement = layer.getElement();
+    if (pathElement) {
+        pathElement.style.stroke = '#ff6600';
+        pathElement.style.strokeWidth = '4';
+        pathElement.style.strokeOpacity = '1';
+        pathElement.classList.add('selected-polygon');
+    }
+}
+
+function applyDefaultStyle(layer) {
+    const pathElement = layer.getElement();
+    if (pathElement) {
+        pathElement.style.stroke = '#3388ff';
+        pathElement.style.strokeWidth = '2';
+        pathElement.style.strokeOpacity = '1';
+        pathElement.classList.remove('selected-polygon');
+    }
+}
+
+function updateSelectionCounter() {
+    const counter = document.getElementById('selectedCount');
+    if (counter) {
+        const count = selectedPolygons.size;
+        counter.textContent = `${count} polygon${count !== 1 ? 's' : ''} selected`;
+    }
+    updateSelectionButtons();
+}
+
+function updateSelectionButtons() {
+    const selectAllBtn = document.getElementById('selectAllBtn');
+    const deselectAllBtn = document.getElementById('deselectAllBtn');
+
+    const hasData = currentGeoJsonLayer && currentGeoJsonLayer.getLayers().length > 0;
+    const hasSelections = selectedPolygons.size > 0;
+
+    if (selectAllBtn) {
+        selectAllBtn.disabled = !hasData || !selectionEnabled;
+    }
+    if (deselectAllBtn) {
+        deselectAllBtn.disabled = !hasSelections || !selectionEnabled;
+    }
+}
+
+function updateDataDependentButtons() {
+    const hasData = currentGeoJsonLayer && currentGeoJsonLayer.getLayers().length > 0;
+
+    // Update selection buttons
+    updateSelectionButtons();
+
+    // Update adjacency buttons
+    updateAdjacencyButtons();
+
+    // Update display control buttons
+    const selectionInfoBtn = document.querySelector('[onclick="toggleSelectionInfo()"]');
+    const polygonsVisibilityBtn = document.querySelector('[onclick="togglePolygonsVisibility()"]');
+
+    if (selectionInfoBtn) {
+        selectionInfoBtn.disabled = !hasData;
+    }
+    if (polygonsVisibilityBtn) {
+        polygonsVisibilityBtn.disabled = !hasData;
+    }
+
+    console.log('Data-dependent buttons updated. Has data:', hasData);
+}
+
+function updateAdjacencyButtons() {
+    const selectAdjacentBtn = document.getElementById('selectAdjacentBtn');
+    const clearSelectionBtn = document.getElementById('clearSelectionBtn');
+    const showAllPolygonsBtn = document.getElementById('showAllPolygonsBtn');
+
+    // These buttons are only enabled when adjacent polygons have been found
+    if (selectAdjacentBtn) {
+        selectAdjacentBtn.disabled = !adjacentPolygonsFound;
+    }
+    if (clearSelectionBtn) {
+        clearSelectionBtn.disabled = !adjacentPolygonsFound;
+    }
+    if (showAllPolygonsBtn) {
+        showAllPolygonsBtn.disabled = !adjacentPolygonsFound;
+    }
+}
+
+function selectAllPolygons() {
+    if (!currentGeoJsonLayer) return;
+
+    currentGeoJsonLayer.eachLayer(function(layer) {
+        const layerId = L.Util.stamp(layer);
+        selectedPolygons.add(layerId);
+        applySelectedStyle(layer);
+    });
+
+    updateSelectionCounter();
+}
+
+function deselectAllPolygons() {
+    if (!currentGeoJsonLayer) return;
+
+    currentGeoJsonLayer.eachLayer(function(layer) {
+        const layerId = L.Util.stamp(layer);
+        selectedPolygons.delete(layerId);
+        applyDefaultStyle(layer);
+    });
+
+    selectedPolygons.clear();
+    updateSelectionCounter();
+}
+
+function toggleSelectionMode() {
+    selectionEnabled = !selectionEnabled;
+    updateSelectionToggleButton();
+}
+
+
+function updateSelectionToggleButton() {
+    console.log('updateSelectionToggleButton called. Selection enabled:', selectionEnabled);
+    const btn = document.getElementById('toggleSelectionBtn');
+    if (btn) {
+        const iconSpan = btn.querySelector('.toggle-icon');
+        const stateSpan = btn.querySelector('.toggle-state');
+
+        if (selectionEnabled) {
+            btn.classList.add('active');
+            btn.classList.remove('inactive');
+            if (iconSpan) iconSpan.textContent = '✏️';
+            if (stateSpan) stateSpan.textContent = 'ON';
+            btn.title = 'Disable polygon selection';
+            console.log('Button set to active state');
+        } else {
+            btn.classList.remove('active');
+            btn.classList.add('inactive');
+            if (iconSpan) iconSpan.textContent = '🚫';
+            if (stateSpan) stateSpan.textContent = 'OFF';
+            btn.title = 'Enable polygon selection';
+            console.log('Button set to inactive state');
+        }
+    } else {
+        console.log('Toggle button not found!');
+    }
+    // Update selection buttons when toggle state changes
+    updateSelectionButtons();
+}
+
+// Polyline management functions
+function saveDrawnPolylines() {
+    if (drawnPolylines.length === 0) {
+        alert('No polylines to save');
+        return;
+    }
+
+    const polylinesGeoJSON = {
+        type: 'FeatureCollection',
+        features: drawnPolylines.map((polyline, index) => ({
+            type: 'Feature',
+            properties: {
+                id: index,
+                name: `Polyline ${index + 1}`,
+                created: new Date().toISOString()
+            },
+            geometry: {
+                type: 'LineString',
+                coordinates: polyline.getLatLngs().map(latlng => [latlng.lng, latlng.lat])
+            }
+        }))
+    };
+
+    // Send to server to save
+    fetch('/save-drawn-polylines/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(polylinesGeoJSON)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert(`Saved ${drawnPolylines.length} polylines successfully`);
+        } else {
+            alert('Error saving polylines: ' + data.error);
+        }
+    })
+    .catch(error => {
+        console.error('Error saving polylines:', error);
+        alert('Error saving polylines');
+    });
+}
+
+function deleteSelectedPolyline() {
+    if (!selectedPolyline) {
+        alert('No polyline selected');
+        return;
+    }
+
+    // Add to history for undo
+    polylineHistory.push({
+        action: 'delete',
+        polyline: selectedPolyline,
+        index: drawnPolylines.indexOf(selectedPolyline)
+    });
+
+    // Remove from map and array
+    map.removeLayer(selectedPolyline);
+    drawnPolylines = drawnPolylines.filter(p => p !== selectedPolyline);
+
+    selectedPolyline = null;
+    updatePolylineControls();
+    updatePolylineList();
+}
+
+function undoLastPolyline() {
+    if (polylineHistory.length === 0) {
+        alert('No actions to undo');
+        return;
+    }
+
+    const lastAction = polylineHistory.pop();
+
+    if (lastAction.action === 'delete') {
+        // Restore deleted polyline
+        lastAction.polyline.addTo(map);
+        drawnPolylines.splice(lastAction.index, 0, lastAction.polyline);
+        addPolylineClickHandler(lastAction.polyline);
+    } else if (lastAction.action === 'create') {
+        // Remove created polyline
+        map.removeLayer(lastAction.polyline);
+        drawnPolylines = drawnPolylines.filter(p => p !== lastAction.polyline);
+        if (selectedPolyline === lastAction.polyline) {
+            selectedPolyline = null;
+        }
+    }
+
+    updatePolylineControls();
+    updatePolylineList();
+}
+
+function clearAllPolylines() {
+    if (drawnPolylines.length === 0) {
+        alert('No polylines to clear');
+        return;
+    }
+
+    if (confirm(`Are you sure you want to delete all ${drawnPolylines.length} polylines?`)) {
+        // Add to history for undo
+        polylineHistory.push({
+            action: 'clear',
+            polylines: [...drawnPolylines]
+        });
+
+        // Remove all polylines
+        drawnPolylines.forEach(polyline => {
+            map.removeLayer(polyline);
+        });
+
+        drawnPolylines = [];
+        selectedPolyline = null;
+        updatePolylineControls();
+        updatePolylineList();
+    }
+}
+
+function addPolylineClickHandler(polyline) {
+    polyline.on('click', function(e) {
+        L.DomEvent.stopPropagation(e);
+
+        // Deselect previous selection
+        if (selectedPolyline) {
+            selectedPolyline.setStyle({ color: '#3388ff', weight: 3 });
+        }
+
+        // Select new polyline
+        selectedPolyline = polyline;
+        polyline.setStyle({ color: '#ff6600', weight: 5 });
+
+        updatePolylineControls();
+        updatePolylineStats();
+    });
+}
+
+function updatePolylineControls() {
+    const deleteBtn = document.getElementById('deletePolylineBtn');
+    const undoBtn = document.getElementById('undoPolylineBtn');
+    const clearBtn = document.getElementById('clearPolylinesBtn');
+    const saveBtn = document.getElementById('savePolylinesBtn');
+
+    if (deleteBtn) deleteBtn.disabled = !selectedPolyline;
+    if (undoBtn) undoBtn.disabled = polylineHistory.length === 0;
+    if (clearBtn) clearBtn.disabled = drawnPolylines.length === 0;
+    if (saveBtn) saveBtn.disabled = drawnPolylines.length === 0;
+}
+
+function updatePolylineList() {
+    const listElement = document.getElementById('drawnPolylinesList');
+    if (!listElement) return;
+
+    if (drawnPolylines.length === 0) {
+        listElement.innerHTML = '<p>No polylines drawn yet</p>';
+    } else {
+        const listItems = drawnPolylines.map((polyline, index) => {
+            const isSelected = polyline === selectedPolyline;
+            const length = calculatePolylineLength(polyline);
+            return `
+                <div class="polyline-item ${isSelected ? 'selected' : ''}" onclick="selectPolylineFromList(${index})">
+                    <strong>Polyline ${index + 1}</strong>
+                    <br>Length: ${length.toFixed(2)} km
+                    ${isSelected ? ' (Selected)' : ''}
+                </div>
+            `;
+        }).join('');
+        listElement.innerHTML = listItems;
+    }
+}
+
+function updatePolylineStats() {
+    const countElement = document.getElementById('polylineCount');
+    const selectedElement = document.getElementById('selectedPolyline');
+
+    if (countElement) countElement.textContent = drawnPolylines.length;
+    if (selectedElement) {
+        if (selectedPolyline) {
+            const index = drawnPolylines.indexOf(selectedPolyline) + 1;
+            selectedElement.textContent = `Polyline ${index}`;
+        } else {
+            selectedElement.textContent = 'None';
+        }
+    }
+}
+
+function selectPolylineFromList(index) {
+    if (index >= 0 && index < drawnPolylines.length) {
+        // Deselect previous
+        if (selectedPolyline) {
+            selectedPolyline.setStyle({ color: '#3388ff', weight: 3 });
+        }
+
+        // Select new
+        selectedPolyline = drawnPolylines[index];
+        selectedPolyline.setStyle({ color: '#ff6600', weight: 5 });
+
+        updatePolylineControls();
+        updatePolylineStats();
+        updatePolylineList();
+    }
+}
+
+function calculatePolylineLength(polyline) {
+    const latlngs = polyline.getLatLngs();
+    let totalLength = 0;
+
+    for (let i = 0; i < latlngs.length - 1; i++) {
+        totalLength += latlngs[i].distanceTo(latlngs[i + 1]);
+    }
+
+    return totalLength / 1000; // Convert to kilometers
+}
+
 // Function definitions for controls (map interface functions)
 window.zoomIn = function() {
     map.zoomIn();
@@ -24,7 +484,150 @@ window.fitToSelected = function() {
 };
 
 window.togglePolygonSelectionMode = function() {
-    console.log('Polygon selection mode toggled');
+    selectionEnabled = !selectionEnabled;
+    updateSelectionToggleButton();
+    console.log('Polygon selection mode toggled. Enabled:', selectionEnabled);
+};
+
+window.selectAllPolygons = function() {
+    selectAllPolygons();
+};
+
+window.deselectAllPolygons = function() {
+    deselectAllPolygons();
+};
+
+window.toggleSelectionInfo = function() {
+    const hasData = currentGeoJsonLayer && currentGeoJsonLayer.getLayers().length > 0;
+    if (!hasData) {
+        console.log('No data loaded - selection info cannot be toggled');
+        return;
+    }
+
+    const selectedCount = document.getElementById('selectedCount');
+    if (selectedCount) {
+        if (selectedCount.style.display === 'none') {
+            selectedCount.style.display = 'block';
+            console.log('Selection info shown');
+        } else {
+            selectedCount.style.display = 'none';
+            console.log('Selection info hidden');
+        }
+    }
+};
+
+window.togglePolygonsVisibility = function() {
+    const hasData = currentGeoJsonLayer && currentGeoJsonLayer.getLayers().length > 0;
+    if (!hasData) {
+        console.log('No data loaded - polygons visibility cannot be toggled');
+        return;
+    }
+
+    if (currentGeoJsonLayer) {
+        if (map.hasLayer(currentGeoJsonLayer)) {
+            map.removeLayer(currentGeoJsonLayer);
+            console.log('Polygons hidden');
+        } else {
+            map.addLayer(currentGeoJsonLayer);
+            console.log('Polygons shown');
+        }
+    }
+};
+
+function clearAllData() {
+    // Clear current data
+    if (currentGeoJsonLayer && map.hasLayer(currentGeoJsonLayer)) {
+        map.removeLayer(currentGeoJsonLayer);
+    }
+    currentGeoJsonLayer = null;
+
+    // Clear selections
+    selectedPolygons.clear();
+
+    // Update UI
+    updateSelectionCounter();
+    updateDataDependentButtons();
+
+    console.log('All data cleared, buttons disabled');
+}
+
+// Auction Properties Layer Management
+let auctionMarkersGroup = null;
+
+window.toggleAuctionLayer = function() {
+    if (auctionMarkersGroup) {
+        if (map.hasLayer(auctionMarkersGroup)) {
+            map.removeLayer(auctionMarkersGroup);
+        } else {
+            map.addLayer(auctionMarkersGroup);
+        }
+    } else {
+        loadAuctionProperties();
+    }
+};
+
+window.loadAuctionProperties = async function() {
+    try {
+        const response = await fetch('/api/v1/auction-properties/');
+        const data = await response.json();
+
+        if (data.geojson) {
+            displayAuctionProperties(data.geojson);
+        }
+    } catch (error) {
+        console.error('Error loading auction properties:', error);
+    }
+};
+
+window.displayAuctionProperties = function(geojson) {
+    if (auctionMarkersGroup) {
+        map.removeLayer(auctionMarkersGroup);
+    }
+
+    auctionMarkersGroup = L.geoJSON(geojson, {
+        pointToLayer: function(feature, latlng) {
+            const props = feature.properties;
+            const color = props.marker_color || '#FF6B6B';
+            const size = props.marker_size || 8;
+
+            return L.circleMarker(latlng, {
+                radius: size,
+                fillColor: color,
+                color: '#000',
+                weight: 1,
+                opacity: 1,
+                fillOpacity: 0.8
+            });
+        },
+        onEachFeature: function(feature, layer) {
+            const props = feature.properties;
+            const popupContent = `
+                <div class="auction-popup">
+                    <h4>${props.description || props.property_id}</h4>
+                    <p><strong>Type:</strong> ${props.property_type}</p>
+                    <p><strong>Status:</strong> ${props.status}</p>
+                    <p><strong>Starting Price:</strong> €${props.starting_price?.toLocaleString()}</p>
+                    <p><strong>Auction Date:</strong> ${props.auction_date}</p>
+                </div>
+            `;
+            layer.bindPopup(popupContent);
+        }
+    }).addTo(map);
+};
+
+window.filterActiveAuctions = function() {
+    // Filter to show only active auctions
+    console.log('Filtering active auctions');
+};
+
+window.filterAuctionsByType = function() {
+    const typeFilter = document.getElementById('auctionTypeFilter').value;
+    console.log('Filtering by type:', typeFilter);
+};
+
+window.filterAuctionsByPrice = function() {
+    const maxPrice = document.getElementById('maxPriceFilter').value;
+    console.log('Filtering by max price:', maxPrice);
 };
 
 window.startDrawingMode = function() {
@@ -41,7 +644,344 @@ window.stopDrawingMode = function() {
 
 window.clearAllDrawings = function() {
     drawnItems.clearLayers();
+    updateDrawingControls();
 };
+
+// Enhanced Drawing Management Functions
+
+function updateDrawingControls() {
+    const count = drawnItems.getLayers().length;
+    const drawingInfo = document.getElementById('drawingInfo');
+    if (drawingInfo) {
+        drawingInfo.textContent = `${count} drawings created`;
+    }
+
+    // Update button states
+    const saveBtn = document.getElementById('saveDrawingsBtn');
+    const clearBtn = document.getElementById('clearDrawingsBtn');
+    const exportBtn = document.getElementById('exportDrawingsBtn');
+
+    if (saveBtn) saveBtn.disabled = count === 0;
+    if (clearBtn) clearBtn.disabled = count === 0;
+    if (exportBtn) exportBtn.disabled = count === 0;
+
+    // Update stats and features list
+    updateDrawingStats();
+    updateFeaturesListDisplay();
+}
+
+async function saveDrawnPolygons() {
+    if (!window.authManager || !window.authManager.isSignedIn()) {
+        alert('Please sign in to save your drawings');
+        return;
+    }
+
+    if (drawnItems.getLayers().length === 0) {
+        alert('No drawings to save');
+        return;
+    }
+
+    const geojson = {
+        type: 'FeatureCollection',
+        features: []
+    };
+
+    drawnItems.eachLayer(function(layer) {
+        const feature = layer.toGeoJSON();
+        if (layer.feature && layer.feature.properties) {
+            feature.properties = layer.feature.properties;
+        }
+        geojson.features.push(feature);
+    });
+
+    try {
+        const response = await window.authManager.authenticatedFetch('/api/v1/save-drawn-polygons', {
+            method: 'POST',
+            body: JSON.stringify({
+                geojson: geojson,
+                timestamp: new Date().toISOString(),
+                user_id: window.authManager.getUserId()
+            })
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            alert(`Successfully saved ${geojson.features.length} drawings`);
+        } else {
+            throw new Error(data.error || 'Failed to save drawings');
+        }
+    } catch (error) {
+        console.error('Error saving drawings:', error);
+        if (error.message.includes('Authentication')) {
+            alert('Session expired. Please sign in again.');
+        } else {
+            alert('Error saving drawings: ' + error.message);
+        }
+    }
+}
+
+async function loadDrawnPolygons() {
+    if (!window.authManager || !window.authManager.isSignedIn()) {
+        alert('Please sign in to load your saved drawings');
+        return;
+    }
+
+    try {
+        const response = await window.authManager.authenticatedFetch('/api/v1/load-drawn-polygons');
+        const data = await response.json();
+
+        if (data.success && data.geojson) {
+            // Clear existing drawings
+            drawnItems.clearLayers();
+
+            // Load saved drawings
+            data.geojson.features.forEach(feature => {
+                const layer = L.geoJSON(feature, {
+                    style: function(feature) {
+                        return {
+                            color: '#3388ff',
+                            weight: 4,
+                            opacity: 0.8,
+                            fillOpacity: 0.4
+                        };
+                    }
+                });
+
+                // Add feature properties back to layer
+                layer.eachLayer(function(sublayer) {
+                    sublayer.feature = feature;
+                    drawnItems.addLayer(sublayer);
+                });
+            });
+
+            updateDrawingControls();
+            alert(`Loaded ${data.geojson.features.length} saved drawings`);
+        } else {
+            alert('No saved drawings found');
+        }
+    } catch (error) {
+        console.error('Error loading drawings:', error);
+        if (error.message.includes('Authentication')) {
+            alert('Session expired. Please sign in again.');
+        } else {
+            alert('Error loading drawings: ' + error.message);
+        }
+    }
+}
+
+function exportDrawingsAsGeoJSON() {
+    if (drawnItems.getLayers().length === 0) {
+        alert('No drawings to export');
+        return;
+    }
+
+    const geojson = {
+        type: 'FeatureCollection',
+        features: []
+    };
+
+    drawnItems.eachLayer(function(layer) {
+        const feature = layer.toGeoJSON();
+        if (layer.feature && layer.feature.properties) {
+            feature.properties = layer.feature.properties;
+        }
+        geojson.features.push(feature);
+    });
+
+    // Create download link
+    const dataStr = JSON.stringify(geojson, null, 2);
+    const dataBlob = new Blob([dataStr], {type: 'application/json'});
+    const url = URL.createObjectURL(dataBlob);
+
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `drawn_polygons_${new Date().toISOString().slice(0, 10)}.geojson`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+}
+
+function importDrawingsFromGeoJSON() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.geojson,.json';
+
+    input.onchange = function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            try {
+                const geojson = JSON.parse(e.target.result);
+
+                // Validate GeoJSON structure
+                if (!geojson.type || geojson.type !== 'FeatureCollection' || !geojson.features) {
+                    throw new Error('Invalid GeoJSON format');
+                }
+
+                // Load features
+                geojson.features.forEach(feature => {
+                    const layer = L.geoJSON(feature, {
+                        style: function(feature) {
+                            return {
+                                color: '#3388ff',
+                                weight: 4,
+                                opacity: 0.8,
+                                fillOpacity: 0.4
+                            };
+                        }
+                    });
+
+                    layer.eachLayer(function(sublayer) {
+                        sublayer.feature = feature;
+                        drawnItems.addLayer(sublayer);
+                    });
+                });
+
+                updateDrawingControls();
+                alert(`Imported ${geojson.features.length} drawings from ${file.name}`);
+            } catch (error) {
+                console.error('Error importing GeoJSON:', error);
+                alert('Error importing file: ' + error.message);
+            }
+        };
+        reader.readAsText(file);
+    };
+
+    input.click();
+}
+
+// Additional drawing management functions
+
+function fitDrawingsToView() {
+    if (drawnItems.getLayers().length === 0) {
+        alert('No drawings to fit to view');
+        return;
+    }
+
+    try {
+        const group = new L.featureGroup(drawnItems.getLayers());
+        map.fitBounds(group.getBounds(), { padding: [20, 20] });
+        console.log('Fitted', drawnItems.getLayers().length, 'drawings to view');
+    } catch (error) {
+        console.error('Error fitting drawings to view:', error);
+    }
+}
+
+function updateDrawingStats() {
+    const layers = drawnItems.getLayers();
+    let polygonCount = 0;
+    let polylineCount = 0;
+    let markerCount = 0;
+
+    layers.forEach(layer => {
+        if (layer.feature && layer.feature.properties) {
+            const type = layer.feature.properties.type;
+            switch (type) {
+                case 'polygon':
+                case 'rectangle':
+                case 'circle':
+                    polygonCount++;
+                    break;
+                case 'polyline':
+                    polylineCount++;
+                    break;
+                case 'marker':
+                    markerCount++;
+                    break;
+            }
+        }
+    });
+
+    // Update stat displays
+    const polygonCountEl = document.getElementById('polygonCount');
+    const polylineCountEl = document.getElementById('polylineCount');
+    const markerCountEl = document.getElementById('markerCount');
+
+    if (polygonCountEl) polygonCountEl.textContent = polygonCount;
+    if (polylineCountEl) polylineCountEl.textContent = polylineCount;
+    if (markerCountEl) markerCountEl.textContent = markerCount;
+}
+
+function updateFeaturesListDisplay() {
+    const featuresContainer = document.querySelector('.features-container');
+    if (!featuresContainer) return;
+
+    const layers = drawnItems.getLayers();
+
+    if (layers.length === 0) {
+        featuresContainer.innerHTML = '<p class="no-features">No drawings yet. Use the drawing tools on the map to create polygons, lines, or markers.</p>';
+        return;
+    }
+
+    const featuresHtml = layers.map(layer => {
+        const props = layer.feature?.properties || {};
+        const type = props.type || 'unknown';
+        const id = props.id || 'unnamed';
+        const created = props.created ? new Date(props.created).toLocaleString() : 'Unknown';
+        const area = props.area && props.area !== 'N/A' ?
+                     (typeof props.area === 'number' ? (props.area / 1000000).toFixed(2) + ' km²' : props.area) : '';
+
+        return `
+            <div class="feature-item" data-layer-id="${id}">
+                <div class="feature-info">
+                    <div class="feature-type">${type.charAt(0).toUpperCase() + type.slice(1)}</div>
+                    <div class="feature-details">
+                        Created: ${created}
+                        ${area ? `<br>Area: ${area}` : ''}
+                    </div>
+                </div>
+                <div class="feature-actions">
+                    <button class="feature-btn zoom" onclick="zoomToFeature('${id}')">🔍</button>
+                    <button class="feature-btn delete" onclick="deleteFeature('${id}')">🗑️</button>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    featuresContainer.innerHTML = featuresHtml;
+}
+
+function zoomToFeature(featureId) {
+    drawnItems.eachLayer(layer => {
+        if (layer.feature?.properties?.id === featureId) {
+            const bounds = layer.getBounds ? layer.getBounds() : L.latLngBounds([layer.getLatLng()]);
+            map.fitBounds(bounds, { padding: [50, 50] });
+
+            // Temporarily highlight the feature
+            const originalStyle = layer.options;
+            layer.setStyle({ color: '#ff6b6b', weight: 6, opacity: 1 });
+            setTimeout(() => {
+                layer.setStyle(originalStyle);
+            }, 2000);
+        }
+    });
+}
+
+function deleteFeature(featureId) {
+    if (!confirm('Are you sure you want to delete this feature?')) return;
+
+    drawnItems.eachLayer(layer => {
+        if (layer.feature?.properties?.id === featureId) {
+            drawnItems.removeLayer(layer);
+            updateDrawingControls();
+        }
+    });
+}
+
+// Enhanced updateDrawingControls function
+// NOTE: updateDrawingControls defined earlier in file (line 652)
+
+// Global functions for button access
+window.saveDrawnPolygons = saveDrawnPolygons;
+window.loadDrawnPolygons = loadDrawnPolygons;
+window.exportDrawingsAsGeoJSON = exportDrawingsAsGeoJSON;
+window.importDrawingsFromGeoJSON = importDrawingsFromGeoJSON;
+window.fitDrawingsToView = fitDrawingsToView;
+window.zoomToFeature = zoomToFeature;
+window.deleteFeature = deleteFeature;
 
 window.toggleLegend = function() {
     const legend = document.querySelector('.leaflet-control-layers');
@@ -50,19 +990,7 @@ window.toggleLegend = function() {
     }
 };
 
-window.toggleSelectionInfo = function() {
-    console.log('Selection info toggled');
-};
-
-window.togglePolygonsVisibility = function() {
-    if (currentGeoJsonLayer) {
-        if (map.hasLayer(currentGeoJsonLayer)) {
-            map.removeLayer(currentGeoJsonLayer);
-        } else {
-            map.addLayer(currentGeoJsonLayer);
-        }
-    }
-};
+// NOTE: toggleSelectionInfo and togglePolygonsVisibility defined earlier in file (lines 500 and 519)
 
 window.toggleBasemapVisibility = function() {
     const layerControl = document.querySelector('.leaflet-control-layers');
@@ -143,33 +1071,280 @@ window.switchBasemap = function() {
     }
 };
 
+// Plugin management functions
+window.toggleMiniMap = function() {
+    const miniMapControl = document.querySelector('.leaflet-control-minimap');
+    if (miniMapControl) {
+        const toggleBtn = miniMapControl.querySelector('.leaflet-control-minimap-toggle-display');
+        if (toggleBtn) {
+            toggleBtn.click();
+            console.log('MiniMap toggled');
+        }
+    } else {
+        console.log('MiniMap not found');
+    }
+};
+
+window.showPluginInfo = function() {
+    const plugins = [
+        { name: 'Geocoder', status: typeof L.Control.Geocoder !== 'undefined' },
+        { name: 'MiniMap', status: typeof L.Control.MiniMap !== 'undefined' },
+        { name: 'Locate', status: typeof L.Control.Locate !== 'undefined' },
+        { name: 'MousePosition', status: typeof L.Control.MousePosition !== 'undefined' },
+        { name: 'Measure', status: typeof L.control.measure !== 'undefined' },
+        { name: 'Fullscreen', status: typeof L.control.fullscreen !== 'undefined' },
+        { name: 'TreeLayers', status: typeof L.Control.TreeLayers !== 'undefined' },
+        { name: 'Draw', status: typeof L.Control.Draw !== 'undefined' }
+    ];
+
+    const activePlugins = plugins.filter(p => p.status).map(p => p.name);
+    const inactivePlugins = plugins.filter(p => !p.status).map(p => p.name);
+
+    let message = `Active Plugins (${activePlugins.length}):\n${activePlugins.join(', ')}\n\n`;
+    if (inactivePlugins.length > 0) {
+        message += `Inactive Plugins (${inactivePlugins.length}):\n${inactivePlugins.join(', ')}`;
+    }
+
+    alert(message);
+    console.log('Plugin Status:', plugins);
+};
+
+window.resetMapView = function() {
+    if (map) {
+        // Reset to Italy bounds
+        map.setView([41.8719, 12.5674], 6);
+        console.log('Map view reset to default');
+    }
+};
+
+window.toggleCoordinates = function() {
+    const mousePositionControl = document.querySelector('.leaflet-control-mouseposition');
+    if (mousePositionControl) {
+        const isVisible = mousePositionControl.style.display !== 'none';
+        mousePositionControl.style.display = isVisible ? 'none' : 'block';
+        console.log('Coordinate display toggled:', !isVisible);
+    } else {
+        console.log('Mouse position control not found');
+    }
+};
+
+// Update plugin status indicators in the sidebar
+function updatePluginStatusIndicators() {
+    const pluginChecks = [
+        { name: 'Geocoder', check: () => typeof L.Control.Geocoder !== 'undefined' },
+        { name: 'MiniMap', check: () => typeof L.Control.MiniMap !== 'undefined' },
+        { name: 'Locate', check: () => typeof L.Control.Locate !== 'undefined' },
+        { name: 'Coordinates', check: () => typeof L.Control.MousePosition !== 'undefined' },
+        { name: 'Measure', check: () => typeof L.control.measure !== 'undefined' },
+        { name: 'Fullscreen', check: () => typeof L.control.fullscreen !== 'undefined' },
+        { name: 'Layers', check: () => typeof L.Control.TreeLayers !== 'undefined' },
+        { name: 'Drawing', check: () => typeof L.Control.Draw !== 'undefined' }
+    ];
+
+    pluginChecks.forEach(plugin => {
+        const pluginItems = document.querySelectorAll('.plugin-item');
+        pluginItems.forEach(item => {
+            const nameElement = item.querySelector('.plugin-name');
+            if (nameElement && nameElement.textContent.toLowerCase() === plugin.name.toLowerCase()) {
+                const isActive = plugin.check();
+                item.classList.remove('active', 'inactive');
+                item.classList.add(isActive ? 'active' : 'inactive');
+                item.title = isActive ?
+                    `${plugin.name} - Active and available` :
+                    `${plugin.name} - Not available or failed to load`;
+            }
+        });
+    });
+
+    console.log('Plugin status indicators updated');
+}
+
+// TreeLayers management functions
+window.toggleTreeLayers = function() {
+    const treeControl = document.querySelector('.leaflet-control-treelayers');
+    if (treeControl) {
+        const isHidden = treeControl.style.display === 'none';
+        treeControl.style.display = isHidden ? 'block' : 'none';
+        console.log('TreeLayers control toggled:', !isHidden ? 'visible' : 'hidden');
+    }
+};
+
+window.expandAllTreeLayers = function() {
+    if (window.treeLayersControl && typeof window.treeLayersControl.expandAll === 'function') {
+        window.treeLayersControl.expandAll();
+        console.log('All TreeLayers expanded');
+    }
+};
+
+window.collapseAllTreeLayers = function() {
+    if (window.treeLayersControl && typeof window.treeLayersControl.collapseAll === 'function') {
+        window.treeLayersControl.collapseAll();
+        console.log('All TreeLayers collapsed');
+    }
+};
+
+window.refreshTreeLayers = function() {
+    if (window.treeLayersControl) {
+        window.treeLayersControl.refresh();
+        console.log('TreeLayers control refreshed');
+    }
+};
+
 // Selection control functions
 window.changeSelectionMode = function() {
     const mode = document.getElementById('selectionMode').value;
     console.log('Selection mode changed to:', mode);
 };
 
-window.findAdjacencyForSelected = function() {
-    // Implementation would call the backend adjacency endpoint
-    console.log('Finding adjacent polygons for selected features');
+window.findAdjacencyForSelected = async function() {
+    if (selectedPolygons.size === 0) {
+        alert('Please select at least one polygon first');
+        return;
+    }
+
+    if (!currentGeoJsonLayer) {
+        alert('No data loaded');
+        return;
+    }
+
     const method = document.getElementById('adjacencyMethod').value;
-    console.log('Using adjacency method:', method);
+    console.log('Finding adjacent polygons for selected features using method:', method);
+
+    try {
+        // Get the first selected polygon index for adjacency analysis
+        const selectedIndex = Array.from(selectedPolygons)[0];
+
+        // Call the backend adjacency endpoint
+        const response = await fetch('/get-adjacent-polygons/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                selected_index: selectedIndex,
+                touch_method: method
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        console.log('Adjacency analysis result:', data);
+
+        if (data.adjacent_polygons && data.adjacent_polygons.length > 0) {
+            // Adjacent polygons found - enable the buttons
+            adjacentPolygonsFound = true;
+            adjacentPolygonIndices = data.adjacent_polygons;
+            updateAdjacencyButtons();
+
+            // You could also highlight the adjacent polygons here
+            console.log(`Found ${data.adjacent_polygons.length} adjacent polygons:`, data.adjacent_polygons);
+            alert(`Found ${data.adjacent_polygons.length} adjacent polygons`);
+        } else {
+            // No adjacent polygons found
+            adjacentPolygonsFound = false;
+            adjacentPolygonIndices = [];
+            updateAdjacencyButtons();
+            console.log('No adjacent polygons found');
+            alert('No adjacent polygons found');
+        }
+
+    } catch (error) {
+        console.error('Error finding adjacent polygons:', error);
+        alert('Error finding adjacent polygons: ' + error.message);
+        adjacentPolygonsFound = false;
+        adjacentPolygonIndices = [];
+        updateAdjacencyButtons();
+    }
 };
 
 window.clearSelection = function() {
     // Clear all selected polygons
-    const countElement = document.getElementById('selectedCount');
-    if (countElement) {
-        countElement.textContent = '0 polygons selected';
+    selectedPolygons.clear();
+
+    // Reset visual styles for all polygons
+    if (currentGeoJsonLayer) {
+        currentGeoJsonLayer.eachLayer(function(layer) {
+            applyDefaultStyle(layer);
+        });
     }
 
-    // Disable adjacency button when no selection
-    const adjBtn = document.getElementById('findAdjacencyBtn');
-    if (adjBtn) {
-        adjBtn.disabled = true;
-    }
+    // Reset adjacency state
+    adjacentPolygonsFound = false;
+    adjacentPolygonIndices = [];
+
+    // Update UI
+    updateSelectionCounter();
+    updateAdjacencyButtons();
 
     console.log('Selection cleared');
+};
+
+window.toggleSelectAdjacentPolygons = function() {
+    if (!adjacentPolygonsFound || adjacentPolygonIndices.length === 0) {
+        console.log('No adjacent polygons found to select');
+        return;
+    }
+
+    if (!currentGeoJsonLayer) {
+        console.log('No data layer available');
+        return;
+    }
+
+    // Get all layers as an array for index-based access
+    const layers = [];
+    currentGeoJsonLayer.eachLayer(function(layer) {
+        layers.push(layer);
+    });
+
+    // Check if any adjacent polygons are currently selected
+    let adjacentSelected = 0;
+    adjacentPolygonIndices.forEach(index => {
+        if (index < layers.length) {
+            const layer = layers[index];
+            const layerId = L.Util.stamp(layer);
+            if (selectedPolygons.has(layerId)) {
+                adjacentSelected++;
+            }
+        }
+    });
+
+    // If all or most adjacent polygons are selected, deselect them
+    // Otherwise, select all adjacent polygons
+    const shouldSelect = adjacentSelected < adjacentPolygonIndices.length / 2;
+
+    console.log(`Adjacent polygons selected: ${adjacentSelected}/${adjacentPolygonIndices.length}`);
+    console.log(`Action: ${shouldSelect ? 'Select' : 'Deselect'} all adjacent polygons`);
+
+    // Toggle selection for each adjacent polygon
+    adjacentPolygonIndices.forEach(index => {
+        if (index < layers.length) {
+            const layer = layers[index];
+            const layerId = L.Util.stamp(layer);
+
+            if (shouldSelect) {
+                // Select the polygon
+                if (!selectedPolygons.has(layerId)) {
+                    selectedPolygons.add(layerId);
+                    applySelectedStyle(layer);
+                }
+            } else {
+                // Deselect the polygon
+                if (selectedPolygons.has(layerId)) {
+                    selectedPolygons.delete(layerId);
+                    applyDefaultStyle(layer);
+                }
+            }
+        }
+    });
+
+    // Update UI
+    updateSelectionCounter();
+    updateSelectionButtons();
+
+    console.log(`${shouldSelect ? 'Selected' : 'Deselected'} ${adjacentPolygonIndices.length} adjacent polygons`);
 };
 
 window.showAllPolygons = function() {
@@ -190,7 +1365,6 @@ function addNavigationControls(map) {
         onAdd: function(map) {
             const container = L.DomUtil.create('div', 'leaflet-control-navigation');
             container.innerHTML = `
-                <div class="control-group-header">Navigate ⋮⋮</div>
                 <button onclick="fitToPolygons()" title="Fit map to show all polygons">🎯</button>
                 <button id="fitSelectedBtn" onclick="fitToSelected()" disabled title="Fit map to selected polygons only">📍</button>
             `;
@@ -209,11 +1383,12 @@ function addToolsControls(map) {
         onAdd: function(map) {
             const container = L.DomUtil.create('div', 'leaflet-control-tools');
             container.innerHTML = `
-                <div class="control-group-header">Tools ⋮⋮</div>
-                <button onclick="togglePolygonSelectionMode()" title="Enable/disable polygon selection">✏️</button>
-                <div class="control-separator"></div>
-                <button onclick="startDrawingMode()" title="Start drawing new polygons">🖊️</button>
-                <button id="stopDrawing" onclick="stopDrawingMode()" disabled title="Stop drawing mode">⏹️</button>
+                <button id="toggleSelectionBtn" onclick="togglePolygonSelectionMode()" class="toggle-button active" title="Enable/disable polygon selection">
+                    <span class="toggle-icon">✏️</span>
+                    <span class="toggle-state">ON</span>
+                </button>
+                <button onclick="selectAllPolygons()" id="selectAllBtn" title="Select all polygons">📋</button>
+                <button onclick="deselectAllPolygons()" id="deselectAllBtn" title="Deselect all polygons">🔲</button>
                 <button onclick="clearAllDrawings()" title="Clear all drawn polygons">🗑️</button>
             `;
             L.DomEvent.disableClickPropagation(container);
@@ -231,9 +1406,7 @@ function addDisplayControls(map) {
         onAdd: function(map) {
             const container = L.DomUtil.create('div', 'leaflet-control-display');
             container.innerHTML = `
-                <div class="control-group-header">Display ⋮⋮</div>
                 <button onclick="toggleLegend()" title="Show/hide map legend">📋</button>
-                <div class="control-separator"></div>
                 <button onclick="toggleSelectionInfo()" title="Show/hide selection information">ℹ️</button>
                 <button onclick="togglePolygonsVisibility()" title="Show/hide all polygons">👁️</button>
             `;
@@ -244,17 +1417,52 @@ function addDisplayControls(map) {
     map.addControl(new DisplayControl());
 }
 
+function addAdjacencyControls(map) {
+    const AdjacencyControl = L.Control.extend({
+        options: {
+            position: 'topright'
+        },
+        onAdd: function(map) {
+            const container = L.DomUtil.create('div', 'leaflet-control-adjacency');
+            container.innerHTML = `
+                <button onclick="showAllPolygons()" id="showAllPolygonsBtn" class="adjacency-show-btn" title="Show/Hide All Adjacent Polygons" disabled></button>
+                <button onclick="toggleSelectAdjacentPolygons()" id="selectAdjacentBtn" class="adjacency-select-btn" title="Select/Deselect All Adjacent Polygons" disabled></button>
+                <button onclick="clearSelection()" id="clearSelectionBtn" class="adjacency-delete-btn" title="Delete All Adjacent Polygons" disabled></button>
+            `;
+            L.DomEvent.disableClickPropagation(container);
+            return container;
+        }
+    });
+    map.addControl(new AdjacencyControl());
+}
+
+function addAuctionControls(map) {
+    const AuctionControl = L.Control.extend({
+        options: {
+            position: 'topright'
+        },
+        onAdd: function(map) {
+            const container = L.DomUtil.create('div', 'leaflet-control-auction');
+            container.innerHTML = `
+                <button onclick="toggleAuctionLayer()" title="Toggle auction properties layer">🏠</button>
+                <button onclick="filterActiveAuctions()" title="Show only active auctions">⏰</button>
+                <button onclick="loadAuctionProperties()" title="Load auction properties">📊</button>
+            `;
+            L.DomEvent.disableClickPropagation(container);
+            return container;
+        }
+    });
+    map.addControl(new AuctionControl());
+}
 function addDataControls(map) {
     const DataControl = L.Control.extend({
         options: {
-            position: 'bottomright'
+            position: 'topright'
         },
         onAdd: function(map) {
             const container = L.DomUtil.create('div', 'leaflet-control-data');
             container.innerHTML = `
-                <div class="control-group-header">Data ⋮⋮</div>
                 <button onclick="saveDrawingsToJSON()" title="Export drawn polygons to JSON">💾</button>
-                <div class="control-separator"></div>
                 <button onclick="triggerLoadDrawings()" title="Import polygons from JSON file">📁</button>
                 <button id="exportSelectionBtn" onclick="exportSelection()" disabled title="Export selected polygons">📤</button>
                 <button onclick="importSelection()" title="Import polygon selection">📥</button>
@@ -273,12 +1481,31 @@ function loadGeoJsonData() {
             const geoJsonData = window.geoJsonData;
             if (geoJsonData && geoJsonData.features && geoJsonData.features.length > 0) {
                 currentGeoJsonLayer = L.geoJSON(geoJsonData, {
-                    style: {
-                        color: '#3388ff',
-                        weight: 2,
-                        fillOpacity: 0.1
+                    style: function(feature) {
+                        return {
+                            color: '#3388ff',
+                            weight: 2,
+                            fillOpacity: 0.4
+                        };
                     },
                     onEachFeature: function(feature, layer) {
+                        // Apply stripe pattern to each polygon
+                        layer.on('add', function() {
+                            const pathElement = layer.getElement();
+                            if (pathElement) {
+                                const angle = getRandomStripeAngle();
+                                const patternId = createStripePattern(angle, '#3388ff');
+                                pathElement.style.fill = `url(#${patternId})`;
+                            }
+                        });
+
+                        // Add click handler for selection
+                        layer.on('click', function(e) {
+                            console.log('Polygon clicked!');
+                            L.DomEvent.stopPropagation(e);
+                            togglePolygonSelection(layer);
+                        });
+
                         if (feature.properties) {
                             let popupContent = '<strong>Feature Properties:</strong><br>';
                             for (let key in feature.properties) {
@@ -291,6 +1518,33 @@ function loadGeoJsonData() {
 
                 // Fit map to data bounds
                 map.fitBounds(currentGeoJsonLayer.getBounds());
+
+                // Update search control with loaded data
+                if (window.searchControl && currentGeoJsonLayer) {
+                    window.searchControl.setLayer(currentGeoJsonLayer);
+                }
+
+                // Initialize selection counter
+                selectedPolygons.clear();
+                adjacentPolygonsFound = false;
+                adjacentPolygonIndices = [];
+                updateSelectionCounter();
+                updateDataDependentButtons();
+
+                // Update tree layers control with loaded data
+                if (window.treeLayersControl && currentGeoJsonLayer) {
+                    try {
+                        // Update the TreeLayers control with current data
+                        const overlayLayers = window.treeLayersControl.getOverlayLayers();
+                        if (overlayLayers['📊 Data Layers']) {
+                            overlayLayers['📊 Data Layers']['🏛️ Current Cadastral Data'] = currentGeoJsonLayer;
+                            window.treeLayersControl.refresh();
+                            console.log('TreeLayers control updated with cadastral data');
+                        }
+                    } catch (e) {
+                        console.warn('Could not update TreeLayers control:', e);
+                    }
+                }
             }
         } catch (error) {
             console.error('Error loading GeoJSON data:', error);
@@ -315,6 +1569,17 @@ function initializeMap() {
     // Create map centered on Italy
     map = L.map('map').setView([41.8719, 12.5674], 6);
     console.log('Leaflet map created:', map);
+
+    // Add custom bottom-center position for controls
+    const corners = map._controlCorners;
+    const container = map._controlContainer;
+
+    function createCorner(vSide, hSide) {
+        const className = 'leaflet-' + vSide + ' leaflet-' + hSide;
+        corners[vSide + hSide] = L.DomUtil.create('div', className, container);
+    }
+
+    createCorner('bottom', 'center');
 
     // Define all map providers
     const mapProviders = {
@@ -369,8 +1634,8 @@ function initializeMap() {
         })
     };
 
-    // Add default layer
-    mapProviders['OpenStreetMap'].addTo(map);
+    // Add default layer - Google Maps
+    mapProviders['📍 Google Maps'].addTo(map);
 
     // Add layer control
     L.control.layers(mapProviders, weatherOverlays, {
@@ -385,17 +1650,99 @@ function initializeMap() {
     drawControl = new L.Control.Draw({
         position: 'topleft',
         draw: {
-            polygon: true,
-            circle: true,
-            rectangle: true,
-            polyline: true,
-            marker: true
+            polygon: {
+                allowIntersection: false,
+                showArea: true,
+                drawError: {
+                    color: '#e1e100',
+                    message: '<strong>Oh snap!</strong> you can\'t draw that!'
+                },
+                shapeOptions: {
+                    color: '#3388ff',
+                    weight: 4,
+                    opacity: 0.8,
+                    fillOpacity: 0.4
+                }
+            },
+            circle: {
+                shapeOptions: {
+                    color: '#3388ff',
+                    weight: 4,
+                    opacity: 0.8,
+                    fillOpacity: 0.4
+                }
+            },
+            rectangle: {
+                shapeOptions: {
+                    color: '#3388ff',
+                    weight: 4,
+                    opacity: 0.8,
+                    fillOpacity: 0.4
+                }
+            },
+            polyline: {
+                shapeOptions: {
+                    color: '#3388ff',
+                    weight: 4,
+                    opacity: 0.8
+                }
+            },
+            marker: true,
+            circlemarker: false
         },
         edit: {
-            featureGroup: drawnItems
+            featureGroup: drawnItems,
+            remove: true
         }
     });
     map.addControl(drawControl);
+
+    // Add drawing event listeners
+    map.on('draw:created', function(e) {
+        const type = e.layerType;
+        const layer = e.layer;
+
+        // Add unique ID to each drawn feature
+        layer.feature = {
+            type: 'Feature',
+            properties: {
+                id: 'drawn_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+                type: type,
+                created: new Date().toISOString(),
+                area: type === 'polygon' || type === 'rectangle' || type === 'circle' ?
+                      L.GeometryUtil ? L.GeometryUtil.geodesicArea(layer.getLatLngs()[0]) : 'N/A' : null
+            }
+        };
+
+        drawnItems.addLayer(layer);
+        updateDrawingControls();
+        console.log('Created', type, 'with ID:', layer.feature.properties.id);
+    });
+
+    map.on('draw:edited', function(e) {
+        const layers = e.layers;
+        layers.eachLayer(function(layer) {
+            if (layer.feature && layer.feature.properties) {
+                layer.feature.properties.modified = new Date().toISOString();
+                // Recalculate area if applicable
+                const type = layer.feature.properties.type;
+                if ((type === 'polygon' || type === 'rectangle' || type === 'circle') && L.GeometryUtil) {
+                    layer.feature.properties.area = L.GeometryUtil.geodesicArea(layer.getLatLngs()[0]);
+                }
+            }
+        });
+        updateDrawingControls();
+        console.log('Edited', layers.getLayers().length, 'features');
+    });
+
+    map.on('draw:deleted', function(e) {
+        const layers = e.layers;
+        console.log('Deleted', layers.getLayers().length, 'features');
+        updateDrawingControls();
+    });
+
+    // Initialize drawing controls state
+    updateDrawingControls();
 
     // Add fullscreen control
     L.control.fullscreen({
@@ -406,6 +1753,219 @@ function initializeMap() {
     L.control.measure({
         position: 'topleft'
     }).addTo(map);
+
+    // Add fit buttons to the existing zoom control after map loads
+    setTimeout(() => {
+        // Update zoom control icons with more intuitive ones
+        const zoomInBtn = document.querySelector('.leaflet-control-zoom-in');
+        const zoomOutBtn = document.querySelector('.leaflet-control-zoom-out');
+        const fullscreenBtn = document.querySelector('.leaflet-control-fullscreen-button');
+
+        if (zoomInBtn) {
+            zoomInBtn.innerHTML = '+';
+            zoomInBtn.title = 'Zoom In';
+            zoomInBtn.style.fontSize = '18px';
+            zoomInBtn.style.fontWeight = 'bold';
+        }
+        if (zoomOutBtn) {
+            zoomOutBtn.innerHTML = '−';
+            zoomOutBtn.title = 'Zoom Out';
+            zoomOutBtn.style.fontSize = '18px';
+            zoomOutBtn.style.fontWeight = 'bold';
+        }
+        if (fullscreenBtn) {
+            fullscreenBtn.innerHTML = '⛶';
+            fullscreenBtn.title = 'Toggle Fullscreen';
+            fullscreenBtn.style.fontSize = '16px';
+        }
+
+        const zoomControl = document.querySelector('.leaflet-control-zoom');
+        if (zoomControl) {
+            // Create Fit All button
+            const fitAllBtn = L.DomUtil.create('a', 'leaflet-control-zoom-fit-all', zoomControl);
+            fitAllBtn.innerHTML = '🌍';
+            fitAllBtn.href = '#';
+            fitAllBtn.title = 'Fit map to show all polygons';
+            fitAllBtn.setAttribute('role', 'button');
+            fitAllBtn.setAttribute('aria-label', 'Fit map to show all polygons');
+
+            // Create Fit Selected button
+            const fitSelectedBtn = L.DomUtil.create('a', 'leaflet-control-zoom-fit-selected', zoomControl);
+            fitSelectedBtn.innerHTML = '🎯';
+            fitSelectedBtn.href = '#';
+            fitSelectedBtn.title = 'Fit map to selected polygons only';
+            fitSelectedBtn.setAttribute('role', 'button');
+            fitSelectedBtn.setAttribute('aria-label', 'Fit map to selected polygons only');
+
+            // Add event handlers
+            L.DomEvent.on(fitAllBtn, 'click', function(e) {
+                L.DomEvent.stopPropagation(e);
+                L.DomEvent.preventDefault(e);
+                if (currentGeoJsonLayer) {
+                    map.fitBounds(currentGeoJsonLayer.getBounds(), { padding: [10, 10] });
+                } else {
+                    // Default to Italy bounds if no data
+                    map.fitBounds([[35.49, 6.63], [47.09, 18.52]]);
+                }
+            });
+
+            L.DomEvent.on(fitSelectedBtn, 'click', function(e) {
+                L.DomEvent.stopPropagation(e);
+                L.DomEvent.preventDefault(e);
+                // Fit to selected polygons or current data
+                if (currentGeoJsonLayer) {
+                    map.fitBounds(currentGeoJsonLayer.getBounds(), { padding: [10, 10] });
+                }
+            });
+
+            // Disable map dragging on buttons
+            L.DomEvent.disableClickPropagation(fitAllBtn);
+            L.DomEvent.disableClickPropagation(fitSelectedBtn);
+        }
+    }, 100);
+
+    // Add geocoder control (search functionality)
+    if (typeof L.Control.Geocoder !== 'undefined') {
+        L.Control.geocoder({
+            defaultMarkGeocode: false,
+            position: 'topright'
+        }).on('markgeocode', function(e) {
+            const bbox = e.geocode.bbox;
+            const poly = L.polygon([
+                bbox.getSouthEast(),
+                bbox.getNorthEast(),
+                bbox.getNorthWest(),
+                bbox.getSouthWest()
+            ]).addTo(map);
+            map.fitBounds(poly.getBounds());
+        }).addTo(map);
+    }
+
+    // Add minimap control
+    if (typeof L.Control.MiniMap !== 'undefined') {
+        const osmUrl = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+        const osmAttrib = '© OpenStreetMap contributors';
+        const miniMapLayer = new L.TileLayer(osmUrl, {minZoom: 0, maxZoom: 13, attribution: osmAttrib});
+        const miniMap = new L.Control.MiniMap(miniMapLayer, {
+            position: 'bottomleft',
+            width: 150,
+            height: 150,
+            collapsedWidth: 25,
+            collapsedHeight: 25,
+            toggleDisplay: true
+        }).addTo(map);
+    }
+
+    // Add LocateControl for user location
+    if (typeof L.Control.Locate !== 'undefined') {
+        const locateControl = L.control.locate({
+            position: 'topleft',
+            strings: {
+                title: "Show me where I am",
+            },
+            locateOptions: {
+                maxZoom: 16
+            }
+        }).addTo(map);
+    }
+
+    // Add Search Control
+    if (typeof L.Control.Search !== 'undefined') {
+        const searchControl = new L.Control.Search({
+            position: 'topright',
+            layer: null, // Will be set when data is loaded
+            propertyName: 'properties', // Search in feature properties
+            marker: false,
+            moveToLocation: function(latlng, title, map) {
+                map.setView(latlng, 16);
+            },
+            buildTip: function(text, val) {
+                return '<b>' + text + '</b>';
+            }
+        });
+        map.addControl(searchControl);
+
+        // Store reference for later use when data is loaded
+        window.searchControl = searchControl;
+    }
+
+    // Add Mouse Position Control
+    if (typeof L.Control.MousePosition !== 'undefined') {
+        const mousePositionControl = L.control.mousePosition({
+            position: 'bottomright',
+            separator: ' | ',
+            emptyString: 'Unavailable',
+            lngFirst: false,
+            numDigits: 5,
+            lngFormatter: function(num) {
+                return 'Lng: ' + L.Util.formatNum(num, 5);
+            },
+            latFormatter: function(num) {
+                return 'Lat: ' + L.Util.formatNum(num, 5);
+            }
+        }).addTo(map);
+    }
+
+    // Add TreeLayers Control (on the right side) - Enhanced Version
+    if (typeof L.Control.TreeLayers !== 'undefined') {
+        // Initialize with comprehensive base layers and overlay structure
+        const baseLayers = {
+            '🗺️ Base Maps': {
+                '🌍 OpenStreetMap': mapProviders['OpenStreetMap'],
+                '📍 Google Maps': mapProviders['📍 Google Maps'],
+                '🛰️ Google Satellite': mapProviders['🛰️ Google Satellite'],
+                '⛰️ Google Terrain': mapProviders['⛰️ Google Terrain'],
+                '🌍 Google Hybrid': mapProviders['🌍 Google Hybrid'],
+                '🌐 ESRI World Imagery': mapProviders['🌐 ESRI World Imagery'],
+                '🏔️ ESRI Terrain': mapProviders['🏔️ ESRI Terrain'],
+                '⚪ CartoDB Light': mapProviders['⚪ CartoDB Light'],
+                '⚫ CartoDB Dark': mapProviders['⚫ CartoDB Dark']
+            }
+        };
+
+        const overlayLayers = {
+            '📊 Data Layers': {
+                '🏛️ Current Cadastral Data': null, // Will be populated when data is loaded
+                '✏️ Drawn Features': drawnItems,
+                '🏠 Auction Properties': auctionMarkersGroup
+            },
+            '🌤️ Weather Overlays': {
+                '🌡️ Temperature': weatherOverlays['🌡️ Temperature'],
+                '🌧️ Precipitation': weatherOverlays['🌧️ Precipitation'],
+                '💨 Wind Speed': weatherOverlays['💨 Wind Speed'],
+                '☁️ Cloud Coverage': weatherOverlays['☁️ Cloud Coverage']
+            }
+        };
+
+        const treeLayersControl = L.control.treeLayers(baseLayers, overlayLayers, {
+            position: 'topright',
+            namedToggle: true,
+            selectorBack: false,
+            closedSymbol: '▶',
+            openedSymbol: '▼',
+            spaceSymbol: '&nbsp;&nbsp;&nbsp;',
+            collapseAll: '🔽 Collapse all',
+            expandAll: '🔼 Expand all',
+            collapsed: false // Start expanded to make it more visible
+        }).addTo(map);
+
+        // Store reference for later updates
+        window.treeLayersControl = treeLayersControl;
+
+        // Make TreeLayers more prominent with custom styling
+        setTimeout(() => {
+            const treeControl = document.querySelector('.leaflet-control-treelayers');
+            if (treeControl) {
+                treeControl.style.maxWidth = '300px';
+                treeControl.style.minWidth = '250px';
+                treeControl.style.background = 'rgba(255, 255, 255, 0.95)';
+                treeControl.style.border = '2px solid #007cba';
+                treeControl.style.borderRadius = '8px';
+                treeControl.style.boxShadow = '0 4px 12px rgba(0,124,186,0.3)';
+                console.log('TreeLayers control enhanced and made more visible');
+            }
+        }, 500);
+    }
 
     // Add custom navigation controls
     addNavigationControls(map);
@@ -419,14 +1979,85 @@ function initializeMap() {
     // Add custom data controls
     addDataControls(map);
 
+    // Add custom adjacency controls
+    addAdjacencyControls(map);
+
+    // Add custom auction controls
+    addAuctionControls(map);
+
     // Handle drawing events
     map.on(L.Draw.Event.CREATED, function(e) {
         const layer = e.layer;
         drawnItems.addLayer(layer);
+
+        // Check if it's a polyline
+        if (layer instanceof L.Polyline && !(layer instanceof L.Polygon)) {
+            // Add to polylines array
+            drawnPolylines.push(layer);
+
+            // Add click handler for selection
+            addPolylineClickHandler(layer);
+
+            // Add to history for undo
+            polylineHistory.push({
+                action: 'create',
+                polyline: layer
+            });
+
+            // Update controls and stats
+            updatePolylineControls();
+            updatePolylineStats();
+            updatePolylineList();
+        }
+    });
+
+    map.on(L.Draw.Event.DELETED, function(e) {
+        const layers = e.layers;
+        layers.eachLayer(function(layer) {
+            // Check if deleted layer is a polyline
+            if (drawnPolylines.includes(layer)) {
+                // Add to history for undo
+                polylineHistory.push({
+                    action: 'delete',
+                    polyline: layer,
+                    index: drawnPolylines.indexOf(layer)
+                });
+
+                // Remove from polylines array
+                drawnPolylines = drawnPolylines.filter(p => p !== layer);
+
+                // Clear selection if it was selected
+                if (selectedPolyline === layer) {
+                    selectedPolyline = null;
+                }
+
+                // Update controls and stats
+                updatePolylineControls();
+                updatePolylineStats();
+                updatePolylineList();
+            }
+        });
     });
 
     // Load existing data if available
     loadGeoJsonData();
+
+    // Initialize polyline controls
+    updatePolylineControls();
+    updatePolylineStats();
+
+    // Initialize toggle button state
+    updateSelectionToggleButton();
+
+    // Initialize data-dependent buttons (disabled initially)
+    updateDataDependentButtons();
+
+    // Initialize adjacency buttons as disabled
+    adjacentPolygonsFound = false;
+    updateAdjacencyButtons();
+
+    // Update plugin status indicators
+    updatePluginStatusIndicators();
 }
 
 // Original sidebar functionality
@@ -657,16 +2288,33 @@ function clearMap() {
 function addGeoJsonToMap(geojson, options = {}) {
     if (!map || !geojson) return;
 
-    const style = options.style || {
-        color: '#3388ff',
-        weight: 2,
-        opacity: 1,
-        fillOpacity: 0.2
-    };
-
     const layer = L.geoJSON(geojson, {
-        style: style,
+        style: function(feature) {
+            return {
+                color: options.color || '#3388ff',
+                weight: 2,
+                opacity: 1,
+                fillOpacity: 0.4
+            };
+        },
         onEachFeature: function(feature, layer) {
+            // Apply stripe pattern to each polygon
+            layer.on('add', function() {
+                const pathElement = layer.getElement();
+                if (pathElement) {
+                    const angle = getRandomStripeAngle();
+                    const patternId = createStripePattern(angle, options.color || '#3388ff');
+                    pathElement.style.fill = `url(#${patternId})`;
+                }
+            });
+
+            // Add click handler for selection
+            layer.on('click', function(e) {
+                console.log('Polygon clicked (addGeoJsonToMap)!');
+                L.DomEvent.stopPropagation(e);
+                togglePolygonSelection(layer);
+            });
+
             // Add popup with feature properties
             if (feature.properties) {
                 const popupContent = Object.entries(feature.properties)
@@ -682,6 +2330,35 @@ function addGeoJsonToMap(geojson, options = {}) {
 
     // Store as current layer for fitting bounds
     currentGeoJsonLayer = layer;
+
+    // Update search control with new layer
+    if (window.searchControl) {
+        window.searchControl.setLayer(layer);
+    }
+
+    // Initialize selection counter for new data
+    selectedPolygons.clear();
+    adjacentPolygonsFound = false;
+    adjacentPolygonIndices = [];
+    updateSelectionCounter();
+    updateDataDependentButtons();
+
+    // Update tree layers control with new layer
+    if (window.treeLayersControl) {
+        const layerName = options.name || 'New Cadastral Layer';
+        // Add layer to tree control
+        try {
+            const overlayLayers = window.treeLayersControl.getOverlayLayers();
+            if (!overlayLayers['📊 Data Layers']) {
+                overlayLayers['📊 Data Layers'] = {};
+            }
+            overlayLayers['📊 Data Layers'][`🏛️ ${layerName}`] = layer;
+            window.treeLayersControl.refresh();
+            console.log(`TreeLayers control updated with new layer: ${layerName}`);
+        } catch (e) {
+            console.warn('Could not update tree layers control:', e);
+        }
+    }
 
     return layer;
 }
@@ -816,88 +2493,45 @@ function loadAttributeTable() {
     }
 
     if (features && features.length > 0) {
-        try {
-            // Update info
-            tableInfo.textContent = `${features.length} features loaded`;
+        // Update info
+        tableInfo.textContent = `${features.length} features loaded`;
 
-                // Create table
-                let tableHTML = '<table class="data-table"><thead><tr>';
+        // Create table
+        let tableHTML = '<table class="data-table"><thead><tr>';
 
-                // Get all property keys
-                const allKeys = new Set();
-                features.forEach(feature => {
-                    if (feature.properties) {
-                        Object.keys(feature.properties).forEach(key => allKeys.add(key));
-                    }
-                });
-
-                // Add headers
-                allKeys.forEach(key => {
-                    tableHTML += `<th>${key}</th>`;
-                });
-                tableHTML += '</tr></thead><tbody>';
-
-                // Add rows
-                features.forEach((feature, index) => {
-                    tableHTML += `<tr data-feature-index="${index}">`;
-                    allKeys.forEach(key => {
-                        const value = feature.properties && feature.properties[key] ? feature.properties[key] : '';
-                        tableHTML += `<td>${value}</td>`;
-                    });
-                    tableHTML += '</tr>';
-                });
-
-                tableHTML += '</tbody></table>';
-                tableContainer.innerHTML = tableHTML;
-            } else {
-                tableContainer.innerHTML = '<div class="no-data-message"><p>No features found in the loaded data.</p></div>';
-                tableInfo.textContent = 'No data available';
+        // Get all property keys
+        const allKeys = new Set();
+        features.forEach(feature => {
+            if (feature.properties) {
+                Object.keys(feature.properties).forEach(key => allKeys.add(key));
             }
-        } catch (error) {
-            console.error('Error loading attribute table:', error);
-            tableContainer.innerHTML = '<div class="no-data-message"><p>Error loading attribute data.</p></div>';
-            tableInfo.textContent = 'Error loading data';
-        }
+        });
+
+        // Add headers
+        allKeys.forEach(key => {
+            tableHTML += `<th>${key}</th>`;
+        });
+        tableHTML += '</tr></thead><tbody>';
+
+        // Add rows
+        features.forEach((feature, index) => {
+            tableHTML += `<tr data-feature-index="${index}">`;
+            allKeys.forEach(key => {
+                const value = feature.properties && feature.properties[key] ? feature.properties[key] : '';
+                tableHTML += `<td>${value}</td>`;
+            });
+            tableHTML += '</tr>';
+        });
+
+        tableHTML += '</tbody></table>';
+        tableContainer.innerHTML = tableHTML;
     } else {
         tableContainer.innerHTML = '<div class="no-data-message"><p>No geospatial data loaded. Please upload a file or select cadastral data to view attributes.</p></div>';
         tableInfo.textContent = 'No data loaded';
     }
 }
 
-// Update drawing statistics
-function updateDrawingStats() {
-    const drawnCount = document.getElementById('drawnCount');
-    const drawnSelected = document.getElementById('drawnSelected');
-    const drawnPolygonsList = document.getElementById('drawnPolygonsList');
-
-    if (drawnItems) {
-        const layers = drawnItems.getLayers();
-        const totalDrawn = layers.length;
-
-        // Update counts
-        if (drawnCount) drawnCount.textContent = totalDrawn;
-        if (drawnSelected) drawnSelected.textContent = '0'; // TODO: implement selection tracking
-
-        // Update list
-        if (drawnPolygonsList) {
-            if (totalDrawn === 0) {
-                drawnPolygonsList.innerHTML = '<p>No polygons drawn yet</p>';
-            } else {
-                let listHTML = '<ul class="drawn-list">';
-                layers.forEach((layer, index) => {
-                    const type = layer instanceof L.Circle ? 'Circle' :
-                                layer instanceof L.Rectangle ? 'Rectangle' :
-                                layer instanceof L.Polygon ? 'Polygon' :
-                                layer instanceof L.Polyline ? 'Polyline' :
-                                layer instanceof L.Marker ? 'Marker' : 'Feature';
-                    listHTML += `<li data-layer-index="${index}">${type} ${index + 1}</li>`;
-                });
-                listHTML += '</ul>';
-                drawnPolygonsList.innerHTML = listHTML;
-            }
-        }
-    }
-}
+// NOTE: updateDrawingStats defined earlier in file (line 873)
 
 // Save drawn polygons
 window.saveDrawnPolygons = function() {
@@ -954,13 +2588,13 @@ window.showMapView = function() {
     const mapElement = document.getElementById('map');
 
     if (mapView) {
-        mapView.style.display = 'block';
+        mapView.style.display = 'flex';
         mapView.classList.add('active');
         console.log('Map view shown');
     }
 
     if (mapContainer) {
-        mapContainer.style.display = 'block';
+        mapContainer.style.display = 'flex';
         mapContainer.style.height = '100%';
         console.log('Map container shown');
     }
@@ -1012,7 +2646,7 @@ window.handleTableViewClick = function() {
     });
 
     // Show table view
-    document.getElementById('tableView').style.display = 'block';
+    document.getElementById('tableView').style.display = 'flex';
     document.getElementById('tableView').classList.add('active');
 
     // Set active button state
@@ -1033,7 +2667,7 @@ window.showAdjacencyView = function() {
     });
 
     // Show adjacency view
-    document.getElementById('adjacencyView').style.display = 'block';
+    document.getElementById('adjacencyView').style.display = 'flex';
     document.getElementById('adjacencyView').classList.add('active');
 
     // Set active button state
@@ -1051,7 +2685,7 @@ window.showMappingView = function() {
     });
 
     // Show mapping view
-    document.getElementById('mappingView').style.display = 'block';
+    document.getElementById('mappingView').style.display = 'flex';
     document.getElementById('mappingView').classList.add('active');
 
     // Set active button state
@@ -1257,6 +2891,9 @@ function setupCadastralEventListeners() {
     }
 }
 
+// Additional cadastral functions moved from folium-interface.js for consolidation
+// NOTE: Duplicate functions have been removed - using definitions from earlier in file
+
 // Initialize map and controls when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DOM loaded, initializing map...');
@@ -1274,23 +2911,23 @@ document.addEventListener('DOMContentLoaded', function() {
         return;
     }
 
-    // Add a manual test button for debugging
-    const testButton = document.createElement('button');
-    testButton.textContent = 'Test Initialize';
-    testButton.style.position = 'fixed';
-    testButton.style.top = '10px';
-    testButton.style.right = '10px';
-    testButton.style.zIndex = '10000';
-    testButton.style.backgroundColor = 'red';
-    testButton.style.color = 'white';
-    testButton.onclick = function() {
-        console.log('Manual test button clicked');
-        console.log('Triggering map initialization...');
-        initializeMap();
-        console.log('Triggering cadastral data load...');
-        loadCadastralData();
-    };
-    document.body.appendChild(testButton);
+    // // Add a manual test button for debugging
+    // const testButton = document.createElement('button');
+    // testButton.textContent = 'Test Initialize';
+    // testButton.style.position = 'fixed';
+    // testButton.style.top = '10px';
+    // testButton.style.right = '10px';
+    // testButton.style.zIndex = '10000';
+    // testButton.style.backgroundColor = 'red';
+    // testButton.style.color = 'white';
+    // testButton.onclick = function() {
+    //     console.log('Manual test button clicked');
+    //     console.log('Triggering map initialization...');
+    //     initializeMap();
+    //     console.log('Triggering cadastral data load...');
+    //     loadCadastralData();
+    // };
+    // document.body.appendChild(testButton);
 
     // Initialize map first
     setTimeout(() => {
@@ -1462,4 +3099,338 @@ async function loadSqlJs() {
         };
         document.head.appendChild(script);
     });
+}
+
+// =============================================================================
+// UNIFIED AUTO-ZOOM FUNCTIONALITY
+// Works with both regular Leaflet maps (map.html) and Folium maps (index.html)
+// =============================================================================
+
+/**
+ * Unified function to auto-zoom to all polygons on any map type
+ * Supports both regular Leaflet maps and Folium server-generated maps
+ */
+function autoZoomToAllPolygons() {
+    console.log('🔍 autoZoomToAllPolygons called from map.js (unified implementation)');
+
+    try {
+        // First try: Regular Leaflet map (map.html)
+        if (typeof map !== 'undefined' && map && map.getBounds) {
+            console.log('📍 Found regular Leaflet map, attempting auto-zoom');
+            return autoZoomLeafletMap();
+        }
+
+        // Second try: Folium map (index.html)
+        const foliumMap = findFoliumMap();
+        if (foliumMap) {
+            console.log('🗺️ Found Folium map, attempting auto-zoom');
+            return autoZoomFoliumMap(foliumMap);
+        }
+
+        // Third try: Wait and retry (for delayed initialization)
+        console.log('⏳ No map found, waiting 500ms and retrying...');
+        setTimeout(() => {
+            const retryFoliumMap = findFoliumMap();
+            if (retryFoliumMap) {
+                console.log('🗺️ Found Folium map on retry');
+                autoZoomFoliumMap(retryFoliumMap);
+            } else if (typeof map !== 'undefined' && map) {
+                console.log('📍 Found Leaflet map on retry');
+                autoZoomLeafletMap();
+            } else {
+                console.warn('❌ No compatible map found after retry');
+            }
+        }, 500);
+
+    } catch (error) {
+        console.error('❌ Error in unified auto-zoom:', error);
+    }
+}
+
+/**
+ * Auto-zoom for regular Leaflet maps (map.html)
+ */
+function autoZoomLeafletMap() {
+    try {
+        if (!map || !map.getBounds) {
+            console.warn('❌ Leaflet map not properly initialized');
+            return false;
+        }
+
+        const bounds = calculateLeafletBounds();
+        if (bounds && bounds.isValid()) {
+            map.fitBounds(bounds, {
+                padding: [20, 20]
+            });
+            console.log('✅ Auto-zoomed Leaflet map to fit all polygons');
+
+            // Update polygon management state if available
+            if (typeof updatePolygonManagementState === 'function') {
+                updatePolygonManagementState();
+            }
+            return true;
+        } else {
+            console.log('❌ No valid bounds found for Leaflet map');
+            return false;
+        }
+    } catch (error) {
+        console.error('❌ Error auto-zooming Leaflet map:', error);
+        return false;
+    }
+}
+
+/**
+ * Auto-zoom for Folium maps (index.html)
+ */
+function autoZoomFoliumMap(foliumMap) {
+    try {
+        if (!foliumMap || !foliumMap.fitBounds) {
+            console.warn('❌ Folium map not properly initialized');
+            return false;
+        }
+
+        const bounds = calculateFoliumBounds(foliumMap);
+        if (bounds) {
+            foliumMap.fitBounds([
+                [bounds.minLat, bounds.minLng],
+                [bounds.maxLat, bounds.maxLng]
+            ], {
+                padding: [20, 20]
+            });
+            console.log('✅ Auto-zoomed Folium map to fit all polygons');
+
+            // Update polygon management state if available
+            if (typeof updatePolygonManagementState === 'function') {
+                updatePolygonManagementState();
+            }
+            return true;
+        } else {
+            console.log('❌ No valid bounds found for Folium map');
+            return false;
+        }
+    } catch (error) {
+        console.error('❌ Error auto-zooming Folium map:', error);
+        return false;
+    }
+}
+
+/**
+ * Find Folium map instance in the DOM
+ */
+function findFoliumMap() {
+    try {
+        const mapElements = document.querySelectorAll('.folium-map');
+        console.log(`Found ${mapElements.length} .folium-map elements`);
+
+        if (mapElements.length > 0) {
+            const mapId = mapElements[0].id;
+            console.log('Map ID found:', mapId);
+
+            if (mapId && window[mapId]) {
+                console.log('Folium map object found in window:', window[mapId]);
+                return window[mapId];
+            } else {
+                console.warn('No map object found in window with ID:', mapId);
+            }
+        } else {
+            console.log('No .folium-map elements found');
+        }
+        return null;
+    } catch (error) {
+        console.error('Error finding Folium map:', error);
+        return null;
+    }
+}
+
+/**
+ * Calculate bounds for regular Leaflet maps
+ */
+function calculateLeafletBounds() {
+    const bounds = L.latLngBounds();
+    let hasFeatures = false;
+
+    try {
+        // Include GeoJSON layer bounds
+        if (currentGeoJsonLayer && currentGeoJsonLayer.getBounds) {
+            const layerBounds = currentGeoJsonLayer.getBounds();
+            if (layerBounds.isValid()) {
+                bounds.extend(layerBounds);
+                hasFeatures = true;
+            }
+        }
+
+        // Include drawn items bounds
+        if (drawnItems && drawnItems.getBounds) {
+            const drawnBounds = drawnItems.getBounds();
+            if (drawnBounds.isValid()) {
+                bounds.extend(drawnBounds);
+                hasFeatures = true;
+            }
+        }
+
+        // Check all layers on the map
+        map.eachLayer(function(layer) {
+            if (layer.getBounds && typeof layer.getBounds === 'function') {
+                try {
+                    const layerBounds = layer.getBounds();
+                    if (layerBounds && layerBounds.isValid && layerBounds.isValid()) {
+                        bounds.extend(layerBounds);
+                        hasFeatures = true;
+                    }
+                } catch (e) {
+                    console.debug('Could not get bounds for layer:', e);
+                }
+            }
+        });
+
+        return hasFeatures && bounds.isValid() ? bounds : null;
+    } catch (error) {
+        console.error('Error calculating Leaflet bounds:', error);
+        return null;
+    }
+}
+
+/**
+ * Calculate bounds for Folium maps
+ */
+function calculateFoliumBounds(foliumMap) {
+    let minLat = Infinity, maxLat = -Infinity;
+    let minLng = Infinity, maxLng = -Infinity;
+    let hasFeatures = false;
+
+    try {
+        // Iterate through all layers on the Folium map
+        foliumMap.eachLayer(function(layer) {
+            // Skip base tile layers
+            if (layer._url && layer._url.includes('tile')) {
+                return;
+            }
+
+            // Check if layer has getBounds method (GeoJSON, Polygon, etc.)
+            if (layer.getBounds && typeof layer.getBounds === 'function') {
+                try {
+                    const layerBounds = layer.getBounds();
+                    if (layerBounds && layerBounds.isValid()) {
+                        const sw = layerBounds.getSouthWest();
+                        const ne = layerBounds.getNorthEast();
+
+                        minLat = Math.min(minLat, sw.lat);
+                        maxLat = Math.max(maxLat, ne.lat);
+                        minLng = Math.min(minLng, sw.lng);
+                        maxLng = Math.max(maxLng, ne.lng);
+                        hasFeatures = true;
+                    }
+                } catch (e) {
+                    console.debug('Could not get bounds for layer:', e);
+                }
+            }
+            // Handle individual markers or points
+            else if (layer.getLatLng && typeof layer.getLatLng === 'function') {
+                try {
+                    const latLng = layer.getLatLng();
+                    if (latLng) {
+                        minLat = Math.min(minLat, latLng.lat);
+                        maxLat = Math.max(maxLat, latLng.lat);
+                        minLng = Math.min(minLng, latLng.lng);
+                        maxLng = Math.max(maxLng, latLng.lng);
+                        hasFeatures = true;
+                    }
+                } catch (e) {
+                    console.debug('Could not get latlng for layer:', e);
+                }
+            }
+        });
+
+        // Fallback to window.geoJsonData if no features found
+        if (!hasFeatures && window.geoJsonData) {
+            return calculateGeoJsonBounds(window.geoJsonData);
+        }
+
+        // Return bounds if valid
+        if (hasFeatures && minLat !== Infinity && maxLat !== -Infinity &&
+            minLng !== Infinity && maxLng !== -Infinity) {
+            return {
+                minLat: minLat,
+                maxLat: maxLat,
+                minLng: minLng,
+                maxLng: maxLng
+            };
+        }
+
+        return null;
+    } catch (error) {
+        console.error('Error calculating Folium bounds:', error);
+        return null;
+    }
+}
+
+/**
+ * Calculate bounds from GeoJSON data (fallback method)
+ */
+function calculateGeoJsonBounds(geoJsonData) {
+    if (!geoJsonData || !geoJsonData.features || geoJsonData.features.length === 0) {
+        return null;
+    }
+
+    let minLat = Infinity, maxLat = -Infinity;
+    let minLng = Infinity, maxLng = -Infinity;
+
+    try {
+        geoJsonData.features.forEach(feature => {
+            if (feature.geometry && feature.geometry.coordinates) {
+                const coords = feature.geometry.coordinates;
+
+                // Handle different geometry types
+                if (feature.geometry.type === 'Polygon') {
+                    coords[0].forEach(coord => {
+                        const lng = coord[0], lat = coord[1];
+                        minLat = Math.min(minLat, lat);
+                        maxLat = Math.max(maxLat, lat);
+                        minLng = Math.min(minLng, lng);
+                        maxLng = Math.max(maxLng, lng);
+                    });
+                } else if (feature.geometry.type === 'MultiPolygon') {
+                    coords.forEach(polygon => {
+                        polygon[0].forEach(coord => {
+                            const lng = coord[0], lat = coord[1];
+                            minLat = Math.min(minLat, lat);
+                            maxLat = Math.max(maxLat, lat);
+                            minLng = Math.min(minLng, lng);
+                            maxLng = Math.max(maxLng, lng);
+                        });
+                    });
+                } else if (feature.geometry.type === 'Point') {
+                    const lng = coords[0], lat = coords[1];
+                    minLat = Math.min(minLat, lat);
+                    maxLat = Math.max(maxLat, lat);
+                    minLng = Math.min(minLng, lng);
+                    maxLng = Math.max(maxLng, lng);
+                } else if (feature.geometry.type === 'LineString') {
+                    coords.forEach(coord => {
+                        const lng = coord[0], lat = coord[1];
+                        minLat = Math.min(minLat, lat);
+                        maxLat = Math.max(maxLat, lat);
+                        minLng = Math.min(minLng, lng);
+                        maxLng = Math.max(maxLng, lng);
+                    });
+                }
+            }
+        });
+
+        // Return valid bounds
+        if (minLat !== Infinity && maxLat !== -Infinity &&
+            minLng !== Infinity && maxLng !== -Infinity) {
+            return {
+                minLat: minLat,
+                maxLat: maxLat,
+                minLng: minLng,
+                maxLng: maxLng
+            };
+        }
+
+        return null;
+    } catch (error) {
+        console.error('Error calculating GeoJSON bounds:', error);
+        return null;
+    }
 }
