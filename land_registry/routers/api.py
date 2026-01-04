@@ -6,7 +6,7 @@ Centralizes all API endpoints for better organization and maintainability
 import boto3
 from botocore import UNSIGNED
 from botocore.config import Config
-from fastapi import APIRouter, UploadFile, File, HTTPException, Request, Depends, Header
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Header
 from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPBearer
 import geopandas as gpd
@@ -24,20 +24,26 @@ import hashlib
 
 from land_registry.dashboard import STATE
 from land_registry.map import (
-    ControlButton, ControlSelect,
     extract_qpkg_data, find_adjacent_polygons,
     get_current_gdf, set_current_gdf, set_current_layers, get_current_layers
 )
 from land_registry.s3_storage import get_s3_storage, S3Settings, configure_s3_storage
 from land_registry.file_availability_db import file_availability_db
-from land_registry.map import get_auction_properties_geojson, create_auction_properties_layer
-from land_registry.settings import (
-    app_settings, s3_settings, db_settings, cadastral_settings,
-    get_cadastral_structure_path
+from land_registry.config import (
+    s3_settings, get_cadastral_structure_path, cadastral_settings, get_cadastral_data_root
 )
+from land_registry.spatialite import load_layer as load_spatialite_layer
 from land_registry.models import (
-    TableDataResponse, CadastralCacheInfoResponse,
-    ServiceUnavailableResponse
+    CadastralCacheInfoResponse
+)
+from land_registry.cadastral_db import CadastralDatabase, CadastralFilter
+# Import proper JWT verification from aecs4u-auth
+from land_registry.routers.auth import (
+    get_current_user,
+    get_current_user_optional,
+    get_current_superuser,
+    require_role,
+    ClerkUser,
 )
 
 # Configure logger
@@ -48,42 +54,196 @@ logger = logging.getLogger(__name__)
 # Pydantic Models
 # ============================================================================
 
+from pydantic import Field, field_validator
+import re
+
+
 class PolygonSelection(BaseModel):
-    feature_id: int
-    geometry: Dict[str, Any]
-    touch_method: str = "touches"
+    feature_id: int = Field(..., ge=0, description="Feature ID must be non-negative")
+    geometry: Dict[str, Any] = Field(..., description="GeoJSON geometry object")
+    touch_method: str = Field(default="touches", pattern="^(touches|intersects|overlaps)$")
+
+    @field_validator('geometry')
+    @classmethod
+    def validate_geometry(cls, v):
+        if 'type' not in v:
+            raise ValueError('GeoJSON geometry must have a "type" field')
+        if v.get('type') not in ['Point', 'LineString', 'Polygon', 'MultiPoint', 'MultiLineString', 'MultiPolygon']:
+            raise ValueError(f'Invalid GeoJSON geometry type: {v.get("type")}')
+        return v
 
 
 class CadastralFileRequest(BaseModel):
-    files: List[str]  # List of file paths to load from S3
+    files: List[str] = Field(..., min_length=1, max_length=500, description="List of file paths to load")
+    clear_existing: bool = Field(default=True, description="Clear existing layers before loading")
+
+    @field_validator('files')
+    @classmethod
+    def validate_files(cls, v):
+        # Validate file paths don't contain path traversal attempts
+        for path in v:
+            if '..' in path or path.startswith('/'):
+                raise ValueError(f'Invalid file path: {path}')
+            # Validate extension
+            if not any(path.lower().endswith(ext) for ext in ['.gpkg', '.geojson', '.shp', '.kml', '.qpkg']):
+                raise ValueError(f'Unsupported file format: {path}')
+        return v
 
 
 class S3ConfigRequest(BaseModel):
-    bucket_name: str = "catasto-2025"
-    region: str = "eu-central-1"
+    bucket_name: str = Field(default="catasto-2025", min_length=3, max_length=63)
+    region: str = Field(default="eu-central-1", pattern="^[a-z]{2}-[a-z]+-[0-9]+$")
     endpoint_url: Optional[str] = None
-    access_key_id: Optional[str] = None
-    secret_access_key: Optional[str] = None
+    access_key_id: Optional[str] = Field(default=None, min_length=16, max_length=128)
+    secret_access_key: Optional[str] = Field(default=None, min_length=16, max_length=128)
 
 
 class DrawnPolygonsRequest(BaseModel):
-    geojson: Dict[str, Any]  # GeoJSON data for drawn polygons
-    filename: str = "drawn_polygons.json"  # Optional filename
+    geojson: Dict[str, Any] = Field(..., description="GeoJSON FeatureCollection")
+    filename: str = Field(default="drawn_polygons.json", max_length=255)
+
+    @field_validator('filename')
+    @classmethod
+    def validate_filename(cls, v):
+        # Prevent path traversal and ensure valid filename
+        if '..' in v or '/' in v or '\\' in v:
+            raise ValueError('Filename cannot contain path separators')
+        if not v.endswith('.json') and not v.endswith('.geojson'):
+            raise ValueError('Filename must end with .json or .geojson')
+        # Validate filename characters
+        if not re.match(r'^[\w\-. ]+$', v):
+            raise ValueError('Filename contains invalid characters')
+        return v
+
+    @field_validator('geojson')
+    @classmethod
+    def validate_geojson(cls, v):
+        if v.get('type') != 'FeatureCollection':
+            raise ValueError('GeoJSON must be a FeatureCollection')
+        if 'features' not in v:
+            raise ValueError('GeoJSON FeatureCollection must have "features" array')
+        return v
 
 
 class PublicGeoDataRequest(BaseModel):
-    s3_key: str  # S3 key path like "ITALIA/ABRUZZO/AQ/A018_ACCIANO/A018_ACCIANO_map.gpkg"
-    layer: int = 0  # Layer index for GPKG files
+    s3_key: str = Field(..., min_length=1, max_length=1024, description="S3 key path")
+    layer: int = Field(default=0, ge=0, le=100, description="Layer index for GPKG files")
+
+    @field_validator('s3_key')
+    @classmethod
+    def validate_s3_key(cls, v):
+        # Prevent path traversal
+        if '..' in v:
+            raise ValueError('S3 key cannot contain path traversal')
+        # Validate extension
+        if not any(v.lower().endswith(ext) for ext in ['.gpkg', '.geojson', '.shp', '.kml']):
+            raise ValueError(f'Unsupported file format in S3 key: {v}')
+        return v
 
 
 class ControlStateUpdate(BaseModel):
-    control_id: str
+    control_id: str = Field(..., min_length=1, max_length=50, pattern="^[a-zA-Z0-9_-]+$")
     enabled: bool
 
 
 class FilterBody(BaseModel):
-    region: Optional[str] = None
-    province: Optional[str] = None
+    region: Optional[str] = Field(default=None, max_length=100)
+    province: Optional[str] = Field(default=None, max_length=10)
+
+
+class SpatialiteQueryRequest(BaseModel):
+    """Request model for loading SpatiaLite data."""
+
+    table: Optional[str] = Field(default=None, max_length=128)
+    where: Optional[str] = Field(
+        default=None,
+        description="SQL WHERE clause without the 'WHERE' keyword (e.g., region = 'ABRUZZO')",
+        max_length=500,
+    )
+    limit: Optional[int] = Field(default=None, ge=1, le=10000)
+
+
+class CadastralQueryRequest(BaseModel):
+    """Exhaustive filter for cadastral polygon queries."""
+
+    # Geographic hierarchy
+    regione: Optional[str] = Field(default=None, max_length=50, description="Region name (e.g., LOMBARDIA)")
+    provincia: Optional[str] = Field(default=None, max_length=10, description="Province code (e.g., MI)")
+    comune: Optional[str] = Field(default=None, max_length=10, description="Municipality code (e.g., I056)")
+    comune_name: Optional[str] = Field(default=None, max_length=100, description="Municipality name search")
+
+    # Cadastral hierarchy
+    foglio: Optional[int] = Field(default=None, ge=1, description="Single foglio number")
+    foglio_list: Optional[List[int]] = Field(default=None, max_length=100, description="List of fogli")
+    particella: Optional[int] = Field(default=None, ge=1, description="Single particella number")
+    particella_list: Optional[List[int]] = Field(default=None, max_length=1000, description="List of particelle")
+    particella_min: Optional[int] = Field(default=None, ge=1, description="Particella range minimum")
+    particella_max: Optional[int] = Field(default=None, ge=1, description="Particella range maximum")
+
+    # Spatial filters
+    bbox_min_lon: Optional[float] = Field(default=None, ge=-180, le=180)
+    bbox_min_lat: Optional[float] = Field(default=None, ge=-90, le=90)
+    bbox_max_lon: Optional[float] = Field(default=None, ge=-180, le=180)
+    bbox_max_lat: Optional[float] = Field(default=None, ge=-90, le=90)
+    point_lon: Optional[float] = Field(default=None, ge=-180, le=180, description="Find parcels at point")
+    point_lat: Optional[float] = Field(default=None, ge=-90, le=90)
+
+    # Temporal filters
+    date_from: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$", description="YYYY-MM-DD")
+    date_to: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$", description="YYYY-MM-DD")
+
+    # Data type
+    layer_type: Optional[str] = Field(default=None, pattern="^(map|ple)$", description="map=fogli, ple=particelle")
+
+    # Pagination
+    limit: Optional[int] = Field(default=1000, ge=1, le=10000)
+    offset: int = Field(default=0, ge=0)
+
+    def to_cadastral_filter(self) -> CadastralFilter:
+        """Convert to CadastralFilter object."""
+        from datetime import datetime
+
+        # Build bbox tuple if all coordinates provided
+        bbox = None
+        if all(v is not None for v in [self.bbox_min_lon, self.bbox_min_lat, self.bbox_max_lon, self.bbox_max_lat]):
+            bbox = (self.bbox_min_lon, self.bbox_min_lat, self.bbox_max_lon, self.bbox_max_lat)
+
+        # Build point tuple if both coordinates provided
+        point = None
+        if self.point_lon is not None and self.point_lat is not None:
+            point = (self.point_lon, self.point_lat)
+
+        # Build particella range if both provided
+        particella_range = None
+        if self.particella_min is not None and self.particella_max is not None:
+            particella_range = (self.particella_min, self.particella_max)
+
+        # Parse dates
+        date_from = None
+        date_to = None
+        if self.date_from:
+            date_from = datetime.strptime(self.date_from, "%Y-%m-%d")
+        if self.date_to:
+            date_to = datetime.strptime(self.date_to, "%Y-%m-%d")
+
+        return CadastralFilter(
+            regione=self.regione,
+            provincia=self.provincia,
+            comune=self.comune,
+            comune_name=self.comune_name,
+            foglio=self.foglio,
+            foglio_list=self.foglio_list,
+            particella=self.particella,
+            particella_list=self.particella_list,
+            particella_range=particella_range,
+            bbox=bbox,
+            point=point,
+            date_from=date_from,
+            date_to=date_to,
+            layer_type=self.layer_type,
+            limit=self.limit,
+            offset=self.offset,
+        )
 
 
 # ============================================================================
@@ -95,24 +255,37 @@ api_router = APIRouter()
 # Authentication utilities
 security = HTTPBearer()
 
+# DEPRECATED: Use get_current_user_optional from aecs4u-auth instead
+# This function is kept for backward compatibility but should not be used for new code
 async def get_user_from_token(authorization: str = Header(None)) -> Optional[str]:
-    """Extract user ID from Clerk JWT token"""
+    """
+    DEPRECATED: Extract user ID from Clerk JWT token.
+
+    WARNING: This function does NOT verify JWT signatures.
+    Use get_current_user_optional dependency from aecs4u-auth for secure authentication.
+    """
+    logger.warning("get_user_from_token is deprecated - use get_current_user_optional instead")
     if not authorization or not authorization.startswith("Bearer "):
         return None
 
     try:
         token = authorization.replace("Bearer ", "")
-        # For demo purposes, we'll extract user ID from token payload
-        # In production, you should verify the JWT signature with Clerk's public key
+        # WARNING: This does NOT verify the signature - for backward compat only
         payload_part = token.split('.')[1]
-        # Add padding if needed
         payload_part += '=' * (4 - len(payload_part) % 4)
         payload = base64.b64decode(payload_part)
         user_data = json.loads(payload)
-        return user_data.get('sub')  # 'sub' is the user ID in JWT
+        return user_data.get('sub')
     except Exception as e:
         logger.error(f"Error decoding token: {e}")
         return None
+
+
+def get_user_id_from_clerk_user(user: Optional[ClerkUser]) -> Optional[str]:
+    """Extract user ID from verified ClerkUser object."""
+    if user is None:
+        return None
+    return user.id
 
 def get_user_directory(user_id: str) -> Path:
     """Get user-specific directory for storing drawings"""
@@ -131,8 +304,6 @@ root_folder = os.path.dirname(__file__)
 @api_router.post("/upload-qpkg/")
 async def upload_qpkg(file: UploadFile = File(...)):
     """Upload and process QPKG file"""
-    global current_gdf
-
     if not (file.filename.endswith('.qpkg') or file.filename.endswith('.gpkg')):
         raise HTTPException(status_code=400, detail="File must be a QPKG or GPKG file")
 
@@ -359,7 +530,7 @@ async def get_cadastral_structure(include_metadata: bool = False):
         raise HTTPException(status_code=500, detail=f"Error loading cadastral structure: {str(e)}")
 
 
-@api_router.get("/api/v1/cadastral-cache-info", response_model=CadastralCacheInfoResponse)
+@api_router.get("/cadastral-cache-info", response_model=CadastralCacheInfoResponse)
 async def get_cadastral_cache_info():
     """
     Get information about the cadastral data cache.
@@ -507,8 +678,6 @@ async def get_municipalities(regions: str = None, provinces: str = None):
 @api_router.post("/load-public-geo-data/")
 async def load_public_geo_data(request: PublicGeoDataRequest):
     """Load geo data directly from the public catasto-2025 bucket using unsigned access"""
-    global current_gdf
-
     try:
         # Create unsigned S3 client (no credentials needed for public bucket)
         s3 = boto3.client("s3", config=Config(signature_version=UNSIGNED))
@@ -532,8 +701,8 @@ async def load_public_geo_data(request: PublicGeoDataRequest):
         if 'feature_id' not in gdf.columns:
             gdf['feature_id'] = range(len(gdf))
 
-        # Set as current global data
-        current_gdf = gdf
+        # Set as current global data using proper setter
+        set_current_gdf(gdf)
 
         # Convert to GeoJSON for response
         geojson_data = json.loads(gdf.to_json())
@@ -568,6 +737,47 @@ async def load_example_geo_data():
     return await load_public_geo_data(example_request)
 
 
+@api_router.post("/load-spatialite/")
+async def load_spatialite_data(request: SpatialiteQueryRequest):
+    """
+    Load geo data from the configured SpatiaLite database with optional filters.
+    """
+    try:
+        gdf = load_spatialite_layer(
+            table=request.table,
+            where=request.where,
+            limit=request.limit,
+        )
+
+        if gdf is None or gdf.empty:
+            return {
+                "success": True,
+                "feature_count": 0,
+                "geojson": None,
+                "message": "No features found for the given query.",
+            }
+
+        if 'feature_id' not in gdf.columns:
+            gdf['feature_id'] = range(len(gdf))
+
+        # Persist current dataset for map/table endpoints
+        set_current_gdf(gdf)
+
+        geojson_data = json.loads(gdf.to_json())
+
+        return {
+            "success": True,
+            "feature_count": len(gdf),
+            "columns": list(gdf.columns),
+            "geojson": geojson_data,
+            "crs": str(gdf.crs) if gdf.crs else None,
+            "table": request.table or None,
+        }
+    except Exception as e:
+        logger.error(f"Error loading SpatiaLite data: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error loading SpatiaLite data: {str(e)}")
+
+
 # ============================================================================
 # S3 & File Management Endpoints
 # ============================================================================
@@ -575,8 +785,6 @@ async def load_example_geo_data():
 @api_router.get("/load-cadastral-files/{file_path:path}")
 async def load_cadastral_file(file_path: str):
     """Load a single cadastral file from S3 and return as GeoJSON"""
-    global current_gdf
-
     if not file_path:
         raise HTTPException(status_code=400, detail="No file path specified")
 
@@ -606,7 +814,7 @@ async def load_cadastral_file(file_path: str):
         logger.debug(f"Created BytesIO object, size: {file_like.tell()} bytes")
         file_like.seek(0)  # Reset to beginning
 
-        logger.debug(f"Attempting to read with geopandas...")
+        logger.debug("Attempting to read with geopandas...")
         gdf = gpd.read_file(file_like, layer=0)
         logger.info(f"Successfully read GeoDataFrame with {len(gdf)} features, columns: {list(gdf.columns)}")
 
@@ -616,14 +824,14 @@ async def load_cadastral_file(file_path: str):
 
         # Convert to GeoJSON
         geojson_data = json.loads(gdf.to_json())
-        logger.info(f"Successfully converted to GeoJSON")
+        logger.info("Successfully converted to GeoJSON")
 
-        # Update global current_gdf
-        current_gdf = gdf
+        # Update global current_gdf using proper setter
+        set_current_gdf(gdf)
 
         return {
             "success": True,
-            "message": f"Successfully loaded cadastral file from S3",
+            "message": "Successfully loaded cadastral file from S3",
             "name": os.path.basename(file_path),
             "filename": os.path.basename(file_path),
             "file": s3_key,
@@ -638,10 +846,55 @@ async def load_cadastral_file(file_path: str):
         raise HTTPException(status_code=500, detail=f"Error loading cadastral file: {str(e)}")
 
 
-@api_router.post("/save-drawn-polygons/")
-async def save_drawn_polygons(request: DrawnPolygonsRequest):
-    """Save drawn polygons as JSON file"""
+# Rate limiting for anonymous endpoints (simple in-memory counter)
+_anonymous_save_timestamps: list = []
+ANONYMOUS_RATE_LIMIT = 10  # Max requests per minute
+ANONYMOUS_RATE_WINDOW = 60  # Window in seconds
+MAX_ANONYMOUS_FEATURES = 100  # Max features per save
+MAX_ANONYMOUS_FILE_SIZE = 1024 * 1024  # 1MB max
+
+
+@api_router.post("/save-drawn-polygons-anonymous/")
+async def save_drawn_polygons_anonymous(request: DrawnPolygonsRequest):
+    """
+    Save drawn polygons as JSON file (anonymous, no auth required).
+
+    SECURITY: Rate limited to 10 requests/minute, max 100 features, max 1MB.
+    For larger/frequent saves, use authenticated endpoint.
+    """
+    import time
+
+    # Rate limiting check
+    current_time = time.time()
+    # Clean old timestamps
+    _anonymous_save_timestamps[:] = [t for t in _anonymous_save_timestamps if current_time - t < ANONYMOUS_RATE_WINDOW]
+
+    if len(_anonymous_save_timestamps) >= ANONYMOUS_RATE_LIMIT:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded. Max {ANONYMOUS_RATE_LIMIT} requests per {ANONYMOUS_RATE_WINDOW} seconds."
+        )
+
+    # Check feature count
+    features = request.geojson.get("features", [])
+    if len(features) > MAX_ANONYMOUS_FEATURES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many features ({len(features)}). Max {MAX_ANONYMOUS_FEATURES} for anonymous saves."
+        )
+
+    # Check approximate size
+    geojson_str = json.dumps(request.geojson)
+    if len(geojson_str) > MAX_ANONYMOUS_FILE_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Request too large ({len(geojson_str)} bytes). Max {MAX_ANONYMOUS_FILE_SIZE} bytes."
+        )
+
     try:
+        # Record this request for rate limiting
+        _anonymous_save_timestamps.append(current_time)
+
         # Create a unique filename with timestamp
         timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
         filename = f"drawn_polygons_{timestamp}.json"
@@ -654,92 +907,174 @@ async def save_drawn_polygons(request: DrawnPolygonsRequest):
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(request.geojson, f, indent=2, ensure_ascii=False)
 
+        logger.info(f"Anonymous save: {filename} with {len(features)} features")
+
         return {
             "message": "Polygons saved successfully",
             "filename": filename,
             "filepath": str(filepath),
-            "feature_count": len(request.geojson.get("features", []))
+            "feature_count": len(features)
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error saving drawn polygons: {str(e)}")
 
 
+def _load_single_file(file_path: str, use_local: bool, local_root: str, s3_client, bucket: str) -> dict:
+    """
+    Load a single cadastral file from local filesystem or S3.
+    This function is designed to be run in parallel using ThreadPoolExecutor.
+
+    Returns a dict with either 'gdf' and 'layer_data' on success, or 'error' on failure.
+    """
+    try:
+        if use_local and local_root:
+            # Load from local filesystem
+            local_file_path = os.path.join(local_root, file_path)
+
+            if not os.path.exists(local_file_path):
+                return {"error": f"File not found: {local_file_path}", "file_path": file_path}
+
+            # Read directly from local file
+            gdf = gpd.read_file(local_file_path, layer=0)
+        else:
+            # Load from S3
+            s3_key = file_path if file_path.startswith('ITALIA/') else f"ITALIA/{file_path}"
+
+            # Get the object from S3
+            obj = s3_client.get_object(Bucket=bucket, Key=s3_key)
+            body = obj["Body"]
+
+            # Save to an in-memory file-like object
+            file_like = BytesIO(body.read())
+            file_like.seek(0)
+
+            # Read with geopandas
+            gdf = gpd.read_file(file_like, layer=0)
+
+        # Add layer identifier and feature IDs
+        layer_name = os.path.basename(file_path)
+        gdf['layer_name'] = layer_name
+        gdf['source_file'] = file_path
+
+        if 'feature_id' not in gdf.columns:
+            gdf['feature_id'] = range(len(gdf))
+
+        return {
+            "gdf": gdf,
+            "layer_name": layer_name,
+            "file_path": file_path,
+            "feature_count": len(gdf)
+        }
+
+    except Exception as e:
+        return {"error": str(e), "file_path": file_path}
+
+
 @api_router.post("/load-cadastral-files/")
 async def load_multiple_cadastral_files(request: dict):
-    """Load multiple cadastral files from S3, creating separate layers for each file"""
-    global current_gdf
+    """
+    Load multiple cadastral files from local filesystem (development) or S3 (production).
 
+    Optimized for performance with parallel file loading using ThreadPoolExecutor.
+
+    Request body:
+        file_paths: List of file paths to load
+        file_types: List of file types (optional)
+        clear_existing: If True, clears existing layers before loading new ones (default: True)
+    """
     try:
         file_paths = request.get('file_paths', [])
-        file_types = request.get('file_types', [])
+        request.get('file_types', [])
+        clear_existing = request.get('clear_existing', True)  # Default to clearing existing data
 
         if not file_paths:
             raise HTTPException(status_code=400, detail="No file paths provided")
 
-        logger.info(f"Loading {len(file_paths)} cadastral files as separate layers")
+        # Check if we should use local files (development mode)
+        use_local = cadastral_settings.use_local_files
+        local_root = get_cadastral_data_root()
 
-        # Store individual layers
+        # Clear existing data if requested (default behavior)
+        if clear_existing:
+            from land_registry.map import clear_current_layers
+            clear_current_layers()
+            set_current_gdf(None)
+            logger.info("Cleared existing layers and GeoDataFrame")
+
+        logger.info(f"Loading {len(file_paths)} cadastral files (use_local={use_local}, parallel=True)")
+
+        # Create S3 client only if not using local files
+        s3_client = None
+        bucket = None
+        if not use_local:
+            s3_client = boto3.client("s3", config=Config(signature_version=UNSIGNED))
+            bucket = s3_settings.s3_bucket_name
+
+        # Use ThreadPoolExecutor for parallel file loading
+        # Limit workers to avoid overwhelming I/O (local) or network (S3)
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import time
+
+        start_time = time.time()
+        max_workers = min(8, len(file_paths))  # Cap at 8 parallel workers
+
+        results = []
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all file loading tasks
+            future_to_path = {
+                executor.submit(
+                    _load_single_file,
+                    file_path,
+                    use_local,
+                    local_root,
+                    s3_client,
+                    bucket
+                ): file_path
+                for file_path in file_paths
+            }
+
+            # Collect results as they complete
+            for future in as_completed(future_to_path):
+                result = future.result()
+                results.append(result)
+
+        # Process results
         layers_data = {}
         all_gdfs = []
         total_features = 0
 
-        from io import BytesIO
-        import geopandas as gpd
-
-        # Create unsigned S3 client for public bucket access
-        s3_client = boto3.client("s3", config=Config(signature_version=UNSIGNED))
-        bucket = s3_settings.s3_bucket_name
-
-        for file_path in file_paths:
-            try:
-                # Ensure proper S3 key format
-                s3_key = file_path if file_path.startswith('ITALIA/') else f"ITALIA/{file_path}"
-
-                logger.info(f"Loading layer from S3: {bucket}/{s3_key}")
-
-                # Get the object from S3
-                obj = s3_client.get_object(Bucket=bucket, Key=s3_key)
-                body = obj["Body"]
-
-                # Save to an in-memory file-like object
-                file_like = BytesIO(body.read())
-                file_like.seek(0)
-
-                # Read with geopandas
-                gdf = gpd.read_file(file_like, layer=0)
-
-                # Add layer identifier and feature IDs
-                layer_name = os.path.basename(file_path)
-                gdf['layer_name'] = layer_name
-                gdf['source_file'] = file_path
-
-                if 'feature_id' not in gdf.columns:
-                    gdf['feature_id'] = range(len(gdf))
+        for result in results:
+            if "error" in result:
+                # File loading failed
+                layer_name = os.path.basename(result["file_path"])
+                layers_data[layer_name] = {
+                    "error": result["error"],
+                    "source_file": result["file_path"]
+                }
+                logger.debug(f"Failed to load {result['file_path']}: {result['error']}")
+            else:
+                # File loaded successfully
+                gdf = result["gdf"]
+                layer_name = result["layer_name"]
 
                 # Convert to GeoJSON for this layer
                 layer_geojson = json.loads(gdf.to_json())
 
-                # Store layer data
                 layers_data[layer_name] = {
                     "geojson": layer_geojson,
-                    "feature_count": len(gdf),
-                    "source_file": file_path,
+                    "feature_count": result["feature_count"],
+                    "source_file": result["file_path"],
                     "layer_name": layer_name
                 }
 
                 all_gdfs.append(gdf)
-                total_features += len(gdf)
+                total_features += result["feature_count"]
 
-                logger.info(f"Successfully loaded layer '{layer_name}' with {len(gdf)} features")
-
-            except Exception as e:
-                logger.error(f"Error loading file {file_path}: {e}")
-                # Continue with other files instead of failing completely
-                layers_data[os.path.basename(file_path)] = {
-                    "error": str(e),
-                    "source_file": file_path
-                }
+        load_time = time.time() - start_time
+        logger.info(f"Parallel loading completed: {len(all_gdfs)} files, {total_features} features in {load_time:.2f}s")
 
         # Append new layers to existing layers data (for efficiency)
         existing_layers = get_current_layers() or {}
@@ -749,42 +1084,60 @@ async def load_multiple_cadastral_files(request: dict):
         combined_layers.update(layers_data)
 
         set_current_layers(combined_layers)
-        logger.info(f"Added {len(layers_data)} new layers to existing {len(existing_layers)} layers")
 
         # Combine all GeoDataFrames and append to existing current_gdf (additive loading)
+        new_bounds = None
         if all_gdfs:
             new_combined_gdf = gpd.pd.concat(all_gdfs, ignore_index=True)
             existing_gdf = get_current_gdf()
+
+            # Calculate bounds of newly loaded data for zoom-to-new-layers feature
+            try:
+                bounds = new_combined_gdf.total_bounds  # [minx, miny, maxx, maxy]
+                if bounds is not None and len(bounds) == 4:
+                    new_bounds = {
+                        "south": float(bounds[1]),  # miny = south
+                        "west": float(bounds[0]),   # minx = west
+                        "north": float(bounds[3]),  # maxy = north
+                        "east": float(bounds[2])    # maxx = east
+                    }
+                    logger.debug(f"Calculated bounds for new layers: {new_bounds}")
+            except Exception as e:
+                logger.warning(f"Could not calculate bounds for new layers: {e}")
 
             if existing_gdf is not None and not existing_gdf.empty:
                 # Append to existing data
                 combined_gdf = gpd.pd.concat([existing_gdf, new_combined_gdf], ignore_index=True)
                 set_current_gdf(combined_gdf)
-                logger.info(f"Appended {len(new_combined_gdf)} new features to existing {len(existing_gdf)} features. Total: {len(combined_gdf)}")
             else:
                 # No existing data, use new data
                 set_current_gdf(new_combined_gdf)
-                logger.debug(f"Created new current_gdf with {len(new_combined_gdf)} features")
-        else:
-            logger.info("No new data loaded, keeping existing current_gdf")
 
         # Calculate totals for response
         final_gdf = get_current_gdf()
         total_existing_features = len(final_gdf) if final_gdf is not None else 0
         final_layers = get_current_layers() or {}
 
+        successful_count = len([layer for layer in layers_data.values() if 'error' not in layer])
+        failed_count = len([layer for layer in layers_data.values() if 'error' in layer])
+
         return {
             "success": True,
-            "message": f"Successfully added {len([l for l in layers_data.values() if 'error' not in l])} new layers. Total layers: {len(final_layers)}",
+            "message": f"Loaded {successful_count} files ({total_features} features) in {load_time:.2f}s",
             "layers": layers_data,  # Only new layers for display
+            "new_bounds": new_bounds,  # Bounds of newly loaded layers for zoom
             "total_layers": len(final_layers),  # Total including existing
             "new_layers": len(file_paths),
-            "successful_layers": len([l for l in layers_data.values() if 'error' not in l]),
-            "failed_layers": len([l for l in layers_data.values() if 'error' in l]),
+            "successful_layers": successful_count,
+            "failed_layers": failed_count,
             "features_count": total_features,  # New features added
-            "total_features_count": total_existing_features  # Total features including existing
+            "total_features_count": total_existing_features,  # Total features including existing
+            "load_time_seconds": round(load_time, 2)
         }
 
+    except HTTPException:
+        # Re-raise HTTPExceptions directly (e.g., 400 errors for validation)
+        raise
     except Exception as e:
         logger.error(f"Error loading multiple cadastral files: {e}")
         import traceback
@@ -970,10 +1323,19 @@ async def populate_auction_data():
 
 
 @api_router.post("/configure-s3/")
-async def configure_s3(config: S3ConfigRequest):
-    """Configure S3 storage settings"""
+async def configure_s3(
+    config: S3ConfigRequest,
+    current_user: ClerkUser = Depends(get_current_superuser)
+):
+    """
+    Configure S3 storage settings.
+
+    SECURITY: Requires superuser/admin authentication.
+    This endpoint modifies global storage configuration and should only be
+    accessible to administrators.
+    """
     try:
-        # Create S3 settings from request
+        # Create S3 settings from request (do NOT log secrets)
         s3_settings = S3Settings(
             s3_bucket_name=config.bucket_name,
             s3_region=config.region,
@@ -981,6 +1343,8 @@ async def configure_s3(config: S3ConfigRequest):
             aws_access_key_id=config.access_key_id,
             aws_secret_access_key=config.secret_access_key
         )
+
+        logger.info(f"Admin {current_user.id} configuring S3 bucket: {config.bucket_name}")
 
         # Configure the global S3 storage
         s3_storage = configure_s3_storage(s3_settings)
@@ -993,8 +1357,8 @@ async def configure_s3(config: S3ConfigRequest):
                 "message": "S3 configured successfully",
                 "bucket_name": config.bucket_name,
                 "region": config.region,
-                "test_files_found": len(files[:5]),  # Show first 5 files as test
-                "sample_files": files[:5]
+                "test_files_found": len(files[:5]),
+                # Don't expose sample file names in response for security
             }
         except Exception as test_error:
             return {
@@ -1021,7 +1385,7 @@ async def get_s3_status():
             files = s3_storage.list_files(prefix="ITALIA/", suffix=".shp")
             connection_status = "connected"
             file_count = len(files)
-        except Exception as e:
+        except Exception:
             connection_status = "error"
             file_count = 0
 
@@ -1281,11 +1645,25 @@ async def check_file_availability(force_refresh: bool = False):
         force_refresh: If True, bypass cache and check all files fresh
     """
     try:
-        # Load cadastral structure
-        data_dir = os.path.join(os.path.dirname(__file__), "..", "data")
-        cadastral_file = os.path.join(data_dir, "cadastral_structure.json")
-
-        if not os.path.exists(cadastral_file):
+        # Load cadastral structure - check multiple possible locations
+        possible_paths = [
+            # Project root data directory (most common)
+            os.path.join(os.path.dirname(__file__), "..", "..", "data", "cadastral_structure.json"),
+            # Inside land_registry package
+            os.path.join(os.path.dirname(__file__), "..", "data", "cadastral_structure.json"),
+            # Current working directory
+            os.path.join(os.getcwd(), "data", "cadastral_structure.json"),
+        ]
+        
+        cadastral_file = None
+        for path in possible_paths:
+            normalized_path = os.path.normpath(path)
+            if os.path.exists(normalized_path):
+                cadastral_file = normalized_path
+                break
+        
+        if cadastral_file is None:
+            logger.error(f"Cadastral structure file not found in paths: {possible_paths}")
             raise HTTPException(status_code=404, detail="Cadastral structure file not found")
 
         with open(cadastral_file, 'r', encoding='utf-8') as f:
@@ -1318,18 +1696,18 @@ async def check_file_availability(force_refresh: bool = False):
             cached_statuses = file_availability_db.get_file_status_batch(all_file_paths, max_age_hours=24)
             files_to_check = [path for path in all_file_paths if path not in cached_statuses]
 
-        # Check remaining files via HTTP HEAD requests
+        # Check remaining files via HTTP HEAD requests using httpx (already in dependencies)
         new_statuses = {}
         if files_to_check:
             import asyncio
-            import aiohttp
+            import httpx
 
-            async def check_file_exists(session, s3_key):
+            async def check_file_exists(client: httpx.AsyncClient, s3_key: str):
                 """Check if file exists via HTTP HEAD request"""
                 url = f"https://catasto-2025.s3.amazonaws.com/{s3_key}"
                 try:
-                    async with session.head(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
-                        return s3_key, response.status
+                    response = await client.head(url, timeout=10.0)
+                    return s3_key, response.status_code
                 except Exception:
                     return s3_key, 500  # Mark as error if request fails
 
@@ -1338,8 +1716,8 @@ async def check_file_availability(force_refresh: bool = False):
             batches = [files_to_check[i:i + batch_size] for i in range(0, len(files_to_check), batch_size)]
 
             for batch in batches:
-                async with aiohttp.ClientSession() as session:
-                    tasks = [check_file_exists(session, s3_key) for s3_key in batch]
+                async with httpx.AsyncClient() as client:
+                    tasks = [check_file_exists(client, s3_key) for s3_key in batch]
                     batch_results = await asyncio.gather(*tasks)
 
                     for s3_key, status_code in batch_results:
@@ -1633,3 +2011,603 @@ async def list_user_drawings(user_id: str = Depends(get_user_from_token)):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to list user drawings: {str(e)}")
+
+
+# ============================================================================
+# Cadastral Database Query Endpoints
+# ============================================================================
+
+# Initialize cadastral databases (lazy loading) - separate for MAP and per-region PLE
+_cadastral_db_map: Optional[CadastralDatabase] = None
+_cadastral_db_ple_by_region: dict[str, CadastralDatabase] = {}
+
+
+def get_cadastral_db_map() -> CadastralDatabase:
+    """Get or create the MAP database instance (fogli)."""
+    global _cadastral_db_map
+    if _cadastral_db_map is None:
+        db_path = Path("data/cadastral_map.sqlite")
+        if db_path.exists():
+            _cadastral_db_map = CadastralDatabase(db_path)
+        else:
+            logger.warning(f"MAP database not found: {db_path}")
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            _cadastral_db_map = CadastralDatabase(db_path)
+    return _cadastral_db_map
+
+
+def _discover_ple_databases() -> dict[str, Path]:
+    """
+    Discover all per-region PLE databases in the data directory.
+
+    Looks for files matching pattern: cadastral_ple.<region>.sqlite
+
+    Returns:
+        Dict mapping region name to database path
+    """
+    data_dir = Path("data")
+    if not data_dir.exists():
+        return {}
+
+    ple_dbs = {}
+    # Pattern: cadastral_ple.<region>.sqlite
+    for db_file in data_dir.glob("cadastral_ple.*.sqlite"):
+        # Extract region from filename: cadastral_ple.lombardia.sqlite -> lombardia
+        parts = db_file.stem.split(".")
+        if len(parts) >= 2:
+            region_slug = parts[1]  # e.g., "lombardia", "emilia_romagna"
+            ple_dbs[region_slug] = db_file
+
+    return ple_dbs
+
+
+def get_cadastral_db_ple(region: Optional[str] = None) -> Optional[CadastralDatabase]:
+    """
+    Get or create a PLE database instance for a specific region.
+
+    Args:
+        region: Region name (e.g., 'LOMBARDIA', 'lombardia').
+                If None, returns the first available PLE database.
+
+    Returns:
+        CadastralDatabase instance or None if no PLE databases exist
+    """
+    global _cadastral_db_ple_by_region
+
+    # Discover available PLE databases
+    available_dbs = _discover_ple_databases()
+
+    if not available_dbs:
+        logger.warning("No PLE databases found in data directory")
+        return None
+
+    if region:
+        # Normalize region name to match file naming convention
+        region_slug = region.lower().replace(' ', '_').replace('-', '_')
+
+        if region_slug in _cadastral_db_ple_by_region:
+            return _cadastral_db_ple_by_region[region_slug]
+
+        if region_slug in available_dbs:
+            db_path = available_dbs[region_slug]
+            _cadastral_db_ple_by_region[region_slug] = CadastralDatabase(db_path)
+            return _cadastral_db_ple_by_region[region_slug]
+
+        logger.warning(f"PLE database for region '{region}' not found. Available: {list(available_dbs.keys())}")
+        return None
+    else:
+        # Return the first available database (for backward compatibility)
+        first_region = sorted(available_dbs.keys())[0]
+        if first_region not in _cadastral_db_ple_by_region:
+            _cadastral_db_ple_by_region[first_region] = CadastralDatabase(available_dbs[first_region])
+        return _cadastral_db_ple_by_region[first_region]
+
+
+def get_all_ple_databases() -> dict[str, CadastralDatabase]:
+    """
+    Get all available PLE databases, loading them if needed.
+
+    Returns:
+        Dict mapping region slug to CadastralDatabase instance
+    """
+    global _cadastral_db_ple_by_region
+
+    available_dbs = _discover_ple_databases()
+
+    for region_slug, db_path in available_dbs.items():
+        if region_slug not in _cadastral_db_ple_by_region:
+            _cadastral_db_ple_by_region[region_slug] = CadastralDatabase(db_path)
+
+    return _cadastral_db_ple_by_region
+
+
+def get_cadastral_db(layer_type: Optional[str] = None, region: Optional[str] = None) -> Optional[CadastralDatabase]:
+    """
+    Get the appropriate database based on layer type and region.
+
+    Args:
+        layer_type: 'map' for fogli, 'ple' for particelle, None for PLE (default)
+        region: Region name for PLE queries (e.g., 'LOMBARDIA')
+
+    Returns:
+        The appropriate CadastralDatabase instance, or None if not found
+    """
+    if layer_type == 'map':
+        return get_cadastral_db_map()
+    return get_cadastral_db_ple(region)
+
+
+@api_router.post("/cadastral/query")
+async def query_cadastral_parcels(request: CadastralQueryRequest):
+    """
+    Query cadastral parcels with exhaustive filtering.
+
+    Returns GeoJSON FeatureCollection with matching parcels.
+
+    Filter options:
+    - Geographic: regione, provincia, comune, comune_name
+    - Cadastral: foglio, particella (single, list, or range)
+    - Spatial: bounding box, point-in-polygon
+    - Temporal: date range
+    - Layer type: map (fogli) or ple (particelle)
+
+    Example requests:
+    - Get all particelle in a comune: {"regione": "LOMBARDIA", "comune": "I056", "layer_type": "ple"}
+    - Get specific foglio: {"comune": "I056", "foglio": 1, "layer_type": "map"}
+    - Get particelle range: {"regione": "LOMBARDIA", "comune": "I056", "foglio": 1, "particella_min": 1, "particella_max": 100}
+    - Get parcels in bounding box: {"bbox_min_lon": 14.3, "bbox_min_lat": 41.0, "bbox_max_lon": 14.4, "bbox_max_lat": 41.1}
+
+    Note: For PLE queries, the 'regione' parameter is required to select the correct per-region database.
+    """
+    try:
+        # Select database based on layer_type and region
+        db = get_cadastral_db(request.layer_type, request.regione)
+
+        if db is None:
+            if request.layer_type == 'ple' and not request.regione:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Region (regione) is required for PLE queries. Available regions can be found via /cadastral/databases endpoint."
+                )
+            raise HTTPException(
+                status_code=404,
+                detail=f"Database not found for layer_type='{request.layer_type}', region='{request.regione}'"
+            )
+
+        cadastral_filter = request.to_cadastral_filter()
+        result = db.query(cadastral_filter, as_geojson=True)
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Cadastral query error: {e}")
+        raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
+
+
+@api_router.get("/cadastral/hierarchy")
+async def get_cadastral_hierarchy(
+    regione: Optional[str] = None,
+    provincia: Optional[str] = None,
+    comune: Optional[str] = None,
+    layer_type: Optional[str] = None
+):
+    """
+    Get available values at each hierarchy level for cascading dropdowns.
+
+    Call without parameters to get regions.
+    Call with regione to get provinces.
+    Call with regione + provincia to get comuni.
+    Call with comune to get fogli.
+
+    If layer_type is not specified, returns combined results from both databases.
+    For PLE queries with a specific region, uses the per-region PLE database.
+    """
+    try:
+        if layer_type:
+            # Use specific database
+            db = get_cadastral_db(layer_type, regione)
+            if db is None:
+                return {}
+            return db.get_hierarchy(regione, provincia, comune)
+        else:
+            # Combine results from MAP database and all PLE databases
+            combined = {}
+
+            # Get MAP hierarchy
+            try:
+                db_map = get_cadastral_db_map()
+                map_hierarchy = db_map.get_hierarchy(regione, provincia, comune)
+                for key, values in map_hierarchy.items():
+                    if key not in combined:
+                        combined[key] = set()
+                    combined[key].update(values)
+            except Exception as e:
+                logger.debug(f"Could not get MAP hierarchy: {e}")
+
+            # Get PLE hierarchy from all per-region databases
+            ple_dbs = get_all_ple_databases()
+            for region_slug, db_ple in ple_dbs.items():
+                try:
+                    # If regione is specified, only query the matching database
+                    if regione:
+                        region_slug_normalized = regione.lower().replace(' ', '_').replace('-', '_')
+                        if region_slug != region_slug_normalized:
+                            continue
+
+                    ple_hierarchy = db_ple.get_hierarchy(regione, provincia, comune)
+                    for key, values in ple_hierarchy.items():
+                        if key not in combined:
+                            combined[key] = set()
+                        combined[key].update(values)
+                except Exception as e:
+                    logger.debug(f"Could not get PLE hierarchy for {region_slug}: {e}")
+
+            # Convert sets to sorted lists
+            return {key: sorted(list(values)) for key, values in combined.items()}
+
+    except Exception as e:
+        logger.error(f"Hierarchy query error: {e}")
+        raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
+
+
+@api_router.get("/cadastral/statistics")
+async def get_cadastral_statistics():
+    """
+    Get database statistics: total parcels, counts by region, layer type.
+
+    Returns combined statistics from MAP and all per-region PLE databases.
+    """
+    try:
+        map_stats = {"total_parcels": 0, "by_region": {}, "spatialite_available": False}
+
+        # Get MAP database stats
+        try:
+            db_map = get_cadastral_db_map()
+            map_stats = db_map.get_statistics()
+        except Exception as e:
+            logger.warning(f"Could not get MAP database stats: {e}")
+
+        # Get stats from all PLE databases (per-region)
+        ple_total = 0
+        ple_by_region = {}
+        ple_databases_info = {}
+        spatialite_available = map_stats.get("spatialite_available", False)
+
+        ple_dbs = get_all_ple_databases()
+        for region_slug, db_ple in ple_dbs.items():
+            try:
+                stats = db_ple.get_statistics()
+                region_total = stats.get("total_parcels", 0)
+                ple_total += region_total
+                spatialite_available = spatialite_available or stats.get("spatialite_available", False)
+
+                # Store per-region stats
+                for region, count in stats.get("by_region", {}).items():
+                    ple_by_region[region] = ple_by_region.get(region, 0) + count
+
+                ple_databases_info[region_slug] = {
+                    "total_parcels": region_total,
+                    "by_region": stats.get("by_region", {}),
+                }
+            except Exception as e:
+                logger.warning(f"Could not get PLE stats for {region_slug}: {e}")
+                ple_databases_info[region_slug] = {"error": str(e)}
+
+        # Combine statistics
+        combined_by_region = {}
+        for region, count in map_stats.get("by_region", {}).items():
+            combined_by_region[region] = combined_by_region.get(region, 0) + count
+        for region, count in ple_by_region.items():
+            combined_by_region[region] = combined_by_region.get(region, 0) + count
+
+        return {
+            "total_parcels": map_stats.get("total_parcels", 0) + ple_total,
+            "map_parcels": map_stats.get("total_parcels", 0),
+            "ple_parcels": ple_total,
+            "by_region": combined_by_region,
+            "by_layer_type": {
+                "map": map_stats.get("total_parcels", 0),
+                "ple": ple_total,
+            },
+            "spatialite_available": spatialite_available,
+            "databases": {
+                "map": {
+                    "total_parcels": map_stats.get("total_parcels", 0),
+                    "by_region": map_stats.get("by_region", {}),
+                },
+                "ple": ple_databases_info,
+            },
+            "ple_databases_count": len(ple_dbs),
+        }
+
+    except Exception as e:
+        logger.error(f"Statistics query error: {e}")
+        raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
+
+
+@api_router.get("/cadastral/databases")
+async def list_cadastral_databases():
+    """
+    List all available cadastral databases.
+
+    Returns information about the MAP database and all per-region PLE databases.
+    Useful for frontend to know which regions have PLE data available.
+    """
+    try:
+        databases = {
+            "map": None,
+            "ple": {},
+            "ple_regions": []
+        }
+
+        # Check MAP database
+        map_path = Path("data/cadastral_map.sqlite")
+        if map_path.exists():
+            databases["map"] = {
+                "path": str(map_path),
+                "size_mb": round(map_path.stat().st_size / (1024 * 1024), 2),
+                "exists": True
+            }
+        else:
+            databases["map"] = {"exists": False}
+
+        # Discover PLE databases
+        ple_dbs = _discover_ple_databases()
+        for region_slug, db_path in sorted(ple_dbs.items()):
+            databases["ple"][region_slug] = {
+                "path": str(db_path),
+                "size_mb": round(db_path.stat().st_size / (1024 * 1024), 2),
+                "exists": True,
+                "region_slug": region_slug,
+                # Convert slug back to display name (e.g., emilia_romagna -> EMILIA ROMAGNA)
+                "region_display": region_slug.upper().replace('_', ' ')
+            }
+            databases["ple_regions"].append(region_slug)
+
+        return databases
+
+    except Exception as e:
+        logger.error(f"Database listing error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to list databases: {str(e)}")
+
+
+@api_router.get("/cadastral/search/{reference}")
+async def search_by_reference(reference: str, regione: Optional[str] = None):
+    """
+    Search for a parcel by its national cadastral reference.
+
+    Examples:
+    - Foglio: I056_000100
+    - Particella: I056_000100.42
+
+    For particella references, you can optionally specify the region to search in.
+    If not specified, searches all available PLE databases.
+    """
+    try:
+        # Determine if it's a foglio or particella reference
+        if "." in reference:
+            # Particella reference: I056_000100.42
+            layer_type = "ple"
+        else:
+            # Foglio reference: I056_000100
+            layer_type = "map"
+
+        features = []
+
+        if layer_type == "map":
+            # Search MAP database
+            db = get_cadastral_db_map()
+            if db:
+                with db._get_connection() as conn:
+                    rows = conn.execute("""
+                        SELECT * FROM cadastral_parcels
+                        WHERE national_reference = ?
+                    """, (reference,)).fetchall()
+                    features.extend(_rows_to_features(rows))
+        else:
+            # Search PLE databases
+            if regione:
+                # Search specific region
+                db = get_cadastral_db_ple(regione)
+                if db:
+                    with db._get_connection() as conn:
+                        rows = conn.execute("""
+                            SELECT * FROM cadastral_parcels
+                            WHERE national_reference = ?
+                        """, (reference,)).fetchall()
+                        features.extend(_rows_to_features(rows))
+            else:
+                # Search all PLE databases
+                ple_dbs = get_all_ple_databases()
+                for region_slug, db in ple_dbs.items():
+                    try:
+                        with db._get_connection() as conn:
+                            rows = conn.execute("""
+                                SELECT * FROM cadastral_parcels
+                                WHERE national_reference = ?
+                            """, (reference,)).fetchall()
+                            features.extend(_rows_to_features(rows))
+                            if features:  # Stop after finding a match
+                                break
+                    except Exception as e:
+                        logger.debug(f"Search error in {region_slug}: {e}")
+
+        if not features:
+            raise HTTPException(status_code=404, detail=f"Reference not found: {reference}")
+
+        return {
+            "type": "FeatureCollection",
+            "features": features
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Reference search error: {e}")
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+
+def _rows_to_features(rows) -> list:
+    """Convert database rows to GeoJSON features."""
+    features = []
+    for row in rows:
+        feature = {
+            "type": "Feature",
+            "id": row['id'],
+            "properties": dict(row),
+            "geometry": None
+        }
+
+        if row['geometry_wkt']:
+            try:
+                from shapely import wkt
+                from shapely.geometry import mapping
+                geom = wkt.loads(row['geometry_wkt'])
+                feature['geometry'] = mapping(geom)
+            except Exception:
+                pass
+
+        # Remove WKT from properties
+        if 'geometry_wkt' in feature['properties']:
+            del feature['properties']['geometry_wkt']
+        features.append(feature)
+
+    return features
+
+# ============================================================================
+# FlatGeobuf (FGB) API Endpoints
+# ============================================================================
+
+@api_router.get("/fgb/regions")
+async def list_fgb_regions():
+    """
+    List all available FGB regions.
+    Returns a list of regions with their available files.
+    """
+    try:
+        fgb_dir = Path("/mnt/mobile/data/aecs4u.it/land-registry")
+        if not fgb_dir.exists():
+            return {"regions": []}
+        
+        regions = {}
+        
+        # Find all FGB files
+        for fgb_file in fgb_dir.glob("cadastral_*.fgb"):
+            # Parse filename: cadastral_{type}.{region}.fgb
+            parts = fgb_file.stem.split('.')
+            if len(parts) >= 2:
+                type_part = parts[0]  # e.g., "cadastral_map" or "cadastral_ple"
+                region_slug = parts[1]  # e.g., "basilicata"
+                
+                # Extract layer type (map or ple)
+                if "_map" in type_part:
+                    layer_type = "map"
+                elif "_ple" in type_part:
+                    layer_type = "ple"
+                else:
+                    continue
+                
+                # Initialize region if not exists
+                if region_slug not in regions:
+                    regions[region_slug] = {
+                        "slug": region_slug,
+                        "name": region_slug.replace('_', ' ').title(),
+                        "map_file": None,
+                        "ple_file": None
+                    }
+                
+                # Add file to region
+                if layer_type == "map":
+                    regions[region_slug]["map_file"] = fgb_file.name
+                else:
+                    regions[region_slug]["ple_file"] = fgb_file.name
+        
+        # Convert to list and sort by name
+        region_list = sorted(regions.values(), key=lambda x: x["name"])
+        
+        return {"regions": region_list}
+    
+    except Exception as e:
+        logger.error(f"Error listing FGB regions: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to list regions: {str(e)}")
+
+
+@api_router.get("/fgb/metadata/{region_slug}/{layer_type}")
+async def get_fgb_metadata(region_slug: str, layer_type: str):
+    """
+    Get metadata for a specific FGB file.
+    """
+    try:
+        if layer_type not in ["map", "ple"]:
+            raise HTTPException(status_code=400, detail="layer_type must be 'map' or 'ple'")
+        
+        fgb_dir = Path("/mnt/mobile/data/aecs4u.it/land-registry")
+        filename = f"cadastral_{layer_type}.{region_slug}.fgb"
+        fgb_path = fgb_dir / filename
+        
+        if not fgb_path.exists():
+            raise HTTPException(status_code=404, detail=f"FGB file not found: {filename}")
+        
+        # Get file size
+        size = fgb_path.stat().st_size
+        
+        # Try to get feature count from FGB header if possible
+        # For now, return basic metadata
+        return {
+            "filename": filename,
+            "size": size,
+            "layer_type": layer_type,
+            "region": region_slug.replace('_', ' ').title(),
+            "path": str(fgb_path)
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting FGB metadata: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get metadata: {str(e)}")
+
+
+@api_router.get("/fgb/load/{region_slug}/{layer_type}")
+async def load_fgb_file(region_slug: str, layer_type: str):
+    """
+    Load a FGB file and return as GeoJSON.
+    This endpoint reads the FGB file and converts it to GeoJSON for map display.
+    """
+    try:
+        if layer_type not in ["map", "ple"]:
+            raise HTTPException(status_code=400, detail="layer_type must be 'map' or 'ple'")
+        
+        fgb_dir = Path("/mnt/mobile/data/aecs4u.it/land-registry")
+        filename = f"cadastral_{layer_type}.{region_slug}.fgb"
+        fgb_path = fgb_dir / filename
+        
+        if not fgb_path.exists():
+            raise HTTPException(status_code=404, detail=f"FGB file not found: {filename}")
+        
+        logger.info(f"Loading FGB file: {fgb_path}")
+        
+        # Read FGB file using geopandas
+        gdf = gpd.read_file(fgb_path)
+        
+        # Convert to GeoJSON
+        geojson = json.loads(gdf.to_json())
+        
+        logger.info(f"Loaded {len(gdf)} features from {filename}")
+        
+        return {
+            "success": True,
+            "filename": filename,
+            "feature_count": len(gdf),
+            "layer_type": layer_type,
+            "region": region_slug.replace('_', ' ').title(),
+            "geojson": geojson
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error loading FGB file: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to load FGB file: {str(e)}")
+

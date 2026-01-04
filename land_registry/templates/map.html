@@ -5,14 +5,17 @@
     <div class="sidebar">
         <h1>Cadastre</h1>
 
+        <!-- 1. Navigation -->
         <div class="navigation-links">
             <a href="/cadastral-data" target="_blank" class="nav-link">📊 Browse All Cadastral Data</a>
         </div>
 
+        <!-- 2. Data Input (Upload & Selection) -->
         <div class="upload-section">
             <div class="upload-tabs">
-                <div class="upload-tab" onclick="showUploadTab('file')">📁 File Upload</div>
-                <div class="upload-tab active" onclick="showUploadTab('cadastral')">🏛️ Cadastral Selection</div>
+                <div class="upload-tab" onclick="showUploadTab('file')">📁 Files</div>
+                <div class="upload-tab active" onclick="showUploadTab('cadastral')">🏛️ Selection</div>
+                <div class="upload-tab" onclick="showUploadTab('database')">🗄️ Database</div>
             </div>
 
             <div class="upload-content">
@@ -82,19 +85,213 @@
 
                     <button onclick="loadCadastralSelection()" id="loadCadastralBtn" disabled>Load Selected Files</button>
                 </div>
+
+                <!-- Database Query Tab -->
+                <div id="databaseQuery" class="database-query" style="display: none;">
+                    <!-- Data Source Selector -->
+                    <div class="db-source-section">
+                        <label>Data Source:</label>
+                        <div class="source-toggle">
+                            <button type="button" id="sourceSpatialite" class="source-btn active" onclick="selectDataSource('spatialite')">
+                                🗄️ SpatiaLite
+                            </button>
+                            <button type="button" id="sourceFgb" class="source-btn" onclick="selectDataSource('fgb')">
+                                📦 FlatGeobuf
+                            </button>
+                        </div>
+                        <small class="help-text" id="sourceHelp">SpatiaLite: Full query support | FlatGeobuf: Faster loading, per-region files</small>
+                    </div>
+
+                    <div class="db-stats">
+                        <div class="stat-card">
+                            <div class="stat-number" id="dbTotalParcels">--</div>
+                            <div class="stat-label">Parcels</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-number" id="dbTotalRegions">--</div>
+                            <div class="stat-label">Regions</div>
+                        </div>
+                    </div>
+
+                    <!-- Quick Search -->
+                    <div class="db-search-section">
+                        <label for="dbQuickSearch">🔎 Quick Search:</label>
+                        <div class="search-row">
+                            <input type="text" id="dbQuickSearch" placeholder="e.g., I056_000100.42" />
+                            <button onclick="searchCadastralReference()" class="search-btn">Search</button>
+                        </div>
+                        <small class="help-text">Search by cadastral reference (Comune_Foglio.Particella)</small>
+                    </div>
+
+                    <!-- Geographic Filters (SpatiaLite) -->
+                    <div class="db-filter-section" id="spatialiteFilters">
+                        <h5>📍 Geographic Filters</h5>
+                        <div class="db-filter-row">
+                            <label for="dbRegione">Region:</label>
+                            <select id="dbRegione" onchange="updateDbProvinces()">
+                                <option value="">All Regions</option>
+                            </select>
+                        </div>
+                        <div class="db-filter-row">
+                            <label for="dbProvincia">Province:</label>
+                            <select id="dbProvincia" onchange="updateDbComuni()" disabled>
+                                <option value="">All Provinces</option>
+                            </select>
+                        </div>
+                        <div class="db-filter-row">
+                            <label for="dbComune">Municipality:</label>
+                            <select id="dbComune" onchange="updateDbFogli()" disabled>
+                                <option value="">All Municipalities</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- FlatGeobuf Region Selector -->
+                    <div class="db-filter-section" id="fgbFilters" style="display: none;">
+                        <h5>📍 Region Selection (FlatGeobuf)</h5>
+                        <div class="db-filter-row">
+                            <label for="fgbRegione">Region:</label>
+                            <select id="fgbRegione" onchange="updateFgbLayerInfo()">
+                                <option value="">Select a Region</option>
+                            </select>
+                        </div>
+                        <div class="db-filter-row">
+                            <label>Layer Type:</label>
+                            <div class="layer-type-radios">
+                                <label><input type="radio" name="fgbLayerType" value="map" checked /> MAP (Fogli)</label>
+                                <label><input type="radio" name="fgbLayerType" value="ple" /> PLE (Particelle)</label>
+                            </div>
+                        </div>
+                        <div id="fgbFileInfo" class="fgb-file-info" style="display: none;">
+                            <div class="fgb-info-row">
+                                <span class="fgb-label">File:</span>
+                                <span id="fgbFileName">--</span>
+                            </div>
+                            <div class="fgb-info-row">
+                                <span class="fgb-label">Size:</span>
+                                <span id="fgbFileSize">--</span>
+                            </div>
+                            <div class="fgb-info-row">
+                                <span class="fgb-label">Features:</span>
+                                <span id="fgbFeatureCount">--</span>
+                            </div>
+                        </div>
+                        <small class="help-text">FlatGeobuf files are loaded per-region for faster performance. Select a region and layer type to load.</small>
+                    </div>
+
+                    <!-- Cadastral Filters -->
+                    <div class="db-filter-section">
+                        <h5>📋 Cadastral Filters</h5>
+                        <div class="db-filter-row">
+                            <label for="dbFoglio">Foglio:</label>
+                            <select id="dbFoglio" disabled>
+                                <option value="">All Fogli</option>
+                            </select>
+                        </div>
+                        <div class="db-filter-row">
+                            <label for="dbParticella">Particella:</label>
+                            <input type="text" id="dbParticella" placeholder="e.g., 42 or 1-100" disabled />
+                        </div>
+                        <div class="db-filter-row">
+                            <label>Layer Type:</label>
+                            <div class="layer-type-radios">
+                                <label><input type="radio" name="dbLayerType" value="" checked /> All</label>
+                                <label><input type="radio" name="dbLayerType" value="map" /> MAP (Fogli)</label>
+                                <label><input type="radio" name="dbLayerType" value="ple" /> PLE (Particelle)</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Spatial Filters -->
+                    <div class="db-filter-section collapsed" id="dbSpatialSection">
+                        <h5 onclick="toggleDbSection('dbSpatialSection')" class="collapsible-header">
+                            📐 Spatial Filters <span class="collapse-icon">▶</span>
+                        </h5>
+                        <div class="collapsible-content" style="display: none;">
+                            <div class="db-filter-row">
+                                <button onclick="useMapBoundsAsFilter()" class="secondary-btn">Use Current Map Bounds</button>
+                            </div>
+                            <div class="bbox-inputs">
+                                <div class="bbox-row">
+                                    <label>Min Lon:</label>
+                                    <input type="number" id="dbBboxMinLon" step="0.0001" placeholder="-180" />
+                                    <label>Max Lon:</label>
+                                    <input type="number" id="dbBboxMaxLon" step="0.0001" placeholder="180" />
+                                </div>
+                                <div class="bbox-row">
+                                    <label>Min Lat:</label>
+                                    <input type="number" id="dbBboxMinLat" step="0.0001" placeholder="-90" />
+                                    <label>Max Lat:</label>
+                                    <input type="number" id="dbBboxMaxLat" step="0.0001" placeholder="90" />
+                                </div>
+                            </div>
+                            <div class="db-filter-row">
+                                <button onclick="clearBboxFilter()" class="clear-btn">Clear Bounds</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Query Results Info -->
+                    <div id="dbQueryInfo" class="query-info" style="display: none;">
+                        <span id="dbResultCount">0</span> parcels match filters
+                    </div>
+
+                    <!-- Action Buttons (SpatiaLite) -->
+                    <div class="db-actions" id="spatialiteActions">
+                        <button onclick="previewDbQuery()" id="previewDbBtn" class="secondary-btn">Preview Count</button>
+                        <button onclick="executeDbQuery()" id="executeDbBtn" class="primary-btn">Load Parcels</button>
+                    </div>
+                    <div class="db-actions" id="spatialiteClear">
+                        <button onclick="clearDbFilters()" class="clear-btn">Clear All Filters</button>
+                    </div>
+
+                    <!-- Action Buttons (FlatGeobuf) -->
+                    <div class="db-actions" id="fgbActions" style="display: none;">
+                        <button onclick="loadFgbRegion()" id="loadFgbBtn" class="primary-btn" disabled>Load Region Data</button>
+                    </div>
+                    <div class="db-actions" id="fgbClear" style="display: none;">
+                        <button onclick="clearFgbSelection()" class="clear-btn">Clear Selection</button>
+                    </div>
+                </div>
             </div>
         </div>
 
-        <!-- View Toggle Buttons -->
-        <div class="view-toggle">
-            <button id="mapViewBtn" class="active" onclick="showMapView()">Map View</button>
-            <button id="tableViewBtn" onclick="handleTableViewClick()" class="">Table View</button>
-            <button id="adjacencyViewBtn" onclick="showAdjacencyView()" class="">Adjacency</button>
-            <button id="mappingViewBtn" onclick="showMappingView()" class="">Mapping</button>
+        <!-- 3. Map Configuration (Layers & View) -->
+        <div class="config-section">
+            <!-- TreeLayers Control Management -->
+            <div class="treelayers-controls">
+                <h4>🌳 Layer Manager</h4>
+                <div class="control-row">
+                    <button onclick="toggleTreeLayers()" class="control-btn" title="Show/hide the layers panel">Toggle Layers</button>
+                    <button onclick="refreshTreeLayers()" class="control-btn" title="Refresh layers panel">Refresh</button>
+                </div>
+                <div class="control-row">
+                    <button onclick="expandAllTreeLayers()" class="control-btn" title="Expand all layer groups">Expand All</button>
+                    <button onclick="collapseAllTreeLayers()" class="control-btn" title="Collapse all layer groups">Collapse All</button>
+                </div>
+                <div class="treelayers-info">
+                    <small>🗺️ Base maps, 📊 Data layers, 🌤️ Weather overlays</small>
+                </div>
+            </div>
+
+            <!-- Advanced Tools -->
+            <div class="advanced-controls">
+                <h4>🚀 View Tools</h4>
+                <div class="control-row">
+                    <button onclick="resetMapView()" class="control-btn" title="Reset map to default view">Reset View</button>
+                    <button onclick="toggleCoordinates()" class="control-btn" title="Toggle coordinate display">Coordinates</button>
+                </div>
+                 <div class="control-row">
+                    <button onclick="toggleMiniMap()" class="control-btn" title="Toggle overview minimap">Toggle MiniMap</button>
+                    <button onclick="showPluginInfo()" class="control-btn" title="Show plugin information">Plugin Info</button>
+                </div>
+            </div>
         </div>
 
-        <!-- Selection Controls Section -->
+        <!-- 4. Analysis & Selection -->
         <div class="controls">
+            <h4>🔍 Analysis Tools</h4>
+            
             <div class="control-group">
                 <label for="selectionMode">Selection Mode:</label>
                 <select id="selectionMode" onchange="changeSelectionMode()">
@@ -112,31 +309,75 @@
             </div>
 
             <div id="selectionControls">
-                <button onclick="findAdjacencyForSelected()" id="findAdjacencyBtn" disabled>Find Adjacent Polygons</button>
-                <button onclick="clearSelection()">Clear Selection</button>
-                <button onclick="showAllPolygons()">Show All Polygons</button>
+                <div class="adjacency-buttons">
+                    <button onclick="findAdjacencyForSelected()" id="findAdjacencyBtn" disabled>Find Adjacent Polygons</button>
+                    <button onclick="clearPolygonSelection()" id="clearSelectionBtn" disabled style="margin-left: 10px;">Clear Selection</button>
+                 </div>
                 <div id="selectedCount" class="table-info">0 polygons selected</div>
             </div>
 
-            <!-- Additional Map Controls -->
-            {% if controls_html %}
-            <div class="additional-controls">
-                {{ controls_html|safe }}
+            <!-- Polygon Management (Restored) -->
+            <div class="polygon-management">
+                <h4>🗂️ Polygon Management</h4>
+                <div class="control-row">
+                    <button onclick="removeAllPolygons()" id="removePolygonsBtn" disabled class="remove-btn">🗑️ Remove All</button>
+                    <button onclick="autoZoomToAllPolygons()" id="zoomToPolygonsBtn" disabled class="zoom-btn">🔍 Zoom to Fit</button>
+                </div>
+                <div id="polygonCount" class="table-info">No polygons loaded</div>
             </div>
-            {% endif %}
         </div>
 
-        <!-- Note: Controls now implemented as native Leaflet controls -->
+        <!-- 5. Filters -->
+        <div class="auctionControls">
+            <h4>🏠 Property Filters</h4>
+            <div class="control-row">
+                <button onclick="toggleAuctionLayer()" class="control-btn">Toggle Auctions</button>
+                <button onclick="filterActiveAuctions()" class="control-btn">Active Only</button>
+            </div>
+            <div class="control-row">
+                <select id="auctionTypeFilter" onchange="filterAuctionsByType()">
+                    <option value="">All Types</option>
+                    <option value="residential">Residential</option>
+                    <option value="commercial">Commercial</option>
+                    <option value="agricultural">Agricultural</option>
+                    <option value="industrial">Industrial</option>
+                </select>
+            </div>
+            <div class="control-row">
+                <label>Max Price: €</label>
+                <input type="number" id="maxPriceFilter" onchange="filterAuctionsByPrice()" placeholder="150000">
+            </div>
+        </div>
+
+        <!-- 6. Authentication -->
+        <div class="auth-section">
+            <h4>👤 User Account</h4>
+            <div id="sidebar-auth-container" class="auth-container">
+                <!-- Clerk authentication status will be shown here -->
+                <div id="sidebar-auth-status" class="auth-status">
+                    <div class="loading-text">Checking authentication...</div>
+                </div>
+            </div>
+        </div>
+
     </div>
 
     <div class="main-content">
+        <!-- View Toggle Buttons -->
+        <div class="view-toggle">
+            <button id="mapViewBtn" class="active" onclick="showMapView()">Map View</button>
+            <button id="tableViewBtn" onclick="handleTableViewClick()" class="">Table View</button>
+            <button id="adjacencyViewBtn" onclick="showAdjacencyView()" class="">Adjacency</button>
+            <button id="mappingViewBtn" onclick="showMappingView()" class="">Mapping</button>
+        </div>
         <!-- Map View -->
         <div id="mapView" class="view-content active" style="display: block;">
+            <div class="map-header">
+                <h2>Map</h2>
+                <div id="tableInfo" class="table-info">No data loaded</div>
+            </div>
+
             <div class="map-container">
-                <div class="map-header">
-                    <h2>Map</h2>
-                    <div id="tableInfo" class="table-info">No data loaded</div>
-                </div>
                 <div id="map"></div>
             </div>
         </div>
@@ -148,9 +389,72 @@
                     <h2>Polygon Attributes Table</h2>
                     <div id="tableInfo" class="table-info">No data loaded</div>
                 </div>
+
+                <!-- Table Controls -->
+                <div class="table-controls">
+                    <div class="control-row">
+                        <div class="search-container">
+                            <input type="text" id="tableSearch" placeholder="Search all columns..." class="search-input">
+                            <button onclick="searchTable()" class="search-btn">🔍</button>
+                        </div>
+                        <div class="filter-container">
+                            <select id="tableFilterField" class="filter-select">
+                                <option value="">Filter by column...</option>
+                            </select>
+                            <input type="text" id="tableFilterValue" placeholder="Filter value..." class="filter-input">
+                            <button onclick="filterTable()" class="filter-btn">Filter</button>
+                            <button onclick="clearTableFilters()" class="clear-btn">Clear</button>
+                        </div>
+                    </div>
+                    <div class="control-row">
+                        <div class="sort-container">
+                            <select id="tableSortField" class="sort-select">
+                                <option value="">Sort by column...</option>
+                            </select>
+                            <select id="tableSortDirection" class="sort-direction">
+                                <option value="asc">Ascending</option>
+                                <option value="desc">Descending</option>
+                            </select>
+                            <button onclick="sortTable()" class="sort-btn">Sort</button>
+                        </div>
+                        <div class="page-size-container">
+                            <label>Rows per page:</label>
+                            <select id="tablePageSize" class="page-size-select" onchange="changeTablePageSize()">
+                                <option value="25">25</option>
+                                <option value="50">50</option>
+                                <option value="100" selected>100</option>
+                                <option value="200">200</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
                 <div id="attributeTable" class="attribute-table">
+                    <div class="loading-message" style="display: none;">
+                        <p>Loading data...</p>
+                    </div>
                     <div class="no-data-message">
                         <p>No geospatial data loaded. Please upload a file or select cadastral data to view attributes.</p>
+                    </div>
+                    <div class="table-wrapper" style="display: none;">
+                        <table id="dataTable" class="data-table">
+                            <thead id="tableHead"></thead>
+                            <tbody id="tableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Pagination Controls -->
+                <div class="pagination-container" style="display: none;">
+                    <div class="pagination-info">
+                        <span id="tableRecordInfo">Showing 0 to 0 of 0 entries</span>
+                    </div>
+                    <div class="pagination-controls">
+                        <button onclick="goToTablePage(1)" id="tableFirstBtn" class="page-btn">First</button>
+                        <button onclick="goToTablePage(currentTablePage - 1)" id="tablePrevBtn" class="page-btn">Previous</button>
+                        <span class="page-numbers" id="tablePageNumbers"></span>
+                        <button onclick="goToTablePage(currentTablePage + 1)" id="tableNextBtn" class="page-btn">Next</button>
+                        <button onclick="goToTablePage(totalTablePages)" id="tableLastBtn" class="page-btn">Last</button>
                     </div>
                 </div>
             </div>
@@ -163,6 +467,45 @@
                     <h2>Adjacency Analysis Results</h2>
                     <div id="adjacencyInfo" class="table-info">Select a polygon to find adjacent features</div>
                 </div>
+
+                <!-- Adjacency Table Controls -->
+                <div class="table-controls">
+                    <div class="control-row">
+                        <div class="search-container">
+                            <input type="text" id="adjacencySearch" placeholder="Search adjacency results..." class="search-input">
+                            <button onclick="searchAdjacencyTable()" class="search-btn">🔍</button>
+                        </div>
+                        <div class="filter-container">
+                            <select id="adjacencyFilterField" class="filter-select">
+                                <option value="">Filter by column...</option>
+                            </select>
+                            <input type="text" id="adjacencyFilterValue" placeholder="Filter value..." class="filter-input">
+                            <button onclick="filterAdjacencyTable()" class="filter-btn">Filter</button>
+                            <button onclick="clearAdjacencyFilters()" class="clear-btn">Clear</button>
+                        </div>
+                    </div>
+                    <div class="control-row">
+                        <div class="sort-container">
+                            <select id="adjacencySortField" class="sort-select">
+                                <option value="">Sort by column...</option>
+                            </select>
+                            <select id="adjacencySortDirection" class="sort-direction">
+                                <option value="asc">Ascending</option>
+                                <option value="desc">Descending</option>
+                            </select>
+                            <button onclick="sortAdjacencyTable()" class="sort-btn">Sort</button>
+                        </div>
+                        <div class="page-size-container">
+                            <label>Rows per page:</label>
+                            <select id="adjacencyPageSize" class="page-size-select" onchange="changeAdjacencyPageSize()">
+                                <option value="25">25</option>
+                                <option value="50" selected>50</option>
+                                <option value="100">100</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
                 <div id="adjacencyResults" class="adjacency-results">
                     <div class="adjacency-section">
                         <h3>Selected Polygon</h3>
@@ -170,10 +513,40 @@
                             <p>No polygon selected</p>
                         </div>
                     </div>
+
                     <div class="adjacency-section">
                         <h3>Adjacent Polygons</h3>
                         <div id="adjacentPolygonsInfo" class="polygon-info">
                             <p>Select a polygon to find adjacent features</p>
+                        </div>
+
+                        <div class="adjacency-table-container">
+                            <div class="loading-message" style="display: none;">
+                                <p>Loading adjacency data...</p>
+                            </div>
+                            <div class="no-data-message">
+                                <p>No adjacency analysis results available. Use 'Find Adjacent Polygons' to populate this table.</p>
+                            </div>
+                            <div class="table-wrapper" style="display: none;">
+                                <table id="adjacencyDataTable" class="data-table">
+                                    <thead id="adjacencyTableHead"></thead>
+                                    <tbody id="adjacencyTableBody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Adjacency Pagination Controls -->
+                        <div class="pagination-container" style="display: none;">
+                            <div class="pagination-info">
+                                <span id="adjacencyRecordInfo">Showing 0 to 0 of 0 entries</span>
+                            </div>
+                            <div class="pagination-controls">
+                                <button onclick="goToAdjacencyPage(1)" id="adjacencyFirstBtn" class="page-btn">First</button>
+                                <button onclick="goToAdjacencyPage(currentAdjacencyPage - 1)" id="adjacencyPrevBtn" class="page-btn">Previous</button>
+                                <span class="page-numbers" id="adjacencyPageNumbers"></span>
+                                <button onclick="goToAdjacencyPage(currentAdjacencyPage + 1)" id="adjacencyNextBtn" class="page-btn">Next</button>
+                                <button onclick="goToAdjacencyPage(totalAdjacencyPages)" id="adjacencyLastBtn" class="page-btn">Last</button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -187,26 +560,120 @@
                     <h2>Mapping Results</h2>
                     <div class="mapping-info">Use the drawing tools to create and edit polygons</div>
                 </div>
-                <div class="drawing-controls">
-                    <div class="drawing-section">
-                        <h3>Drawn Polygons</h3>
-                        <div id="drawnPolygonsList" class="drawn-polygons-list">
-                            <p>No polygons drawn yet</p>
+
+                <!-- Mapping Table Controls -->
+                <div class="table-controls">
+                    <div class="control-row">
+                        <div class="search-container">
+                            <input type="text" id="mappingSearch" placeholder="Search drawn features..." class="search-input">
+                            <button onclick="searchMappingTable()" class="search-btn">🔍</button>
                         </div>
-                        <div class="drawing-actions">
-                            <button onclick="saveDrawnPolygons()">Save Drawn Polygons</button>
-                            <button onclick="clearDrawnPolygons()">Clear All Drawings</button>
+                        <div class="filter-container">
+                            <select id="mappingFilterField" class="filter-select">
+                                <option value="">Filter by column...</option>
+                            </select>
+                            <input type="text" id="mappingFilterValue" placeholder="Filter value..." class="filter-input">
+                            <button onclick="filterMappingTable()" class="filter-btn">Filter</button>
+                            <button onclick="clearMappingFilters()" class="clear-btn">Clear</button>
                         </div>
                     </div>
-                    <div class="mapping-stats">
-                        <div class="stat-item">
-                            <span class="stat-label">Total Drawn:</span>
-                            <span id="drawnCount" class="stat-value">0</span>
+                    <div class="control-row">
+                        <div class="sort-container">
+                            <select id="mappingSortField" class="sort-select">
+                                <option value="">Sort by column...</option>
+                            </select>
+                            <select id="mappingSortDirection" class="sort-direction">
+                                <option value="asc">Ascending</option>
+                                <option value="desc">Descending</option>
+                            </select>
+                            <button onclick="sortMappingTable()" class="sort-btn">Sort</button>
                         </div>
-                        <div class="stat-item">
-                            <span class="stat-label">Selected:</span>
-                            <span id="drawnSelected" class="stat-value">0</span>
+                        <div class="page-size-container">
+                            <label>Rows per page:</label>
+                            <select id="mappingPageSize" class="page-size-select" onchange="changeMappingPageSize()">
+                                <option value="10">10</option>
+                                <option value="25" selected>25</option>
+                                <option value="50">50</option>
+                            </select>
                         </div>
+                    </div>
+                </div>
+
+                <div class="drawing-controls">
+                    <div class="drawing-section">
+                        <h3>Drawn Features Table</h3>
+                        <div class="mapping-table-container">
+                            <div class="loading-message" style="display: none;">
+                                <p>Loading mapping data...</p>
+                            </div>
+                            <div class="no-data-message">
+                                <p>No drawn features available. Use drawing tools to create polygons and polylines.</p>
+                            </div>
+                            <div class="table-wrapper" style="display: none;">
+                                <table id="mappingDataTable" class="data-table">
+                                    <thead id="mappingTableHead"></thead>
+                                    <tbody id="mappingTableBody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Mapping Pagination Controls -->
+                        <div class="pagination-container" style="display: none;">
+                            <div class="pagination-info">
+                                <span id="mappingRecordInfo">Showing 0 to 0 of 0 entries</span>
+                            </div>
+                            <div class="pagination-controls">
+                                <button onclick="goToMappingPage(1)" id="mappingFirstBtn" class="page-btn">First</button>
+                                <button onclick="goToMappingPage(currentMappingPage - 1)" id="mappingPrevBtn" class="page-btn">Previous</button>
+                                <span class="page-numbers" id="mappingPageNumbers"></span>
+                                <button onclick="goToMappingPage(currentMappingPage + 1)" id="mappingNextBtn" class="page-btn">Next</button>
+                                <button onclick="goToMappingPage(totalMappingPages)" id="mappingLastBtn" class="page-btn">Last</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="drawing-section">
+                        <h3>Drawing Management</h3>
+                        <div id="drawingInfo" class="drawing-info">0 drawings created</div>
+
+                        <div class="drawing-actions">
+                            <div class="action-row">
+                                <button onclick="saveDrawnPolygons()" id="saveDrawingsBtn" disabled class="primary-btn" data-requires-auth="true">💾 Save to Server</button>
+                                <button onclick="loadDrawnPolygons()" id="loadDrawingsBtn" class="secondary-btn" data-requires-auth="true">📁 Load from Server</button>
+                            </div>
+                            <div class="action-row">
+                                <button onclick="exportDrawingsAsGeoJSON()" id="exportDrawingsBtn" disabled class="secondary-btn">📤 Export GeoJSON</button>
+                                <button onclick="importDrawingsFromGeoJSON()" class="secondary-btn">📥 Import GeoJSON</button>
+                            </div>
+                            <div class="action-row">
+                                <button onclick="clearAllDrawings()" id="clearDrawingsBtn" disabled class="danger-btn">🗑️ Clear All</button>
+                                <button onclick="fitDrawingsToView()" class="secondary-btn">🔍 Zoom to Fit</button>
+                            </div>
+                        </div>
+
+                        <div class="drawing-stats">
+                            <div class="stat-card">
+                                <div class="stat-label">Polygons</div>
+                                <div id="polygonCount" class="stat-value">0</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-label">Polylines</div>
+                                <div id="polylineCount" class="stat-value">0</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-label">Markers</div>
+                                <div id="markerCount" class="stat-value">0</div>
+                            </div>
+                        </div>
+
+                        <div id="drawnPolygonsList" class="drawn-features-list">
+                            <h4>Drawn Features</h4>
+                            <div class="features-container">
+                                <p class="no-features">No drawings yet. Use the drawing tools on the map to create polygons, lines, or markers.</p>
+                            </div>
+                        </div>
+                    </div>
+
                     </div>
                 </div>
             </div>
@@ -219,7 +686,7 @@
 <script>
     // Inject GeoJSON data into window for external JS to use
     {% if geojson_data %}
-    window.geoJsonData = {{ geojson_data|safe }};
+    window.geoJsonData = JSON.parse('{{ geojson_data|tojson|safe }}');
     {% else %}
     window.geoJsonData = null;
     {% endif %}
@@ -237,5 +704,66 @@
 {% endblock %}
 
 {% block app_js %}
-<script src="/static/map.js"></script>
+<script>
+  // Update sidebar authentication status
+  function updateSidebarAuth() {
+    const sidebarAuth = document.getElementById('sidebar-auth-status');
+    if (!sidebarAuth) return;
+
+    if (window.Clerk && window.Clerk.user) {
+      const user = window.Clerk.user;
+      sidebarAuth.innerHTML = `
+        <div class="user-logged-in">
+          <div class="user-email">${user.primaryEmailAddress?.emailAddress || 'User'}</div>
+          <button class="sidebar-logout-btn" onclick="handleSidebarLogout()">Sign Out</button>
+        </div>
+      `;
+      // Enable auth-required buttons
+      document.querySelectorAll('[data-requires-auth="true"]').forEach(btn => {
+        btn.disabled = false;
+      });
+    } else if (window.Clerk) {
+      sidebarAuth.innerHTML = `
+        <div class="user-not-logged-in">
+          <button class="sidebar-login-btn" onclick="window.location.href='/auth/login?next=' + encodeURIComponent(window.location.pathname)">Sign In</button>
+          <button class="sidebar-register-btn" onclick="window.location.href='/auth/register'">Register</button>
+        </div>
+      `;
+      // Disable auth-required buttons
+      document.querySelectorAll('[data-requires-auth="true"]').forEach(btn => {
+        btn.disabled = true;
+      });
+    } else {
+      sidebarAuth.innerHTML = '<div class="loading-text">Auth loading...</div>';
+    }
+  }
+
+  async function handleSidebarLogout() {
+    if (window.Clerk) {
+      await window.Clerk.signOut();
+      // Clear server session
+      await fetch('/auth/clerk/logout', { method: 'POST' });
+      window.location.reload();
+    }
+  }
+
+  // Initialize sidebar auth when Clerk is ready
+  window.addEventListener('load', async function() {
+    let attempts = 0;
+    while (!window.Clerk && attempts < 50) {
+      await new Promise(r => setTimeout(r, 100));
+      attempts++;
+    }
+    if (window.Clerk) {
+      await window.Clerk.load();
+      updateSidebarAuth();
+      window.Clerk.addListener(updateSidebarAuth);
+    } else {
+      const sidebarAuth = document.getElementById('sidebar-auth-status');
+      if (sidebarAuth) {
+        sidebarAuth.innerHTML = '<div class="loading-text">Auth unavailable</div>';
+      }
+    }
+  });
+</script>
 {% endblock %}

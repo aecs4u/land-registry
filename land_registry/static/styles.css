@@ -1,1743 +1,4116 @@
 body {
-    font-family: Arial, sans-serif;
-    margin: 0;
-    padding: 0;
+  font-family: Arial, sans-serif;
+  margin: 0;
+  padding: 0;
+}
+
+/* Unified Leaflet Control Styling */
+.leaflet-bar a,
+.leaflet-control-layers-toggle,
+.leaflet-control-zoom-in,
+.leaflet-control-zoom-out,
+.leaflet-control-fullscreen-button {
+  width: 34px !important;
+  height: 34px !important;
+  line-height: 34px !important;
+  font-size: 16px !important;
+  color: #333 !important;
+  border-bottom: 1px solid #ccc !important;
+  background-color: #fff !important;
+  background-repeat: no-repeat;
+  background-position: 50% 50%;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-decoration: none !important;
+  border-radius: 4px !important;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.4) !important;
+}
+
+/* Specific fix for draw toolbar icons to match standard */
+.leaflet-draw-toolbar a {
+  width: 34px !important;
+  height: 34px !important;
+  line-height: 34px !important;
+}
+
+/* Ensure hover states are consistent */
+.leaflet-bar a:hover,
+.leaflet-control-layers-toggle:hover,
+.leaflet-control-fullscreen-button:hover {
+  background-color: #f4f4f4 !important;
+  color: #000 !important;
+}
+
+/* Remove border from last item in bar */
+.leaflet-bar a:last-child {
+  border-bottom: none !important;
+}
+/* Extended zoom control buttons styling */
+.leaflet-control-zoom-fit-all,
+.leaflet-control-zoom-fit-selected,
+.leaflet-control-zoom-box,
+.leaflet-control-zoom-reset {
+  background-color: #fff !important;
+  border: none !important;
+  border-bottom: 1px solid #ccc !important;
+  color: #333 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 16px !important;
+  line-height: 34px !important;
+  text-align: center !important;
+  text-decoration: none !important;
+  width: 34px !important;
+  height: 34px !important;
+  cursor: pointer !important;
+}
+
+.leaflet-control-zoom-fit-all:hover,
+.leaflet-control-zoom-fit-selected:hover,
+.leaflet-control-zoom-box:hover,
+.leaflet-control-zoom-reset:hover {
+  background-color: #f4f4f4 !important;
+  color: #000 !important;
+}
+
+/* Active state for box zoom button */
+.leaflet-control-zoom-box.active {
+  background-color: #3388ff !important;
+  color: white !important;
+}
+
+/* Remove bottom border from last zoom control button */
+.leaflet-control-zoom a:last-child {
+  border-bottom: none !important;
+  border-radius: 0 0 4px 4px !important;
 }
 
 .container {
-    display: flex;
-    height: 100vh;
+  display: flex;
+  height: 100vh;
 }
 
 .sidebar {
-    width: 300px;
-    padding: 20px;
-    background-color: #f5f5f5;
-    box-shadow: 2px 0 5px rgba(0,0,0,0.1);
-    overflow-y: auto;
+  width: 300px;
+  padding: 20px;
+  background-color: #f5f5f5;
+  box-shadow: 2px 0 5px rgba(0, 0, 0, 0.1);
+  overflow-y: auto;
 }
 
 .main-content {
-    flex: 1;
-    position: relative;
-    height: 100%;
+  flex: 1;
+  position: relative;
+  height: 100%;
 }
 
 .view-content {
-    height: 100%;
-    width: 100%;
-    overflow: hidden;
-    position: absolute;
-    top: 0;
-    left: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .view-content.active {
-    display: block !important;
-    visibility: visible !important;
-    z-index: 10;
+  display: flex !important;
+  visibility: visible !important;
+  z-index: 10;
 }
 
 .view-content:not(.active) {
-    display: none !important;
+  display: none !important;
 }
 
 .map-container {
-    height: 100%;
-    width: 100%;
-    position: relative;
+  height: 100% !important;
+  width: 100% !important;
+  position: relative;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch;
+}
+
+.map-header {
+  position: relative !important;
+  z-index: 1000;
+  background: white;
+  padding: 10px 15px;
+  border-bottom: 1px solid #ddd;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  flex-shrink: 0 !important; /* Prevent header from shrinking */
+  width: 100% !important;
+  box-sizing: border-box;
+  order: 1 !important; /* Ensure it appears first in flex order */
+  display: block !important;
+  float: none !important;
+  clear: both;
+}
+
+.map-header h2 {
+  margin: 0;
+  font-size: 1.5em;
+  color: #333;
+}
+
+.map-header .table-info {
+  margin-top: 5px;
+  font-size: 0.9em;
+  color: #666;
 }
 
 #map {
-    height: 100%;
-    width: 100%;
-    min-height: 600px;
-    z-index: 1;
+  height: 100% !important;
+  width: 100% !important;
+  min-height: 600px;
+  flex-grow: 1 !important; /* Take remaining space */
+  z-index: 1;
+  position: relative !important;
+  order: 2 !important; /* Ensure it appears after header */
+  box-sizing: border-box;
+  display: block !important;
+  float: none !important;
+  clear: both;
 }
 
 .navigation-links {
-    margin-bottom: 20px;
-    padding-bottom: 15px;
-    border-bottom: 1px solid #ddd;
+  margin-bottom: 20px;
+  padding-bottom: 15px;
+  border-bottom: 1px solid #ddd;
 }
 
 .nav-link {
-    display: inline-block;
-    padding: 8px 12px;
-    background: #007bff;
-    color: white;
-    text-decoration: none;
-    border-radius: 4px;
-    font-size: 13px;
-    font-weight: 500;
-    transition: background-color 0.2s;
-    width: 100%;
-    text-align: center;
-    box-sizing: border-box;
+  display: inline-block;
+  padding: 8px 12px;
+  background: #007bff;
+  color: white;
+  text-decoration: none;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background-color 0.2s;
+  width: 100%;
+  text-align: center;
+  box-sizing: border-box;
 }
 
 .nav-link:hover {
-    background: #0056b3;
-    text-decoration: none;
-    color: white;
+  background: #0056b3;
+  text-decoration: none;
+  color: white;
 }
 
 .upload-section {
-    margin-bottom: 20px;
-    padding-bottom: 20px;
-    border-bottom: 1px solid #ddd;
+  margin-bottom: 20px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid #ddd;
 }
 
 .upload-tabs {
-    display: flex;
-    margin-bottom: 15px;
+  display: flex;
+  margin-bottom: 15px;
 }
 
 .upload-tab {
-    flex: 1;
-    padding: 8px 12px;
-    background: white;
-    border: 1px solid #dee2e6;
-    cursor: pointer;
-    text-align: center;
-    font-size: 14px;
-    border-bottom: none;
+  flex: 1;
+  padding: 8px 12px;
+  background: white;
+  border: 1px solid #dee2e6;
+  cursor: pointer;
+  text-align: center;
+  font-size: 14px;
+  border-bottom: none;
 }
 
 .upload-tab:first-child {
-    border-radius: 4px 0 0 0;
+  border-radius: 4px 0 0 0;
 }
 
 .upload-tab:last-child {
-    border-radius: 0 4px 0 0;
-    border-left: none;
+  border-radius: 0 4px 0 0;
+  border-left: none;
 }
 
 .upload-tab.active {
-    background: #007cba;
-    color: white;
+  background: #007cba;
+  color: white;
 }
 
 .upload-content {
-    background: white;
-    padding: 15px;
-    border: 1px solid #dee2e6;
-    border-radius: 0 0 4px 4px;
+  background: white;
+  padding: 15px;
+  border: 1px solid #dee2e6;
+  border-radius: 0 0 4px 4px;
 }
 
 .cadastral-selection {
-    display: none;
+  display: none;
 }
 
 .cadastral-selection.active {
-    display: block;
+  display: block;
 }
 
 .file-upload {
-    display: none;
+  display: none;
 }
 
 .file-upload.active {
-    display: block;
+  display: block;
+}
+
+/* Database Query Tab Styles */
+.database-query {
+  display: none;
+}
+
+.database-query.active {
+  display: block;
+}
+
+/* Database Status Indicator */
+.db-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 15px;
+  background: #f8f9fa;
+  border-radius: 6px;
+  border: 1px solid #e0e0e0;
+}
+
+.db-status.connected {
+  background: #d4edda;
+  border-color: #c3e6cb;
+}
+
+.db-status.error {
+  background: #f8d7da;
+  border-color: #f5c6cb;
+}
+
+.db-icon {
+  font-size: 18px;
+}
+
+#dbStatusText {
+  font-size: 13px;
+  color: #333;
+}
+
+.db-status.connected #dbStatusText {
+  color: #155724;
+}
+
+.db-status.error #dbStatusText {
+  color: #721c24;
+}
+
+/* Load Database Button */
+.load-db-btn {
+  width: 100%;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #28a745, #20863c);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-top: 10px;
+}
+
+.load-db-btn:hover {
+  background: linear-gradient(135deg, #20863c, #1a702f);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(40, 167, 69, 0.3);
+}
+
+.load-db-btn:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* Database Result Info */
+.db-result-info {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: #e7f3ff;
+  border: 1px solid #007cba;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #007cba;
+  text-align: center;
+}
+
+.db-stats {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-bottom: 15px;
+}
+
+.db-search-section {
+  margin-bottom: 15px;
+  padding: 10px;
+  background: #f8f9fa;
+  border-radius: 4px;
+}
+
+.db-search-section label {
+  font-weight: bold;
+  display: block;
+  margin-bottom: 5px;
+  color: #333;
+}
+
+.search-row {
+  display: flex;
+  gap: 5px;
+}
+
+.search-row input {
+  flex: 1;
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
+.search-row .search-btn {
+  padding: 8px 12px;
+  background: #007cba;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.search-row .search-btn:hover {
+  background: #005a87;
+}
+
+.help-text {
+  color: #666;
+  font-size: 11px;
+  margin-top: 5px;
+  display: block;
+}
+
+.db-filter-section {
+  margin-bottom: 15px;
+  padding: 10px;
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+}
+
+.db-filter-section h5 {
+  margin: 0 0 10px 0;
+  color: #333;
+  font-size: 13px;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 5px;
+}
+
+.db-filter-row {
+  margin-bottom: 10px;
+}
+
+.db-filter-row:last-child {
+  margin-bottom: 0;
+}
+
+.db-filter-row label {
+  display: block;
+  font-size: 12px;
+  color: #555;
+  margin-bottom: 3px;
+}
+
+.db-filter-row select,
+.db-filter-row input[type="text"],
+.db-filter-row input[type="number"] {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 13px;
+  box-sizing: border-box;
+}
+
+.db-filter-row select:disabled,
+.db-filter-row input:disabled {
+  background: #f5f5f5;
+  color: #999;
+}
+
+.layer-type-radios {
+  display: flex;
+  gap: 15px;
+  padding: 5px 0;
+}
+
+.layer-type-radios label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.layer-type-radios input[type="radio"] {
+  width: auto;
+  margin: 0;
+}
+
+/* Collapsible sections */
+.db-filter-section.collapsed .collapsible-content {
+  display: none;
+}
+
+.collapsible-header {
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.collapsible-header:hover {
+  color: #007cba;
+}
+
+.collapse-icon {
+  font-size: 10px;
+  color: #999;
+}
+
+/* Bbox inputs */
+.bbox-inputs {
+  margin-top: 10px;
+}
+
+.bbox-row {
+  display: grid;
+  grid-template-columns: 60px 1fr 60px 1fr;
+  gap: 5px;
+  align-items: center;
+  margin-bottom: 5px;
+}
+
+.bbox-row label {
+  font-size: 11px;
+  text-align: right;
+  margin: 0;
+}
+
+.bbox-row input {
+  padding: 4px 6px;
+  font-size: 11px;
+}
+
+/* Query info */
+.query-info {
+  background: #e7f3ff;
+  border: 1px solid #007cba;
+  border-radius: 4px;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: #007cba;
+  text-align: center;
+}
+
+/* Database action buttons */
+.db-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.db-actions button {
+  flex: 1;
+  padding: 10px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.2s;
+}
+
+.db-actions .primary-btn {
+  background: #007cba;
+  color: white;
+}
+
+.db-actions .primary-btn:hover {
+  background: #005a87;
+}
+
+.db-actions .secondary-btn {
+  background: #6c757d;
+  color: white;
+}
+
+.db-actions .secondary-btn:hover {
+  background: #545b62;
+}
+
+.db-actions .clear-btn {
+  background: #f8f9fa;
+  color: #666;
+  border: 1px solid #ddd;
+}
+
+.db-actions .clear-btn:hover {
+  background: #e9ecef;
 }
 
 .cadastral-step {
-    margin-bottom: 15px;
+  margin-bottom: 15px;
 }
 
 .cadastral-step label {
-    font-weight: bold;
-    display: block;
-    margin-bottom: 5px;
-    color: #333;
+  font-weight: bold;
+  display: block;
+  margin-bottom: 5px;
+  color: #333;
 }
 
 .cadastral-step select {
-    width: 100%;
-    padding: 8px;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    background: white;
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: white;
 }
 
 .cadastral-step select:disabled {
-    background: #f8f9fa;
-    color: #666;
+  background: #f8f9fa;
+  color: #666;
 }
 
 .file-type-checkboxes {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    padding: 10px;
-    background: white;
-    border: 1px solid #ddd;
-    border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 4px;
 }
 
 .file-type-checkbox {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    border: 1px solid #e0e0e0;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    justify-content: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  justify-content: flex-start;
 }
 
 .file-type-checkbox:hover {
-    background: #f8f9fa;
-    border-color: #007cba;
+  background: #f8f9fa;
+  border-color: #007cba;
 }
 
 .file-type-checkbox.selected {
-    background: #e7f3ff;
-    border-color: #007cba;
+  background: #e7f3ff;
+  border-color: #007cba;
 }
 
 .file-type-checkbox input[type="checkbox"] {
-    margin: 0;
-    width: auto;
+  margin: 0;
+  width: auto;
 }
 
 .file-type-checkbox label {
-    margin: 0;
-    font-weight: normal;
-    cursor: pointer;
-    font-size: 13px;
+  margin: 0;
+  font-weight: normal;
+  cursor: pointer;
+  font-size: 13px;
 }
 
 .selection-summary {
-    background: #e7f3ff;
-    border: 1px solid #007cba;
-    border-radius: 4px;
-    padding: 10px;
-    margin-top: 10px;
-    font-size: 12px;
+  background: #e7f3ff;
+  border: 1px solid #007cba;
+  border-radius: 4px;
+  padding: 10px;
+  margin-top: 10px;
+  font-size: 12px;
 }
 
 .selection-summary h4 {
-    margin: 0 0 8px 0;
-    color: #007cba;
+  margin: 0 0 8px 0;
+  color: #007cba;
 }
 
 .files-list {
-    margin-top: 15px;
-    max-height: 200px;
-    overflow-y: auto;
-    border: 1px solid #dee2e6;
-    border-radius: 4px;
-    background: white;
+  margin-top: 15px;
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  background: white;
 }
 
 .files-list h5 {
-    margin: 0;
-    padding: 8px 10px;
-    background: #f8f9fa;
-    border-bottom: 1px solid #dee2e6;
-    font-size: 12px;
-    color: #666;
-    font-weight: bold;
+  margin: 0;
+  padding: 8px 10px;
+  background: #f8f9fa;
+  border-bottom: 1px solid #dee2e6;
+  font-size: 12px;
+  color: #666;
+  font-weight: bold;
 }
 
 .file-item {
-    padding: 4px 10px;
-    font-size: 11px;
-    font-family: monospace;
-    border-bottom: 1px solid #f0f0f0;
-    color: #333;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-family: monospace;
+  border-bottom: 1px solid #f0f0f0;
+  color: #333;
 }
 
 .file-item:last-child {
-    border-bottom: none;
+  border-bottom: none;
 }
 
 .file-item.map-file {
-    background: #e8f5e8;
+  background: #e8f5e8;
 }
 
 .file-item.ple-file {
-    background: #fff3cd;
+  background: #fff3cd;
 }
 
 .cadastral-stats {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
-    gap: 10px;
-    margin-bottom: 20px;
-    padding: 15px;
-    background: #f8f9fa;
-    border-radius: 4px;
-    border: 1px solid #dee2e6;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: 10px;
+  margin-bottom: 20px;
+  padding: 15px;
+  background: #f8f9fa;
+  border-radius: 4px;
+  border: 1px solid #dee2e6;
 }
 
 .stat-card {
-    background: white;
-    padding: 10px;
-    border-radius: 4px;
-    text-align: center;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  background: white;
+  padding: 10px;
+  border-radius: 4px;
+  text-align: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 .stat-number {
-    font-size: 18px;
-    font-weight: bold;
-    color: #007cba;
-    margin-bottom: 2px;
+  font-size: 18px;
+  font-weight: bold;
+  color: #007cba;
+  margin-bottom: 2px;
 }
 
 .stat-label {
-    font-size: 10px;
-    color: #666;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+  font-size: 10px;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
-.upload-container { 
-    margin: 20px; 
+.upload-container {
+  margin: 20px;
 }
 
 .info-section {
-    margin-top: 20px;
+  margin-top: 20px;
 }
 
 .feature-info {
-    background: white;
-    padding: 10px;
-    margin: 10px 0;
-    border-radius: 5px;
-    border-left: 4px solid #007cba;
+  background: white;
+  padding: 10px;
+  margin: 10px 0;
+  border-radius: 5px;
+  border-left: 4px solid #007cba;
 }
 
 .selected-info {
-    border-left-color: #ff0000;
+  border-left-color: #ff0000;
 }
 
 .adjacent-info {
-    border-left-color: #ffa500;
+  border-left-color: #ffa500;
 }
 
 .legend {
-    background: white;
-    padding: 15px;
-    border-radius: 5px;
-    margin: 10px 0;
+  background: white;
+  padding: 15px;
+  border-radius: 5px;
+  margin: 10px 0;
 }
 
 .legend-item {
-    display: flex;
-    align-items: center;
-    margin: 5px 0;
+  display: flex;
+  align-items: center;
+  margin: 5px 0;
 }
 
 .legend-color {
-    width: 20px;
-    height: 20px;
-    margin-right: 10px;
-    border: 2px solid #333;
+  width: 20px;
+  height: 20px;
+  margin-right: 10px;
+  border: 2px solid #333;
 }
 
 .controls {
-    margin: 15px 0;
+  margin: 15px 0;
 }
 
 .control-group {
-    margin: 10px 0;
+  margin: 10px 0;
 }
 
 label {
-    display: block;
-    margin-bottom: 5px;
-    font-weight: bold;
+  display: block;
+  margin-bottom: 5px;
+  font-weight: bold;
 }
 
-select, input[type="file"], button {
-    width: 100%;
-    padding: 8px;
-    margin: 5px 0;
-    border: 1px solid #ddd;
-    border-radius: 4px;
+select,
+input[type="file"],
+button {
+  width: 100%;
+  padding: 8px;
+  margin: 5px 0;
+  border: 1px solid #ddd;
+  border-radius: 4px;
 }
 
 button {
-    background-color: #007cba;
-    color: white;
-    cursor: pointer;
+  background-color: #007cba;
+  color: white;
+  cursor: pointer;
 }
 
 button:hover {
-    background-color: #005a8b;
+  background-color: #005a8b;
 }
 
 .status {
-    padding: 10px;
-    margin: 10px 0;
-    border-radius: 5px;
+  padding: 10px;
+  margin: 10px 0;
+  border-radius: 5px;
 }
 
 .status.success {
-    background-color: #d4edda;
-    color: #155724;
-    border: 1px solid #c3e6cb;
+  background-color: #d4edda;
+  color: #155724;
+  border: 1px solid #c3e6cb;
 }
 
 .status.error {
-    background-color: #f8d7da;
-    color: #721c24;
-    border: 1px solid #f5c6cb;
+  background-color: #f8d7da;
+  color: #721c24;
+  border: 1px solid #f5c6cb;
 }
 
 .attributes-section {
-    margin-top: 20px;
+  margin-top: 20px;
 }
 
 .main-content {
-    position: relative;
-    height: 100%;
+  position: relative;
+  height: 100%;
 }
 
 .view-toggle {
-    position: absolute;
-    top: 15px;
-    right: 15px;
-    z-index: 1000;
-    display: flex;
-    gap: 0;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.12);
-    border-radius: 20px;
-    background: rgba(255,255,255,0.95);
-    backdrop-filter: blur(20px);
-    overflow: hidden;
-    cursor: move;
-    user-select: none;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    border: 1px solid rgba(255,255,255,0.6);
+  position: absolute;
+  top: 15px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  gap: 0;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(20px);
+  overflow: hidden;
+  cursor: move;
+  user-select: none;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  border: 1px solid rgba(255, 255, 255, 0.6);
 }
 
 .view-toggle:hover {
-    box-shadow: 0 12px 40px rgba(0,0,0,0.18);
-    background: rgba(255,255,255,1);
-    transform: translateY(-3px) scale(1.02);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  background: rgba(255, 255, 255, 1);
 }
 
 .view-toggle.dragging {
-    transform: scale(1.08) translateY(-4px);
-    box-shadow: 0 12px 40px rgba(0,0,0,0.3);
-    z-index: 9999;
+  transform: scale(1.08) translateY(-4px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+  z-index: 9999;
 }
 
 .view-toggle button {
-    padding: 10px 16px;
-    border: none;
-    background: white;
-    color: #007cba;
-    cursor: pointer;
-    border-radius: 0;
-    font-size: 13px;
-    font-weight: 500;
-    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-    position: relative;
-    overflow: hidden;
-    border-right: 1px solid rgba(222,226,230,0.5);
+  padding: 10px 16px;
+  border: none;
+  background: white;
+  color: #007cba;
+  cursor: pointer;
+  border-radius: 0;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+  border-right: 1px solid rgba(222, 226, 230, 0.5);
 }
 
 .view-toggle button:last-child {
-    border-right: none;
+  border-right: none;
 }
 
 .view-toggle button:first-child {
-    border-top-left-radius: 16px;
-    border-bottom-left-radius: 16px;
+  border-top-left-radius: 16px;
+  border-bottom-left-radius: 16px;
 }
 
 .view-toggle button:last-child {
-    border-top-right-radius: 16px;
-    border-bottom-right-radius: 16px;
-    border-right: none;
+  border-top-right-radius: 16px;
+  border-bottom-right-radius: 16px;
+  border-right: none;
 }
 
 .view-toggle button::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: -100%;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
-    transition: left 0.5s;
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.4),
+    transparent
+  );
+  transition: left 0.5s;
 }
 
 .view-toggle button.active {
-    background: #007cba;
-    color: white;
-    box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
+  background: #007cba;
+  color: white;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .view-toggle button:hover:not(.active) {
-    background: #f8f9fa;
-    color: #005a8b;
-    transform: translateY(-1px);
+  background: #f8f9fa;
+  color: #005a8b;
 }
 
 .view-toggle button:hover::before {
-    left: 100%;
+  left: 100%;
 }
 
 .main-table-container {
-    height: 100%;
-    display: none;
-    flex-direction: column;
-    background: white;
-    min-height: 400px;
-    border: 1px solid #ddd;
+  height: 100%;
+  display: none;
+  flex-direction: column;
+  background: white;
+  min-height: 400px;
+  border: 1px solid #ddd;
+}
+
+.map-header {
+  padding: 20px;
+  background: #f8f9fa;
+  border-bottom: 1px solid #dee2e6;
+}
+
+.map-header h2 {
+  margin: 0 0 10px 0;
+  color: #333;
 }
 
 .table-header {
-    padding: 20px;
-    background: #f8f9fa;
-    border-bottom: 1px solid #dee2e6;
+  padding: 20px;
+  background: #f8f9fa;
+  border-bottom: 1px solid #dee2e6;
 }
 
 .table-header h2 {
-    margin: 0 0 10px 0;
-    color: #333;
+  margin: 0 0 10px 0;
+  color: #333;
 }
 
 .table-info {
-    font-size: 14px;
-    color: #666;
-    margin: 5px 0;
+  font-size: 14px;
+  color: #666;
+  margin: 5px 0;
 }
 
 .column-selector {
-    background: #f8f9fa;
-    border-top: 1px solid #dee2e6;
-    padding: 15px 20px;
-    max-height: 200px;
-    overflow-y: auto;
+  background: #f8f9fa;
+  border-top: 1px solid #dee2e6;
+  padding: 15px 20px;
+  max-height: 200px;
+  overflow-y: auto;
 }
 
 .column-selector h4 {
-    margin: 0 0 10px 0;
-    color: #333;
-    font-size: 14px;
+  margin: 0 0 10px 0;
+  color: #333;
+  font-size: 14px;
 }
 
 .column-controls {
-    display: flex;
-    gap: 10px;
-    margin-bottom: 10px;
+  display: flex;
+  gap: 10px;
+  margin-bottom: 10px;
 }
 
 .column-controls button {
-    padding: 4px 8px;
-    border: 1px solid #007cba;
-    background: white;
-    color: #007cba;
-    cursor: pointer;
-    border-radius: 3px;
-    font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid #007cba;
+  background: white;
+  color: #007cba;
+  cursor: pointer;
+  border-radius: 3px;
+  font-size: 12px;
 }
 
 .column-controls button:hover {
-    background: #007cba;
-    color: white;
+  background: #007cba;
+  color: white;
 }
 
 .column-checkboxes {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px;
 }
 
 .column-checkbox {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
 }
 
 .column-checkbox input[type="checkbox"] {
-    margin: 0;
+  margin: 0;
 }
 
 .column-checkbox label {
-    cursor: pointer;
-    margin: 0;
-    font-weight: normal;
+  cursor: pointer;
+  margin: 0;
+  font-weight: normal;
 }
 
 .attributes-table-container {
-    flex: 1;
-    overflow: auto;
-    padding: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 0;
 }
 
 .attributes-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 14px;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
 }
 
 .attributes-table th {
-    background-color: #f8f9fa;
-    padding: 12px 8px;
-    text-align: left;
-    border-bottom: 2px solid #dee2e6;
-    position: sticky;
-    top: 0;
-    z-index: 10;
-    font-weight: 600;
-    color: #333;
+  background-color: #f8f9fa;
+  padding: 12px 8px;
+  text-align: left;
+  border-bottom: 2px solid #dee2e6;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  font-weight: 600;
+  color: #333;
 }
 
 .attributes-table td {
-    padding: 10px 8px;
-    border-bottom: 1px solid #dee2e6;
-    max-width: 200px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  padding: 10px 8px;
+  border-bottom: 1px solid #dee2e6;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .attributes-table tr:hover {
-    background-color: #f8f9fa;
-    cursor: pointer;
+  background-color: #f8f9fa;
+  cursor: pointer;
 }
 
 .attributes-table tr.selected-row {
-    background-color: #fff3cd;
+  background-color: #fff3cd;
 }
 
 .attributes-table tr:nth-child(even) {
-    background-color: #f9f9f9;
+  background-color: #f9f9f9;
 }
 
 .attributes-table tr.selected-row:nth-child(even) {
-    background-color: #fff3cd;
+  background-color: #fff3cd;
 }
 
 .attribute-marker {
-    background: white;
-    border: 2px solid #007cba;
-    border-radius: 8px;
-    padding: 8px 12px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-    min-width: 200px;
-    max-width: 300px;
+  background: white;
+  border: 2px solid #007cba;
+  border-radius: 8px;
+  padding: 8px 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  min-width: 200px;
+  max-width: 300px;
 }
 
 .attribute-marker h4 {
-    margin: 0 0 8px 0;
-    color: #007cba;
-    font-size: 14px;
-    font-weight: bold;
+  margin: 0 0 8px 0;
+  color: #007cba;
+  font-size: 14px;
+  font-weight: bold;
 }
 
 .attribute-marker .key-attributes {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .attribute-marker .attr-row {
-    display: flex;
-    justify-content: space-between;
-    font-size: 12px;
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
 }
 
 .attribute-marker .attr-key {
-    font-weight: bold;
-    color: #333;
-    margin-right: 8px;
+  font-weight: bold;
+  color: #333;
+  margin-right: 8px;
 }
 
 .attribute-marker .attr-value {
-    color: #666;
-    word-break: break-word;
+  color: #666;
+  word-break: break-word;
 }
 
 /* Adjacency table styles */
 .adjacency-table-section {
-    margin-top: 20px;
-    background: white;
-    padding: 15px;
-    border-radius: 5px;
-    border: 1px solid #ddd;
+  margin-top: 20px;
+  background: white;
+  padding: 15px;
+  border-radius: 5px;
+  border: 1px solid #ddd;
 }
 
 .styled-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 14px;
-    border: 2px solid #007cba;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  border: 2px solid #007cba;
 }
 
 .styled-table th {
-    background-color: #007cba;
-    color: white;
-    padding: 12px 8px;
-    text-align: left;
-    border: 1px solid #005a8b;
-    font-weight: 600;
+  background-color: #007cba;
+  color: white;
+  padding: 12px 8px;
+  text-align: left;
+  border: 1px solid #005a8b;
+  font-weight: 600;
 }
 
 .styled-table td {
-    padding: 10px 8px;
-    border: 1px solid #ddd;
-    background-color: white;
+  padding: 10px 8px;
+  border: 1px solid #ddd;
+  background-color: white;
 }
 
 .styled-table tr:nth-child(even) td {
-    background-color: #f8f9fa;
+  background-color: #f8f9fa;
 }
 
 .styled-table tr:hover td {
-    background-color: #e3f2fd;
+  background-color: #e3f2fd;
 }
 
 /* Main adjacency view styles */
 .adjacency-content {
-    flex: 1;
-    overflow: auto;
-    padding: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 0;
 }
 
 .adjacency-table-main {
-    padding: 20px;
+  padding: 20px;
 }
 
 /* Enhanced map controls styling - Minimal compact design */
 .map-controls {
-    position: absolute;
-    z-index: 1000;
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-    border-radius: 8px;
-    background: rgba(255,255,255,0.95);
-    backdrop-filter: blur(10px);
-    padding: 4px;
-    cursor: move;
-    user-select: none;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    border: 1px solid rgba(255,255,255,0.6);
-    width: auto;
-    min-width: auto;
+  position: absolute;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  padding: 4px;
+  cursor: move;
+  user-select: none;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  width: auto;
+  min-width: auto;
 }
 
 /* Specific positioning for each control group to avoid overlap */
 #navigationControls {
-    top: 15px;
-    right: 15px;
+  top: 15px;
+  right: 15px;
 }
 
 #selectionDrawingControls {
-    top: 15px;
-    left: 15px;
+  top: 15px;
+  left: 15px;
 }
 
 #viewDisplayControls {
-    top: 200px;
-    left: 15px;
+  top: 200px;
+  left: 15px;
 }
 
 #dataOperationsControls {
-    bottom: 15px;
-    right: 15px;
+  bottom: 15px;
+  right: 15px;
 }
 
 #basemapControls {
-    bottom: 15px;
-    left: 200px;
+  bottom: 15px;
+  left: 200px;
 }
 
 .map-controls:hover {
-    box-shadow: 0 12px 40px rgba(0,0,0,0.18);
-    background: rgba(255,255,255,1);
-    transform: translateY(-3px) scale(1.02);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  background: rgba(255, 255, 255, 1);
+  transform: translateY(-3px) scale(1.02);
 }
 
 .map-controls.dragging {
-    transform: scale(1.08) translateY(-4px);
-    box-shadow: 0 12px 40px rgba(0,0,0,0.3);
-    z-index: 9999;
+  transform: scale(1.08) translateY(-4px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+  z-index: 9999;
 }
 
 .control-group-header {
-    background: linear-gradient(135deg, #007cba, #005a8b);
-    color: white;
-    padding: 4px 8px;
-    margin: -4px -4px 3px -4px;
-    border-radius: 8px 8px 4px 4px;
-    font-size: 10px;
-    font-weight: 600;
-    text-align: center;
-    letter-spacing: 0.3px;
-    text-transform: uppercase;
-    cursor: move;
-    position: relative;
-    box-shadow: 0 1px 4px rgba(0,124,186,0.25);
+  background: linear-gradient(135deg, #007cba, #005a8b);
+  color: white;
+  padding: 4px 8px;
+  margin: -4px -4px 3px -4px;
+  border-radius: 8px 8px 4px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-align: center;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  cursor: move;
+  position: relative;
+  box-shadow: 0 1px 4px rgba(0, 124, 186, 0.25);
 }
 
 .control-group-header::after {
-    content: '⋮⋮';
-    position: absolute;
-    right: 8px;
-    top: 50%;
-    transform: translateY(-50%);
-    font-size: 14px;
-    opacity: 0.7;
+  content: "⋮⋮";
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 14px;
+  opacity: 0.7;
 }
 
 /* Button grid layout for organized controls */
 .control-button-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 8px;
-    margin: 8px 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 8px 0;
 }
 
 .control-button-row {
-    display: flex;
-    gap: 8px;
-    justify-content: space-between;
-    margin: 8px 0;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  margin: 8px 0;
 }
 
 .map-controls button {
-    width: 28px;
-    height: 28px;
-    border: 1px solid #007cba;
-    background: white;
-    color: #007cba;
-    cursor: pointer;
-    border-radius: 6px;
-    font-size: 14px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-    box-shadow: 0 1px 4px rgba(0,124,186,0.15);
-    margin: 1px;
-    position: relative;
-    overflow: hidden;
-    font-weight: 500;
-    padding: 0;
+  width: 28px;
+  height: 28px;
+  border: 1px solid #007cba;
+  background: white;
+  color: #007cba;
+  cursor: pointer;
+  border-radius: 6px;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 1px 4px rgba(0, 124, 186, 0.15);
+  margin: 1px;
+  position: relative;
+  overflow: hidden;
+  font-weight: 500;
+  padding: 0;
 }
 
 .map-controls button.wide {
-    grid-column: span 2;
-    width: auto;
-    min-width: 80px;
-    font-size: 14px;
-    padding: 0 16px;
+  grid-column: span 2;
+  width: auto;
+  min-width: 80px;
+  font-size: 14px;
+  padding: 0 16px;
 }
 
 .map-controls button.full-width {
-    grid-column: span 3;
-    width: auto;
-    font-size: 14px;
-    padding: 0 16px;
+  grid-column: span 3;
+  width: auto;
+  font-size: 14px;
+  padding: 0 16px;
 }
 
 /* Compact selects for map controls */
 .map-controls select {
-    width: auto;
-    min-width: 120px;
-    max-width: 150px;
-    height: 28px;
-    padding: 2px 4px;
-    margin: 1px;
-    border: 1px solid #007cba;
-    border-radius: 6px;
-    font-size: 11px;
-    background: white;
-    color: #007cba;
+  width: auto;
+  min-width: 120px;
+  max-width: 150px;
+  height: 28px;
+  padding: 2px 4px;
+  margin: 1px;
+  border: 1px solid #007cba;
+  border-radius: 6px;
+  font-size: 11px;
+  background: white;
+  color: #007cba;
 }
 
 .map-controls button::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: -100%;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
-    transition: left 0.5s;
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.4),
+    transparent
+  );
+  transition: left 0.5s;
 }
 
 .map-controls button:hover:not(:disabled) {
-    background: #007cba;
-    color: white;
-    box-shadow: 0 6px 16px rgba(0,124,186,0.3);
-    transform: translateY(-2px) scale(1.05);
+  background: #007cba;
+  color: white;
+  box-shadow: 0 6px 16px rgba(0, 124, 186, 0.3);
+  transform: translateY(-2px) scale(1.05);
 }
 
 .map-controls button:hover:not(:disabled)::before {
-    left: 100%;
+  left: 100%;
 }
 
 .map-controls button:disabled {
-    background: #f8f9fa;
-    color: #adb5bd;
-    border-color: #e9ecef;
-    cursor: not-allowed;
-    opacity: 0.5;
-    box-shadow: none;
+  background: #f8f9fa;
+  color: #adb5bd;
+  border-color: #e9ecef;
+  cursor: not-allowed;
+  opacity: 0.5;
+  box-shadow: none;
 }
 
 .map-controls button:active:not(:disabled) {
-    transform: translateY(-1px) scale(0.98);
-    transition: all 0.1s ease;
+  transform: translateY(-1px) scale(0.98);
+  transition: all 0.1s ease;
 }
 
 /* Import/Export button styling */
 #exportSelectionBtn:not(:disabled) {
-    background: #28a745;
-    border-color: #28a745;
+  background: #28a745;
+  border-color: #28a745;
 }
 
 #exportSelectionBtn:not(:disabled):hover {
-    background: #218838;
-    border-color: #218838;
+  background: #218838;
+  border-color: #218838;
 }
 
 #importSelectionBtn {
-    background: #17a2b8;
-    border-color: #17a2b8;
+  background: #17a2b8;
+  border-color: #17a2b8;
 }
 
 #importSelectionBtn:hover {
-    background: #138496;
-    border-color: #138496;
+  background: #138496;
+  border-color: #138496;
 }
 
 /* Map info controls (left side) */
 .map-info-controls {
-    position: absolute;
-    bottom: 15px;
-    left: 15px;
-    z-index: 1000;
-    display: flex;
-    flex-direction: row;
-    gap: 6px;
-    background: rgba(255,255,255,0.95);
-    backdrop-filter: blur(15px);
-    border-radius: 12px;
-    padding: 8px;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.12);
-    border: 1px solid rgba(255,255,255,0.6);
-    cursor: move;
-    user-select: none;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: absolute;
+  bottom: 15px;
+  left: 15px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: row;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(15px);
+  border-radius: 12px;
+  padding: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  cursor: move;
+  user-select: none;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .map-info-controls:hover {
-    box-shadow: 0 12px 40px rgba(0,0,0,0.18);
-    background: rgba(255,255,255,1);
-    transform: translateY(-3px) scale(1.02);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  background: rgba(255, 255, 255, 1);
+  transform: translateY(-3px) scale(1.02);
 }
 
 .map-info-controls button {
-    width: 36px;
-    height: 36px;
-    border: 1px solid #007cba;
-    background: white;
-    color: #007cba;
-    cursor: pointer;
-    border-radius: 8px;
-    font-size: 16px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: 0 2px 8px rgba(0,124,186,0.15);
-    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-    position: relative;
-    overflow: hidden;
+  width: 36px;
+  height: 36px;
+  border: 1px solid #007cba;
+  background: white;
+  color: #007cba;
+  cursor: pointer;
+  border-radius: 8px;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 124, 186, 0.15);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
 }
 
 .map-info-controls button::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: -100%;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
-    transition: left 0.5s;
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.4),
+    transparent
+  );
+  transition: left 0.5s;
 }
 
 .map-info-controls button:hover {
-    background: #007cba;
-    color: white;
-    transform: translateY(-2px) scale(1.08);
-    box-shadow: 0 6px 16px rgba(0,124,186,0.3);
+  background: #007cba;
+  color: white;
+  transform: translateY(-2px) scale(1.08);
+  box-shadow: 0 6px 16px rgba(0, 124, 186, 0.3);
 }
 
 .map-info-controls button:hover::before {
-    left: 100%;
+  left: 100%;
 }
 
 .map-info-controls button:active {
-    transform: translateY(-1px) scale(1.02);
-    transition: all 0.1s ease;
+  transform: translateY(-1px) scale(1.02);
+  transition: all 0.1s ease;
 }
 
 /* Map panels */
 .map-panel {
-    position: absolute;
-    top: 120px;
-    left: 90px;
-    z-index: 999;
-    background: rgba(255,255,255,0.98);
-    backdrop-filter: blur(15px);
-    border: 2px solid #007cba;
-    border-radius: 16px;
-    box-shadow: 0 8px 24px rgba(0,124,186,0.2);
-    min-width: 280px;
-    max-width: 400px;
-    transform: translateY(0);
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: absolute;
+  top: 120px;
+  left: 90px;
+  z-index: 999;
+  background: rgba(255, 255, 255, 0.98);
+  backdrop-filter: blur(15px);
+  border: 2px solid #007cba;
+  border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(0, 124, 186, 0.2);
+  min-width: 280px;
+  max-width: 400px;
+  transform: translateY(0);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .panel-header {
-    background: linear-gradient(135deg, #007cba, #005a8b);
-    color: white;
-    padding: 12px 18px;
-    border-radius: 14px 14px 0 0;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    box-shadow: 0 2px 8px rgba(0,124,186,0.3);
+  background: linear-gradient(135deg, #007cba, #005a8b);
+  color: white;
+  padding: 12px 18px;
+  border-radius: 14px 14px 0 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 0 2px 8px rgba(0, 124, 186, 0.3);
 }
 
 .panel-header h3 {
-    margin: 0;
-    font-size: 16px;
+  margin: 0;
+  font-size: 16px;
 }
 
 .panel-close {
-    background: none;
-    border: none;
-    color: white;
-    font-size: 20px;
-    cursor: pointer;
-    padding: 0;
-    width: 28px;
-    height: 28px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 6px;
-    transition: all 0.2s ease;
+  background: none;
+  border: none;
+  color: white;
+  font-size: 20px;
+  cursor: pointer;
+  padding: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all 0.2s ease;
 }
 
 .panel-close:hover {
-    background: rgba(255,255,255,0.25);
-    transform: scale(1.1);
+  background: rgba(255, 255, 255, 0.25);
+  transform: scale(1.1);
 }
 
 .panel-content {
-    padding: 18px;
-    background: rgba(255,255,255,0.95);
-    border-radius: 0 0 14px 14px;
-    backdrop-filter: blur(10px);
+  padding: 18px;
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 0 0 14px 14px;
+  backdrop-filter: blur(10px);
 }
 
 /* Legend items in panel */
 .panel-content .legend-item {
-    display: flex;
-    align-items: center;
-    margin: 8px 0;
+  display: flex;
+  align-items: center;
+  margin: 8px 0;
 }
 
 .panel-content .legend-color {
-    width: 20px;
-    height: 20px;
-    margin-right: 10px;
-    border: 2px solid #333;
-    border-radius: 3px;
+  width: 20px;
+  height: 20px;
+  margin-right: 10px;
+  border: 2px solid #333;
+  border-radius: 3px;
 }
 
 .panel-content .legend-item span {
-    font-size: 14px;
-    color: #333;
+  font-size: 14px;
+  color: #333;
 }
 
 /* Selection info in panel */
 #selectionInfo {
-    font-size: 14px;
-    line-height: 1.4;
-    color: #333;
+  font-size: 14px;
+  line-height: 1.4;
+  color: #333;
 }
 
 /* Mapping view styles */
 .mapping-content {
-    padding: 20px;
+  padding: 20px;
 }
 
 .mapping-controls {
-    display: flex;
-    gap: 10px;
-    align-items: center;
+  display: flex;
+  gap: 10px;
+  align-items: center;
 }
 
 .mapping-controls .btn {
-    padding: 8px 16px;
-    border: 1px solid #007cba;
-    background: white;
-    color: #007cba;
-    cursor: pointer;
-    border-radius: 4px;
-    font-size: 14px;
+  padding: 8px 16px;
+  border: 1px solid #007cba;
+  background: white;
+  color: #007cba;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 14px;
 }
 
 .mapping-controls .btn:hover {
-    background: #007cba;
-    color: white;
+  background: #007cba;
+  color: white;
 }
 
 .mapping-summary {
-    background: #f8f9fa;
-    border: 1px solid #dee2e6;
-    border-radius: 6px;
-    padding: 15px;
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 6px;
+  padding: 15px;
 }
 
 .summary-stats {
-    display: flex;
-    justify-content: space-around;
-    gap: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.summary-item {
+  padding: 8px 12px;
+  background: #f8f9fa;
+  border-left: 3px solid #007cba;
+  border-radius: 4px;
+}
+
+.summary-item strong {
+  color: #007cba;
+  margin-right: 8px;
 }
 
 .stat-item {
-    text-align: center;
+  text-align: center;
 }
 
 .stat-value {
-    display: block;
-    font-size: 20px;
-    font-weight: bold;
-    color: #007cba;
+  display: block;
+  font-size: 20px;
+  font-weight: bold;
+  color: #007cba;
 }
 
 .mapping-table-main {
-    overflow-x: auto;
+  overflow-x: auto;
 }
 
 .no-data {
-    text-align: center;
-    font-style: italic;
-    color: #666;
-    padding: 30px;
+  text-align: center;
+  font-style: italic;
+  color: #666;
+  padding: 30px;
 }
 
 /* Intersection type indicators */
 .intersection-contains {
-    color: #28a745;
-    font-weight: bold;
+  color: #28a745;
+  font-weight: bold;
 }
 
 .intersection-overlaps {
-    color: #ffc107;
-    font-weight: bold;
+  color: #ffc107;
+  font-weight: bold;
 }
 
 .intersection-partial {
-    color: #17a2b8;
-    font-weight: bold;
+  color: #17a2b8;
+  font-weight: bold;
 }
 
 .intersection-none {
-    color: #6c757d;
-    font-weight: bold;
+  color: #6c757d;
+  font-weight: bold;
 }
 
 /* Control separator styling */
 .control-separator {
-    height: 2px;
-    background: #dee2e6;
-    margin: 5px 0;
-    border-radius: 1px;
+  height: 2px;
+  background: #dee2e6;
+  margin: 5px 0;
+  border-radius: 1px;
 }
 
 /* Control group label styling - hidden since we have headers now */
 .control-group-label {
-    display: none;
+  display: none;
 }
 
 /* Enhanced control organization */
 .control-section {
-    background: rgba(248, 249, 250, 0.8);
-    border-radius: 12px;
-    padding: 12px;
-    margin: 8px 0;
-    border: 1px solid rgba(222, 226, 230, 0.5);
+  background: rgba(248, 249, 250, 0.8);
+  border-radius: 12px;
+  padding: 12px;
+  margin: 8px 0;
+  border: 1px solid rgba(222, 226, 230, 0.5);
 }
 
 .control-section-title {
-    font-size: 11px;
-    font-weight: 600;
-    color: #495057;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-bottom: 8px;
-    text-align: center;
-    border-bottom: 1px solid rgba(222, 226, 230, 0.3);
-    padding-bottom: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #495057;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+  text-align: center;
+  border-bottom: 1px solid rgba(222, 226, 230, 0.3);
+  padding-bottom: 4px;
 }
 
 /* Collapsible control groups */
 .control-group-collapsible {
-    position: relative;
+  position: relative;
 }
 
 .control-group-toggle {
-    position: absolute;
-    top: 8px;
-    right: 12px;
-    background: none;
-    border: none;
-    color: white;
-    font-size: 16px;
-    cursor: pointer;
-    width: 24px;
-    height: 24px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 6px;
-    transition: all 0.2s ease;
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  background: none;
+  border: none;
+  color: white;
+  font-size: 16px;
+  cursor: pointer;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all 0.2s ease;
 }
 
 .control-group-toggle:hover {
-    background: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .control-group-content {
-    transition: all 0.3s ease;
-    overflow: hidden;
+  transition: all 0.3s ease;
+  overflow: hidden;
 }
 
 .control-group-content.collapsed {
-    max-height: 0;
-    opacity: 0;
-    margin: 0;
-    padding: 0;
+  max-height: 0;
+  opacity: 0;
+  margin: 0;
+  padding: 0;
 }
 
 /* Status indicators for controls */
 .control-status-indicator {
-    position: absolute;
-    top: -2px;
-    right: -2px;
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    border: 2px solid white;
-    font-size: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid white;
+  font-size: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .control-status-indicator.active {
-    background: #28a745;
+  background: #28a745;
 }
 
 .control-status-indicator.warning {
-    background: #ffc107;
+  background: #ffc107;
 }
 
 .control-status-indicator.error {
-    background: #dc3545;
+  background: #dc3545;
 }
 
 /* Improved responsive design for mobile and tablet */
 @media (max-width: 768px) {
-    .container {
-        flex-direction: column;
-    }
+  .container {
+    flex-direction: column;
+  }
 
-    .sidebar {
-        width: 100%;
-        height: auto;
-        max-height: 35vh;
-        order: 1;
-        overflow-y: auto;
-    }
+  .sidebar {
+    width: 100%;
+    height: auto;
+    max-height: 35vh;
+    order: 1;
+    overflow-y: auto;
+  }
 
-    .map-container {
-        order: 2;
-        height: 65vh;
-    }
+  .map-container {
+    order: 2;
+    height: 65vh;
+  }
 
-    .map-controls {
-        padding: 3px;
-        gap: 2px;
-    }
+  .map-controls {
+    padding: 3px;
+    gap: 2px;
+  }
 
-    /* Mobile positioning - stack controls more efficiently */
-    #navigationControls {
-        top: 10px;
-        right: 10px;
-    }
+  /* Mobile positioning - stack controls more efficiently */
+  #navigationControls {
+    top: 10px;
+    right: 10px;
+  }
 
-    #selectionDrawingControls {
-        top: 10px;
-        left: 10px;
-    }
+  #selectionDrawingControls {
+    top: 10px;
+    left: 10px;
+  }
 
-    #viewDisplayControls {
-        top: 120px;
-        left: 10px;
-    }
+  #viewDisplayControls {
+    top: 120px;
+    left: 10px;
+  }
 
-    #dataOperationsControls {
-        bottom: 10px;
-        right: 10px;
-    }
+  #dataOperationsControls {
+    bottom: 10px;
+    right: 10px;
+  }
 
-    #basemapControls {
-        bottom: 10px;
-        left: 10px;
-        max-width: 140px;
-    }
+  #basemapControls {
+    bottom: 10px;
+    left: 10px;
+    max-width: 140px;
+  }
 
-    .map-controls button {
-        width: 24px;
-        height: 24px;
-        font-size: 12px;
-    }
+  .map-controls button {
+    width: 24px;
+    height: 24px;
+    font-size: 12px;
+  }
 
-    .map-controls select {
-        min-width: 100px;
-        max-width: 120px;
-        height: 24px;
-        font-size: 10px;
-    }
+  .map-controls select {
+    min-width: 100px;
+    max-width: 120px;
+    height: 24px;
+    font-size: 10px;
+  }
 
-    .control-button-grid {
-        grid-template-columns: repeat(2, 1fr);
-        gap: 6px;
-    }
+  .control-button-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+  }
 
-    .map-controls button.wide {
-        grid-column: span 2;
-        font-size: 12px;
-        padding: 0 12px;
-    }
+  .map-controls button.wide {
+    grid-column: span 2;
+    font-size: 12px;
+    padding: 0 12px;
+  }
 
-    .map-controls button.full-width {
-        grid-column: span 2;
-        font-size: 12px;
-        padding: 0 12px;
-    }
+  .map-controls button.full-width {
+    grid-column: span 2;
+    font-size: 12px;
+    padding: 0 12px;
+  }
 
-    .map-info-controls {
-        padding: 6px;
-        gap: 4px;
-        bottom: 10px;
-        left: 10px;
-        flex-direction: row;
-    }
+  .map-info-controls {
+    padding: 6px;
+    gap: 4px;
+    bottom: 10px;
+    left: 10px;
+    flex-direction: row;
+  }
 
-    .map-info-controls button {
-        width: 32px;
-        height: 32px;
-        font-size: 14px;
-    }
+  .map-info-controls button {
+    width: 32px;
+    height: 32px;
+    font-size: 14px;
+  }
 
-    .map-panel {
-        min-width: 240px;
-        max-width: calc(100vw - 30px);
-        left: 15px;
-        top: 70px;
-    }
+  .map-panel {
+    min-width: 240px;
+    max-width: calc(100vw - 30px);
+    left: 15px;
+    top: 70px;
+  }
 
-    .view-toggle {
-        top: 10px;
-        right: 10px;
-        border-radius: 16px;
-    }
+  .view-toggle {
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    border-radius: 16px;
+  }
 
-    .view-toggle button {
-        padding: 10px 14px;
-        font-size: 11px;
-    }
+  .view-toggle button {
+    padding: 10px 14px;
+    font-size: 11px;
+  }
 
-    .control-group-header {
-        font-size: 9px;
-        padding: 3px 6px;
-        margin: -3px -3px 2px -3px;
-    }
+  .control-group-header {
+    font-size: 9px;
+    padding: 3px 6px;
+    margin: -3px -3px 2px -3px;
+  }
 }
 
 @media (max-width: 480px) {
-    .map-controls {
-        max-width: 160px;
-        padding: 6px;
-        gap: 4px;
-    }
-    
-    .map-controls button {
-        width: 32px;
-        height: 32px;
-        font-size: 14px;
-    }
-    
-    .control-group-header {
-        padding: 6px 12px;
-        font-size: 10px;
-    }
-    
-    .map-info-controls button {
-        width: 36px;
-        height: 36px;
-        font-size: 16px;
-    }
-    
-    .map-panel {
-        min-width: 200px;
-        left: 10px;
-        top: 60px;
-    }
-    
-    .panel-content {
-        padding: 12px;
-    }
+  .map-controls {
+    max-width: 160px;
+    padding: 6px;
+    gap: 4px;
+  }
+
+  .map-controls button {
+    width: 32px;
+    height: 32px;
+    font-size: 14px;
+  }
+
+  .control-group-header {
+    padding: 6px 12px;
+    font-size: 10px;
+  }
+
+  .map-info-controls button {
+    width: 36px;
+    height: 36px;
+    font-size: 16px;
+  }
+
+  .map-panel {
+    min-width: 200px;
+    left: 10px;
+    top: 60px;
+  }
+
+  .panel-content {
+    padding: 12px;
+  }
 }
 
 /* Custom Leaflet Controls Styling */
 .leaflet-control-navigation,
 .leaflet-control-tools,
 .leaflet-control-display,
-.leaflet-control-data {
-    background: white;
-    border-radius: 8px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-    padding: 8px;
-    margin: 5px;
-    min-width: 120px;
+.leaflet-control-data,
+.leaflet-control-adjacency,
+.leaflet-control-auction {
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  padding: 8px;
+  margin: 5px;
+  min-width: 120px;
 }
 
 .control-group-header {
-    font-size: 11px;
-    color: #666;
-    font-weight: bold;
-    text-align: center;
-    margin-bottom: 8px;
-    padding-bottom: 4px;
-    border-bottom: 1px solid #eee;
+  font-size: 11px;
+  color: #666;
+  font-weight: bold;
+  text-align: center;
+  margin-bottom: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #eee;
 }
 
 .leaflet-control-navigation button,
 .leaflet-control-tools button,
 .leaflet-control-display button,
-.leaflet-control-data button {
-    background: #fff;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    padding: 6px 8px;
-    margin: 2px;
-    cursor: pointer;
-    font-size: 14px;
-    transition: all 0.2s;
-    display: inline-block;
-    min-width: 30px;
+.leaflet-control-data button,
+.leaflet-control-adjacency button,
+.leaflet-control-auction button {
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 6px 8px;
+  margin: 2px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s;
+  display: inline-block;
+  min-width: 30px;
 }
 
 .leaflet-control-navigation button:hover,
 .leaflet-control-tools button:hover,
 .leaflet-control-display button:hover,
-.leaflet-control-data button:hover {
-    background: #f5f5f5;
-    border-color: #007cba;
+.leaflet-control-data button:hover,
+.leaflet-control-adjacency button:hover,
+.leaflet-control-auction button:hover {
+  background: #f5f5f5;
+  border-color: #007cba;
 }
 
 .leaflet-control-navigation button:disabled,
 .leaflet-control-tools button:disabled,
 .leaflet-control-display button:disabled,
-.leaflet-control-data button:disabled {
-    background: #f9f9f9;
-    color: #ccc;
-    cursor: not-allowed;
-    border-color: #eee;
+.leaflet-control-data button:disabled,
+.leaflet-control-adjacency button:disabled,
+.leaflet-control-auction button:disabled {
+  background: #f9f9f9;
+  color: #ccc;
+  cursor: not-allowed;
+  border-color: #eee;
 }
 
 .control-separator {
-    border-top: 1px solid #eee;
-    margin: 6px 2px;
+  border-top: 1px solid #eee;
+  margin: 6px 2px;
 }
 
 /* Position adjustments */
 .leaflet-control-navigation {
-    margin-top: 80px;
+  margin-top: 80px;
 }
 
 .leaflet-control-tools {
-    margin-top: 10px;
+  margin-top: 10px;
 }
 
 .leaflet-control-display {
-    margin-top: 10px;
+  margin-top: 10px;
+}
+
+/* Custom bottom-center position for Leaflet controls */
+.leaflet-bottom.leaflet-center {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+}
+
+.leaflet-bottom.leaflet-center .leaflet-control {
+  pointer-events: auto;
+  margin-bottom: 10px;
 }
 
 .leaflet-control-data {
-    margin-bottom: 10px;
+  margin-bottom: 10px;
 }
 
 /* Right-align stat numbers */
 .stat-number {
-    text-align: right;
+  text-align: right;
 }
 
 /* View Container Styles */
-.table-container, .adjacency-container, .mapping-container {
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    background: white;
+.table-container,
+.adjacency-container,
+.mapping-container {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: white;
 }
 
-.table-header, .adjacency-header, .mapping-header {
-    padding: 20px;
-    background: #f8f9fa;
-    border-bottom: 1px solid #dee2e6;
-    flex-shrink: 0;
+.table-header,
+.adjacency-header,
+.mapping-header {
+  padding: 20px;
+  background: #f8f9fa;
+  border-bottom: 1px solid #dee2e6;
+  flex-shrink: 0;
 }
 
-.table-header h2, .adjacency-header h2, .mapping-header h2 {
-    margin: 0 0 10px 0;
-    color: #333;
-    font-size: 1.5em;
+.table-header h2,
+.adjacency-header h2,
+.mapping-header h2 {
+  margin: 0 0 10px 0;
+  color: #333;
+  font-size: 1.5em;
 }
 
 .attribute-table {
-    flex: 1;
-    overflow: auto;
-    padding: 20px;
+  flex: 1;
+  overflow: auto;
+  padding: 20px;
 }
 
 .data-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 14px;
-    background: white;
-    border-radius: 8px;
-    overflow: hidden;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  background: white;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
 .data-table th {
-    background: #007cba;
-    color: white;
-    padding: 12px 8px;
-    text-align: left;
-    font-weight: 600;
-    position: sticky;
-    top: 0;
-    z-index: 10;
+  background: #007cba;
+  color: white;
+  padding: 12px 8px;
+  text-align: left;
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  z-index: 10;
 }
 
 .data-table td {
-    padding: 10px 8px;
-    border-bottom: 1px solid #dee2e6;
-    max-width: 200px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  padding: 10px 8px;
+  border-bottom: 1px solid #dee2e6;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .data-table tr:nth-child(even) {
-    background-color: #f8f9fa;
+  background-color: #f8f9fa;
 }
 
 .data-table tr:hover {
-    background-color: #e3f2fd;
-    cursor: pointer;
+  background-color: #e3f2fd;
+  cursor: pointer;
 }
 
 .no-data-message {
-    text-align: center;
-    color: #666;
-    font-style: italic;
-    padding: 60px 20px;
-    background: #f8f9fa;
-    border-radius: 8px;
-    margin: 20px;
+  text-align: center;
+  color: #666;
+  font-style: italic;
+  padding: 60px 20px;
+  background: #f8f9fa;
+  border-radius: 8px;
+  margin: 20px;
 }
 
 /* Adjacency View Styles */
 .adjacency-results {
-    flex: 1;
-    overflow: auto;
-    padding: 20px;
+  flex: 1;
+  overflow: auto;
+  padding: 20px;
 }
 
 .adjacency-section {
-    margin-bottom: 30px;
-    background: white;
-    border-radius: 8px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    overflow: hidden;
+  margin-bottom: 30px;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
 }
 
 .adjacency-section h3 {
-    background: #007cba;
-    color: white;
-    margin: 0;
-    padding: 15px 20px;
-    font-size: 1.2em;
+  background: #007cba;
+  color: white;
+  margin: 0;
+  padding: 15px 20px;
+  font-size: 1.2em;
 }
 
 .polygon-info {
-    padding: 20px;
-    color: #666;
+  padding: 20px;
+  color: #666;
 }
 
 /* Mapping View Styles */
 .mapping-container {
-    padding: 20px;
+  padding: 20px;
 }
 
 .drawing-controls {
-    flex: 1;
-    overflow: auto;
+  flex: 1;
+  overflow: auto;
 }
 
 .drawing-section {
-    background: white;
-    border-radius: 8px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    padding: 20px;
-    margin-bottom: 20px;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  padding: 20px;
+  margin-bottom: 20px;
 }
 
 .drawing-section h3 {
-    margin: 0 0 15px 0;
-    color: #007cba;
-    font-size: 1.2em;
+  margin: 0 0 15px 0;
+  color: #007cba;
+  font-size: 1.2em;
 }
 
 .drawn-polygons-list {
-    max-height: 200px;
-    overflow-y: auto;
-    margin-bottom: 15px;
-    padding: 10px;
-    background: #f8f9fa;
-    border-radius: 4px;
-    border: 1px solid #dee2e6;
+  max-height: 200px;
+  overflow-y: auto;
+  margin-bottom: 15px;
+  padding: 10px;
+  background: #f8f9fa;
+  border-radius: 4px;
+  border: 1px solid #dee2e6;
 }
 
 .drawn-list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
+  list-style: none;
+  padding: 0;
+  margin: 0;
 }
 
 .drawn-list li {
-    padding: 8px 12px;
-    margin: 4px 0;
-    background: white;
-    border: 1px solid #dee2e6;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: background-color 0.2s;
+  padding: 8px 12px;
+  margin: 4px 0;
+  background: white;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s;
 }
 
 .drawn-list li:hover {
-    background: #e3f2fd;
+  background: #e3f2fd;
 }
 
 .drawing-actions {
-    display: flex;
-    gap: 10px;
+  display: flex;
+  gap: 10px;
 }
 
 .drawing-actions button {
-    flex: 1;
-    padding: 10px 16px;
-    border: 1px solid #007cba;
-    background: #007cba;
-    color: white;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 14px;
-    transition: background-color 0.2s;
+  flex: 1;
+  padding: 10px 16px;
+  border: 1px solid #007cba;
+  background: #007cba;
+  color: white;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background-color 0.2s;
 }
 
 .drawing-actions button:hover {
-    background: #005a8b;
+  background: #005a8b;
 }
 
 .mapping-stats {
-    background: white;
-    border-radius: 8px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    padding: 20px;
-    display: flex;
-    justify-content: space-around;
-    gap: 20px;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  padding: 20px;
+  display: flex;
+  justify-content: space-around;
+  gap: 20px;
 }
 
 .mapping-stats .stat-item {
-    text-align: center;
+  text-align: center;
 }
 
 .mapping-stats .stat-label {
-    display: block;
-    font-size: 14px;
-    color: #666;
-    margin-bottom: 5px;
+  display: block;
+  font-size: 14px;
+  color: #666;
+  margin-bottom: 5px;
 }
 
 .mapping-stats .stat-value {
-    display: block;
-    font-size: 24px;
-    font-weight: bold;
-    color: #007cba;
+  display: block;
+  font-size: 24px;
+  font-weight: bold;
+  color: #007cba;
 }
 
 .mapping-info {
-    color: #666;
-    margin-bottom: 20px;
+  color: #666;
+  margin-bottom: 20px;
 }
 
 /* Cadastral Selection Summary Styles */
 .selection-summary {
-    background: #f8f9fa;
-    border: 1px solid #dee2e6;
-    border-radius: 8px;
-    padding: 15px;
-    margin-top: 15px;
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  padding: 15px;
+  margin-top: 15px;
 }
 
 .selection-summary h4 {
-    margin: 0 0 10px 0;
-    color: #007cba;
-    font-size: 1.1em;
+  margin: 0 0 10px 0;
+  color: #007cba;
+  font-size: 1.1em;
 }
 
 .files-breakdown {
-    margin-top: 10px;
-    padding: 10px;
-    background: white;
-    border-radius: 4px;
-    border: 1px solid #dee2e6;
+  margin-top: 10px;
+  padding: 10px;
+  background: white;
+  border-radius: 4px;
+  border: 1px solid #dee2e6;
 }
 
 .files-breakdown strong {
-    color: #007cba;
+  color: #007cba;
 }
 
 .no-files {
-    color: #666;
-    font-style: italic;
-    text-align: center;
-    padding: 10px;
+  color: #666;
+  font-style: italic;
+  text-align: center;
+  padding: 10px;
 }
+
+/* Prevent Leaflet controls from overlapping map header */
+.leaflet-top {
+  top: 10px !important;
+}
+
+.leaflet-control-container .leaflet-top .leaflet-control {
+  margin-top: 10px !important;
+}
+
+/* Ensure map header stays visible and accessible */
+.map-header {
+  position: relative !important;
+  z-index: 1001 !important; /* Higher than Leaflet controls (z-index: 1000) */
+}
+
+/* Debug: Force map header to be above map */
+#mapView .map-header {
+  display: block !important;
+  width: 100% !important;
+  float: none !important;
+  clear: both !important;
+  position: relative !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  margin: 0 !important;
+  order: -1 !important; /* Ensure it comes first */
+}
+
+/* Debug: Force map to be below header */
+#mapView #map {
+  display: block !important;
+  width: 100% !important;
+  float: none !important;
+  clear: both !important;
+  position: relative !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  margin: 0 !important;
+  order: 1 !important; /* Ensure it comes after header */
+}
+
+/* Force the map container to use correct layout */
+#mapView .map-container {
+  display: flex !important;
+  flex-direction: column !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* Leaflet Plugins Styling */
+
+/* Search Control */
+.leaflet-control-search {
+  font-size: 14px;
+}
+
+.leaflet-control-search .search-input {
+  width: 200px;
+  padding: 5px;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+}
+
+.leaflet-control-search .search-tooltip {
+  background: white;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  padding: 5px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Mouse Position Control */
+.leaflet-control-mouseposition {
+  background: rgba(255, 255, 255, 0.9);
+  color: #333;
+  font-size: 12px;
+  padding: 5px 8px;
+  border-radius: 3px;
+  border: 1px solid #ccc;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+/* Enhanced TreeLayers Control */
+.leaflet-control-treelayers {
+  background: rgba(255, 255, 255, 0.98) !important;
+  border: 2px solid #007cba !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 12px rgba(0, 124, 186, 0.3) !important;
+  max-width: 320px !important;
+  min-width: 280px !important;
+  max-height: 500px !important;
+  overflow-y: auto !important;
+  font-family: Arial, sans-serif !important;
+  z-index: 1001 !important;
+}
+
+/* TreeLayers header styling */
+.leaflet-control-treelayers .leaflet-control-treelayers-header {
+  background: linear-gradient(135deg, #007cba, #005a8b) !important;
+  color: white !important;
+  padding: 12px 15px !important;
+  margin: -1px -1px 10px -1px !important;
+  border-radius: 6px 6px 0 0 !important;
+  font-weight: bold !important;
+  font-size: 14px !important;
+  text-align: center !important;
+  border-bottom: 1px solid #005a8b !important;
+}
+
+/* TreeLayers sections */
+.leaflet-control-treelayers .leaflet-control-treelayers-section {
+  margin-bottom: 8px !important;
+  border: 1px solid #dee2e6 !important;
+  border-radius: 6px !important;
+  overflow: hidden !important;
+}
+
+/* TreeLayers section headers */
+.leaflet-control-treelayers .leaflet-control-treelayers-section-header {
+  background: linear-gradient(135deg, #f8f9fa, #e9ecef) !important;
+  color: #495057 !important;
+  padding: 8px 12px !important;
+  font-weight: bold !important;
+  font-size: 13px !important;
+  border-bottom: 1px solid #dee2e6 !important;
+  cursor: pointer !important;
+  transition: all 0.2s ease !important;
+}
+
+.leaflet-control-treelayers .leaflet-control-treelayers-section-header:hover {
+  background: linear-gradient(135deg, #e9ecef, #dee2e6) !important;
+  color: #007cba !important;
+}
+
+/* TreeLayers items */
+.leaflet-control-treelayers .leaflet-control-treelayers-item {
+  padding: 6px 12px !important;
+  border-bottom: 1px solid #f8f9fa !important;
+  transition: all 0.2s ease !important;
+}
+
+.leaflet-control-treelayers .leaflet-control-treelayers-item:hover {
+  background: #e7f3ff !important;
+  color: #007cba !important;
+}
+
+.leaflet-control-treelayers .leaflet-control-treelayers-item:last-child {
+  border-bottom: none !important;
+}
+
+/* TreeLayers checkboxes and radio buttons */
+.leaflet-control-treelayers input[type="checkbox"],
+.leaflet-control-treelayers input[type="radio"] {
+  margin-right: 8px !important;
+  transform: scale(1.1) !important;
+}
+
+/* TreeLayers labels */
+.leaflet-control-treelayers label {
+  cursor: pointer !important;
+  display: flex !important;
+  align-items: center !important;
+  font-size: 12px !important;
+  color: #495057 !important;
+  padding: 4px 0 !important;
+  transition: color 0.2s ease !important;
+}
+
+.leaflet-control-treelayers label:hover {
+  color: #007cba !important;
+}
+
+/* TreeLayers collapse/expand controls */
+.leaflet-control-treelayers .leaflet-control-treelayers-toggle {
+  background: #007cba !important;
+  color: white !important;
+  border: none !important;
+  padding: 4px 8px !important;
+  border-radius: 4px !important;
+  font-size: 11px !important;
+  cursor: pointer !important;
+  margin: 5px !important;
+  transition: all 0.2s ease !important;
+}
+
+.leaflet-control-treelayers .leaflet-control-treelayers-toggle:hover {
+  background: #005a8b !important;
+  transform: translateY(-1px) !important;
+  box-shadow: 0 2px 4px rgba(0, 124, 186, 0.3) !important;
+}
+
+.leaflet-control-treelayers-header {
+  background: #f5f5f5;
+  border-bottom: 1px solid #ddd;
+  padding: 8px;
+  font-weight: bold;
+}
+
+.leaflet-control-treelayers label {
+  display: flex;
+  align-items: center;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.leaflet-control-treelayers label:hover {
+  background: #f0f0f0;
+}
+
+.leaflet-control-treelayers input[type="checkbox"],
+.leaflet-control-treelayers input[type="radio"] {
+  margin-right: 8px;
+}
+
+/* Selection Controls */
+.selection-buttons,
+.adjacency-buttons {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.selection-buttons button,
+.adjacency-buttons button {
+  padding: 6px 12px;
+  border: 1px solid #007cba;
+  background: #fff;
+  color: #007cba;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.2s;
+}
+
+.selection-buttons button:hover,
+.adjacency-buttons button:hover {
+  background: #007cba;
+  color: #fff;
+}
+
+.selection-buttons button:disabled,
+.adjacency-buttons button:disabled {
+  background: #f5f5f5;
+  color: #999;
+  border-color: #ddd;
+  cursor: not-allowed;
+}
+
+.selection-buttons button.disabled {
+  background: #f8d7da;
+  color: #721c24;
+  border-color: #f5c6cb;
+}
+
+/* Selected polygon visual feedback */
+.selected-polygon {
+  stroke: #ff6600 !important;
+  stroke-width: 4 !important;
+  stroke-opacity: 1 !important;
+}
+
+#selectedCount {
+  margin-top: 5px;
+  font-weight: bold;
+  color: #007cba;
+}
+
+/* Polyline Controls */
+.drawn-polylines-list {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 8px;
+  margin-bottom: 10px;
+  background: #f9f9f9;
+}
+
+.polyline-item {
+  padding: 8px;
+  margin-bottom: 8px;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.polyline-item:hover {
+  background: #f0f8ff;
+  border-color: #007cba;
+}
+
+.polyline-item.selected {
+  background: #e7f3ff;
+  border-color: #007cba;
+  border-width: 2px;
+}
+
+.polyline-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.polyline-actions button {
+  padding: 6px 12px;
+  border: 1px solid #007cba;
+  background: #fff;
+  color: #007cba;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.2s;
+}
+
+.polyline-actions button:hover:not(:disabled) {
+  background: #007cba;
+  color: #fff;
+}
+
+.polyline-actions button:disabled {
+  background: #f5f5f5;
+  color: #999;
+  border-color: #ddd;
+  cursor: not-allowed;
+}
+
+/* Leaflet Control Buttons Styling */
+.leaflet-control-navigation button,
+.leaflet-control-tools button,
+.leaflet-control-display button,
+.leaflet-control-data button,
+.leaflet-control-auction button {
+  width: 30px !important;
+  height: 30px !important;
+  border: 1px solid #ccc !important;
+  background: #fff !important;
+  border-radius: 4px !important;
+  cursor: pointer !important;
+  font-size: 16px !important;
+  display: block !important;
+  margin-bottom: 2px !important;
+  padding: 0 !important;
+  line-height: 28px !important;
+  text-align: center !important;
+  transition: all 0.2s !important;
+}
+
+/* Adjacency control buttons with icon styling */
+.leaflet-control-adjacency button {
+  width: 30px !important;
+  height: 30px !important;
+  border: 1px solid #ccc !important;
+  background: #fff !important;
+  border-radius: 4px !important;
+  cursor: pointer !important;
+  font-size: 16px !important;
+  display: block !important;
+  margin-bottom: 2px !important;
+  padding: 0 !important;
+  line-height: 28px !important;
+  text-align: center !important;
+  transition: all 0.2s !important;
+  position: relative !important;
+}
+
+/* Show/Hide All Adjacent Polygons Button - Eye Icon */
+.adjacency-show-btn::before {
+  content: "👁️";
+  font-size: 16px;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+/* Select/Deselect All Adjacent Polygons Button - Hand Pointer Icon */
+.adjacency-select-btn::before {
+  content: "👆";
+  font-size: 16px;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+/* Delete All Adjacent Polygons Button - Trash/Delete Icon */
+.adjacency-delete-btn::before {
+  content: "🗑️";
+  font-size: 16px;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+/* Disabled state for adjacency buttons */
+.leaflet-control-adjacency button:disabled::before {
+  opacity: 0.3;
+}
+
+/* Hover effects for adjacency buttons */
+.adjacency-show-btn:hover:not(:disabled)::before {
+  content: "👁️";
+  transform: translate(-50%, -50%) scale(1.1);
+}
+
+.adjacency-select-btn:hover:not(:disabled)::before {
+  content: "👆";
+  transform: translate(-50%, -50%) scale(1.1);
+}
+
+.adjacency-delete-btn:hover:not(:disabled)::before {
+  content: "🗑️";
+  transform: translate(-50%, -50%) scale(1.1);
+}
+
+.leaflet-control-navigation button:hover,
+.leaflet-control-tools button:hover,
+.leaflet-control-display button:hover,
+.leaflet-control-data button:hover,
+.leaflet-control-adjacency button:hover,
+.leaflet-control-auction button:hover {
+  background: #f0f0f0 !important;
+  border-color: #999 !important;
+}
+
+.leaflet-control-navigation button:disabled,
+.leaflet-control-tools button:disabled,
+.leaflet-control-display button:disabled,
+.leaflet-control-data button:disabled,
+.leaflet-control-adjacency button:disabled,
+.leaflet-control-auction button:disabled {
+  background: #f5f5f5 !important;
+  color: #ccc !important;
+  cursor: not-allowed !important;
+}
+
+.leaflet-control-navigation,
+.leaflet-control-tools,
+.leaflet-control-display,
+.leaflet-control-data,
+.leaflet-control-adjacency,
+.leaflet-control-auction {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* Toggle Button Specific Styling */
+.toggle-button {
+  width: 60px !important;
+  height: 30px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 2px 4px !important;
+  border-radius: 15px !important;
+  transition: all 0.3s ease !important;
+  font-size: 12px !important;
+  font-weight: bold !important;
+}
+
+.toggle-button.active {
+  background: linear-gradient(135deg, #4caf50, #45a049) !important;
+  border: 2px solid #4caf50 !important;
+  color: white !important;
+  box-shadow: 0 2px 4px rgba(76, 175, 80, 0.3) !important;
+}
+
+.toggle-button.inactive {
+  background: linear-gradient(135deg, #f44336, #d32f2f) !important;
+  border: 2px solid #f44336 !important;
+  color: white !important;
+  box-shadow: 0 2px 4px rgba(244, 67, 54, 0.3) !important;
+}
+
+.toggle-button:hover.active {
+  background: linear-gradient(135deg, #45a049, #4caf50) !important;
+  transform: translateY(-1px) !important;
+  box-shadow: 0 3px 6px rgba(76, 175, 80, 0.4) !important;
+}
+
+.toggle-button:hover.inactive {
+  background: linear-gradient(135deg, #d32f2f, #f44336) !important;
+  transform: translateY(-1px) !important;
+  box-shadow: 0 3px 6px rgba(244, 67, 54, 0.4) !important;
+}
+
+.toggle-icon {
+  font-size: 14px !important;
+}
+
+.toggle-state {
+  font-size: 10px !important;
+  font-weight: bold !important;
+  letter-spacing: 0.5px !important;
+}
+
+/* Plugin Status and Advanced Controls */
+.plugin-status,
+.advanced-controls {
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  padding: 15px;
+  margin-bottom: 15px;
+}
+
+.plugin-status h4,
+.advanced-controls h4 {
+  margin: 0 0 10px 0;
+  color: #495057;
+  font-size: 14px;
+  font-weight: bold;
+}
+
+.plugin-indicators {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.plugin-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px;
+  background: white;
+  border: 1px solid #dee2e6;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+  cursor: pointer;
+  text-align: center;
+}
+
+.plugin-item:hover {
+  background: #e7f3ff;
+  border-color: #007cba;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 124, 186, 0.15);
+}
+
+.plugin-icon {
+  font-size: 16px;
+  margin-bottom: 4px;
+  display: block;
+}
+
+.plugin-name {
+  font-size: 10px;
+  font-weight: bold;
+  color: #495057;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.plugin-item.active {
+  background: #d4edda;
+  border-color: #28a745;
+}
+
+.plugin-item.active .plugin-name {
+  color: #155724;
+}
+
+.plugin-item.inactive {
+  background: #f8d7da;
+  border-color: #dc3545;
+  opacity: 0.7;
+}
+
+.plugin-item.inactive .plugin-name {
+  color: #721c24;
+}
+
+/* TreeLayers Control Management */
+.treelayers-controls {
+  background: linear-gradient(135deg, #e8f5e8, #f0f8f0);
+  border: 2px solid #28a745;
+  border-radius: 8px;
+  padding: 15px;
+  margin-bottom: 15px;
+  box-shadow: 0 2px 8px rgba(40, 167, 69, 0.15);
+}
+
+.treelayers-controls h4 {
+  margin: 0 0 10px 0;
+  color: #155724;
+  font-size: 14px;
+  font-weight: bold;
+}
+
+.treelayers-info {
+  margin-top: 10px;
+  padding: 8px;
+  background: rgba(40, 167, 69, 0.1);
+  border-radius: 4px;
+  text-align: center;
+}
+
+.treelayers-info small {
+  color: #155724;
+  font-weight: 500;
+}
+
+/* Auction Controls, Drawing Controls, and Layer Controls */
+.auction-controls,
+.auctionControls,
+.drawing-controls,
+.layer-controls {
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  padding: 15px;
+  margin-bottom: 15px;
+}
+
+.auction-controls h4,
+.drawing-controls h4,
+.layer-controls h4 {
+  margin: 0 0 10px 0;
+  color: #495057;
+  font-size: 14px;
+  font-weight: bold;
+}
+
+.control-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.control-btn {
+  padding: 6px 12px;
+  border: 1px solid #007cba;
+  background: #fff;
+  color: #007cba;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.2s;
+}
+
+.control-btn:hover {
+  background: #007cba;
+  color: #fff;
+}
+
+#auctionTypeFilter,
+#maxPriceFilter {
+  padding: 4px 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.layer-controls label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.layer-controls input[type="checkbox"] {
+  margin: 0;
+}
+
+/* Auction Popup Styling */
+.auction-popup {
+  width: 200px;
+  font-family: Arial, sans-serif;
+}
+
+.auction-popup h4 {
+  margin: 0 0 8px 0;
+  color: #333;
+  font-size: 14px;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 4px;
+}
+
+.auction-popup p {
+  margin: 4px 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.auction-popup strong {
+  color: #555;
+}
+
+/* ============================================================================
+   Server-Generated Folium Map Styles
+   ============================================================================ */
+
+#folium-map-container {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+/* Ensure Folium map fills the container */
+#folium-map-container > div {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* Folium map iframe styling */
+#folium-map-container iframe {
+  width: 100% !important;
+  height: 100% !important;
+  border: none;
+}
+
+/* No map message styling */
+.no-map-message {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 400px;
+  background-color: #f8f9fa;
+  border: 2px dashed #dee2e6;
+  border-radius: 8px;
+  color: #6c757d;
+  font-style: italic;
+}
+
+.no-map-message p {
+  margin: 0;
+  font-size: 16px;
+}
+
+/* Override Folium default styles for better integration */
+.folium-map {
+  width: 100% !important;
+  height: 100% !important;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+/* Ensure proper sizing for embedded Folium maps */
+.map-container #folium-map-container .folium-map {
+  min-height: 500px;
+}
+
+/* Enhanced Table Controls Styling */
+.table-controls {
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.table-controls .control-row {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.table-controls .control-row:last-child {
+  margin-bottom: 0;
+}
+
+/* Search container */
+.search-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 250px;
+}
+
+.search-input {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.search-btn {
+  padding: 8px 12px;
+  background: #007bff;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background-color 0.2s;
+}
+
+.search-btn:hover {
+  background: #0056b3;
+}
+
+/* Filter container */
+.filter-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 300px;
+}
+
+.filter-select,
+.filter-input {
+  padding: 8px 12px;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.filter-select {
+  min-width: 120px;
+}
+
+.filter-input {
+  flex: 1;
+}
+
+.filter-btn,
+.clear-btn {
+  padding: 8px 12px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background-color 0.2s;
+}
+
+.filter-btn {
+  background: #28a745;
+  color: white;
+}
+
+.filter-btn:hover {
+  background: #1e7e34;
+}
+
+.clear-btn {
+  background: #6c757d;
+  color: white;
+}
+
+.clear-btn:hover {
+  background: #545b62;
+}
+
+/* Sort container */
+.sort-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 250px;
+}
+
+.sort-select,
+.sort-direction {
+  padding: 8px 12px;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.sort-select {
+  min-width: 120px;
+}
+
+.sort-direction {
+  min-width: 100px;
+}
+
+.sort-btn {
+  padding: 8px 12px;
+  background: #fd7e14;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background-color 0.2s;
+}
+
+.sort-btn:hover {
+  background: #dc6502;
+}
+
+/* Page size container */
+.page-size-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.page-size-container label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #495057;
+}
+
+.page-size-select {
+  padding: 8px 12px;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  font-size: 14px;
+  min-width: 80px;
+}
+
+/* Enhanced table styling */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 16px;
+  background: white;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.data-table th {
+  background: #495057;
+  color: white;
+  padding: 12px;
+  text-align: left;
+  font-weight: 600;
+  position: relative;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.2s;
+}
+
+.data-table th:hover {
+  background: #343a40;
+}
+
+.data-table th::after {
+  content: "↕";
+  position: absolute;
+  right: 8px;
+  opacity: 0.6;
+  font-size: 12px;
+}
+
+.data-table td {
+  padding: 12px;
+  border-bottom: 1px solid #dee2e6;
+  background: white;
+  transition: background-color 0.2s;
+}
+
+.data-table tr:hover td {
+  background: #f8f9fa;
+}
+
+.data-table tr:nth-child(even) td {
+  background: #fdfdfd;
+}
+
+.data-table tr:nth-child(even):hover td {
+  background: #f1f3f4;
+}
+
+/* Table wrapper for responsive scrolling */
+.table-wrapper {
+  overflow-x: auto;
+  border-radius: 8px;
+  border: 1px solid #dee2e6;
+}
+
+/* Pagination styling */
+.pagination-container {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 16px;
+  padding: 16px;
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+}
+
+.pagination-info {
+  font-size: 14px;
+  color: #495057;
+  font-weight: 500;
+}
+
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.page-btn {
+  padding: 8px 12px;
+  background: white;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.page-btn:hover:not(:disabled) {
+  background: #e9ecef;
+  border-color: #adb5bd;
+}
+
+.page-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+  background: #f8f9fa;
+}
+
+.page-btn.active {
+  background: #007bff;
+  color: white;
+  border-color: #007bff;
+}
+
+.page-numbers {
+  display: flex;
+  gap: 4px;
+}
+
+/* Loading and message states */
+.loading-message,
+.no-data-message {
+  text-align: center;
+  padding: 40px;
+  color: #6c757d;
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  margin: 16px 0;
+}
+
+.loading-message {
+  background: #e3f2fd;
+  border-color: #bbdefb;
+  color: #1976d2;
+}
+
+/* Responsive design for table controls */
+@media (max-width: 768px) {
+  .table-controls .control-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .search-container,
+  .filter-container,
+  .sort-container {
+    min-width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .filter-container,
+  .sort-container {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .pagination-container {
+    flex-direction: column;
+    gap: 12px;
+    text-align: center;
+  }
+
+  .pagination-controls {
+    justify-content: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .table-controls {
+    padding: 12px;
+  }
+
+  .data-table th,
+  .data-table td {
+    padding: 8px;
+    font-size: 13px;
+  }
+
+  .page-btn {
+    padding: 6px 8px;
+    font-size: 12px;
+  }
+}
+
+/* Polygon Management Controls Styling */
+.polygon-management {
+  background: #f1f3f4;
+  border: 1px solid #dadce0;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.polygon-management h4 {
+  margin: 0 0 12px 0;
+  color: #3c4043;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.polygon-management .control-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.remove-btn,
+.zoom-btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.remove-btn {
+  background: #ea4335;
+  color: white;
+}
+
+.remove-btn:hover:not(:disabled) {
+  background: #d33b2c;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(234, 67, 53, 0.3);
+}
+
+.remove-btn:disabled {
+  background: #f1f3f4;
+  color: #9aa0a6;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.zoom-btn {
+  background: #1a73e8;
+  color: white;
+}
+
+.zoom-btn:hover:not(:disabled) {
+  background: #1557b0;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(26, 115, 232, 0.3);
+}
+
+.zoom-btn:disabled {
+  background: #f1f3f4;
+  color: #9aa0a6;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* Responsive design for polygon management */
+@media (max-width: 768px) {
+  .polygon-management .control-row {
+    flex-direction: column;
+  }
+
+  .remove-btn,
+  .zoom-btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* Enhanced Drawing Controls Styles */
+
+.drawing-info {
+  background: #e8f4f8;
+  padding: 10px;
+  border-radius: 6px;
+  margin-bottom: 15px;
+  text-align: center;
+  font-weight: 500;
+  color: #007cba;
+  border: 1px solid #b3d9e8;
+}
+
+.drawing-actions {
+  margin-bottom: 20px;
+}
+
+.action-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 10px;
+  justify-content: space-between;
+}
+
+.action-row button {
+  flex: 1;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.primary-btn {
+  background: #007cba;
+  color: white;
+}
+
+.primary-btn:hover:not(:disabled) {
+  background: #005fa3;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 124, 186, 0.3);
+}
+
+.secondary-btn {
+  background: #f8f9fa;
+  color: #495057;
+  border: 1px solid #dee2e6;
+}
+
+.secondary-btn:hover {
+  background: #e9ecef;
+  border-color: #adb5bd;
+}
+
+.danger-btn {
+  background: #dc3545;
+  color: white;
+}
+
+.danger-btn:hover:not(:disabled) {
+  background: #c82333;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(220, 53, 69, 0.3);
+}
+
+.action-row button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.drawing-stats {
+  display: flex;
+  gap: 15px;
+  margin-bottom: 20px;
+  justify-content: space-around;
+}
+
+.stat-card {
+  background: white;
+  border: 1px solid #e0e6ed;
+  border-radius: 8px;
+  padding: 12px;
+  text-align: center;
+  flex: 1;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.stat-card .stat-label {
+  font-size: 12px;
+  color: #6c757d;
+  margin-bottom: 4px;
+  display: block;
+}
+
+.stat-card .stat-value {
+  font-size: 20px;
+  font-weight: 600;
+  color: #007cba;
+  display: block;
+}
+
+.drawn-features-list {
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  padding: 15px;
+}
+
+.drawn-features-list h4 {
+  margin: 0 0 12px 0;
+  color: #495057;
+  font-size: 16px;
+}
+
+.features-container {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.no-features {
+  color: #6c757d;
+  font-style: italic;
+  margin: 0;
+  text-align: center;
+  padding: 20px;
+}
+
+.feature-item {
+  background: white;
+  border: 1px solid #e0e6ed;
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.feature-info {
+  flex: 1;
+}
+
+.feature-type {
+  font-weight: 600;
+  color: #007cba;
+  font-size: 14px;
+}
+
+.feature-details {
+  font-size: 12px;
+  color: #6c757d;
+  margin-top: 4px;
+}
+
+.feature-actions {
+  display: flex;
+  gap: 5px;
+}
+
+.feature-btn {
+  padding: 4px 8px;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.feature-btn.zoom {
+  background: #e8f4f8;
+  color: #007cba;
+}
+
+.feature-btn.delete {
+  background: #f8d7da;
+  color: #721c24;
+}
+
+.feature-btn:hover {
+  opacity: 0.8;
+}
+
+/* Authentication Styles */
+.auth-section {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.auth-section h4 {
+  margin: 0 0 12px 0;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.auth-container {
+  background: #fff;
+  border-radius: 6px;
+  padding: 12px;
+  min-height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Authentication Loading State */
+.auth-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+}
+
+.loading-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid #e0e0e0;
+  border-top: 2px solid var(--primary-color);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.loading-text {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* User Section (Signed In) */
+.user-section {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.user-avatar {
+  flex-shrink: 0;
+}
+
+.user-avatar img {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 2px solid var(--border-color);
+}
+
+.user-details {
+  flex: 1;
+  min-width: 0;
+}
+
+.user-name {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.user-email {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.auth-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.profile-btn,
+.signout-btn {
+  padding: 4px 8px;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.profile-btn {
+  background: var(--primary-color);
+  color: white;
+}
+
+.profile-btn:hover {
+  background: var(--primary-hover);
+}
+
+.signout-btn {
+  background: #f8f9fa;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+}
+
+.signout-btn:hover {
+  background: #e9ecef;
+}
+
+/* Auth Section (Not Signed In) */
+.auth-section .auth-message {
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin-bottom: 12px;
+  line-height: 1.4;
+}
+
+.signin-btn,
+.signup-btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin: 0 4px;
+}
+
+.signin-btn {
+  background: var(--primary-color);
+  color: white;
+}
+
+.signin-btn:hover {
+  background: var(--primary-hover);
+  transform: translateY(-1px);
+}
+
+.signup-btn {
+  background: #fff;
+  color: var(--primary-color);
+  border: 1px solid var(--primary-color);
+}
+
+.signup-btn:hover {
+  background: var(--primary-color);
+  color: white;
+  transform: translateY(-1px);
+}
+
+/* Auth Error State */
+.auth-error {
+  text-align: center;
+  padding: 12px;
+  background: #fff3cd;
+  border: 1px solid #ffeaa7;
+  border-radius: 6px;
+}
+
+.error-message {
+  font-size: 13px;
+  color: #856404;
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+
+.error-note {
+  font-size: 12px;
+  color: #6c757d;
+}
+
+/* =========================================
+   Cadastral Popup Styles
+   ========================================= */
+
+.cadastral-popup {
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  min-width: 200px;
+}
+
+.cadastral-popup .popup-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid #3388ff;
+}
+
+.cadastral-popup .level-badge {
+  background: #3388ff;
+  color: white;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.cadastral-popup .admin-unit {
+  background: #f0f0f0;
+  color: #333;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: monospace;
+}
+
+.cadastral-popup .cadastral-data {
+  margin-bottom: 8px;
+}
+
+.cadastral-popup .data-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+  border-bottom: 1px dotted #e0e0e0;
+}
+
+.cadastral-popup .data-row:last-child {
+  border-bottom: none;
+}
+
+.cadastral-popup .data-row.primary {
+  background: #f8f9fa;
+  margin: 0 -8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  margin-bottom: 4px;
+}
+
+.cadastral-popup .data-row.primary .value {
+  font-weight: 700;
+  font-size: 16px;
+  color: #3388ff;
+}
+
+.cadastral-popup .data-row.reference {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #e0e0e0;
+  border-bottom: none;
+}
+
+.cadastral-popup .data-row .label {
+  color: #666;
+  font-size: 12px;
+}
+
+.cadastral-popup .data-row .value {
+  font-weight: 600;
+  color: #333;
+}
+
+.cadastral-popup .data-row .value.small {
+  font-size: 11px;
+  font-family: monospace;
+  word-break: break-all;
+}
+
+.cadastral-popup .data-row.small {
+  font-size: 11px;
+}
+
+.cadastral-popup .data-row.small .label {
+  font-size: 11px;
+}
+
+.cadastral-popup .data-row.small .value {
+  font-weight: 500;
+}
+
+.cadastral-popup .additional-props {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #e0e0e0;
+}
+
+.cadastral-popup .additional-props summary {
+  cursor: pointer;
+  color: #666;
+  font-size: 12px;
+  user-select: none;
+}
+
+.cadastral-popup .additional-props summary:hover {
+  color: #3388ff;
+}
+
+.cadastral-popup .additional-props[open] summary {
+  margin-bottom: 6px;
+}
+
+/* Leaflet popup overrides for cadastral popups */
+.leaflet-popup-content-wrapper {
+  border-radius: 8px;
+}
+
+.leaflet-popup-content {
+  margin: 10px 12px;
+}
+
+/* ============================================================================
+   FlatGeobuf (FGB) Data Source Styles
+   ============================================================================ */
+
+/* Data source selector */
+.db-source-section {
+    margin-bottom: 20px;
+    padding: 15px;
+    background-color: #f8f9fa;
+    border-radius: 4px;
+}
+
+.db-source-section label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 600;
+    color: #333;
+}
+
+.source-toggle {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.source-btn {
+    flex: 1;
+    padding: 10px 15px;
+    border: 2px solid #ddd;
+    background-color: #fff;
+    color: #666;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    text-align: center;
+}
+
+.source-btn:hover {
+    border-color: #3498db;
+    background-color: #f8f9fa;
+}
+
+.source-btn.active {
+    border-color: #3498db;
+    background-color: #3498db;
+    color: #fff;
+}
+
+.source-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* FGB file info display */
+.fgb-file-info {
+    margin-top: 15px;
+    padding: 12px;
+    background-color: #e8f4f8;
+    border-left: 4px solid #3498db;
+    border-radius: 4px;
+}
+
+.fgb-info-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    font-size: 13px;
+}
+
+.fgb-label {
+    font-weight: 600;
+    color: #555;
+}
+
+.fgb-info-row span:last-child {
+    color: #333;
+    font-family: 'Courier New', monospace;
+}
+
+/* Layer type radios for FGB */
+#fgbFilters .layer-type-radios {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+#fgbFilters .layer-type-radios label {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    background-color: #fff;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+#fgbFilters .layer-type-radios label:hover {
+    background-color: #f8f9fa;
+    border-color: #3498db;
+}
+
+#fgbFilters .layer-type-radios input[type="radio"] {
+    margin-right: 8px;
+}
+
+#fgbFilters .layer-type-radios input[type="radio"]:checked + * {
+    font-weight: 600;
+}
+
+/* Help text styling */
+.help-text {
+    display: block;
+    margin-top: 8px;
+    font-size: 12px;
+    color: #666;
+    line-height: 1.4;
+}
+
+#sourceHelp {
+    margin-top: 8px;
+    font-style: italic;
+}
+
+/* Database actions button groups */
+.db-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 15px;
+}
+
+.db-actions button {
+    flex: 1;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .source-toggle {
+        flex-direction: column;
+    }
+    
+    .source-btn {
+        width: 100%;
+    }
+}
+
