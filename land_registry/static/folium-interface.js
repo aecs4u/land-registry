@@ -674,6 +674,24 @@ async function initDatabaseFilters() {
                 opt.textContent = region;
                 regionSelect.appendChild(opt);
             });
+        } else {
+            // Fallback: use FGB regions if hierarchy endpoint fails
+            console.log('[DB] Hierarchy endpoint failed, using FGB regions as fallback');
+            const fgbResponse = await fetch('/api/v1/fgb/regions');
+            if (fgbResponse.ok) {
+                const fgbData = await fgbResponse.json();
+                const regions = (fgbData.regions || []).map(r => r.name);
+                window.dbHierarchyCache.regions = regions;
+
+                const regionSelect = document.getElementById('dbRegione');
+                regionSelect.innerHTML = '<option value="">All Regions</option>';
+                regions.forEach(region => {
+                    const opt = document.createElement('option');
+                    opt.value = region;
+                    opt.textContent = region;
+                    regionSelect.appendChild(opt);
+                });
+            }
         }
 
         window.dbFiltersInitialized = true;
@@ -2211,6 +2229,10 @@ document.addEventListener('DOMContentLoaded', function() {
     fgbRadios.forEach(radio => {
         radio.addEventListener('change', updateFgbLayerInfo);
     });
+
+    // Initialize region selectors on page load
+    initDatabaseFilters();  // Load SpatiaLite regions and statistics
+    loadFgbRegions();       // Load FGB regions
 });
 
 // ========================================
