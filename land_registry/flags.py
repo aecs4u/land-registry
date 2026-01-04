@@ -12,7 +12,6 @@ import json
 import csv
 import time
 import sys
-from urllib.parse import quote
 import requests
 
 WIKIDATA_SPARQL = "https://query.wikidata.org/sparql"

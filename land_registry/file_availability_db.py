@@ -4,10 +4,11 @@ Tracks HTTP status codes for S3 file checks to avoid repeated requests.
 """
 
 import sqlite3
-import os
 from datetime import datetime, timedelta
 import logging
 from typing import Optional, Dict, List
+
+from land_registry.config import db_settings
 
 logger = logging.getLogger(__name__)
 
@@ -438,6 +439,12 @@ class FileAvailabilityDB:
             logger.error(f"Error getting auction statistics: {e}")
             return {}
 
+    def close_connection(self):
+        """Close any active database connections (SQLite auto-closes, so this is a no-op)."""
+        # SQLite connections are automatically closed when the context manager exits
+        # This method exists for consistency with the shutdown event
+        logger.info("Database connections cleanup completed")
 
-# Global instance
-file_availability_db = FileAvailabilityDB()
+
+# Global instance - use db_path from config
+file_availability_db = FileAvailabilityDB(db_path=db_settings.file_availability_db_path)

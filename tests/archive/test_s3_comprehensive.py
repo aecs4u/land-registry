@@ -2,10 +2,8 @@
 Comprehensive tests for S3Storage to boost coverage.
 """
 
-import pytest
 import json
 from unittest.mock import patch, MagicMock
-import boto3
 from botocore.exceptions import ClientError, NoCredentialsError, BotoCoreError
 from moto import mock_aws
 

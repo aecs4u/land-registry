@@ -89,7 +89,7 @@ def validate_test_dependencies():
                     print(f"  ✅ {dep}")
                 else:
                     raise
-            except ImportError as e:
+            except ImportError:
                 print(f"  ❌ {dep}: not available")
                 failed_deps.append(dep)
 

@@ -1,26 +1,148 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>{% block title %}Land Registry Viewer{% endblock %}</title>
 
     <!-- External CSS Libraries -->
     {% block external_css %}
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.fullscreen/2.4.0/Control.FullScreen.css" />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-measure@3.1.0/dist/leaflet-measure.css" />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.fullscreen/2.4.0/Control.FullScreen.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/leaflet-measure@3.1.0/dist/leaflet-measure.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.Default.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet-minimap/dist/Control.MiniMap.min.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/leaflet.locatecontrol/dist/L.Control.Locate.min.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet-search/dist/leaflet-search.min.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/leaflet-mouse-position@1.2.0/src/L.Control.MousePosition.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet-treelayers/L.Control.TreeLayers.css"
+    />
     {% endblock %}
 
     <!-- Application CSS -->
     <link rel="stylesheet" href="/static/styles.css" />
 
+    <!-- Authentication Styles -->
+    <style>
+      /* Auth navbar styles */
+      .auth-navbar {
+        position: fixed;
+        top: 0;
+        right: 0;
+        z-index: 10000;
+        padding: 10px 15px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        background: rgba(255, 255, 255, 0.95);
+        border-radius: 0 0 0 8px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+      }
+      .auth-navbar .user-info {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-family: system-ui, -apple-system, sans-serif;
+        font-size: 14px;
+        color: #333;
+      }
+      .auth-navbar .user-avatar {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        object-fit: cover;
+      }
+      .auth-navbar .auth-btn {
+        padding: 8px 16px;
+        border: none;
+        border-radius: 6px;
+        font-size: 14px;
+        cursor: pointer;
+        transition: all 0.2s;
+        font-family: system-ui, -apple-system, sans-serif;
+      }
+      .auth-navbar .login-btn {
+        background: #3b82f6;
+        color: white;
+      }
+      .auth-navbar .login-btn:hover {
+        background: #2563eb;
+      }
+      .auth-navbar .logout-btn {
+        background: #f3f4f6;
+        color: #374151;
+      }
+      .auth-navbar .logout-btn:hover {
+        background: #e5e7eb;
+      }
+      .auth-navbar .loading {
+        color: #6b7280;
+        font-size: 13px;
+      }
+      #clerk-user-button {
+        display: inline-block;
+      }
+    </style>
+
     <!-- Additional CSS -->
     {% block extra_css %}{% endblock %}
-</head>
-<body>
-    {% block content %}{% endblock %}
+  </head>
+  <body>
+    <!-- Authentication Navbar -->
+    <div class="auth-navbar" id="auth-navbar">
+      <div class="loading" id="auth-loading">Loading...</div>
+    </div>
+
+    <!-- Clerk Configuration for aecs4u-auth -->
+    {% if clerk_publishable_key %}
+    <div
+      id="clerk-config"
+      data-publishable-key="{{ clerk_publishable_key }}"
+      data-sign-in-url="/auth/login"
+      data-sign-up-url="/auth/register"
+      data-after-sign-in-url="/"
+      data-after-sign-up-url="/"
+      style="display: none"
+    ></div>
+    {% endif %} {% block content %}{% endblock %}
 
     <!-- External JavaScript Libraries -->
     {% block external_js %}
@@ -28,15 +150,140 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.fullscreen/2.4.0/Control.FullScreen.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/leaflet-measure@3.1.0/dist/leaflet-measure.js"></script>
+    <script src="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.js"></script>
+    <script src="https://unpkg.com/leaflet.markercluster/dist/leaflet.markercluster.js"></script>
+    <script src="https://unpkg.com/leaflet-minimap/dist/Control.MiniMap.min.js"></script>
+    <script src="https://unpkg.com/leaflet-rastercoords/rastercoords.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/leaflet.locatecontrol/dist/L.Control.Locate.min.js"></script>
+    <script src="https://unpkg.com/leaflet-search/dist/leaflet-search.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/leaflet-mouse-position@1.2.0/src/L.Control.MousePosition.js"></script>
+    <script src="https://unpkg.com/leaflet-treelayers/L.Control.TreeLayers.js"></script>
     {% endblock %}
+
+    <!-- Clerk Authentication SDK and aecs4u-auth integration -->
+    {% if clerk_publishable_key %}
+    <script
+      async
+      crossorigin="anonymous"
+      data-clerk-publishable-key="{{ clerk_publishable_key }}"
+      src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@latest/dist/clerk.browser.js"
+      type="text/javascript"
+    ></script>
+    <!-- Load aecs4u-auth frontend module -->
+    <script src="/static/aecs4u-auth/js/clerk-auth.js"></script>
+    <script>
+      // Initialize authentication using aecs4u-auth ClerkAuth module
+      window.addEventListener("load", async function () {
+        const authNavbar = document.getElementById("auth-navbar");
+        const authLoading = document.getElementById("auth-loading");
+
+        // Wait for Clerk to be available
+        let attempts = 0;
+        while (!window.Clerk && attempts < 50) {
+          await new Promise((r) => setTimeout(r, 100));
+          attempts++;
+        }
+
+        if (!window.Clerk) {
+          authLoading.textContent = "Auth unavailable";
+          return;
+        }
+
+        try {
+          await window.Clerk.load();
+
+          // Update UI based on authentication state
+          function updateAuthUI() {
+            authNavbar.innerHTML = "";
+
+            if (window.Clerk.user) {
+              // User is logged in - show user info
+              const userInfo = document.createElement("div");
+              userInfo.className = "user-info";
+
+              if (window.Clerk.user.imageUrl) {
+                const avatar = document.createElement("img");
+                avatar.className = "user-avatar";
+                avatar.src = window.Clerk.user.imageUrl;
+                avatar.alt = "User avatar";
+                userInfo.appendChild(avatar);
+              }
+
+              const userName = document.createElement("span");
+              userName.textContent =
+                window.Clerk.user.fullName ||
+                window.Clerk.user.primaryEmailAddress?.emailAddress ||
+                "User";
+              userInfo.appendChild(userName);
+
+              authNavbar.appendChild(userInfo);
+
+              // User button (Clerk's built-in component)
+              const userButtonContainer = document.createElement("div");
+              userButtonContainer.id = "clerk-user-button";
+              authNavbar.appendChild(userButtonContainer);
+              window.Clerk.mountUserButton(userButtonContainer);
+            } else {
+              // User is not logged in - show login button
+              const loginBtn = document.createElement("button");
+              loginBtn.className = "auth-btn login-btn";
+              loginBtn.textContent = "Sign In";
+              loginBtn.onclick = function () {
+                window.location.href =
+                  "/auth/login?next=" +
+                  encodeURIComponent(window.location.pathname);
+              };
+              authNavbar.appendChild(loginBtn);
+            }
+          }
+
+          // Initial UI update
+          updateAuthUI();
+
+          // Listen for auth state changes
+          window.Clerk.addListener(updateAuthUI);
+
+          // Sync session with server after sign in
+          if (window.Clerk.user && window.Clerk.session) {
+            try {
+              const token = await window.Clerk.session.getToken();
+              if (token) {
+                await fetch("/auth/clerk/session", {
+                  method: "POST",
+                  headers: {
+                    Authorization: "Bearer " + token,
+                    "Content-Type": "application/json",
+                  },
+                });
+              }
+            } catch (e) {
+              console.error("Failed to sync session:", e);
+            }
+          }
+        } catch (error) {
+          console.error("Clerk initialization error:", error);
+          authLoading.textContent = "Auth error";
+        }
+      });
+    </script>
+    {% else %}
+    <script>
+      // No Clerk key configured - hide auth navbar
+      document.getElementById("auth-navbar").style.display = "none";
+    </script>
+    {% endif %}
 
     <!-- Data Injection Scripts -->
     {% block data_scripts %}{% endblock %}
 
     <!-- Application JavaScript -->
+    {% block map_js %}
+    <script src="/static/map.js"></script>
+    {% endblock %}
+    <script src="/static/table-manager.js"></script>
     {% block app_js %}{% endblock %}
 
     <!-- Additional JavaScript -->
     {% block extra_js %}{% endblock %}
-</body>
+  </body>
 </html>

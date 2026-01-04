@@ -24,7 +24,7 @@ def run_command(cmd, description=""):
         print(f"\n❌ Command failed with exit code {result.returncode}")
         return False
     else:
-        print(f"\n✅ Command completed successfully")
+        print("\n✅ Command completed successfully")
         return True
 
 
@@ -182,10 +182,10 @@ def main():
 
     # Print summary
     if success:
-        print(f"\n🎉 All tests passed!")
+        print("\n🎉 All tests passed!")
         return 0
     else:
-        print(f"\n💥 Some tests failed!")
+        print("\n💥 Some tests failed!")
         return 1
 
 

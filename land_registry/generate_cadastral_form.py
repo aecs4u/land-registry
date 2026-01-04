@@ -542,9 +542,9 @@ def main():
 
     root_folder = os.path.dirname(__file__)
     
-    base_path = "/media/emanuele/ddbb5477-3ef2-4097-b731-3784cb7767c1/aecs4u.it/catasto/qgis"
+    base_path = "../data/catasto/qgis"
     json_output = os.path.join(root_folder, "../data/cadastral_structure.json")
-    html_output = "/media/emanuele/research/git/aecs4u.it/map/cadastral_selection_form.html"
+    html_output = "../data/catasto/cadastral_selection_form.html"
     
     print("Starting cadastral data analysis...")
     
@@ -575,7 +575,7 @@ def main():
     print(f"Total Provinces: {total_provinces}")
     print(f"Total Municipalities: {total_municipalities}")
     print(f"Total GPKG Files: {total_files}")
-    print(f"\nFiles generated:")
+    print("\nFiles generated:")
     print(f"  - JSON Structure: {json_output}")
     print(f"  - HTML Form: {html_output}")
 

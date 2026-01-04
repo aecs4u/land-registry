@@ -7,12 +7,9 @@ import tempfile
 import zipfile
 import json
 import os
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 import geopandas as gpd
-import pandas as pd
 from shapely.geometry import Polygon, Point, LineString
-from shapely.errors import GEOSException
 
 from land_registry.map import extract_qpkg_data, get_current_gdf, find_adjacent_polygons
 

@@ -3,16 +3,14 @@ Additional tests to boost coverage specifically targeting uncovered areas.
 """
 
 import pytest
-import json
 import tempfile
 import os
-from pathlib import Path
-from unittest.mock import patch, MagicMock, mock_open
+from unittest.mock import patch, MagicMock
 import geopandas as gpd
 from shapely.geometry import Polygon
 from fastapi.testclient import TestClient
 
-from land_registry.app import app
+from land_registry.main import app
 from land_registry.s3_storage import S3Storage, S3Settings
 from land_registry.map import extract_qpkg_data
 from land_registry.map_controls import MapControlsManager, ControlButton, ControlSelect, ControlGroup
@@ -31,13 +29,12 @@ class TestAppHealthAndBasics:
     def test_root_endpoint(self):
         """Test root endpoint."""
         client = TestClient(app)
-        with patch('land_registry.app.templates.TemplateResponse') as mock_template_response:
+        with patch('land_registry.main.templates.TemplateResponse') as mock_template_response:
             mock_template_response.return_value.status_code = 200
             mock_template_response.return_value.body = b"<html>Test</html>"
 
             # Mock the TemplateResponse to return HTML content
-            from fastapi.responses import HTMLResponse
-            with patch('land_registry.app.map_controls') as mock_controls:
+            with patch('land_registry.main.map_controls') as mock_controls:
                 mock_controls.generate_html.return_value = "<div>Controls</div>"
                 mock_controls.generate_javascript.return_value = "var test = 1;"
 
@@ -225,7 +222,7 @@ class TestAPIEndpointsBasic:
         assert "groups" in data
         assert isinstance(data["groups"], list)
 
-    @patch('land_registry.app.map_controls.update_control_state')
+    @patch('land_registry.main.map_controls.update_control_state')
     def test_update_control_state_success(self, mock_update):
         """Test control state update success."""
         mock_update.return_value = True
@@ -238,7 +235,7 @@ class TestAPIEndpointsBasic:
         assert response.status_code == 200
         assert response.json()["success"] is True
 
-    @patch('land_registry.app.map_controls.update_control_state')
+    @patch('land_registry.main.map_controls.update_control_state')
     def test_update_control_state_not_found(self, mock_update):
         """Test control state update when control not found."""
         mock_update.return_value = False
@@ -250,7 +247,7 @@ class TestAPIEndpointsBasic:
         })
         assert response.status_code == 404
 
-    @patch('land_registry.app.get_current_gdf')
+    @patch('land_registry.main.get_current_gdf')
     def test_get_attributes_no_data(self, mock_get_gdf):
         """Test get attributes when no data loaded."""
         mock_get_gdf.return_value = None
@@ -277,7 +274,7 @@ class TestAPIEndpointsBasic:
 class TestS3ConfigEndpoints:
     """Test S3 configuration endpoints."""
 
-    @patch('land_registry.app.configure_s3_storage')
+    @patch('land_registry.main.configure_s3_storage')
     def test_configure_s3_basic(self, mock_configure):
         """Test basic S3 configuration."""
         mock_storage = MagicMock()
@@ -292,7 +289,7 @@ class TestS3ConfigEndpoints:
         assert response.status_code == 200
         assert response.json()["success"] is True
 
-    @patch('land_registry.app.get_s3_storage')
+    @patch('land_registry.main.get_s3_storage')
     def test_s3_status_basic(self, mock_get_storage):
         """Test basic S3 status."""
         mock_storage = MagicMock()
@@ -316,8 +313,8 @@ class TestS3ConfigEndpoints:
 class TestIntegrationScenarios:
     """Integration tests for common scenarios."""
 
-    @patch('land_registry.app.get_current_gdf')
-    @patch('land_registry.app.find_adjacent_polygons')
+    @patch('land_registry.main.get_current_gdf')
+    @patch('land_registry.main.find_adjacent_polygons')
     def test_adjacent_polygons_workflow(self, mock_find_adjacent, mock_get_gdf):
         """Test complete adjacent polygons workflow."""
         # Create sample GeoDataFrame

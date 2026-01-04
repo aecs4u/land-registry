@@ -63,7 +63,7 @@ def main():
                         unmatched_municipalities.append((municipality_name, normalized_name))
                         print(f"❌ No flag found for: {municipality_name} → {normalized_name}")
 
-    print(f"\n📊 Summary:")
+    print("\n📊 Summary:")
     print(f"   Total municipalities: {total_municipalities}")
     print(f"   Flags added: {flags_added}")
     print(f"   Unmatched: {len(unmatched_municipalities)}")
@@ -71,7 +71,7 @@ def main():
 
     # Show some examples of unmatched municipalities
     if unmatched_municipalities:
-        print(f"\n❌ Some unmatched examples:")
+        print("\n❌ Some unmatched examples:")
         for i, (orig, normalized) in enumerate(unmatched_municipalities[:10]):
             print(f"   {orig} → {normalized}")
         if len(unmatched_municipalities) > 10:
@@ -88,7 +88,7 @@ def main():
     with open(cadastral_file, 'w', encoding='utf-8') as f:
         json.dump(cadastral_data, f, indent=2, ensure_ascii=False)
 
-    print(f"\n✅ Successfully updated cadastral_structure.json")
+    print("\n✅ Successfully updated cadastral_structure.json")
     print(f"   Added flag_url field to {flags_added} municipalities")
 
 if __name__ == "__main__":

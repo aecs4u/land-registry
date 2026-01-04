@@ -2,17 +2,13 @@
 Focused tests for specific uncovered functions in app.py to boost coverage.
 """
 
-import pytest
-import tempfile
 import json
-import os
 from unittest.mock import patch, MagicMock, mock_open
 from fastapi.testclient import TestClient
 import geopandas as gpd
 from shapely.geometry import Polygon
 
-from land_registry.app import app
-from land_registry.s3_storage import S3Storage, S3Settings
+from land_registry.main import app
 
 
 class TestAppFocusedCoverage:
@@ -26,7 +22,7 @@ class TestAppFocusedCoverage:
         data = response.json()
         assert data == {"status": "healthy", "service": "land-registry"}
 
-    @patch('land_registry.app.map_controls')
+    @patch('land_registry.main.map_controls')
     def test_get_controls_endpoint_coverage(self, mock_controls):
         """Test get controls endpoint."""
         client = TestClient(app)
@@ -42,7 +38,7 @@ class TestAppFocusedCoverage:
         data = response.json()
         assert "groups" in data
 
-    @patch('land_registry.app.map_controls')
+    @patch('land_registry.main.map_controls')
     def test_update_control_state_endpoint_coverage(self, mock_controls):
         """Test update control state endpoint."""
         client = TestClient(app)
@@ -57,7 +53,7 @@ class TestAppFocusedCoverage:
         data = response.json()
         assert data["success"] is True
 
-    @patch('land_registry.app.map_controls')
+    @patch('land_registry.main.map_controls')
     def test_update_control_state_not_found_coverage(self, mock_controls):
         """Test update control state when control not found."""
         client = TestClient(app)
@@ -108,8 +104,8 @@ class TestAppEndpointsCoverage:
         response = client.post("/api/v1/load-cadastral-files/", json={})
         assert response.status_code == 422
 
-    @patch('land_registry.app.extract_qpkg_data')
-    @patch('land_registry.app.generate_folium_map')
+    @patch('land_registry.main.extract_qpkg_data')
+    @patch('land_registry.main.generate_folium_map')
     def test_generate_map_complete_workflow(self, mock_generate_map, mock_extract):
         """Test complete generate map workflow."""
         client = TestClient(app)
@@ -157,7 +153,7 @@ class TestAppEndpointsCoverage:
 class TestAppUtilityFunctions:
     """Test utility functions for complete coverage."""
 
-    @patch('land_registry.app.get_current_gdf')
+    @patch('land_registry.main.get_current_gdf')
     def test_adjacent_polygons_complete_workflow(self, mock_get_gdf):
         """Test complete adjacent polygons workflow."""
         client = TestClient(app)
@@ -172,7 +168,7 @@ class TestAppUtilityFunctions:
 
         mock_get_gdf.return_value = gdf
 
-        with patch('land_registry.app.find_adjacent_polygons') as mock_find:
+        with patch('land_registry.main.find_adjacent_polygons') as mock_find:
             mock_find.return_value = [20]
 
             response = client.post("/api/v1/get-adjacent-polygons/", json={
@@ -191,7 +187,7 @@ class TestAppUtilityFunctions:
             assert "selected_geojson" in data
             assert "adjacent_geojson" in data
 
-    @patch('land_registry.app.get_current_gdf')
+    @patch('land_registry.main.get_current_gdf')
     def test_get_attributes_complete_workflow(self, mock_get_gdf):
         """Test complete get attributes workflow."""
         client = TestClient(app)

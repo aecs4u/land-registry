@@ -2,13 +2,24 @@ import pytest
 import tempfile
 import json
 import os
-from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch, Mock
 from fastapi.testclient import TestClient
 import geopandas as gpd
-from shapely.geometry import Polygon, Point
-import boto3
-from moto import mock_aws
+
+# Optional imports - gracefully handle if not available
+try:
+    import boto3
+    BOTO3_AVAILABLE = True
+except ImportError:
+    boto3 = None
+    BOTO3_AVAILABLE = False
+
+try:
+    from moto import mock_aws
+    MOTO_AVAILABLE = True
+except ImportError:
+    mock_aws = None
+    MOTO_AVAILABLE = False
 
 from land_registry.main import app
 from land_registry.s3_storage import S3Settings, S3Storage
@@ -156,8 +167,8 @@ def drawn_polygons_data():
 def s3_settings():
     """S3 settings for testing."""
     return S3Settings(
-        s3_bucket_name="test-bucket",
-        s3_region="us-east-1",
+        bucket_name="test-bucket",
+        region="us-east-1",
         aws_access_key_id="test-key",
         aws_secret_access_key="test-secret"
     )
@@ -166,6 +177,9 @@ def s3_settings():
 @pytest.fixture
 def mock_s3_client():
     """Mock S3 client with moto."""
+    if not MOTO_AVAILABLE or not BOTO3_AVAILABLE:
+        pytest.skip("moto or boto3 not available")
+
     with mock_aws():
         # Create S3 client
         client = boto3.client(
@@ -184,6 +198,9 @@ def mock_s3_client():
 @pytest.fixture
 def s3_storage_with_data(mock_s3_client, s3_settings, sample_geojson, sample_cadastral_structure):
     """S3 storage instance with test data."""
+    if not MOTO_AVAILABLE or not BOTO3_AVAILABLE:
+        pytest.skip("moto or boto3 not available")
+
     storage = S3Storage(s3_settings)
 
     # Upload test cadastral structure

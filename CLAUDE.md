@@ -34,8 +34,11 @@ The project uses pyproject.toml with uv as the package manager:
 # Install dependencies
 uv sync
 
-# Run the development server
-uvicorn app.land_registry_app:app --reload --host 0.0.0.0 --port 8000
+# Run the development server (fast shutdown)
+python run_dev.py
+
+# Run the development server (alternative)
+uvicorn land_registry.app:app --reload --host 127.0.0.1 --port 8000
 
 # Run tests
 uv run pytest

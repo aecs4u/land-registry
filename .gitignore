@@ -61,6 +61,14 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
+# Land Registry SQLite databases
+data/*.sqlite
+data/*.sqlite-journal
+data/*.sqlite-wal
+data/*.sqlite-shm
+land_registry.db
+file_availability.db
+
 # Flask stuff:
 instance/
 .webassets-cache
@@ -207,3 +215,5 @@ marimo/_lsp/
 __marimo__/
 
 .kate-swp
+
+.playwright-mcp/

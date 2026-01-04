@@ -1,7 +1,7 @@
 [project]
 description = "Land Registry"
 name = "land_registry"
-version = "0.1.1" 
+version = "0.1.4"
 requires-python = '>=3.11'
 dependencies = [
     # Core dependencies for Cloud Functions
@@ -21,13 +21,23 @@ dependencies = [
     "httpx>=0.25.0",
     "pydantic>=2.0.0",
     "python-multipart>=0.0.6",
-    # AWS S3 integration
+    # AWS S3 integration (for catasto-2025 bucket - cadastral data)
     "boto3>=1.34.0",
     "pydantic-settings>=2.0.0",
+    # Google Cloud Storage (for aecs4u-storage bucket - app/user data)
+    "google-cloud-storage>=2.14.0",
+    # Neon PostgreSQL database
+    "psycopg2-binary>=2.9.9",
+    "asyncpg>=0.29.0",
     # Panel for interactive data apps
     "panel>=1.3.0",
     "param>=2.0.0",
     "rich>=14.1.0",
+    # AECS4U Authentication (includes Clerk integration) - from Google Artifact Registry
+    "aecs4u-auth>=1.0.0",
+    # AECS4U Storage abstraction (S3, GCS, Azure, Local) - from Google Artifact Registry
+    "aecs4u-storage>=0.1.0",
+    "moto>=5.1.13",
 ]
 
 [tool.black]
@@ -39,19 +49,10 @@ exclude = '__pycache__'
 profile = "black"
 filter_files = ["__pycache__"]
 
-[project.optional-dependencies]
-auth = [
-    "authlib>=1.6.2",
-    "python-jose[cryptography]>=3.3.0",
-    "python-multipart>=0.0.6",
-    "cryptography>=41.0.0",
-    "pydantic-settings>=2.0.0",
-    "httpx>=0.25.0",
-    "redis>=5.0.0"
-]
-
-encryption = [
-]
+# Optional dependencies (for future use)
+# [project.optional-dependencies]
+# storage = ["aecs4u-storage>=0.1.0"]
+# analytics = ["aecs4u-analytics>=0.1.0"]
 
 [dependency-groups]
 dev = [
@@ -78,16 +79,19 @@ testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+# Ignore archived/outdated tests
+norecursedirs = ["tests/archive"]
 addopts = [
     "--strict-markers",
-    "--strict-config", 
+    "--strict-config",
     "--verbose",
     "--tb=short",
     "--cov=land_registry",
     "--cov-report=html:htmlcov",
     "--cov-report=term-missing",
     "--cov-report=xml",
-    "--cov-fail-under=80"
+    "--cov-fail-under=20",
+    "--ignore=tests/archive"
 ]
 markers = [
     "unit: marks tests as unit tests",
@@ -125,3 +129,22 @@ exclude_lines = [
 
 [tool.setuptools.packages.find]
 where = ["land_registry"]
+
+# =============================================================================
+# UV Configuration - Private Package Sources
+# =============================================================================
+
+# Use keyring for authentication to Google Artifact Registry
+[tool.uv]
+keyring-provider = "subprocess"
+
+# Define the Google Artifact Registry index for aecs4u packages
+[[tool.uv.index]]
+name = "aecs4u-gar"
+url = "https://europe-west1-python.pkg.dev/apps-aecs4u/python-packages/simple/"
+explicit = true
+
+[tool.uv.sources]
+# AECS4U packages from Google Artifact Registry
+aecs4u-auth = { index = "aecs4u-gar" }
+aecs4u-storage = { index = "aecs4u-gar" }

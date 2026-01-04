@@ -21,8 +21,9 @@ class TestCorrectedS3Settings:
         assert settings.s3_bucket_name == "catasto-2025"
         assert settings.s3_region == "eu-central-1"
         assert settings.s3_endpoint_url is None
-        assert settings.aws_access_key_id is None
-        assert settings.aws_secret_access_key is None
+        # AWS credentials may be None or empty string depending on environment
+        assert settings.aws_access_key_id is None or settings.aws_access_key_id == ""
+        assert settings.aws_secret_access_key is None or settings.aws_secret_access_key == ""
 
     def test_s3_settings_custom_values(self):
         """Test S3Settings with custom values."""
@@ -79,14 +80,18 @@ class TestCorrectedS3Storage:
     @mock_aws
     def test_file_exists_true(self):
         """Test file_exists returns True when file exists."""
-        import boto3
 
         # Create real S3 bucket and object using moto
         s3_client = boto3.client('s3', region_name='us-east-1')
         s3_client.create_bucket(Bucket='test-bucket')
         s3_client.put_object(Bucket='test-bucket', Key='test-file.json', Body=b'test content')
 
-        settings = S3Settings(s3_bucket_name="test-bucket", s3_region="us-east-1")
+        settings = S3Settings(
+            s3_bucket_name="test-bucket",
+            s3_region="us-east-1",
+            aws_access_key_id="test-key",
+            aws_secret_access_key="test-secret"
+        )
         storage = S3Storage(settings)
 
         result = storage.file_exists("test-file.json")
@@ -95,13 +100,17 @@ class TestCorrectedS3Storage:
     @mock_aws
     def test_file_exists_false(self):
         """Test file_exists returns False when file doesn't exist."""
-        import boto3
 
         # Create real S3 bucket using moto
         s3_client = boto3.client('s3', region_name='us-east-1')
         s3_client.create_bucket(Bucket='test-bucket')
 
-        settings = S3Settings(s3_bucket_name="test-bucket", s3_region="us-east-1")
+        settings = S3Settings(
+            s3_bucket_name="test-bucket",
+            s3_region="us-east-1",
+            aws_access_key_id="test-key",
+            aws_secret_access_key="test-secret"
+        )
         storage = S3Storage(settings)
 
         result = storage.file_exists("nonexistent-file.json")
@@ -110,7 +119,6 @@ class TestCorrectedS3Storage:
     @mock_aws
     def test_list_files_with_prefix_and_suffix(self):
         """Test list_files with prefix and suffix filters."""
-        import boto3
 
         # Create real S3 bucket and objects using moto
         s3_client = boto3.client('s3', region_name='us-east-1')
@@ -127,7 +135,12 @@ class TestCorrectedS3Storage:
         for file_key in test_files:
             s3_client.put_object(Bucket='test-bucket', Key=file_key, Body=b'test content')
 
-        settings = S3Settings(s3_bucket_name="test-bucket", s3_region="us-east-1")
+        settings = S3Settings(
+            s3_bucket_name="test-bucket",
+            s3_region="us-east-1",
+            aws_access_key_id="test-key",
+            aws_secret_access_key="test-secret"
+        )
         storage = S3Storage(settings)
 
         # Test with prefix and suffix
@@ -141,13 +154,17 @@ class TestCorrectedS3Storage:
     @mock_aws
     def test_list_files_empty_result(self):
         """Test list_files with no matching files."""
-        import boto3
 
         # Create empty S3 bucket using moto
         s3_client = boto3.client('s3', region_name='us-east-1')
         s3_client.create_bucket(Bucket='test-bucket')
 
-        settings = S3Settings(s3_bucket_name="test-bucket", s3_region="us-east-1")
+        settings = S3Settings(
+            s3_bucket_name="test-bucket",
+            s3_region="us-east-1",
+            aws_access_key_id="test-key",
+            aws_secret_access_key="test-secret"
+        )
         storage = S3Storage(settings)
 
         files = storage.list_files()
@@ -186,7 +203,7 @@ class TestCorrectedS3Storage:
         assert result is False
 
     def test_list_files_with_exception_handling(self):
-        """Test list_files handles exceptions properly."""
+        """Test list_files raises exceptions properly."""
         settings = S3Settings(s3_bucket_name="test-bucket")
         storage = S3Storage(settings)
 
@@ -196,13 +213,13 @@ class TestCorrectedS3Storage:
 
         storage._client = mock_client
 
-        files = storage.list_files()
-        assert files == []  # Should return empty list on error
+        # list_files now raises exceptions instead of returning empty list
+        with pytest.raises(Exception):
+            storage.list_files()
 
     @mock_aws
     def test_get_cadastral_structure_success(self):
         """Test successful cadastral structure retrieval."""
-        import boto3
 
         structure_data = {
             "ABRUZZO": {
@@ -219,13 +236,19 @@ class TestCorrectedS3Storage:
         # Create real S3 bucket and object using moto
         s3_client = boto3.client('s3', region_name='us-east-1')
         s3_client.create_bucket(Bucket='test-bucket')
+        # Note: The method uses 'ITALIA/cadastral_structure.json' as default key
         s3_client.put_object(
             Bucket='test-bucket',
-            Key='cadastral_structure.json',
+            Key='ITALIA/cadastral_structure.json',
             Body=json.dumps(structure_data).encode()
         )
 
-        settings = S3Settings(s3_bucket_name="test-bucket", s3_region="us-east-1")
+        settings = S3Settings(
+            s3_bucket_name="test-bucket",
+            s3_region="us-east-1",
+            aws_access_key_id="test-key",
+            aws_secret_access_key="test-secret"
+        )
         storage = S3Storage(settings)
 
         result = storage.get_cadastral_structure()
@@ -234,13 +257,17 @@ class TestCorrectedS3Storage:
     @mock_aws
     def test_get_cadastral_structure_not_found(self):
         """Test cadastral structure when file not found."""
-        import boto3
 
         # Create empty S3 bucket using moto
         s3_client = boto3.client('s3', region_name='us-east-1')
         s3_client.create_bucket(Bucket='test-bucket')
 
-        settings = S3Settings(s3_bucket_name="test-bucket", s3_region="us-east-1")
+        settings = S3Settings(
+            s3_bucket_name="test-bucket",
+            s3_region="us-east-1",
+            aws_access_key_id="test-key",
+            aws_secret_access_key="test-secret"
+        )
         storage = S3Storage(settings)
 
         result = storage.get_cadastral_structure()
@@ -265,7 +292,6 @@ class TestCorrectedS3Integration:
     @mock_aws
     def test_end_to_end_workflow(self):
         """Test complete S3 workflow."""
-        import boto3
 
         # Set up test data
         structure_data = {"test": "structure"}
@@ -274,10 +300,10 @@ class TestCorrectedS3Integration:
         s3_client = boto3.client('s3', region_name='us-east-1')
         s3_client.create_bucket(Bucket='integration-test-bucket')
 
-        # Add test files
+        # Add test files - use the correct key path
         s3_client.put_object(
             Bucket='integration-test-bucket',
-            Key='cadastral_structure.json',
+            Key='ITALIA/cadastral_structure.json',
             Body=json.dumps(structure_data).encode()
         )
         s3_client.put_object(
@@ -289,12 +315,14 @@ class TestCorrectedS3Integration:
         # Test the workflow
         settings = S3Settings(
             s3_bucket_name="integration-test-bucket",
-            s3_region="us-east-1"
+            s3_region="us-east-1",
+            aws_access_key_id="test-key",
+            aws_secret_access_key="test-secret"
         )
         storage = S3Storage(settings)
 
-        # Test file existence
-        assert storage.file_exists("cadastral_structure.json") is True
+        # Test file existence - use the correct key path
+        assert storage.file_exists("ITALIA/cadastral_structure.json") is True
         assert storage.file_exists("nonexistent.json") is False
 
         # Test file listing

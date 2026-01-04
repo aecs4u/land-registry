@@ -34,47 +34,191 @@ class AppSettings(BaseSettings):
     italy_bounds_sw: List[float] = [35.0, 6.0]   # South-west (Sicily)
     italy_bounds_ne: List[float] = [48.0, 19.0]  # North-east (Alps)
 
-    # Authentication settings (Clerk)
-    clerk_publishable_key: Optional[str] = None
-    clerk_secret_key: Optional[str] = None
-    clerk_domain: Optional[str] = None
-
     class Config:
         env_prefix = "LAND_REGISTRY_"
+        env_file = ".env"
         case_sensitive = False
+        extra = "ignore"
+
+
+class AuthSettings(BaseSettings):
+    """Authentication settings for land-registry app.
+
+    Note: Core Clerk settings (publishable key, secret key, JWKS URL) are
+    handled by aecs4u-auth package via environment variables:
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+        CLERK_SECRET_KEY
+        CLERK_JWKS_URL
+
+    These settings override the aecs4u-auth defaults for this specific app.
+    """
+
+    # Redirect URLs after authentication (app-specific overrides)
+    after_sign_in_url: str = "/map"
+    after_sign_up_url: str = "/map"
+
+    class Config:
+        env_prefix = "AUTH_"
+        case_sensitive = False
+        extra = "ignore"
+
+
+class StorageSettings(BaseSettings):
+    """
+    Unified storage settings using aecs4u-storage package.
+
+    This is the primary storage configuration. S3Settings and GCSStorageSettings
+    are kept for backward compatibility but new code should use this.
+    """
+
+    # Provider: local, s3, gcs, azure
+    provider: str = "s3"
+
+    # S3 configuration
+    s3_bucket: str = "apps-aecs4u"
+    s3_region: str = "eu-west-3"
+    s3_endpoint: Optional[str] = None
+
+    # GCS configuration
+    gcs_bucket: str = ""
+    gcs_project: Optional[str] = None
+    gcs_credentials_file: Optional[str] = None
+
+    # Azure configuration
+    azure_container: str = ""
+    azure_connection_string: Optional[str] = None
+
+    # Local storage
+    local_path: str = "./data/uploads"
+
+    # Path organization
+    path_prefix: str = "land-registry"
+    organize_by_date: bool = True
+
+    # URL settings
+    presigned_url_expiry: int = 3600
+    public_base_url: Optional[str] = None
+
+    # File validation
+    max_file_size: int = 104857600  # 100MB
+    # Use string for allowed_extensions to support comma-separated env var format
+    allowed_extensions_str: str = "gpkg,geojson,shp,qpkg,json,csv,xlsx,pdf,png,jpg,jpeg"
+
+    @property
+    def allowed_extensions(self) -> List[str]:
+        """Get allowed extensions as a list."""
+        return [ext.strip() for ext in self.allowed_extensions_str.split(",") if ext.strip()]
+
+    class Config:
+        env_prefix = "STORAGE_"
+        case_sensitive = False
+        extra = "ignore"
 
 
 class S3Settings(BaseSettings):
-    """S3 storage settings"""
+    """
+    S3 storage settings (legacy - for backward compatibility).
+
+    New code should use StorageSettings with STORAGE_* environment variables.
+    """
 
     # S3 configuration
-    s3_bucket_name: str = "catasto-2025"
-    s3_region: str = "eu-central-1"
-    s3_endpoint_url: Optional[str] = None
+    bucket_name: str = "apps-aecs4u"
+    region: str = "eu-west-3"
+    endpoint_url: Optional[str] = None
 
     # AWS credentials (optional for public bucket access)
     aws_access_key_id: Optional[str] = None
     aws_secret_access_key: Optional[str] = None
 
-    # Public bucket fallback
-    use_public_bucket_fallback: bool = True
-    public_bucket_unsigned: bool = True
-
     class Config:
         env_prefix = "S3_"
         case_sensitive = False
+        extra = "ignore"
+
+    # Backward compatibility aliases
+    @property
+    def s3_bucket_name(self) -> str:
+        return self.bucket_name
+
+    @property
+    def s3_region(self) -> str:
+        return self.region
+
+    @property
+    def s3_endpoint_url(self) -> Optional[str]:
+        return self.endpoint_url
 
 
 class DatabaseSettings(BaseSettings):
-    """Database settings"""
+    """Database settings for SQLite (local) and Neon PostgreSQL (production)"""
 
-    # SQLite database for file availability caching
-    db_path: str = "land_registry.db"
+    # SQLite database for local development and offline use
+    sqlite_path: str = "data/land-registry.sqlite"
     cache_expiry_hours: int = 24
+
+    # File availability cache database
+    file_availability_db_path: str = "file_availability.db"
+
+    # Neon PostgreSQL settings (for production/cloud deployment)
+    # Set DATABASE_URL environment variable for Neon connection
+    # Format: postgresql://user:password@host/database?sslmode=require
+    database_url: Optional[str] = None
+
+    # Use Neon for persistent storage (auto-detected based on DATABASE_URL)
+    use_neon: bool = False
+
+    # Use SQLite for local storage (default in development)
+    use_sqlite: bool = True
 
     class Config:
         env_prefix = "DB_"
         case_sensitive = False
+        extra = "ignore"
+
+
+class GCSStorageSettings(BaseSettings):
+    """Google Cloud Storage settings for permanent file storage"""
+
+    # Primary storage bucket for app and user data
+    gcs_bucket_name: str = "aecs4u-storage"
+
+    # Path prefixes within the bucket
+    gcs_app_data_prefix: str = "land-registry/app-data"
+    gcs_user_data_prefix: str = "land-registry/user-data"
+    gcs_uploads_prefix: str = "land-registry/uploads"
+    gcs_exports_prefix: str = "land-registry/exports"
+
+    # Use GCS for storage (vs local filesystem)
+    use_gcs: bool = False
+
+    # Signed URL expiration (seconds)
+    gcs_signed_url_expiration: int = 3600
+
+    class Config:
+        env_prefix = "GCS_"
+        case_sensitive = False
+        extra = "ignore"
+
+
+class SpatialiteSettings(BaseSettings):
+    """SpatiaLite configuration for loading local geodata"""
+
+    # Separate databases for MAP (fogli) and PLE (particelle)
+    db_map_path: str = "data/cadastral_map.sqlite"
+    db_ple_path: str = "data/cadastral_ple.sqlite"
+    # Legacy single database (for backward compatibility)
+    db_path: str = "data/cadastral.sqlite"
+    table: str = "cadastral_parcels"
+    geometry_column: str = "geometry"
+    srid: int = 4326
+    default_limit: int = 1000
+    extension_path: Optional[str] = None  # Optional override for mod_spatialite path
+
+    class Config:
+        env_prefix = "SPATIALITE_"
+        case_sensitive = False
+        extra = "ignore"
 
 
 class CadastralSettings(BaseSettings):
@@ -102,6 +246,7 @@ class CadastralSettings(BaseSettings):
     class Config:
         env_prefix = "CADASTRAL_"
         case_sensitive = False
+        extra = "ignore"
 
 
 class MapControlsSettings(BaseSettings):
@@ -111,7 +256,7 @@ class MapControlsSettings(BaseSettings):
     fullscreen_position: str = "topright"
     measure_position: str = "topleft"
     locate_position: str = "topleft"
-    draw_position: str = "topleft"
+    draw_position: str = "bottomleft"
 
     # Plugin settings
     enable_minimap: bool = True
@@ -129,6 +274,7 @@ class MapControlsSettings(BaseSettings):
     class Config:
         env_prefix = "MAP_CONTROLS_"
         case_sensitive = False
+        extra = "ignore"
 
 
 class PanelServerSettings(BaseSettings):
@@ -164,6 +310,7 @@ class PanelServerSettings(BaseSettings):
     class Config:
         env_prefix = "PANEL_"
         case_sensitive = False
+        extra = "ignore"
 
 
 def get_panel_url(route: str = "") -> str:
@@ -173,11 +320,24 @@ def get_panel_url(route: str = "") -> str:
 
 # Global settings instances
 app_settings = AppSettings()
-s3_settings = S3Settings()
+auth_settings = AuthSettings()
+storage_settings = StorageSettings()  # Primary unified storage config
+s3_settings = S3Settings()  # Legacy - for backward compatibility
 db_settings = DatabaseSettings()
+gcs_settings = GCSStorageSettings()  # Legacy - for backward compatibility
 cadastral_settings = CadastralSettings()
 map_controls_settings = MapControlsSettings()
 panel_settings = PanelServerSettings()
+spatialite_settings = SpatialiteSettings()
+
+# Auto-detect Neon PostgreSQL configuration
+if os.getenv("DATABASE_URL"):
+    db_settings.use_neon = True
+    db_settings.database_url = os.getenv("DATABASE_URL")
+
+# Auto-detect GCS configuration in production
+if os.getenv("ENVIRONMENT") == "production" or os.getenv("GCS_USE_GCS") == "true":
+    gcs_settings.use_gcs = True
 
 
 def get_cadastral_structure_path() -> Optional[str]:

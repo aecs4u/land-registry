@@ -5,14 +5,12 @@ Provides centralized loading, caching, and statistics computation.
 
 import json
 import logging
-import os
 from typing import Optional, Dict, Any, Tuple
-from functools import lru_cache
 from pathlib import Path
 import time
 
 from land_registry.s3_storage import get_s3_storage
-from land_registry.settings import get_cadastral_structure_path, get_cadastral_data_root, cadastral_settings
+from land_registry.config import get_cadastral_structure_path, get_cadastral_data_root, cadastral_settings
 
 logger = logging.getLogger(__name__)
 

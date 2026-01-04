@@ -1,15 +1,10 @@
 """
 Corrected API endpoint tests that match actual application behavior.
-These tests are written based on examining the actual app.py implementation.
+These tests are written based on examining the actual routers/api.py implementation.
 """
 
-import pytest
-import tempfile
-import json
-import os
 import io
-from pathlib import Path
-from unittest.mock import patch, MagicMock, mock_open
+from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 import geopandas as gpd
 from shapely.geometry import Polygon
@@ -37,7 +32,6 @@ class TestCorrectedAPIEndpoints:
 
         response = client.post("/api/v1/upload-qpkg/", files=files)
         assert response.status_code == 400
-        # Use actual error message from app.py line 75
         assert response.json()["detail"] == "File must be a QPKG or GPKG file"
 
     @patch('land_registry.routers.api.extract_qpkg_data')
@@ -51,7 +45,6 @@ class TestCorrectedAPIEndpoints:
 
         response = client.post("/api/v1/upload-qpkg/", files=files)
         assert response.status_code == 400
-        # Use actual error message from app.py line 86
         assert response.json()["detail"] == "No geospatial data found in QPKG"
 
     @patch('land_registry.routers.api.extract_qpkg_data')
@@ -75,7 +68,6 @@ class TestCorrectedAPIEndpoints:
         response = client.post("/api/v1/upload-qpkg/", files=files)
         assert response.status_code == 200
         data = response.json()
-        # Check actual response structure from app.py line 93
         assert "geojson" in data
         assert data["geojson"]["type"] == "FeatureCollection"
 
@@ -87,7 +79,6 @@ class TestCorrectedAPIEndpoints:
 
         response = client.get("/api/v1/get-attributes/")
         assert response.status_code == 400
-        # Use actual error message from app.py line 145
         assert response.json()["detail"] == "No data loaded. Please upload a QPKG or GPKG file first."
 
     @patch('land_registry.routers.api.get_current_gdf')
@@ -106,7 +97,6 @@ class TestCorrectedAPIEndpoints:
         response = client.get("/api/v1/get-attributes/")
         assert response.status_code == 200
         data = response.json()
-        # Check actual response structure from app.py lines 166-171
         assert "columns" in data
         assert "data" in data
         assert len(data["data"]) == 2
@@ -126,7 +116,6 @@ class TestCorrectedAPIEndpoints:
             "touch_method": "touches"
         })
         assert response.status_code == 400
-        # Use actual error message from app.py line 104
         assert response.json()["detail"] == "No data loaded. Please upload a QPKG file first."
 
     @patch('land_registry.routers.api.get_current_gdf')
@@ -156,7 +145,6 @@ class TestCorrectedAPIEndpoints:
 
         assert response.status_code == 200
         data = response.json()
-        # Check actual response structure from app.py lines 128-133
         assert "geojson" in data
         assert "selected_id" in data
         assert "adjacent_ids" in data
@@ -164,62 +152,17 @@ class TestCorrectedAPIEndpoints:
         assert data["selected_id"] == 0
         assert data["adjacent_ids"] == [1]
 
-    @patch('land_registry.routers.api.map_controls')
-    def test_get_controls_actual_response(self, mock_controls):
-        """Test get controls - check actual response structure."""
-        client = TestClient(app)
-
-        # Mock control groups
-        mock_group = MagicMock()
-        mock_group.id = "test_group"
-        mock_group.title = "Test Group"
-        mock_group.controls = []
-        mock_controls.control_groups = [mock_group]
-
-        response = client.get("/api/v1/get-controls/")
-        assert response.status_code == 200
-        data = response.json()
-        # Check actual response structure - this endpoint returns the control groups structure
-        assert "groups" in data
-
-    @patch('land_registry.routers.api.map_controls')
-    def test_update_control_state_success_actual_response(self, mock_controls):
-        """Test control state update success - check actual response."""
-        client = TestClient(app)
-        mock_controls.update_control_state.return_value = True
-
-        response = client.post("/api/v1/update-control-state/", json={
-            "control_id": "test_control",
-            "enabled": True
-        })
-        assert response.status_code == 200
-        data = response.json()
-        # Check actual response structure from app.py line 559
-        assert data["success"] is True
-        assert "message" in data
-
-    @patch('land_registry.routers.api.map_controls')
-    def test_update_control_state_not_found_actual_response(self, mock_controls):
-        """Test control state update not found - check actual error."""
-        client = TestClient(app)
-        mock_controls.update_control_state.return_value = False
-
-        response = client.post("/api/v1/update-control-state/", json={
-            "control_id": "nonexistent",
-            "enabled": True
-        })
-        assert response.status_code == 404
-        # Check actual error message from app.py line 561
-        assert "Control nonexistent not found" in response.json()["detail"]
+    # NOTE: Controls endpoints are currently disabled/commented out in routers/api.py
+    # Uncomment these tests when the endpoints are re-enabled
 
     def test_load_cadastral_files_no_files_actual_response(self):
         """Test load cadastral files with no files - check actual error."""
         client = TestClient(app)
 
-        response = client.post("/api/v1/load-cadastral-files/", json={"files": []})
+        # The actual endpoint expects 'file_paths' not 'files'
+        response = client.post("/api/v1/load-cadastral-files/", json={"file_paths": []})
         assert response.status_code == 400
-        # Check actual error message from app.py line 366
-        assert response.json()["detail"] == "No files specified"
+        assert response.json()["detail"] == "No file paths provided"
 
 
 class TestCorrectedS3Endpoints:
@@ -242,12 +185,11 @@ class TestCorrectedS3Endpoints:
 
         assert response.status_code == 200
         data = response.json()
-        # Check actual response structure from app.py lines 608-614
         assert "success" in data
         assert "message" in data
         assert "bucket_name" in data
         assert "region" in data
-        assert "test_files_found" in data  # Not files_found
+        assert "test_files_found" in data
         assert "sample_files" in data
 
     @patch('land_registry.routers.api.configure_s3_storage')
@@ -261,7 +203,7 @@ class TestCorrectedS3Endpoints:
             "region": "us-east-1"
         })
 
-        assert response.status_code == 500  # Not 400, based on app.py line 601
+        assert response.status_code == 500
         assert "Error configuring S3" in response.json()["detail"]
 
     @patch('land_registry.routers.api.get_s3_storage')
@@ -282,13 +224,12 @@ class TestCorrectedS3Endpoints:
         response = client.get("/api/v1/s3-status/")
         assert response.status_code == 200
         data = response.json()
-        # Check actual response structure from app.py lines 645-651
         assert "bucket_name" in data
         assert "region" in data
         assert "endpoint_url" in data
         assert "has_credentials" in data
         assert "connection_status" in data
-        assert "cadastral_files_found" in data  # Not files_available
+        assert "cadastral_files_found" in data
 
     def test_s3_status_not_configured_actual_response(self):
         """Test S3 status when not configured - check actual response."""
@@ -299,44 +240,47 @@ class TestCorrectedS3Endpoints:
             response = client.get("/api/v1/s3-status/")
             assert response.status_code == 500
             data = response.json()
-            # Check actual error response
             assert "Error checking S3 status" in data["detail"]
 
 
 class TestCorrectedCadastralStructure:
     """Tests for cadastral structure endpoints with correct behavior."""
 
-    @patch('land_registry.routers.api.get_s3_storage')
-    @patch('builtins.open', mock_open(read_data='{"test": "structure"}'))
-    def test_get_cadastral_structure_local_success(self, mock_get_s3):
-        """Test getting cadastral structure from local file."""
+    @patch('land_registry.cadastral_utils.load_cadastral_structure')
+    def test_get_cadastral_structure_local_success(self, mock_load):
+        """Test getting cadastral structure successfully."""
         client = TestClient(app)
-        mock_get_s3.return_value = None  # No S3 configured
+
+        # Mock the cadastral structure loader
+        mock_cadastral = MagicMock()
+        mock_cadastral.data = {"test": "structure"}
+        mock_load.return_value = mock_cadastral
 
         response = client.get("/api/v1/get-cadastral-structure/")
         assert response.status_code == 200
         data = response.json()
         assert data == {"test": "structure"}
 
-    def test_get_cadastral_structure_file_not_found_actual_response(self):
+    @patch('land_registry.cadastral_utils.load_cadastral_structure')
+    def test_get_cadastral_structure_file_not_found_actual_response(self, mock_load):
         """Test get cadastral structure when file not found - check actual error."""
         client = TestClient(app)
 
-        # Mock all possible paths to not exist - need to patch at the api module level
-        with patch('land_registry.routers.api.os.path.exists', return_value=False):
-            response = client.get("/api/v1/get-cadastral-structure/")
-            assert response.status_code == 500  # Actual behavior is 500, not 404
-            # Check actual error message
-            assert "Error reading cadastral structure" in response.json()["detail"]
-            assert "Cadastral structure file not found locally" in response.json()["detail"]
-
-    @patch('land_registry.routers.api.get_s3_storage')
-    @patch('builtins.open', mock_open(read_data='invalid json'))
-    def test_get_cadastral_structure_invalid_json_actual_response(self, mock_get_s3):
-        """Test get cadastral structure with invalid JSON - check actual error."""
-        client = TestClient(app)
-        mock_get_s3.return_value = None  # No S3 configured
+        # Return None to indicate data not found
+        mock_load.return_value = None
 
         response = client.get("/api/v1/get-cadastral-structure/")
-        assert response.status_code == 500  # This is the actual behavior for JSON parse errors
-        assert "Error parsing cadastral structure file" in response.json()["detail"]
+        assert response.status_code == 404
+        assert "not available" in response.json()["detail"]
+
+    @patch('land_registry.cadastral_utils.load_cadastral_structure')
+    def test_get_cadastral_structure_invalid_json_actual_response(self, mock_load):
+        """Test get cadastral structure with invalid JSON - check actual error."""
+        client = TestClient(app)
+
+        # Raise exception to simulate parsing error
+        mock_load.side_effect = Exception("Error parsing")
+
+        response = client.get("/api/v1/get-cadastral-structure/")
+        assert response.status_code == 500
+        assert "Error loading cadastral structure" in response.json()["detail"]

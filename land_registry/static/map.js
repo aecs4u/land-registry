@@ -2,6 +2,16 @@
 // Initialize Leaflet map with all map providers
 let map, currentGeoJsonLayer, drawnItems, drawControl;
 
+// Debug mode - set to true during development to enable console logging
+const DEBUG_MODE = false;
+
+// Conditional debug logging - only logs when DEBUG_MODE is true
+function debugLog(...args) {
+    if (DEBUG_MODE) {
+        console.log('[MapJS]', ...args);
+    }
+}
+
 // Selection management
 let selectedPolygons = new Set();
 let selectionEnabled = true;
@@ -80,26 +90,26 @@ function getRandomStripeAngle() {
 
 // Selection functions
 function togglePolygonSelection(layer) {
-    console.log('togglePolygonSelection called. Selection enabled:', selectionEnabled);
+    debugLog('togglePolygonSelection called. Selection enabled:', selectionEnabled);
 
     if (!selectionEnabled) {
-        console.log('Selection is disabled, returning');
+        debugLog('Selection is disabled, returning');
         return;
     }
 
     const layerId = L.Util.stamp(layer);
-    console.log('Toggling polygon with ID:', layerId);
+    debugLog('Toggling polygon with ID:', layerId);
 
     if (selectedPolygons.has(layerId)) {
         // Deselect
         selectedPolygons.delete(layerId);
         applyDefaultStyle(layer);
-        console.log('Deselected polygon. Total selected:', selectedPolygons.size);
+        debugLog('Deselected polygon. Total selected:', selectedPolygons.size);
     } else {
         // Select
         selectedPolygons.add(layerId);
         applySelectedStyle(layer);
-        console.log('Selected polygon. Total selected:', selectedPolygons.size);
+        debugLog('Selected polygon. Total selected:', selectedPolygons.size);
     }
 
     updateSelectionCounter();
@@ -169,7 +179,7 @@ function updateDataDependentButtons() {
         polygonsVisibilityBtn.disabled = !hasData;
     }
 
-    console.log('Data-dependent buttons updated. Has data:', hasData);
+    debugLog('Data-dependent buttons updated. Has data:', hasData);
 }
 
 function updateAdjacencyButtons() {
@@ -221,7 +231,7 @@ function toggleSelectionMode() {
 
 
 function updateSelectionToggleButton() {
-    console.log('updateSelectionToggleButton called. Selection enabled:', selectionEnabled);
+    debugLog('updateSelectionToggleButton called. Selection enabled:', selectionEnabled);
     const btn = document.getElementById('toggleSelectionBtn');
     if (btn) {
         const iconSpan = btn.querySelector('.toggle-icon');
@@ -233,17 +243,17 @@ function updateSelectionToggleButton() {
             if (iconSpan) iconSpan.textContent = '✏️';
             if (stateSpan) stateSpan.textContent = 'ON';
             btn.title = 'Disable polygon selection';
-            console.log('Button set to active state');
+            debugLog('Button set to active state');
         } else {
             btn.classList.remove('active');
             btn.classList.add('inactive');
             if (iconSpan) iconSpan.textContent = '🚫';
             if (stateSpan) stateSpan.textContent = 'OFF';
             btn.title = 'Enable polygon selection';
-            console.log('Button set to inactive state');
+            debugLog('Button set to inactive state');
         }
     } else {
-        console.log('Toggle button not found!');
+        debugLog('Toggle button not found!');
     }
     // Update selection buttons when toggle state changes
     updateSelectionButtons();
@@ -486,7 +496,7 @@ window.fitToSelected = function() {
 window.togglePolygonSelectionMode = function() {
     selectionEnabled = !selectionEnabled;
     updateSelectionToggleButton();
-    console.log('Polygon selection mode toggled. Enabled:', selectionEnabled);
+    debugLog('Polygon selection mode toggled. Enabled:', selectionEnabled);
 };
 
 window.selectAllPolygons = function() {
@@ -500,7 +510,7 @@ window.deselectAllPolygons = function() {
 window.toggleSelectionInfo = function() {
     const hasData = currentGeoJsonLayer && currentGeoJsonLayer.getLayers().length > 0;
     if (!hasData) {
-        console.log('No data loaded - selection info cannot be toggled');
+        debugLog('No data loaded - selection info cannot be toggled');
         return;
     }
 
@@ -508,10 +518,10 @@ window.toggleSelectionInfo = function() {
     if (selectedCount) {
         if (selectedCount.style.display === 'none') {
             selectedCount.style.display = 'block';
-            console.log('Selection info shown');
+            debugLog('Selection info shown');
         } else {
             selectedCount.style.display = 'none';
-            console.log('Selection info hidden');
+            debugLog('Selection info hidden');
         }
     }
 };
@@ -519,17 +529,17 @@ window.toggleSelectionInfo = function() {
 window.togglePolygonsVisibility = function() {
     const hasData = currentGeoJsonLayer && currentGeoJsonLayer.getLayers().length > 0;
     if (!hasData) {
-        console.log('No data loaded - polygons visibility cannot be toggled');
+        debugLog('No data loaded - polygons visibility cannot be toggled');
         return;
     }
 
     if (currentGeoJsonLayer) {
         if (map.hasLayer(currentGeoJsonLayer)) {
             map.removeLayer(currentGeoJsonLayer);
-            console.log('Polygons hidden');
+            debugLog('Polygons hidden');
         } else {
             map.addLayer(currentGeoJsonLayer);
-            console.log('Polygons shown');
+            debugLog('Polygons shown');
         }
     }
 };
@@ -548,7 +558,7 @@ function clearAllData() {
     updateSelectionCounter();
     updateDataDependentButtons();
 
-    console.log('All data cleared, buttons disabled');
+    debugLog('All data cleared, buttons disabled');
 }
 
 // Auction Properties Layer Management
@@ -617,17 +627,17 @@ window.displayAuctionProperties = function(geojson) {
 
 window.filterActiveAuctions = function() {
     // Filter to show only active auctions
-    console.log('Filtering active auctions');
+    debugLog('Filtering active auctions');
 };
 
 window.filterAuctionsByType = function() {
     const typeFilter = document.getElementById('auctionTypeFilter').value;
-    console.log('Filtering by type:', typeFilter);
+    debugLog('Filtering by type:', typeFilter);
 };
 
 window.filterAuctionsByPrice = function() {
     const maxPrice = document.getElementById('maxPriceFilter').value;
-    console.log('Filtering by max price:', maxPrice);
+    debugLog('Filtering by max price:', maxPrice);
 };
 
 window.startDrawingMode = function() {
@@ -864,7 +874,7 @@ function fitDrawingsToView() {
     try {
         const group = new L.featureGroup(drawnItems.getLayers());
         map.fitBounds(group.getBounds(), { padding: [20, 20] });
-        console.log('Fitted', drawnItems.getLayers().length, 'drawings to view');
+        debugLog('Fitted', drawnItems.getLayers().length, 'drawings to view');
     } catch (error) {
         console.error('Error fitting drawings to view:', error);
     }
@@ -1067,7 +1077,7 @@ window.switchBasemap = function() {
     const selector = document.getElementById('basemapSelector');
     if (selector) {
         const selectedValue = selector.value;
-        console.log('Switching to basemap:', selectedValue);
+        debugLog('Switching to basemap:', selectedValue);
     }
 };
 
@@ -1078,10 +1088,10 @@ window.toggleMiniMap = function() {
         const toggleBtn = miniMapControl.querySelector('.leaflet-control-minimap-toggle-display');
         if (toggleBtn) {
             toggleBtn.click();
-            console.log('MiniMap toggled');
+            debugLog('MiniMap toggled');
         }
     } else {
-        console.log('MiniMap not found');
+        debugLog('MiniMap not found');
     }
 };
 
@@ -1106,14 +1116,14 @@ window.showPluginInfo = function() {
     }
 
     alert(message);
-    console.log('Plugin Status:', plugins);
+    debugLog('Plugin Status:', plugins);
 };
 
 window.resetMapView = function() {
     if (map) {
         // Reset to Italy bounds
         map.setView([41.8719, 12.5674], 6);
-        console.log('Map view reset to default');
+        debugLog('Map view reset to default');
     }
 };
 
@@ -1122,9 +1132,9 @@ window.toggleCoordinates = function() {
     if (mousePositionControl) {
         const isVisible = mousePositionControl.style.display !== 'none';
         mousePositionControl.style.display = isVisible ? 'none' : 'block';
-        console.log('Coordinate display toggled:', !isVisible);
+        debugLog('Coordinate display toggled:', !isVisible);
     } else {
-        console.log('Mouse position control not found');
+        debugLog('Mouse position control not found');
     }
 };
 
@@ -1156,7 +1166,7 @@ function updatePluginStatusIndicators() {
         });
     });
 
-    console.log('Plugin status indicators updated');
+    debugLog('Plugin status indicators updated');
 }
 
 // TreeLayers management functions
@@ -1165,35 +1175,35 @@ window.toggleTreeLayers = function() {
     if (treeControl) {
         const isHidden = treeControl.style.display === 'none';
         treeControl.style.display = isHidden ? 'block' : 'none';
-        console.log('TreeLayers control toggled:', !isHidden ? 'visible' : 'hidden');
+        debugLog('TreeLayers control toggled:', !isHidden ? 'visible' : 'hidden');
     }
 };
 
 window.expandAllTreeLayers = function() {
     if (window.treeLayersControl && typeof window.treeLayersControl.expandAll === 'function') {
         window.treeLayersControl.expandAll();
-        console.log('All TreeLayers expanded');
+        debugLog('All TreeLayers expanded');
     }
 };
 
 window.collapseAllTreeLayers = function() {
     if (window.treeLayersControl && typeof window.treeLayersControl.collapseAll === 'function') {
         window.treeLayersControl.collapseAll();
-        console.log('All TreeLayers collapsed');
+        debugLog('All TreeLayers collapsed');
     }
 };
 
 window.refreshTreeLayers = function() {
     if (window.treeLayersControl) {
         window.treeLayersControl.refresh();
-        console.log('TreeLayers control refreshed');
+        debugLog('TreeLayers control refreshed');
     }
 };
 
 // Selection control functions
 window.changeSelectionMode = function() {
     const mode = document.getElementById('selectionMode').value;
-    console.log('Selection mode changed to:', mode);
+    debugLog('Selection mode changed to:', mode);
 };
 
 window.findAdjacencyForSelected = async function() {
@@ -1207,47 +1217,75 @@ window.findAdjacencyForSelected = async function() {
         return;
     }
 
-    const method = document.getElementById('adjacencyMethod').value;
-    console.log('Finding adjacent polygons for selected features using method:', method);
+    const method = document.getElementById('adjacencyMethod')?.value || 'touches';
+    debugLog('Finding adjacent polygons for selected features using method:', method);
 
     try {
-        // Get the first selected polygon index for adjacency analysis
-        const selectedIndex = Array.from(selectedPolygons)[0];
+        // Get the first selected layer ID from selectedPolygons Set
+        const selectedLayerId = Array.from(selectedPolygons)[0];
+        
+        // Find the actual layer and its feature data
+        let selectedLayer = null;
+        let featureIndex = 0;
+        let foundIndex = 0;
+        
+        currentGeoJsonLayer.eachLayer(function(layer) {
+            const layerId = L.Util.stamp(layer);
+            if (layerId === selectedLayerId) {
+                selectedLayer = layer;
+                featureIndex = foundIndex;
+            }
+            foundIndex++;
+        });
 
-        // Call the backend adjacency endpoint
-        const response = await fetch('/get-adjacent-polygons/', {
+        if (!selectedLayer || !selectedLayer.feature) {
+            alert('Could not find the selected polygon data');
+            return;
+        }
+
+        // Extract feature_id from properties or use the index
+        const feature = selectedLayer.feature;
+        const featureId = feature.properties?.feature_id ?? feature.properties?.id ?? featureIndex;
+        const geometry = feature.geometry;
+
+        debugLog('Selected feature_id:', featureId, 'geometry type:', geometry?.type);
+
+        // Call the backend adjacency endpoint with correct path and payload
+        const response = await fetch('/api/v1/get-adjacent-polygons/', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                selected_index: selectedIndex,
+                feature_id: featureId,
+                geometry: geometry,
                 touch_method: method
             })
         });
 
         if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
         }
 
         const data = await response.json();
-        console.log('Adjacency analysis result:', data);
+        debugLog('Adjacency analysis result:', data);
 
-        if (data.adjacent_polygons && data.adjacent_polygons.length > 0) {
+        if (data.adjacent_ids && data.adjacent_ids.length > 0) {
             // Adjacent polygons found - enable the buttons
             adjacentPolygonsFound = true;
-            adjacentPolygonIndices = data.adjacent_polygons;
+            adjacentPolygonIndices = data.adjacent_ids;
             updateAdjacencyButtons();
 
-            // You could also highlight the adjacent polygons here
-            console.log(`Found ${data.adjacent_polygons.length} adjacent polygons:`, data.adjacent_polygons);
-            alert(`Found ${data.adjacent_polygons.length} adjacent polygons`);
+            // Highlight the adjacent polygons
+            debugLog(`Found ${data.adjacent_ids.length} adjacent polygons:`, data.adjacent_ids);
+            alert(`Found ${data.adjacent_ids.length} adjacent polygons`);
         } else {
             // No adjacent polygons found
             adjacentPolygonsFound = false;
             adjacentPolygonIndices = [];
             updateAdjacencyButtons();
-            console.log('No adjacent polygons found');
+            debugLog('No adjacent polygons found');
             alert('No adjacent polygons found');
         }
 
@@ -1259,6 +1297,7 @@ window.findAdjacencyForSelected = async function() {
         updateAdjacencyButtons();
     }
 };
+
 
 window.clearSelection = function() {
     // Clear all selected polygons
@@ -1279,17 +1318,17 @@ window.clearSelection = function() {
     updateSelectionCounter();
     updateAdjacencyButtons();
 
-    console.log('Selection cleared');
+    debugLog('Selection cleared');
 };
 
 window.toggleSelectAdjacentPolygons = function() {
     if (!adjacentPolygonsFound || adjacentPolygonIndices.length === 0) {
-        console.log('No adjacent polygons found to select');
+        debugLog('No adjacent polygons found to select');
         return;
     }
 
     if (!currentGeoJsonLayer) {
-        console.log('No data layer available');
+        debugLog('No data layer available');
         return;
     }
 
@@ -1315,8 +1354,8 @@ window.toggleSelectAdjacentPolygons = function() {
     // Otherwise, select all adjacent polygons
     const shouldSelect = adjacentSelected < adjacentPolygonIndices.length / 2;
 
-    console.log(`Adjacent polygons selected: ${adjacentSelected}/${adjacentPolygonIndices.length}`);
-    console.log(`Action: ${shouldSelect ? 'Select' : 'Deselect'} all adjacent polygons`);
+    debugLog(`Adjacent polygons selected: ${adjacentSelected}/${adjacentPolygonIndices.length}`);
+    debugLog(`Action: ${shouldSelect ? 'Select' : 'Deselect'} all adjacent polygons`);
 
     // Toggle selection for each adjacent polygon
     adjacentPolygonIndices.forEach(index => {
@@ -1344,7 +1383,7 @@ window.toggleSelectAdjacentPolygons = function() {
     updateSelectionCounter();
     updateSelectionButtons();
 
-    console.log(`${shouldSelect ? 'Selected' : 'Deselected'} ${adjacentPolygonIndices.length} adjacent polygons`);
+    debugLog(`${shouldSelect ? 'Selected' : 'Deselected'} ${adjacentPolygonIndices.length} adjacent polygons`);
 };
 
 window.showAllPolygons = function() {
@@ -1353,7 +1392,7 @@ window.showAllPolygons = function() {
         currentGeoJsonLayer.addTo(map);
         map.fitBounds(currentGeoJsonLayer.getBounds());
     }
-    console.log('Showing all polygons');
+    debugLog('Showing all polygons');
 };
 
 // Custom Leaflet Controls
@@ -1501,7 +1540,7 @@ function loadGeoJsonData() {
 
                         // Add click handler for selection
                         layer.on('click', function(e) {
-                            console.log('Polygon clicked!');
+                            debugLog('Polygon clicked!');
                             L.DomEvent.stopPropagation(e);
                             togglePolygonSelection(layer);
                         });
@@ -1539,7 +1578,7 @@ function loadGeoJsonData() {
                         if (overlayLayers['📊 Data Layers']) {
                             overlayLayers['📊 Data Layers']['🏛️ Current Cadastral Data'] = currentGeoJsonLayer;
                             window.treeLayersControl.refresh();
-                            console.log('TreeLayers control updated with cadastral data');
+                            debugLog('TreeLayers control updated with cadastral data');
                         }
                     } catch (e) {
                         console.warn('Could not update TreeLayers control:', e);
@@ -1554,21 +1593,30 @@ function loadGeoJsonData() {
 
 // Initialize the map with all providers
 function initializeMap() {
-    console.log('Initializing map...');
+    console.log('[MapJS] initializeMap() called');
+    debugLog('Initializing map...');
 
     // Prevent multiple initializations
     if (map) {
-        console.log('Map already initialized, skipping...');
+        console.log('[MapJS] Map already initialized, skipping...');
+        debugLog('Map already initialized, skipping...');
         return;
     }
 
     const mapElement = document.getElementById('map');
-    console.log('Map element found:', mapElement);
-    console.log('Map element dimensions:', mapElement ? `${mapElement.offsetWidth}x${mapElement.offsetHeight}` : 'N/A');
+    console.log('[MapJS] Map element found:', !!mapElement);
+    debugLog('Map element found:', mapElement);
+    debugLog('Map element dimensions:', mapElement ? `${mapElement.offsetWidth}x${mapElement.offsetHeight}` : 'N/A');
+
+    if (!mapElement) {
+        console.error('[MapJS] Cannot initialize map - #map element not found');
+        return;
+    }
 
     // Create map centered on Italy
     map = L.map('map').setView([41.8719, 12.5674], 6);
-    console.log('Leaflet map created:', map);
+    console.log('[MapJS] Leaflet map created successfully');
+    debugLog('Leaflet map created:', map);
 
     // Add custom bottom-center position for controls
     const corners = map._controlCorners;
@@ -1637,18 +1685,15 @@ function initializeMap() {
     // Add default layer - Google Maps
     mapProviders['📍 Google Maps'].addTo(map);
 
-    // Add layer control
-    L.control.layers(mapProviders, weatherOverlays, {
-        position: 'topright',
-        collapsed: true
-    }).addTo(map);
 
+
+    /* // MOVED TO folium-interface.js
     // Add drawing controls
     drawnItems = new L.FeatureGroup();
     map.addLayer(drawnItems);
 
     drawControl = new L.Control.Draw({
-        position: 'topleft',
+        position: 'bottomleft',
         draw: {
             polygon: {
                 allowIntersection: false,
@@ -1666,25 +1711,9 @@ function initializeMap() {
             },
             circle: {
                 shapeOptions: {
-                    color: '#3388ff',
-                    weight: 4,
+                    color: '#662288',
                     opacity: 0.8,
-                    fillOpacity: 0.4
-                }
-            },
-            rectangle: {
-                shapeOptions: {
-                    color: '#3388ff',
-                    weight: 4,
-                    opacity: 0.8,
-                    fillOpacity: 0.4
-                }
-            },
-            polyline: {
-                shapeOptions: {
-                    color: '#3388ff',
-                    weight: 4,
-                    opacity: 0.8
+                    weight: 4
                 }
             },
             marker: true,
@@ -1696,6 +1725,38 @@ function initializeMap() {
         }
     });
     map.addControl(drawControl);
+
+    // Add custom Export control
+    const ExportControl = L.Control.extend({
+        options: {
+            position: 'topleft'
+        },
+
+        onAdd: function (map) {
+            const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
+            const button = L.DomUtil.create('a', 'leaflet-control-export', container);
+            button.href = '#';
+            button.title = 'Export GeoJSON';
+            button.innerHTML = '📤';
+            button.style.fontSize = '18px';
+            button.style.display = 'flex';
+            button.style.alignItems = 'center';
+            button.style.justifyContent = 'center';
+            
+            L.DomEvent.on(button, 'click', function (e) {
+                L.DomEvent.stop(e);
+                if (typeof exportDrawingsAsGeoJSON === 'function') {
+                    exportDrawingsAsGeoJSON();
+                } else {
+                    alert('Export function not available');
+                }
+            });
+
+            return container;
+        }
+    });
+
+    map.addControl(new ExportControl());
 
     // Add drawing event listeners
     map.on('draw:created', function(e) {
@@ -1713,40 +1774,45 @@ function initializeMap() {
                       L.GeometryUtil ? L.GeometryUtil.geodesicArea(layer.getLatLngs()[0]) : 'N/A' : null
             }
         };
+    });
+    */
 
+    /* // MOVED TO folium-interface.js
+    map.on('draw:created', function(e) {
+        const type = e.layerType;
+        const layer = e.layer;
+        // ...
         drawnItems.addLayer(layer);
         updateDrawingControls();
-        console.log('Created', type, 'with ID:', layer.feature.properties.id);
     });
 
     map.on('draw:edited', function(e) {
-        const layers = e.layers;
-        layers.eachLayer(function(layer) {
-            if (layer.feature && layer.feature.properties) {
-                layer.feature.properties.modified = new Date().toISOString();
-                // Recalculate area if applicable
-                const type = layer.feature.properties.type;
-                if ((type === 'polygon' || type === 'rectangle' || type === 'circle') && L.GeometryUtil) {
-                    layer.feature.properties.area = L.GeometryUtil.geodesicArea(layer.getLatLngs()[0]);
-                }
-            }
-        });
+        // ...
         updateDrawingControls();
-        console.log('Edited', layers.getLayers().length, 'features');
     });
 
     map.on('draw:deleted', function(e) {
+        // ...
+        updateDrawingControls();
+    });
+    */
+
+    map.on('draw:deleted', function(e) {
         const layers = e.layers;
-        console.log('Deleted', layers.getLayers().length, 'features');
+        debugLog('Deleted', layers.getLayers().length, 'features');
         updateDrawingControls();
     });
 
     // Initialize drawing controls state
     updateDrawingControls();
 
-    // Add fullscreen control
+    // Fullscreen control
     L.control.fullscreen({
-        position: 'topleft'
+        position: 'topright',
+        title: 'View Fullscreen',
+        titleCancel: 'Exit Fullscreen',
+        content: null,
+        forceSeparateButton: true
     }).addTo(map);
 
     // Add measure control
@@ -1756,10 +1822,14 @@ function initializeMap() {
 
     // Add fit buttons to the existing zoom control after map loads
     setTimeout(() => {
+        console.log('[MapJS] Adding custom zoom buttons...');
+
         // Update zoom control icons with more intuitive ones
         const zoomInBtn = document.querySelector('.leaflet-control-zoom-in');
         const zoomOutBtn = document.querySelector('.leaflet-control-zoom-out');
         const fullscreenBtn = document.querySelector('.leaflet-control-fullscreen-button');
+
+        console.log('[MapJS] Found zoom buttons:', { zoomIn: !!zoomInBtn, zoomOut: !!zoomOutBtn });
 
         if (zoomInBtn) {
             zoomInBtn.innerHTML = '+';
@@ -1780,29 +1850,47 @@ function initializeMap() {
         }
 
         const zoomControl = document.querySelector('.leaflet-control-zoom');
+        console.log('[MapJS] Found zoom control container:', !!zoomControl);
+
         if (zoomControl) {
-            // Create Fit All button
+            // Create Fit All button (zoom to all data)
             const fitAllBtn = L.DomUtil.create('a', 'leaflet-control-zoom-fit-all', zoomControl);
-            fitAllBtn.innerHTML = '🌍';
+            fitAllBtn.innerHTML = '⊞';
             fitAllBtn.href = '#';
-            fitAllBtn.title = 'Fit map to show all polygons';
+            fitAllBtn.title = 'Fit map to show all loaded data';
             fitAllBtn.setAttribute('role', 'button');
             fitAllBtn.setAttribute('aria-label', 'Fit map to show all polygons');
 
-            // Create Fit Selected button
+            // Create Fit Selected button (zoom to selection)
             const fitSelectedBtn = L.DomUtil.create('a', 'leaflet-control-zoom-fit-selected', zoomControl);
-            fitSelectedBtn.innerHTML = '🎯';
+            fitSelectedBtn.innerHTML = '◎';
             fitSelectedBtn.href = '#';
-            fitSelectedBtn.title = 'Fit map to selected polygons only';
+            fitSelectedBtn.title = 'Fit map to selected polygons';
             fitSelectedBtn.setAttribute('role', 'button');
             fitSelectedBtn.setAttribute('aria-label', 'Fit map to selected polygons only');
+
+            // Create Window Zoom button (box zoom)
+            const boxZoomBtn = L.DomUtil.create('a', 'leaflet-control-zoom-box', zoomControl);
+            boxZoomBtn.innerHTML = '⬚';
+            boxZoomBtn.href = '#';
+            boxZoomBtn.title = 'Draw a box to zoom into (hold Shift+drag also works)';
+            boxZoomBtn.setAttribute('role', 'button');
+            boxZoomBtn.setAttribute('aria-label', 'Window zoom - draw a rectangle to zoom');
+
+            // Create Reset View button (zoom to Italy)
+            const resetViewBtn = L.DomUtil.create('a', 'leaflet-control-zoom-reset', zoomControl);
+            resetViewBtn.innerHTML = '🏠';
+            resetViewBtn.href = '#';
+            resetViewBtn.title = 'Reset to default Italy view';
+            resetViewBtn.setAttribute('role', 'button');
+            resetViewBtn.setAttribute('aria-label', 'Reset map view to Italy');
 
             // Add event handlers
             L.DomEvent.on(fitAllBtn, 'click', function(e) {
                 L.DomEvent.stopPropagation(e);
                 L.DomEvent.preventDefault(e);
                 if (currentGeoJsonLayer) {
-                    map.fitBounds(currentGeoJsonLayer.getBounds(), { padding: [10, 10] });
+                    map.fitBounds(currentGeoJsonLayer.getBounds(), { padding: [20, 20] });
                 } else {
                     // Default to Italy bounds if no data
                     map.fitBounds([[35.49, 6.63], [47.09, 18.52]]);
@@ -1812,17 +1900,127 @@ function initializeMap() {
             L.DomEvent.on(fitSelectedBtn, 'click', function(e) {
                 L.DomEvent.stopPropagation(e);
                 L.DomEvent.preventDefault(e);
-                // Fit to selected polygons or current data
-                if (currentGeoJsonLayer) {
-                    map.fitBounds(currentGeoJsonLayer.getBounds(), { padding: [10, 10] });
+                // Fit to selected polygons if any are selected
+                if (selectedPolygons.size > 0) {
+                    const bounds = L.latLngBounds();
+                    selectedPolygons.forEach(layer => {
+                        if (layer.getBounds) {
+                            bounds.extend(layer.getBounds());
+                        }
+                    });
+                    if (bounds.isValid()) {
+                        map.fitBounds(bounds, { padding: [30, 30] });
+                    }
+                } else if (currentGeoJsonLayer) {
+                    // Fall back to all data if nothing selected
+                    map.fitBounds(currentGeoJsonLayer.getBounds(), { padding: [20, 20] });
                 }
+            });
+
+            // Box zoom state
+            let boxZoomActive = false;
+            let boxZoomStartPoint = null;
+            let boxZoomRect = null;
+
+            L.DomEvent.on(boxZoomBtn, 'click', function(e) {
+                L.DomEvent.stopPropagation(e);
+                L.DomEvent.preventDefault(e);
+
+                boxZoomActive = !boxZoomActive;
+
+                if (boxZoomActive) {
+                    boxZoomBtn.classList.add('active');
+                    boxZoomBtn.style.backgroundColor = '#3388ff';
+                    boxZoomBtn.style.color = 'white';
+                    map.getContainer().style.cursor = 'crosshair';
+                    map.dragging.disable();
+
+                    // Add mouse handlers for box zoom
+                    map.on('mousedown', startBoxZoom);
+                    map.on('mousemove', updateBoxZoom);
+                    map.on('mouseup', endBoxZoom);
+                } else {
+                    deactivateBoxZoom();
+                }
+            });
+
+            function startBoxZoom(e) {
+                if (!boxZoomActive) return;
+                boxZoomStartPoint = e.latlng;
+
+                // Create rectangle for visual feedback
+                boxZoomRect = L.rectangle([boxZoomStartPoint, boxZoomStartPoint], {
+                    color: '#3388ff',
+                    weight: 2,
+                    fillOpacity: 0.2,
+                    dashArray: '5, 5'
+                }).addTo(map);
+            }
+
+            function updateBoxZoom(e) {
+                if (!boxZoomActive || !boxZoomStartPoint || !boxZoomRect) return;
+                boxZoomRect.setBounds([boxZoomStartPoint, e.latlng]);
+            }
+
+            function endBoxZoom(e) {
+                if (!boxZoomActive || !boxZoomStartPoint) return;
+
+                const bounds = L.latLngBounds(boxZoomStartPoint, e.latlng);
+
+                // Remove the rectangle
+                if (boxZoomRect) {
+                    map.removeLayer(boxZoomRect);
+                    boxZoomRect = null;
+                }
+
+                // Only zoom if the box is large enough
+                if (bounds.isValid() && bounds.getNorthEast().distanceTo(bounds.getSouthWest()) > 100) {
+                    map.fitBounds(bounds, { padding: [10, 10] });
+                }
+
+                boxZoomStartPoint = null;
+                deactivateBoxZoom();
+            }
+
+            function deactivateBoxZoom() {
+                boxZoomActive = false;
+                boxZoomBtn.classList.remove('active');
+                boxZoomBtn.style.backgroundColor = '';
+                boxZoomBtn.style.color = '';
+                map.getContainer().style.cursor = '';
+                map.dragging.enable();
+
+                map.off('mousedown', startBoxZoom);
+                map.off('mousemove', updateBoxZoom);
+                map.off('mouseup', endBoxZoom);
+
+                if (boxZoomRect) {
+                    map.removeLayer(boxZoomRect);
+                    boxZoomRect = null;
+                }
+            }
+
+            L.DomEvent.on(resetViewBtn, 'click', function(e) {
+                L.DomEvent.stopPropagation(e);
+                L.DomEvent.preventDefault(e);
+                // Reset to default Italy view
+                map.setView([41.9, 12.5], 6);
             });
 
             // Disable map dragging on buttons
             L.DomEvent.disableClickPropagation(fitAllBtn);
             L.DomEvent.disableClickPropagation(fitSelectedBtn);
+            L.DomEvent.disableClickPropagation(boxZoomBtn);
+            L.DomEvent.disableClickPropagation(resetViewBtn);
+
+            console.log('[MapJS] Custom zoom buttons added successfully');
+        } else {
+            console.error('[MapJS] Zoom control not found! Cannot add custom buttons.');
+            // Try to find what controls exist
+            const allControls = document.querySelectorAll('.leaflet-control');
+            console.log('[MapJS] Available controls:', Array.from(allControls).map(c => c.className));
         }
-    }, 100);
+    }, 500);  // Increased timeout to ensure controls are rendered
 
     // Add geocoder control (search functionality)
     if (typeof L.Control.Geocoder !== 'undefined') {
@@ -1939,14 +2137,7 @@ function initializeMap() {
 
         const treeLayersControl = L.control.treeLayers(baseLayers, overlayLayers, {
             position: 'topright',
-            namedToggle: true,
-            selectorBack: false,
-            closedSymbol: '▶',
-            openedSymbol: '▼',
-            spaceSymbol: '&nbsp;&nbsp;&nbsp;',
-            collapseAll: '🔽 Collapse all',
-            expandAll: '🔼 Expand all',
-            collapsed: false // Start expanded to make it more visible
+            collapsed: true
         }).addTo(map);
 
         // Store reference for later updates
@@ -1962,7 +2153,7 @@ function initializeMap() {
                 treeControl.style.border = '2px solid #007cba';
                 treeControl.style.borderRadius = '8px';
                 treeControl.style.boxShadow = '0 4px 12px rgba(0,124,186,0.3)';
-                console.log('TreeLayers control enhanced and made more visible');
+                debugLog('TreeLayers control enhanced and made more visible');
             }
         }, 500);
     }
@@ -2173,7 +2364,7 @@ window.loadCadastralSelection = async function() {
     loadBtn.textContent = 'Loading...';
 
     try {
-        console.log(`Loading ${filePaths.length} cadastral files directly from S3:`, filePaths);
+        debugLog(`Loading ${filePaths.length} cadastral files directly from S3:`, filePaths);
 
         // Clear existing map layers
         clearMap();
@@ -2187,11 +2378,11 @@ window.loadCadastralSelection = async function() {
             loadBtn.textContent = `Loading... (${i + 1}/${filePaths.length})`;
 
             try {
-                console.log(`Loading file ${i + 1}/${filePaths.length} via backend API: ${filePath}`);
+                debugLog(`Loading file ${i + 1}/${filePaths.length} via backend API: ${filePath}`);
 
                 // Use backend API endpoint to load and process GPKG file
                 const apiUrl = `/api/v1/load-cadastral-files/${encodeURIComponent(filePath)}`;
-                console.log(`Fetching from backend API: ${apiUrl}`);
+                debugLog(`Fetching from backend API: ${apiUrl}`);
 
                 const response = await fetch(apiUrl, {
                     method: 'GET',
@@ -2226,7 +2417,7 @@ window.loadCadastralSelection = async function() {
                         style: getLayerStyle(i)
                     });
 
-                    console.log(`Successfully loaded ${layerData.filename} with ${layerData.feature_count} features`);
+                    debugLog(`Successfully loaded ${layerData.filename} with ${layerData.feature_count} features`);
                 } else {
                     console.warn(`Failed to load GPKG file via API: ${filePath}`, responseData);
                 }
@@ -2239,10 +2430,12 @@ window.loadCadastralSelection = async function() {
 
         // Final processing after all files
         if (successfulLoads > 0) {
-            // Fit map to bounds of first loaded layer
-            if (window.map && loadedLayers[0] && loadedLayers[0].geojson) {
-                fitMapToGeoJson(loadedLayers[0].geojson);
+            // Fit map to combined bounds of ONLY the newly loaded layers
+            if (window.map && loadedLayers.length > 0) {
+                debugLog(`Zooming to ${loadedLayers.length} newly loaded layers only`);
+                fitMapToNewLayers(loadedLayers);
             }
+
 
             // Show success message
             const totalFeatures = loadedLayers.reduce((sum, layer) => sum + layer.feature_count, 0);
@@ -2310,17 +2503,15 @@ function addGeoJsonToMap(geojson, options = {}) {
 
             // Add click handler for selection
             layer.on('click', function(e) {
-                console.log('Polygon clicked (addGeoJsonToMap)!');
+                debugLog('Polygon clicked (addGeoJsonToMap)!');
                 L.DomEvent.stopPropagation(e);
                 togglePolygonSelection(layer);
             });
 
-            // Add popup with feature properties
+            // Add popup with feature properties - prioritizing cadastral data
             if (feature.properties) {
-                const popupContent = Object.entries(feature.properties)
-                    .map(([key, value]) => `<strong>${key}:</strong> ${value}`)
-                    .join('<br>');
-                layer.bindPopup(popupContent);
+                const popupContent = formatCadastralPopup(feature.properties);
+                layer.bindPopup(popupContent, { maxWidth: 350 });
             }
         },
         cadastralLayer: true // Mark as cadastral layer for identification
@@ -2354,7 +2545,7 @@ function addGeoJsonToMap(geojson, options = {}) {
             }
             overlayLayers['📊 Data Layers'][`🏛️ ${layerName}`] = layer;
             window.treeLayersControl.refresh();
-            console.log(`TreeLayers control updated with new layer: ${layerName}`);
+            debugLog(`TreeLayers control updated with new layer: ${layerName}`);
         } catch (e) {
             console.warn('Could not update tree layers control:', e);
         }
@@ -2373,6 +2564,114 @@ function getLayerStyle(index) {
     };
 }
 
+/**
+ * Format cadastral popup content with priority fields
+ * Parses and displays foglio, particella, alterno, subalterno from cadastral references
+ * @param {Object} properties - Feature properties from GeoJSON
+ * @returns {string} HTML content for popup
+ */
+function formatCadastralPopup(properties) {
+    if (!properties) return 'No properties available';
+
+    let html = '<div class="cadastral-popup">';
+
+    // Priority cadastral fields to display prominently
+    const cadastralRef = properties.NATIONALCADASTRALREFERENCE || properties.NATIONALCADASTRALZONINGREFERENCE;
+    const label = properties.LABEL;
+    const adminUnit = properties.ADMINISTRATIVEUNIT;
+    const levelName = properties.LEVELNAME;
+
+    // Parse cadastral reference to extract components
+    // Format: CODE_FOGLIO.PARTICELLA or CODE_FOGLIO.PARTICELLA.SUBALTERNO
+    let foglio = null, particella = null, subalterno = null, alterno = null;
+
+    if (cadastralRef) {
+        // Try to parse the reference
+        // Examples: A018_000100, A018_000100.1, A018_000100.1.2
+        const parts = cadastralRef.split('_');
+        if (parts.length >= 2) {
+            const cadastralParts = parts[1].split('.');
+            foglio = cadastralParts[0] ? cadastralParts[0].replace(/^0+/, '') || '0' : null;  // Remove leading zeros
+            particella = cadastralParts[1] || null;
+            subalterno = cadastralParts[2] || null;
+            alterno = cadastralParts[3] || null;
+        }
+    }
+
+    // Header section with main cadastral info
+    html += '<div class="popup-header">';
+    if (levelName) {
+        html += `<span class="level-badge">${levelName}</span>`;
+    }
+    if (adminUnit) {
+        html += `<span class="admin-unit">${adminUnit}</span>`;
+    }
+    html += '</div>';
+
+    // Main cadastral data section
+    html += '<div class="cadastral-data">';
+
+    // Label (usually the main identifier shown on map)
+    if (label) {
+        html += `<div class="data-row primary"><span class="label">Etichetta:</span><span class="value">${label}</span></div>`;
+    }
+
+    // Foglio
+    if (foglio) {
+        html += `<div class="data-row"><span class="label">Foglio:</span><span class="value">${foglio}</span></div>`;
+    }
+
+    // Particella
+    if (particella) {
+        html += `<div class="data-row"><span class="label">Particella:</span><span class="value">${particella}</span></div>`;
+    }
+
+    // Subalterno (if present)
+    if (subalterno) {
+        html += `<div class="data-row"><span class="label">Subalterno:</span><span class="value">${subalterno}</span></div>`;
+    }
+
+    // Alterno (if present)
+    if (alterno) {
+        html += `<div class="data-row"><span class="label">Alterno:</span><span class="value">${alterno}</span></div>`;
+    }
+
+    html += '</div>';
+
+    // Full reference (collapsed by default for detailed info)
+    if (cadastralRef) {
+        html += `<div class="data-row reference"><span class="label">Riferimento:</span><span class="value small">${cadastralRef}</span></div>`;
+    }
+
+    // Additional properties section (collapsible)
+    const excludedKeys = ['geometry', 'NATIONALCADASTRALREFERENCE', 'NATIONALCADASTRALZONINGREFERENCE',
+                          'LABEL', 'ADMINISTRATIVEUNIT', 'LEVELNAME', 'gml_id', 'lowerCorner', 'upperCorner',
+                          'INSPIREID_LOCALID', 'INSPIREID_NAMESPACE', 'LEVELNAME_LOCALE'];
+
+    const additionalProps = Object.entries(properties)
+        .filter(([key]) => !excludedKeys.includes(key) && properties[key] !== null && properties[key] !== '')
+        .map(([key, value]) => `<div class="data-row small"><span class="label">${formatPropertyName(key)}:</span><span class="value">${value}</span></div>`)
+        .join('');
+
+    if (additionalProps) {
+        html += '<details class="additional-props"><summary>Altri dettagli</summary>' + additionalProps + '</details>';
+    }
+
+    html += '</div>';
+
+    return html;
+}
+
+/**
+ * Format property name for display (convert UPPERCASE_NAME to Title Case)
+ */
+function formatPropertyName(name) {
+    return name.toLowerCase()
+        .split('_')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
+}
+
 function fitMapToGeoJson(geojson) {
     if (!map || !geojson) return;
 
@@ -2384,6 +2683,51 @@ function fitMapToGeoJson(geojson) {
         }
     } catch (error) {
         console.warn('Could not fit map to GeoJSON bounds:', error);
+    }
+}
+
+/**
+ * Fit map to the combined bounds of newly loaded layers only
+ * This zooms the map to show exactly the new data that was just imported
+ * @param {Array} newLayers - Array of layer objects with geojson property (newly loaded only)
+ */
+function fitMapToNewLayers(newLayers) {
+    if (!map || !newLayers || newLayers.length === 0) return;
+
+
+    try {
+        // Create a combined bounds from all layers
+        let combinedBounds = null;
+
+        newLayers.forEach(layerData => {
+            if (layerData.geojson) {
+                const layer = L.geoJSON(layerData.geojson);
+                const layerBounds = layer.getBounds();
+
+                if (layerBounds.isValid()) {
+                    if (combinedBounds === null) {
+                        combinedBounds = L.latLngBounds(layerBounds);
+                    } else {
+                        combinedBounds.extend(layerBounds);
+                    }
+                }
+            }
+        });
+
+        // Fit to combined bounds with padding
+        if (combinedBounds && combinedBounds.isValid()) {
+            map.fitBounds(combinedBounds, {
+                padding: [20, 20],
+                maxZoom: 18  // Prevent zooming in too close on small areas
+            });
+            debugLog(`Fitted map to combined bounds of ${newLayers.length} newly loaded layers`);
+        }
+    } catch (error) {
+        console.warn('Could not fit map to combined layer bounds:', error);
+        // Fallback: try to fit to first layer
+        if (newLayers[0] && newLayers[0].geojson) {
+            fitMapToGeoJson(newLayers[0].geojson);
+        }
     }
 }
 
@@ -2427,9 +2771,10 @@ function updateSelectionSummary() {
 
     // Show/hide summary
     if (hasValidSelection) {
-        // Calculate total files
+        // Calculate total files and build file selection array
         let totalFiles = 0;
         const fileBreakdown = {};
+        const fileSelection = [];  // Array to hold file paths for loading
 
         selectedMunicipalities.forEach(municipalityKey => {
             const [regionName, provinceCode, municipalityId] = municipalityKey.split('|');
@@ -2441,13 +2786,31 @@ function updateSelectionSummary() {
                 const files = municipalityData.files || [];
 
                 selectedFileTypes.forEach(fileType => {
-                    const typeFiles = files.filter(file => file.includes(fileType));
+                    // Case-insensitive match for file type (MAP/map, PLE/ple)
+                    const fileTypeLower = fileType.toLowerCase();
+                    const typeFiles = files.filter(file => file.toLowerCase().includes(fileTypeLower));
                     if (!fileBreakdown[fileType]) fileBreakdown[fileType] = 0;
                     fileBreakdown[fileType] += typeFiles.length;
                     totalFiles += typeFiles.length;
+
+                    // Add matching files to selection array with full path info
+                    typeFiles.forEach(fileName => {
+                        fileSelection.push({
+                            path: `${regionName}/${provinceCode}/${municipalityId}/${fileName}`,
+                            region: regionName,
+                            province: provinceCode,
+                            municipality: municipalityId,
+                            fileName: fileName,
+                            fileType: fileType
+                        });
+                    });
                 });
             }
         });
+
+        // Update global file selection for loadCadastralSelection() to use
+        window.currentFileSelection = fileSelection;
+        debugLog('Updated currentFileSelection with', fileSelection.length, 'files');
 
         // Update summary content
         summaryContent.innerHTML = `
@@ -2474,7 +2837,23 @@ function updateSelectionSummary() {
         selectionSummary.style.display = 'block';
     } else {
         selectionSummary.style.display = 'none';
+        // Clear file selection when no valid selection
+        window.currentFileSelection = [];
     }
+}
+
+// Get selected file types from checkboxes
+function getSelectedFileTypes() {
+    const fileTypesContainer = document.getElementById('cadastralFileTypes');
+    const selectedTypes = [];
+
+    if (fileTypesContainer) {
+        fileTypesContainer.querySelectorAll('input[type="checkbox"]:checked').forEach(checkbox => {
+            selectedTypes.push(checkbox.value);
+        });
+    }
+
+    return selectedTypes;
 }
 
 // Load attribute table data
@@ -2573,13 +2952,13 @@ window.clearDrawnPolygons = function() {
 
 // View toggle functions
 window.showMapView = function() {
-    console.log('Showing Map View...');
+    debugLog('Showing Map View...');
 
     // Hide all views
     document.querySelectorAll('.view-content').forEach(view => {
         view.style.display = 'none';
         view.classList.remove('active');
-        console.log(`Hiding view: ${view.id}`);
+        debugLog(`Hiding view: ${view.id}`);
     });
 
     // Show map view explicitly
@@ -2590,21 +2969,21 @@ window.showMapView = function() {
     if (mapView) {
         mapView.style.display = 'flex';
         mapView.classList.add('active');
-        console.log('Map view shown');
+        debugLog('Map view shown');
     }
 
     if (mapContainer) {
         mapContainer.style.display = 'flex';
         mapContainer.style.height = '100%';
-        console.log('Map container shown');
+        debugLog('Map container shown');
     }
 
     if (mapElement) {
         mapElement.style.display = 'block';
         mapElement.style.height = '100%';
         mapElement.style.minHeight = '600px';
-        console.log('Map element configured');
-        console.log('Map element dimensions:', `${mapElement.offsetWidth}x${mapElement.offsetHeight}`);
+        debugLog('Map element configured');
+        debugLog('Map element dimensions:', `${mapElement.offsetWidth}x${mapElement.offsetHeight}`);
     }
 
     // Set active button state
@@ -2616,26 +2995,26 @@ window.showMapView = function() {
 
     // Refresh map if needed - multiple attempts
     if (map) {
-        console.log('Refreshing map...');
+        debugLog('Refreshing map...');
         setTimeout(() => {
             map.invalidateSize();
-            console.log('Map size invalidated immediately');
+            debugLog('Map size invalidated immediately');
         }, 50);
 
         setTimeout(() => {
             map.invalidateSize();
-            console.log('Map size invalidated after 200ms');
+            debugLog('Map size invalidated after 200ms');
         }, 200);
 
         setTimeout(() => {
             map.invalidateSize();
-            console.log('Map size invalidated after 500ms');
+            debugLog('Map size invalidated after 500ms');
         }, 500);
     } else {
-        console.log('Map object not found!');
+        debugLog('Map object not found!');
     }
 
-    console.log('Map View switch completed');
+    debugLog('Map View switch completed');
 };
 
 window.handleTableViewClick = function() {
@@ -2656,7 +3035,7 @@ window.handleTableViewClick = function() {
     // Load table data if available
     loadAttributeTable();
 
-    console.log('Switched to Table View');
+    debugLog('Switched to Table View');
 };
 
 window.showAdjacencyView = function() {
@@ -2674,7 +3053,7 @@ window.showAdjacencyView = function() {
     document.querySelectorAll('.view-toggle button').forEach(btn => btn.classList.remove('active'));
     document.getElementById('adjacencyViewBtn').classList.add('active');
 
-    console.log('Switched to Adjacency View');
+    debugLog('Switched to Adjacency View');
 };
 
 window.showMappingView = function() {
@@ -2695,46 +3074,100 @@ window.showMappingView = function() {
     // Update drawing stats
     updateDrawingStats();
 
-    console.log('Switched to Mapping View');
+    debugLog('Switched to Mapping View');
 };
 
 // Cadastral data
 let cadastralData = null;
+let cadastralDataLoading = false;
+let cadastralDataLoaded = false;
+let cadastralDataPromise = null;
 
 // Load cadastral data and populate selects
 async function loadCadastralData() {
-    console.log('Loading cadastral data...');
+    // If already loaded, return immediately
+    if (cadastralDataLoaded && cadastralData) {
+        debugLog('Cadastral data already loaded, returning cached data');
+        return cadastralData;
+    }
+
+    // If currently loading, return the existing promise
+    if (cadastralDataLoading && cadastralDataPromise) {
+        debugLog('Cadastral data already loading, waiting for existing request...');
+        return cadastralDataPromise;
+    }
+
+    cadastralDataLoading = true;
+    debugLog('Loading cadastral data...');
+
+    // Create and store the promise so concurrent calls can wait on it
+    cadastralDataPromise = _doLoadCadastralData();
+    return cadastralDataPromise;
+}
+
+// Internal function to actually load cadastral data
+async function _doLoadCadastralData() {
+    const regionsSelect = document.getElementById('cadastralRegions');
+    if (regionsSelect) {
+        // Show loading state
+        regionsSelect.innerHTML = '<option value="">Loading regions...</option>';
+    }
+
     try {
         const response = await fetch('/api/v1/get-cadastral-structure/');
-        console.log('Cadastral data response status:', response.status);
+        debugLog('Cadastral data response status:', response.status);
 
         if (response.ok) {
             cadastralData = await response.json();
-            console.log('Cadastral data loaded:', cadastralData);
-            console.log('Number of regions:', Object.keys(cadastralData).length);
+            // Also set on window for access from other scripts (folium-interface.js)
+            window.cadastralData = cadastralData;
+            debugLog('Cadastral data loaded:', cadastralData);
+            debugLog('Number of regions:', Object.keys(cadastralData).length);
 
-            populateRegionsSelect();
-            setupCadastralEventListeners();
+            if (cadastralData && Object.keys(cadastralData).length > 0) {
+                cadastralDataLoaded = true;
+                populateRegionsSelect();
+                setupCadastralEventListeners();
+                return cadastralData;
+            } else {
+                console.error('Cadastral data is empty');
+                showCadastralError('No cadastral data available');
+                return null;
+            }
         } else {
             console.error('Failed to load cadastral data:', response.status, response.statusText);
             const errorText = await response.text();
             console.error('Error response:', errorText);
+            showCadastralError(`Failed to load data (${response.status})`);
+            return null;
         }
     } catch (error) {
         console.error('Error loading cadastral data:', error);
+        showCadastralError('Network error loading data');
+        return null;
+    } finally {
+        cadastralDataLoading = false;
+    }
+}
+
+// Show error message in the regions select
+function showCadastralError(message) {
+    const regionsSelect = document.getElementById('cadastralRegions');
+    if (regionsSelect) {
+        regionsSelect.innerHTML = `<option value="" disabled>${message}</option>`;
     }
 }
 
 // Populate regions select
 function populateRegionsSelect() {
-    console.log('Populating regions select...');
+    debugLog('Populating regions select...');
     const regionsSelect = document.getElementById('cadastralRegions');
-    console.log('Regions select element found:', !!regionsSelect);
-    console.log('Cadastral data available:', !!cadastralData);
+    debugLog('Regions select element found:', !!regionsSelect);
+    debugLog('Cadastral data available:', !!cadastralData);
 
     if (!regionsSelect) {
         console.error('CRITICAL: cadastralRegions select element not found!');
-        console.log('Available elements with cadastral in ID:',
+        debugLog('Available elements with cadastral in ID:',
             Array.from(document.querySelectorAll('[id*="cadastral"]')).map(el => el.id));
         return;
     }
@@ -2744,27 +3177,27 @@ function populateRegionsSelect() {
         return;
     }
 
-    console.log('Cadastral data keys:', Object.keys(cadastralData));
-    console.log('Sample region data:', cadastralData[Object.keys(cadastralData)[0]]);
+    debugLog('Cadastral data keys:', Object.keys(cadastralData));
+    debugLog('Sample region data:', cadastralData[Object.keys(cadastralData)[0]]);
 
     // Clear existing options
     regionsSelect.innerHTML = '';
-    console.log('Cleared existing options');
+    debugLog('Cleared existing options');
 
     // Add region options
     const regions = Object.keys(cadastralData).sort();
-    console.log('Regions to add:', regions);
-    console.log('Number of regions:', regions.length);
+    debugLog('Regions to add:', regions);
+    debugLog('Number of regions:', regions.length);
 
     regions.forEach(regionName => {
         const option = document.createElement('option');
         option.value = regionName;
         option.textContent = regionName;
         regionsSelect.appendChild(option);
-        console.log('Added region:', regionName);
+        debugLog('Added region:', regionName);
     });
 
-    console.log('Regions select populated with', regions.length, 'regions');
+    debugLog('Regions select populated with', regions.length, 'regions');
 }
 
 // Update provinces based on selected regions
@@ -2896,20 +3329,25 @@ function setupCadastralEventListeners() {
 
 // Initialize map and controls when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('DOM loaded, initializing map...');
+    debugLog('DOM loaded, initializing map...');
 
     // Debug: Check if key elements exist
     const mapElement = document.getElementById('map');
     const regionsSelect = document.getElementById('cadastralRegions');
     const mapContainer = document.querySelector('.map-container');
-    console.log('Map element found:', !!mapElement);
-    console.log('Regions select found:', !!regionsSelect);
-    console.log('Map container found:', !!mapContainer);
+    debugLog('Map element found:', !!mapElement);
+    debugLog('Regions select found:', !!regionsSelect);
+    debugLog('Map container found:', !!mapContainer);
 
     if (!mapElement) {
-        console.error('CRITICAL: Map element not found!');
-        return;
+        console.warn('Map element not found - using Folium map instead');
+        // Continue to load cadastral data even without client-side map
     }
+
+    // IMPORTANT: Load cadastral data immediately for sidebar selects
+    // This must happen regardless of map initialization
+    debugLog('Loading cadastral data for sidebar selects...');
+    loadCadastralData();
 
     // // Add a manual test button for debugging
     // const testButton = document.createElement('button');
@@ -2921,10 +3359,10 @@ document.addEventListener('DOMContentLoaded', function() {
     // testButton.style.backgroundColor = 'red';
     // testButton.style.color = 'white';
     // testButton.onclick = function() {
-    //     console.log('Manual test button clicked');
-    //     console.log('Triggering map initialization...');
+    //     debugLog('Manual test button clicked');
+    //     debugLog('Triggering map initialization...');
     //     initializeMap();
-    //     console.log('Triggering cadastral data load...');
+    //     debugLog('Triggering cadastral data load...');
     //     loadCadastralData();
     // };
     // document.body.appendChild(testButton);
@@ -2932,38 +3370,44 @@ document.addEventListener('DOMContentLoaded', function() {
     // Initialize map first
     setTimeout(() => {
         // Ensure Map View is shown
-        console.log('Ensuring Map View is visible...');
+        debugLog('Ensuring Map View is visible...');
         showMapView();
 
-        // Initialize map
-        console.log('Starting map initialization...');
-        initializeMap();
+        // Initialize map (may fail if using Folium map instead)
+        debugLog('Starting map initialization...');
+        try {
+            initializeMap();
+        } catch (e) {
+            console.warn('Client-side map initialization skipped (using Folium map):', e.message);
+        }
+
+        // Always load cadastral data for the sidebar selects
         loadCadastralData();
 
         // Force map refresh multiple times to ensure it renders
         setTimeout(() => {
             if (map) {
-                console.log('First invalidateSize call...');
+                debugLog('First invalidateSize call...');
                 map.invalidateSize();
             }
         }, 200);
 
         setTimeout(() => {
             if (map) {
-                console.log('Second invalidateSize call...');
+                debugLog('Second invalidateSize call...');
                 map.invalidateSize();
             }
         }, 1000);
 
-        console.log('✅ Direct Leaflet map with all providers initialized');
-        console.log('✅ Native Leaflet controls integrated');
+        debugLog('✅ Direct Leaflet map with all providers initialized');
+        debugLog('✅ Native Leaflet controls integrated');
     }, 100);
 });
 
 // GPKG Processing Function for Direct S3 Loading
 async function processGpkgFile(arrayBuffer, filePath) {
     try {
-        console.log(`Processing GPKG file: ${filePath}`);
+        debugLog(`Processing GPKG file: ${filePath}`);
 
         // Check if sql.js is available
         if (typeof initSqlJs === 'undefined') {
@@ -2999,7 +3443,7 @@ async function processGpkgFile(arrayBuffer, filePath) {
                 tableName = contentResult[0].values[0][0]; // table_name is first column
             }
         } catch (e) {
-            console.log('Trying to find table with geometry...');
+            debugLog('Trying to find table with geometry...');
             // Fallback: look for tables with geometry columns
             const tablesQuery = `
                 SELECT name FROM sqlite_master
@@ -3017,7 +3461,7 @@ async function processGpkgFile(arrayBuffer, filePath) {
             return null;
         }
 
-        console.log(`Using table: ${tableName}`);
+        debugLog(`Using table: ${tableName}`);
 
         // Get features from the main table
         const featuresQuery = `SELECT * FROM "${tableName}" LIMIT 100`;
@@ -3031,7 +3475,7 @@ async function processGpkgFile(arrayBuffer, filePath) {
         const columns = result[0].columns;
         const rows = result[0].values;
 
-        console.log(`Found ${rows.length} features with columns:`, columns);
+        debugLog(`Found ${rows.length} features with columns:`, columns);
 
         // Convert to GeoJSON format
         const features = [];
@@ -3076,7 +3520,7 @@ async function processGpkgFile(arrayBuffer, filePath) {
             features: features
         };
 
-        console.log(`Successfully processed ${features.length} features from ${filePath}`);
+        debugLog(`Successfully processed ${features.length} features from ${filePath}`);
         return geojson;
 
     } catch (error) {
@@ -3091,7 +3535,7 @@ async function loadSqlJs() {
         const script = document.createElement('script');
         script.src = 'https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.js';
         script.onload = () => {
-            console.log('sql.js loaded successfully');
+            debugLog('sql.js loaded successfully');
             resolve();
         };
         script.onerror = () => {
@@ -3111,31 +3555,31 @@ async function loadSqlJs() {
  * Supports both regular Leaflet maps and Folium server-generated maps
  */
 function autoZoomToAllPolygons() {
-    console.log('🔍 autoZoomToAllPolygons called from map.js (unified implementation)');
+    debugLog('🔍 autoZoomToAllPolygons called from map.js (unified implementation)');
 
     try {
         // First try: Regular Leaflet map (map.html)
         if (typeof map !== 'undefined' && map && map.getBounds) {
-            console.log('📍 Found regular Leaflet map, attempting auto-zoom');
+            debugLog('📍 Found regular Leaflet map, attempting auto-zoom');
             return autoZoomLeafletMap();
         }
 
         // Second try: Folium map (index.html)
         const foliumMap = findFoliumMap();
         if (foliumMap) {
-            console.log('🗺️ Found Folium map, attempting auto-zoom');
+            debugLog('🗺️ Found Folium map, attempting auto-zoom');
             return autoZoomFoliumMap(foliumMap);
         }
 
         // Third try: Wait and retry (for delayed initialization)
-        console.log('⏳ No map found, waiting 500ms and retrying...');
+        debugLog('⏳ No map found, waiting 500ms and retrying...');
         setTimeout(() => {
             const retryFoliumMap = findFoliumMap();
             if (retryFoliumMap) {
-                console.log('🗺️ Found Folium map on retry');
+                debugLog('🗺️ Found Folium map on retry');
                 autoZoomFoliumMap(retryFoliumMap);
             } else if (typeof map !== 'undefined' && map) {
-                console.log('📍 Found Leaflet map on retry');
+                debugLog('📍 Found Leaflet map on retry');
                 autoZoomLeafletMap();
             } else {
                 console.warn('❌ No compatible map found after retry');
@@ -3162,7 +3606,7 @@ function autoZoomLeafletMap() {
             map.fitBounds(bounds, {
                 padding: [20, 20]
             });
-            console.log('✅ Auto-zoomed Leaflet map to fit all polygons');
+            debugLog('✅ Auto-zoomed Leaflet map to fit all polygons');
 
             // Update polygon management state if available
             if (typeof updatePolygonManagementState === 'function') {
@@ -3170,7 +3614,7 @@ function autoZoomLeafletMap() {
             }
             return true;
         } else {
-            console.log('❌ No valid bounds found for Leaflet map');
+            debugLog('❌ No valid bounds found for Leaflet map');
             return false;
         }
     } catch (error) {
@@ -3197,7 +3641,7 @@ function autoZoomFoliumMap(foliumMap) {
             ], {
                 padding: [20, 20]
             });
-            console.log('✅ Auto-zoomed Folium map to fit all polygons');
+            debugLog('✅ Auto-zoomed Folium map to fit all polygons');
 
             // Update polygon management state if available
             if (typeof updatePolygonManagementState === 'function') {
@@ -3205,7 +3649,7 @@ function autoZoomFoliumMap(foliumMap) {
             }
             return true;
         } else {
-            console.log('❌ No valid bounds found for Folium map');
+            debugLog('❌ No valid bounds found for Folium map');
             return false;
         }
     } catch (error) {
@@ -3220,20 +3664,20 @@ function autoZoomFoliumMap(foliumMap) {
 function findFoliumMap() {
     try {
         const mapElements = document.querySelectorAll('.folium-map');
-        console.log(`Found ${mapElements.length} .folium-map elements`);
+        debugLog(`Found ${mapElements.length} .folium-map elements`);
 
         if (mapElements.length > 0) {
             const mapId = mapElements[0].id;
-            console.log('Map ID found:', mapId);
+            debugLog('Map ID found:', mapId);
 
             if (mapId && window[mapId]) {
-                console.log('Folium map object found in window:', window[mapId]);
+                debugLog('Folium map object found in window:', window[mapId]);
                 return window[mapId];
             } else {
                 console.warn('No map object found in window with ID:', mapId);
             }
         } else {
-            console.log('No .folium-map elements found');
+            debugLog('No .folium-map elements found');
         }
         return null;
     } catch (error) {

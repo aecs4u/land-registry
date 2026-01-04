@@ -3,10 +3,8 @@ Tests for S3 storage functionality.
 """
 
 import pytest
-import json
-import tempfile
 import geopandas as gpd
-from unittest.mock import patch, Mock, MagicMock
+from unittest.mock import patch, MagicMock
 from botocore.exceptions import ClientError
 
 from land_registry.s3_storage import S3Storage, S3Settings, get_s3_storage, configure_s3_storage

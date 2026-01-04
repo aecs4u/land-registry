@@ -1,144 +1,41 @@
-# Cloud Run Deployment Configuration
-# This file contains all configuration settings for the Google Cloud Run deployment
+# App-Specific Configuration
+# This file only contains settings that differ from deploy-config-general.yaml
+# All other settings are inherited from the general configuration
 
 # Google Cloud Configuration
 gcp:
-  project_id: "opendata-470722"
-  region: "europe-west1"
   service_name: "land-registry-service"
 
-# Cloud Run Configuration
-cloudrun:
-  # Resource allocation
-  memory: "2Gi"
-  cpu: "2"
-  min_instances: "0"
-  max_instances: "1"
-  concurrency: "1000"
-  
-  # Environment and runtime
-  execution_environment: "gen2"
-  platform: "managed"
-  port: "8080"
-  timeout: "600"
-  
-  # Performance settings
-  cpu_boost: true
-  no_cpu_throttling: true
-  
-  # Security
-  allow_unauthenticated: true
-  vpc_connector: ""
-  session_affinity: false
-  
-  # Health checks
-  startup_probe_timeout: "600"
+# Main CloudRun Entry Point Configuration
+main_cloudrun:
+  app_name: "AECS4U Land Registry"
+  app_module: "land_registry"
+  app_main_module: "main"
+  health_path: "api/v1/health"
+  gcs_database_enabled: false
 
-# Environment Variables
-env_vars:
-  GOOGLE_CLOUD_FUNCTION: "1"
-  PYTHONPATH: "/app"
-  # Secrets should be loaded from environment variables or secret files
-  # LOGFIRE_TOKEN: "${LOGFIRE_TOKEN}"  # Will be loaded from environment or secrets file
-
-# Docker Configuration
+# Docker Configuration (app-specific)
 docker:
-  base_image: "python:3.11-slim"
-  working_dir: "/app"
-  exposed_port: 8080
-  
-  # System dependencies for geospatial libraries and Rust compilation
-  system_packages:
-    - gcc
-    - g++
-    - gdal-bin
-    - libgdal-dev
-    - libproj-dev
-    - libgeos-dev
-    - curl
-    - build-essential
-  
-  # Environment variables for Docker
-  docker_env:
-    GDAL_DATA: "/usr/share/gdal"
-    PROJ_LIB: "/usr/share/proj"
-  
-  # Directories to create
   directories:
     - "/app/land_registry/static"
     - "/app/land_registry/templates"
     - "/app/data"
 
-# Script Configuration
-script:
-  # Colors for output (using ANSI escape codes)
-  colors:
-    red: '\033[0;31m'
-    green: '\033[0;32m'
-    yellow: '\033[1;33m'
-    blue: '\033[0;34m'
-    nc: '\033[0m'
-  
-  # Files to clean up
-  cleanup_files:
-    - "Dockerfile"
-    - "requirements.txt"
-  
-  # Required APIs to enable
-  required_apis:
-    - "run.googleapis.com"
-    - "cloudbuild.googleapis.com"
+  entrypoint:
+    - "/opt/venv/bin/python"
+    - "main-cloudrun.py"
 
-# Command line options mapping
-cli_options:
-  project_id:
-    short: "-p"
-    long: "--project"
-    description: "Google Cloud Project ID (required)"
-    required: true
-  
-  region:
-    short: "-r"
-    long: "--region"
-    description: "Deployment region"
-    default: "europe-west1"
-  
-  service_name:
-    short: "-n"
-    long: "--name"
-    description: "Service name"
-    default: "land-registry-service"
-  
-  memory:
-    short: "-m"
-    long: "--memory"
-    description: "Memory allocation"
-    default: "2Gi"
-  
-  cpu:
-    short: "-c"
-    long: "--cpu"
-    description: "CPU allocation"
-    default: "2"
-  
-  max_instances:
-    short: "-i"
-    long: "--max-instances"
-    description: "Max instances"
-    default: "1"
-  
-  min_instances:
-    long: "--min-instances"
-    description: "Min instances (Gen2 optimization)"
-    default: "0"
-  
-  auth:
-    short: "-a"
-    long: "--auth"
-    description: "Require authentication (default: allow unauthenticated)"
-    flag: true
-  
-  concurrency:
-    long: "--concurrency"
-    description: "Max concurrent requests per instance"
-    default: "1000"
+# Pre-deployment checks
+pre_deployment:
+  fail_on_type_error: false
+
+# Cloud Build Configuration (uses gcp-cloudbuild provider for GAR authentication)
+cloudbuild:
+  repository: "cloud-run-source-deploy"
+  timeout: "1200s"
+
+# Local Docker provider configuration
+providers:
+  local_docker:
+    image_name: land-registry-service:local
+    context: /git/aecs4u.it/land-registry

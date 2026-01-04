@@ -1,10 +1,12 @@
 # Makefile for Land Registry project
 
-.PHONY: help test test-cov test-html test-unit test-integration test-slow clean-cov install lint format check
+.PHONY: help dev dev-fast test test-cov test-html test-unit test-integration test-slow clean-cov install lint format check
 
 # Default target
 help:
 	@echo "Available targets:"
+	@echo "  dev           - Run development server (standard)"
+	@echo "  dev-fast      - Run development server with fast shutdown"
 	@echo "  test          - Run all tests"
 	@echo "  test-cov      - Run tests with coverage"
 	@echo "  test-html     - Run tests with HTML coverage report"
@@ -16,6 +18,13 @@ help:
 	@echo "  lint          - Run linting"
 	@echo "  format        - Format code"
 	@echo "  check         - Run all checks (lint + test)"
+
+# Development servers
+dev:
+	uv run uvicorn land_registry.app:app --reload --host 127.0.0.1 --port 8000
+
+dev-fast:
+	uv run python run_dev.py
 
 # Install dependencies
 install:

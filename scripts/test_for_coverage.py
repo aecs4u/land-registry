@@ -54,7 +54,7 @@ def run_focused_tests():
 
     # Final coverage run with all working tests
     print("\n🔍 Final coverage assessment...")
-    final_cmd = f"""
+    final_cmd = """
         uv run pytest
         tests/test_coverage_boost.py::TestAppHealthAndBasics::test_health_endpoint
         tests/test_coverage_boost.py::TestS3StorageCore

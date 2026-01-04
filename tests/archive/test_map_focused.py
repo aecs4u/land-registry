@@ -2,16 +2,11 @@
 Focused tests for map.py module to boost coverage significantly.
 """
 
-import pytest
 import tempfile
-import json
 import os
-import zipfile
-from pathlib import Path
-from unittest.mock import patch, MagicMock, mock_open
+from unittest.mock import patch, MagicMock
 import geopandas as gpd
 from shapely.geometry import Polygon, Point
-import pandas as pd
 
 from land_registry.map import (
     extract_qpkg_data, get_current_gdf,

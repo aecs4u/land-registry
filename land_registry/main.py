@@ -9,18 +9,23 @@ import logging
 import os
 import pandas as pd
 import panel as pn
-from threading import Thread
 from typing import Optional
 import asyncio
+import threading
+from tornado.ioloop import IOLoop
 
 from land_registry.cadastral_utils import load_cadastral_structure, get_cadastral_stats
 from land_registry.dashboard import TEMPLATE
 from land_registry.file_availability_db import file_availability_db
 from land_registry.map import get_current_gdf, get_current_layers, map_generator
 from land_registry.routers.api import api_router
+from land_registry.routers.auth_pages import router as auth_pages_router
 from land_registry.s3_storage import get_s3_storage
-from land_registry.settings import app_settings, panel_settings, get_panel_url
+from land_registry.config import app_settings, panel_settings, get_panel_url
 from land_registry.models import TableDataResponse, ServiceUnavailableResponse
+
+# Import aecs4u-auth for authentication setup
+from aecs4u_auth import setup_auth, AuthConfig, get_auth_config
 
 # Configure logging
 logging.basicConfig(
@@ -40,16 +45,30 @@ PANEL_MAP_TABLE_URL = get_panel_url(panel_settings.panel_map_table_route)
 PANEL_ADJACENCY_TABLE_URL = get_panel_url(panel_settings.panel_adjacency_table_route)
 PANEL_MAPPING_TABLE_URL = get_panel_url(panel_settings.panel_mapping_table_route)
 
-# Panel server task reference
-_panel_task: Optional[asyncio.Task] = None
-_panel_shutdown_event = asyncio.Event()
+# Panel server management
+_panel_server = None  # Will hold the Bokeh Server instance
+_panel_thread: Optional[threading.Thread] = None
+_panel_ioloop: Optional[IOLoop] = None
+_panel_already_running = False  # Track if we're reusing an existing server
 
 
-async def _run_panel_server():
+def _is_port_in_use(host: str, port: int) -> bool:
+    """Check if a port is already in use."""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind((host, port))
+            return False
+        except OSError:
+            return True
+
+
+def _run_panel_server_blocking():
     """
-    Run Panel server asynchronously.
-    Uses asyncio.to_thread to run the blocking Panel server in a thread pool.
+    Run Panel server in a blocking manner (runs in separate thread).
+    Stores references for proper cleanup.
     """
+    global _panel_server, _panel_ioloop
     try:
         logger.info(f"Starting Panel server on {PANEL_HOST}:{PANEL_PORT}")
 
@@ -63,19 +82,68 @@ async def _run_panel_server():
             f"localhost:{PANEL_PORT}"
         ])
 
-        # Run Panel server in thread pool (non-blocking)
-        await asyncio.to_thread(
-            pn.serve,
+        # Create a new IOLoop for this thread
+        _panel_ioloop = IOLoop(make_current=True)
+
+        # Use pn.serve which returns a Server instance when threaded=False
+        _panel_server = pn.serve(
             {"dashboard": TEMPLATE},
             port=PANEL_PORT,
             address=PANEL_HOST,
             allow_websocket_origin=websocket_origins,
             show=panel_settings.panel_show,
-            threaded=panel_settings.panel_threaded,
+            threaded=False,  # We manage threading ourselves
+            start=True,  # Start the server
+            session_token_expiration=86400,  # 24 hours to avoid token expiration errors
         )
+    except OSError as e:
+        if "Address already in use" in str(e):
+            # Port is in use - likely from a previous hot-reload
+            logger.warning(f"Panel port {PANEL_PORT} already in use - will reuse existing server")
+        else:
+            logger.error(f"Panel server failed: {e}", exc_info=True)
+            raise
     except Exception as e:
         logger.error(f"Panel server failed: {e}", exc_info=True)
         raise
+
+
+def _stop_panel_server():
+    """
+    Stop the Panel server gracefully.
+    """
+    global _panel_server, _panel_ioloop, _panel_thread
+
+    if _panel_server is not None:
+        try:
+            logger.info("Stopping Panel server...")
+            # Stop the server
+            _panel_server.stop()
+            _panel_server = None
+            logger.info("Panel server stopped")
+        except Exception as e:
+            logger.error(f"Error stopping Panel server: {e}", exc_info=True)
+
+    if _panel_ioloop is not None:
+        try:
+            # Stop the IOLoop - this will cause the thread to exit
+            _panel_ioloop.add_callback(_panel_ioloop.stop)
+            _panel_ioloop = None
+        except Exception as e:
+            logger.error(f"Error stopping Panel IOLoop: {e}", exc_info=True)
+
+    if _panel_thread is not None and _panel_thread.is_alive():
+        try:
+            # Wait for thread to finish
+            _panel_thread.join(timeout=5.0)
+            if _panel_thread.is_alive():
+                logger.warning("Panel thread did not stop gracefully")
+            else:
+                logger.info("Panel thread stopped")
+        except Exception as e:
+            logger.error(f"Error joining Panel thread: {e}", exc_info=True)
+        finally:
+            _panel_thread = None
 
 
 async def _health_check_panel() -> bool:
@@ -114,28 +182,53 @@ async def lifespan(app: FastAPI):
     Lifespan context manager for FastAPI app.
     Manages Panel server startup/shutdown and resource cleanup.
     """
-    global _panel_task
+    global _panel_thread, _panel_already_running
 
     # ========== STARTUP ==========
     logger.info(f"Starting {app_settings.app_name} v{app_settings.app_version}")
 
-    # Start Panel server as async task
-    _panel_task = asyncio.create_task(_run_panel_server())
-    logger.info("Panel server task created")
+    # Check if Panel server is already running (e.g., from a previous hot-reload)
+    if _is_port_in_use(PANEL_HOST, PANEL_PORT):
+        logger.info(f"Panel port {PANEL_PORT} already in use - checking if it's accessible...")
+        # Try a health check to see if it's our Panel server
+        panel_ready = await _health_check_panel()
+        if panel_ready:
+            logger.info("Existing Panel server is healthy - reusing it")
+            _panel_already_running = True
+        else:
+            # Port is bound but server not responding - wait for it to be released
+            logger.warning("Port in use but Panel not responding - waiting for release...")
+            _panel_already_running = False
+            # Wait up to 5 seconds for the port to be released
+            for i in range(10):
+                await asyncio.sleep(0.5)
+                if not _is_port_in_use(PANEL_HOST, PANEL_PORT):
+                    logger.info("Port released, proceeding with startup")
+                    break
+            else:
+                logger.warning("Port still in use after waiting - will try to start anyway")
+    else:
+        _panel_already_running = False
 
-    # Wait for Panel server to be ready with health checks
-    panel_ready = await _health_check_panel()
+    # Start Panel server only if not already running
+    if not _panel_already_running:
+        _panel_thread = threading.Thread(
+            target=_run_panel_server_blocking,
+            name="PanelServer",
+            daemon=True  # Ensures thread stops when main process exits
+        )
+        _panel_thread.start()
+        logger.info("Panel server thread started")
 
-    if not panel_ready:
-        logger.error("Failed to start Panel server - health checks failed")
-        # Cancel the task if health check failed
-        if _panel_task and not _panel_task.done():
-            _panel_task.cancel()
-            try:
-                await _panel_task
-            except asyncio.CancelledError:
-                logger.info("Panel task cancelled after failed health check")
-        raise RuntimeError("Panel server failed to start")
+        # Wait for Panel server to be ready with health checks
+        panel_ready = await _health_check_panel()
+
+        if not panel_ready:
+            # If we can't start Panel, continue anyway but log warning
+            # This allows the main app to function without Panel dashboard
+            logger.warning("Panel server failed to start - continuing without dashboard")
+            # Don't raise - let the app run without Panel
+            # raise RuntimeError("Panel server failed to start")
 
     logger.info(f"Application startup complete - Panel server ready at {PANEL_DASHBOARD_URL}")
 
@@ -144,18 +237,11 @@ async def lifespan(app: FastAPI):
     # ========== SHUTDOWN ==========
     logger.info("Shutting down application...")
 
-    # Cancel Panel server task
-    if _panel_task and not _panel_task.done():
-        logger.info("Cancelling Panel server task...")
-        _panel_task.cancel()
-        try:
-            await asyncio.wait_for(_panel_task, timeout=5.0)
-        except asyncio.CancelledError:
-            logger.info("Panel server task cancelled successfully")
-        except asyncio.TimeoutError:
-            logger.warning("Panel server task cancellation timed out")
-        except Exception as e:
-            logger.error(f"Error cancelling Panel server: {e}", exc_info=True)
+    # Stop Panel server gracefully (only if we started it)
+    if not _panel_already_running:
+        _stop_panel_server()
+    else:
+        logger.info("Keeping existing Panel server running (for hot-reload)")
 
     # Close database connections
     try:
@@ -183,6 +269,31 @@ app = FastAPI(
     debug=app_settings.debug,
     lifespan=lifespan
 )
+
+# Setup authentication using aecs4u-auth
+# This automatically:
+# - Adds session middleware
+# - Includes auth routes at /auth prefix
+# - Sets up exception handlers for RedirectToLogin
+# - Mounts static files for frontend auth integration
+setup_auth(
+    app,
+    config=AuthConfig(
+        site_id="land-registry",
+        site_name=app_settings.app_name,
+        # Override default redirect URLs for this app
+        clerk_after_sign_in_url="/map",
+        clerk_after_sign_up_url="/map",
+    ),
+    include_routes=True,
+    mount_static=True,
+    setup_exception_handlers=True,
+)
+
+# Include HTML auth pages (login/register forms) at /auth prefix
+# These provide GET endpoints for browser-accessible pages
+# (aecs4u-auth only provides POST API endpoints)
+app.include_router(auth_pages_router, prefix="/auth", tags=["auth"])
 
 # Include the API router with /api/v1 prefix
 app.include_router(api_router, prefix="/api/v1")
@@ -238,8 +349,7 @@ async def read_root(request: Request):
         "total_provinces": stats['total_provinces'],
         "total_municipalities": stats['total_municipalities'],
         "total_files": stats['total_files'],
-        "clerk_publishable_key": app_settings.clerk_publishable_key,
-        "clerk_domain": app_settings.clerk_domain
+        "clerk_publishable_key": get_auth_config().clerk_publishable_key,
     })
 
 
@@ -307,7 +417,12 @@ async def serve_index(request: Request):
     )
 
     # Convert Folium map to HTML
-    folium_map_html = folium_map._repr_html_()
+    # Use manual iframe construction to avoid "Make this Notebook Trusted" warning
+    # which comes from folium's _repr_html_ method
+    import html
+    html_content = folium_map.get_root().render()
+    escaped_html = html.escape(html_content)
+    folium_map_html = f'<iframe srcdoc="{escaped_html}" style="width:100%; height:100%; border:none;"></iframe>'
 
     # Load cadastral statistics using utility
     stats = get_cadastral_stats()
@@ -332,8 +447,7 @@ async def serve_index(request: Request):
         "total_provinces": stats['total_provinces'],
         "total_municipalities": stats['total_municipalities'],
         "total_files": stats['total_files'],
-        "clerk_publishable_key": app_settings.clerk_publishable_key,
-        "clerk_domain": app_settings.clerk_domain
+        "clerk_publishable_key": get_auth_config().clerk_publishable_key,
     })
 
 
@@ -421,7 +535,8 @@ async def show_cadastral_data(request: Request):
             "total_files": stats['total_files'],
             "available_files": available_files,
             "missing_files": missing_files,
-            "uncached_files": uncached_files  # Now included in response
+            "uncached_files": uncached_files,
+            "clerk_publishable_key": get_auth_config().clerk_publishable_key,
         })
 
     except json.JSONDecodeError as e:

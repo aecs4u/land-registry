@@ -67,14 +67,14 @@ def main():
             unmatched_flags.append((original_key, transformed_key))
             print(f"❌ {original_key} → {transformed_key} (not found in cadastral data)")
 
-    print(f"\n📊 Summary:")
+    print("\n📊 Summary:")
     print(f"   Matched: {matched_count}")
     print(f"   Unmatched: {len(unmatched_flags)}")
     print(f"   Total transformed: {len(transformed_flags)}")
 
     # Show some examples of unmatched entries
     if unmatched_flags:
-        print(f"\n❌ Some unmatched examples:")
+        print("\n❌ Some unmatched examples:")
         for i, (orig, trans) in enumerate(unmatched_flags[:10]):
             print(f"   {orig} → {trans}")
         if len(unmatched_flags) > 10:
@@ -91,7 +91,7 @@ def main():
     with open(flags_file, 'w', encoding='utf-8') as f:
         json.dump(transformed_flags, f, indent=2, ensure_ascii=False)
 
-    print(f"\n✅ Successfully transformed municipality_flags.json")
+    print("\n✅ Successfully transformed municipality_flags.json")
     print(f"   Original entries: {len(original_flags)}")
     print(f"   Transformed entries: {len(transformed_flags)}")
     print(f"   Match rate: {(matched_count / len(original_flags) * 100):.1f}%")
