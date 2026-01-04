@@ -3,17 +3,10 @@ from branca.element import Template, MacroElement
 import colorsys
 import folium
 from folium.plugins import (
-    Draw, Fullscreen, LocateControl, MeasureControl,
-    BeautifyIcon, FeatureGroupSubGroup, FloatImage,
-    Geocoder, GroupedLayerControl, MarkerCluster, MiniMap,
-    MousePosition, OverlappingMarkerSpiderfier, ScrollZoomToggler,
-    Search, TagFilterButton,
-    TimeSliderChoropleth, Timeline, TimelineSlider,
-    TimestampedGeoJson
+    Draw, Fullscreen, MeasureControl
 )
 from folium.plugins.treelayercontrol import TreeLayerControl
 import geopandas as gpd
-import json
 import logging
 import pandas as pd
 from pathlib import Path
@@ -24,7 +17,7 @@ import tempfile
 from typing import List, Dict, Any, Optional, Union
 import zipfile
 
-from land_registry.settings import map_controls_settings, app_settings
+from land_registry.config import map_controls_settings, app_settings
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -58,6 +51,460 @@ class ControlGroup(BaseSettings):
     position: Dict[str, Any]  # e.g., {"top": "80px", "right": "10px"}
     controls: List[Union[ControlButton, ControlSelect]]
     draggable: bool = True
+
+
+class ExportControl(MacroElement):
+    """Custom Folium control for exporting drawn features as GeoJSON"""
+    
+    _template = Template("""
+        {% macro script(this, kwargs) %}
+            L.Control.Export = L.Control.extend({
+                options: {
+                    position: 'bottomright'
+                },
+                
+                onAdd: function (map) {
+                    var container = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
+                    var button = L.DomUtil.create('a', 'leaflet-control-export', container);
+                    
+                    button.href = '#';
+                    button.title = 'Export drawn features as GeoJSON';
+                    button.innerHTML = '📤';
+                    button.style.fontSize = '18px';
+                    button.style.display = 'flex';
+                    button.style.alignItems = 'center';
+                    button.style.justifyContent = 'center';
+                    button.style.width = '30px';
+                    button.style.height = '30px';
+                    button.style.textDecoration = 'none';
+                    button.style.color = '#000';
+                    button.style.backgroundColor = 'white';
+                    
+                    L.DomEvent.on(button, 'click', function (e) {
+                        L.DomEvent.stop(e);
+                        this.exportDrawnFeatures(map);
+                    }, this);
+                    
+                    L.DomEvent.disableClickPropagation(container);
+                    return container;
+                },
+                
+                exportDrawnFeatures: function(map) {
+                    // Find drawn features by checking all layers
+                    var drawnFeatures = [];
+                    
+                    // Iterate through all layers on the map
+                    map.eachLayer(function(layer) {
+                        // Skip tile layers and other base layers
+                        if (layer instanceof L.TileLayer) {
+                            return;
+                        }
+                        
+                        // Check if this is a drawn shape (check by constructor name)
+                        var isDrawnShape = layer instanceof L.Polygon || 
+                                          layer instanceof L.Polyline || 
+                                          layer instanceof L.Circle || 
+                                          layer instanceof L.Rectangle || 
+                                          layer instanceof L.Marker || 
+                                          layer instanceof L.CircleMarker;
+                        
+                        // Also check if it's in a FeatureGroup (Draw plugin uses FeatureGroups)
+                        if (layer instanceof L.FeatureGroup || layer instanceof L.LayerGroup) {
+                            // Check if this is the drawnItems FeatureGroup from Draw plugin
+                            layer.eachLayer(function(subLayer) {
+                                if (subLayer.toGeoJSON) {
+                                    try {
+                                        var geojson = subLayer.toGeoJSON();
+                                        drawnFeatures.push(geojson);
+                                        console.log('Found drawn feature:', geojson);
+                                    } catch (e) {
+                                        console.warn('Could not convert layer to GeoJSON:', e);
+                                    }
+                                }
+                            });
+                        }
+                        // Direct drawn shapes (not in FeatureGroup)
+                        else if (isDrawnShape && layer.toGeoJSON) {
+                            try {
+                                var geojson = layer.toGeoJSON();
+                                drawnFeatures.push(geojson);
+                                console.log('Found drawn feature:', geojson);
+                            } catch (e) {
+                                console.warn('Could not convert layer to GeoJSON:', e);
+                            }
+                        }
+                    });
+                    
+                    console.log('Total drawn features found:', drawnFeatures.length);
+                    
+                    if (drawnFeatures.length === 0) {
+                        alert('No drawn features to export. Please draw some shapes first using the draw tools.');
+                        return;
+                    }
+                    
+                    var geojson = {
+                        type: 'FeatureCollection',
+                        features: drawnFeatures
+                    };
+                    
+                    // Create download
+                    var dataStr = JSON.stringify(geojson, null, 2);
+                    var dataBlob = new Blob([dataStr], {type: 'application/json'});
+                    var url = URL.createObjectURL(dataBlob);
+                    
+                    var link = document.createElement('a');
+                    link.href = url;
+                    link.download = 'drawn_features_' + new Date().toISOString().slice(0, 10) + '.geojson';
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    URL.revokeObjectURL(url);
+                    
+                    alert('Exported ' + drawnFeatures.length + ' feature(s) as GeoJSON');
+                }
+            });
+            
+            new L.Control.Export().addTo({{ this._parent.get_name() }});
+        {% endmacro %}
+    """)
+    
+    def __init__(self):
+        super(ExportControl, self).__init__()
+        self._name = 'ExportControl'
+
+
+class CustomZoomControl(MacroElement):
+    """Custom Folium control for advanced zoom operations (Fit All, Fit Selected, Box Zoom, Reset)"""
+
+    _template = Template("""
+        {% macro script(this, kwargs) %}
+            L.Control.CustomZoom = L.Control.extend({
+                options: {
+                    position: 'topleft'
+                },
+
+                onAdd: function (map) {
+                    var container = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-custom-zoom');
+
+                    // Fit All button
+                    var fitAllBtn = L.DomUtil.create('a', 'leaflet-control-zoom-fit-all', container);
+                    fitAllBtn.href = '#';
+                    fitAllBtn.title = 'Fit to all data';
+                    fitAllBtn.innerHTML = '⊞';
+                    fitAllBtn.setAttribute('role', 'button');
+                    fitAllBtn.setAttribute('aria-label', 'Fit to all data');
+                    this._styleButton(fitAllBtn);
+
+                    L.DomEvent.on(fitAllBtn, 'click', function (e) {
+                        L.DomEvent.stop(e);
+                        this._fitToAllLayers(map);
+                    }, this);
+
+                    // Fit Selected button
+                    var fitSelectedBtn = L.DomUtil.create('a', 'leaflet-control-zoom-fit-selected', container);
+                    fitSelectedBtn.href = '#';
+                    fitSelectedBtn.title = 'Fit to selected polygons';
+                    fitSelectedBtn.innerHTML = '◎';
+                    fitSelectedBtn.setAttribute('role', 'button');
+                    fitSelectedBtn.setAttribute('aria-label', 'Fit to selected polygons');
+                    this._styleButton(fitSelectedBtn);
+
+                    L.DomEvent.on(fitSelectedBtn, 'click', function (e) {
+                        L.DomEvent.stop(e);
+                        this._fitToSelected(map);
+                    }, this);
+
+                    // Box Zoom button
+                    var boxZoomBtn = L.DomUtil.create('a', 'leaflet-control-zoom-box', container);
+                    boxZoomBtn.href = '#';
+                    boxZoomBtn.title = 'Zoom to window (draw rectangle)';
+                    boxZoomBtn.innerHTML = '⬚';
+                    boxZoomBtn.setAttribute('role', 'button');
+                    boxZoomBtn.setAttribute('aria-label', 'Zoom to window');
+                    this._styleButton(boxZoomBtn);
+
+                    this._boxZoomActive = false;
+                    this._boxZoomBtn = boxZoomBtn;
+                    this._boxZoomStartPoint = null;
+                    this._boxZoomRect = null;
+
+                    L.DomEvent.on(boxZoomBtn, 'click', function (e) {
+                        L.DomEvent.stop(e);
+                        this._toggleBoxZoom(map);
+                    }, this);
+
+                    // Reset View button
+                    var resetBtn = L.DomUtil.create('a', 'leaflet-control-zoom-reset', container);
+                    resetBtn.href = '#';
+                    resetBtn.title = 'Reset to Italy view';
+                    resetBtn.innerHTML = '🏠';
+                    resetBtn.setAttribute('role', 'button');
+                    resetBtn.setAttribute('aria-label', 'Reset view');
+                    this._styleButton(resetBtn);
+
+                    L.DomEvent.on(resetBtn, 'click', function (e) {
+                        L.DomEvent.stop(e);
+                        map.setView([41.8719, 12.5674], 6);
+                        console.log('[CustomZoomControl] View reset to Italy');
+                    }, this);
+
+                    // Fullscreen button
+                    var fullscreenBtn = L.DomUtil.create('a', 'leaflet-control-zoom-fullscreen', container);
+                    fullscreenBtn.href = '#';
+                    fullscreenBtn.title = 'Toggle fullscreen';
+                    fullscreenBtn.innerHTML = '⛶';
+                    fullscreenBtn.setAttribute('role', 'button');
+                    fullscreenBtn.setAttribute('aria-label', 'Toggle fullscreen');
+                    this._styleButton(fullscreenBtn);
+                    this._isFullscreen = false;
+                    this._fullscreenBtn = fullscreenBtn;
+
+                    L.DomEvent.on(fullscreenBtn, 'click', function (e) {
+                        L.DomEvent.stop(e);
+                        this._toggleFullscreen(map);
+                    }, this);
+
+                    L.DomEvent.disableClickPropagation(container);
+
+                    // Store reference to map for box zoom handlers
+                    this._map = map;
+
+                    return container;
+                },
+
+                _styleButton: function(btn) {
+                    btn.style.fontSize = '16px';
+                    btn.style.display = 'flex';
+                    btn.style.alignItems = 'center';
+                    btn.style.justifyContent = 'center';
+                    btn.style.width = '30px';
+                    btn.style.height = '30px';
+                    btn.style.textDecoration = 'none';
+                    btn.style.color = '#000';
+                    btn.style.backgroundColor = 'white';
+                    btn.style.lineHeight = '30px';
+                },
+
+                _fitToAllLayers: function(map) {
+                    var bounds = null;
+
+                    map.eachLayer(function(layer) {
+                        // Skip tile layers
+                        if (layer instanceof L.TileLayer) return;
+
+                        if (layer.getBounds && typeof layer.getBounds === 'function') {
+                            try {
+                                var layerBounds = layer.getBounds();
+                                if (layerBounds && layerBounds.isValid()) {
+                                    if (bounds === null) {
+                                        bounds = L.latLngBounds(layerBounds);
+                                    } else {
+                                        bounds.extend(layerBounds);
+                                    }
+                                }
+                            } catch (e) {
+                                // Layer might not have valid bounds
+                            }
+                        }
+                    });
+
+                    if (bounds && bounds.isValid()) {
+                        map.fitBounds(bounds, { padding: [20, 20], maxZoom: 18 });
+                        console.log('[CustomZoomControl] Fitted to all layers');
+                    } else {
+                        alert('No polygon data loaded on the map.');
+                    }
+                },
+
+                _fitToSelected: function(map) {
+                    // Try to get selected polygons from parent window
+                    var selectedPolygons = [];
+                    try {
+                        if (window.parent && window.parent.selectedPolygons) {
+                            selectedPolygons = window.parent.selectedPolygons;
+                        } else if (window.selectedPolygons) {
+                            selectedPolygons = window.selectedPolygons;
+                        }
+                    } catch (e) {
+                        console.warn('[CustomZoomControl] Could not access selected polygons:', e);
+                    }
+
+                    if (!selectedPolygons || selectedPolygons.length === 0) {
+                        alert('No polygons selected. Click on polygons to select them first.');
+                        return;
+                    }
+
+                    var bounds = null;
+                    selectedPolygons.forEach(function(polygon) {
+                        if (polygon.getBounds) {
+                            var layerBounds = polygon.getBounds();
+                            if (layerBounds.isValid()) {
+                                if (bounds === null) {
+                                    bounds = L.latLngBounds(layerBounds);
+                                } else {
+                                    bounds.extend(layerBounds);
+                                }
+                            }
+                        }
+                    });
+
+                    if (bounds && bounds.isValid()) {
+                        map.fitBounds(bounds, { padding: [20, 20], maxZoom: 18 });
+                        console.log('[CustomZoomControl] Fitted to selected polygons');
+                    }
+                },
+
+                _toggleBoxZoom: function(map) {
+                    var self = this;
+                    this._boxZoomActive = !this._boxZoomActive;
+
+                    if (this._boxZoomActive) {
+                        this._boxZoomBtn.style.backgroundColor = '#e0e0ff';
+                        map.dragging.disable();
+                        map.getContainer().style.cursor = 'crosshair';
+
+                        // Set up event handlers
+                        this._mousedownHandler = function(e) {
+                            if (self._boxZoomActive) {
+                                self._boxZoomStartPoint = e.latlng;
+                                if (self._boxZoomRect) {
+                                    map.removeLayer(self._boxZoomRect);
+                                    self._boxZoomRect = null;
+                                }
+                            }
+                        };
+
+                        this._mousemoveHandler = function(e) {
+                            if (self._boxZoomActive && self._boxZoomStartPoint) {
+                                var bounds = L.latLngBounds(self._boxZoomStartPoint, e.latlng);
+                                if (self._boxZoomRect) {
+                                    self._boxZoomRect.setBounds(bounds);
+                                } else {
+                                    self._boxZoomRect = L.rectangle(bounds, {
+                                        color: '#3388ff',
+                                        weight: 2,
+                                        fillOpacity: 0.2,
+                                        dashArray: '5, 5'
+                                    }).addTo(map);
+                                }
+                            }
+                        };
+
+                        this._mouseupHandler = function(e) {
+                            if (self._boxZoomActive && self._boxZoomStartPoint) {
+                                var bounds = L.latLngBounds(self._boxZoomStartPoint, e.latlng);
+                                var startPoint = map.latLngToContainerPoint(self._boxZoomStartPoint);
+                                var endPoint = map.latLngToContainerPoint(e.latlng);
+                                var distance = Math.sqrt(
+                                    Math.pow(endPoint.x - startPoint.x, 2) +
+                                    Math.pow(endPoint.y - startPoint.y, 2)
+                                );
+
+                                if (distance > 20) {
+                                    map.fitBounds(bounds, { padding: [10, 10] });
+                                }
+
+                                // Clean up
+                                self._deactivateBoxZoom(map);
+                            }
+                        };
+
+                        map.on('mousedown', this._mousedownHandler);
+                        map.on('mousemove', this._mousemoveHandler);
+                        map.on('mouseup', this._mouseupHandler);
+
+                        console.log('[CustomZoomControl] Box zoom mode activated');
+                    } else {
+                        this._deactivateBoxZoom(map);
+                    }
+                },
+
+                _deactivateBoxZoom: function(map) {
+                    if (this._boxZoomRect) {
+                        map.removeLayer(this._boxZoomRect);
+                        this._boxZoomRect = null;
+                    }
+                    this._boxZoomStartPoint = null;
+                    this._boxZoomActive = false;
+                    this._boxZoomBtn.style.backgroundColor = 'white';
+                    map.dragging.enable();
+                    map.getContainer().style.cursor = '';
+
+                    if (this._mousedownHandler) {
+                        map.off('mousedown', this._mousedownHandler);
+                    }
+                    if (this._mousemoveHandler) {
+                        map.off('mousemove', this._mousemoveHandler);
+                    }
+                    if (this._mouseupHandler) {
+                        map.off('mouseup', this._mouseupHandler);
+                    }
+
+                    console.log('[CustomZoomControl] Box zoom mode deactivated');
+                },
+
+                _toggleFullscreen: function(map) {
+                    var container = map.getContainer();
+                    var self = this;
+
+                    if (!this._isFullscreen) {
+                        // Enter fullscreen
+                        if (container.requestFullscreen) {
+                            container.requestFullscreen();
+                        } else if (container.webkitRequestFullscreen) {
+                            container.webkitRequestFullscreen();
+                        } else if (container.msRequestFullscreen) {
+                            container.msRequestFullscreen();
+                        }
+                        this._isFullscreen = true;
+                        this._fullscreenBtn.innerHTML = '⛶';
+                        this._fullscreenBtn.title = 'Exit fullscreen';
+                        console.log('[CustomZoomControl] Entered fullscreen');
+                    } else {
+                        // Exit fullscreen
+                        if (document.exitFullscreen) {
+                            document.exitFullscreen();
+                        } else if (document.webkitExitFullscreen) {
+                            document.webkitExitFullscreen();
+                        } else if (document.msExitFullscreen) {
+                            document.msExitFullscreen();
+                        }
+                        this._isFullscreen = false;
+                        this._fullscreenBtn.innerHTML = '⛶';
+                        this._fullscreenBtn.title = 'Toggle fullscreen';
+                        console.log('[CustomZoomControl] Exited fullscreen');
+                    }
+
+                    // Listen for fullscreen change events to sync state
+                    var fullscreenChangeHandler = function() {
+                        var isNowFullscreen = !!(document.fullscreenElement ||
+                                                  document.webkitFullscreenElement ||
+                                                  document.msFullscreenElement);
+                        self._isFullscreen = isNowFullscreen;
+                        if (isNowFullscreen) {
+                            self._fullscreenBtn.title = 'Exit fullscreen';
+                        } else {
+                            self._fullscreenBtn.title = 'Toggle fullscreen';
+                        }
+                        // Invalidate map size after fullscreen change
+                        setTimeout(function() {
+                            map.invalidateSize();
+                        }, 100);
+                    };
+
+                    document.addEventListener('fullscreenchange', fullscreenChangeHandler);
+                    document.addEventListener('webkitfullscreenchange', fullscreenChangeHandler);
+                    document.addEventListener('msfullscreenchange', fullscreenChangeHandler);
+                }
+            });
+
+            new L.Control.CustomZoom().addTo({{ this._parent.get_name() }});
+        {% endmacro %}
+    """)
+
+    def __init__(self):
+        super(CustomZoomControl, self).__init__()
+        self._name = 'CustomZoomControl'
 
 
 # Global variable to store current geodataframe
@@ -379,7 +826,7 @@ class MapControlsManager:
         # Add comprehensive plugins based on settings
         if self.settings.enable_draw_tools:
             draw = Draw(
-                export=True,
+                export=False,  # Disabled - using custom ExportControl instead
                 position=self.settings.draw_position,
                 draw_options={
                     'polyline': True,
@@ -391,6 +838,10 @@ class MapControlsManager:
                 }
             )
             map_instance.add_child(draw)
+            
+            # Add custom Export control
+            export_control = ExportControl()
+            map_instance.add_child(export_control)
 
         if self.settings.enable_measure_tools:
             measure = MeasureControl(
@@ -401,17 +852,13 @@ class MapControlsManager:
             )
             measure.add_to(map_instance)
 
-        # Add fullscreen control
-        fullscreen = Fullscreen(position=self.settings.fullscreen_position,
-            title_title="Expand me",
-            title_cancel="Exit me",
-            force_separate_button=True,
-        )
-        fullscreen.add_to(map_instance)
+        # Add custom zoom controls (Fit All, Fit Selected, Box Zoom, Reset, Fullscreen)
+        custom_zoom_control = CustomZoomControl()
+        map_instance.add_child(custom_zoom_control)
 
         # Add basic LayerControl for map providers (at the end after all layers are added)
         # This will automatically detect all TileLayer objects on the map
-        basic_layer_control = folium.LayerControl(position='topleft')
+        basic_layer_control = folium.LayerControl(position='topright')
         basic_layer_control.add_to(map_instance)
 
         # Add TreeLayerControl for geo data files only
@@ -792,12 +1239,12 @@ class IntegratedMapGenerator:
                 cadastral_geojson,
                 name='📊 Cadastral Data',
                 style_function=lambda feature: {
-                    'fillColor': '#blue',
-                    'color': '#darkblue',
+                    'fillColor': '#3388ff',  # Standard Leaflet blue
+                    'color': '#1a5490',      # Darker blue for border
                     'weight': 2,
                     'fillOpacity': 0.3,
                 },
-                popup=folium.GeoJsonPopup(fields=['property_id', 'area', 'type'] if 'properties' in str(cadastral_geojson) else [])
+                popup=folium.GeoJsonPopup(fields=['comune_name', 'foglio', 'particella', 'layer_type'] if 'properties' in str(cadastral_geojson) else [])
             ).add_to(m)
 
         # Add auction properties if provided

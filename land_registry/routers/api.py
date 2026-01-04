@@ -161,6 +161,7 @@ class SpatialiteQueryRequest(BaseModel):
         max_length=500,
     )
     limit: Optional[int] = Field(default=None, ge=1, le=10000)
+    layer_type: Optional[str] = Field(default="map", pattern="^(map|ple)$", description="map=fogli, ple=particelle")
 
 
 class CadastralQueryRequest(BaseModel):
@@ -747,6 +748,7 @@ async def load_spatialite_data(request: SpatialiteQueryRequest):
             table=request.table,
             where=request.where,
             limit=request.limit,
+            layer_type=request.layer_type,
         )
 
         if gdf is None or gdf.empty:

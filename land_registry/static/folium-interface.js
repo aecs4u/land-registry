@@ -1158,11 +1158,11 @@ async function checkDbStatus() {
     if (!statusText || !statusIndicator) return;
     
     try {
-        // Try a test query with limit 0 to check connection
+        // Try a test query with limit 1 to check connection
         const response = await fetch('/api/v1/load-spatialite/', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ limit: 1 })
+            body: JSON.stringify({ limit: 1, layer_type: 'map' })
         });
         
         if (response.ok) {
@@ -1253,9 +1253,10 @@ async function loadFromDatabase() {
         if (layerType) whereClause.push(`layer_type = '${layerType}'`);
         
         const request = {
-            limit: limit
+            limit: limit,
+            layer_type: layerType || 'map'  // Default to 'map' if not specified
         };
-        
+
         if (whereClause.length > 0) {
             request.where = whereClause.join(' AND ');
         }
@@ -2204,6 +2205,12 @@ document.addEventListener('DOMContentLoaded', function() {
     } else {
         console.log('No cadastral data - showing default map view');
     }
+
+    // Initialize FGB layer type radio buttons
+    const fgbRadios = document.querySelectorAll('input[name="fgbLayerType"]');
+    fgbRadios.forEach(radio => {
+        radio.addEventListener('change', updateFgbLayerInfo);
+    });
 });
 
 // ========================================
