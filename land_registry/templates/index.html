@@ -1,431 +1,734 @@
-{% extends "base.html" %}
-
-{% block content %}
+{% extends "base.html" %} {% block content %}
 <div class="container">
-    <div class="sidebar">
-        <h1>Cadastre</h1>
+  <div class="sidebar">
+    <h1>Cadastre</h1>
 
-        <div class="navigation-links">
-            <a href="/cadastral-data" target="_blank" class="nav-link">📊 Browse All Cadastral Data</a>
-        </div>
-
-        <div class="upload-section">
-            <div class="upload-tabs">
-                <div class="upload-tab" onclick="showUploadTab('file')">📁 File Upload</div>
-                <div class="upload-tab active" onclick="showUploadTab('cadastral')">🏛️ Cadastral Selection</div>
-            </div>
-
-            <div class="upload-content">
-                <div id="fileUpload" class="file-upload" style="display: none;">
-                    <label for="fileInput">Upload QPKG or GPKG File:</label>
-                    <input type="file" id="fileInput" accept=".qpkg,.gpkg" />
-                    <button onclick="uploadFile()">Upload & Visualize</button>
-                </div>
-
-                <div id="cadastralSelection" class="cadastral-selection active" style="display: block;">
-                    <div class="cadastral-stats">
-                        <div class="stat-card">
-                            <div class="stat-number" id="totalRegions">{{ "{:,}".format(total_regions|default(0)) }}</div>
-                            <div class="stat-label">Regions</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-number" id="totalProvinces">{{ "{:,}".format(total_provinces|default(0)) }}</div>
-                            <div class="stat-label">Provinces</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-number" id="totalMunicipalities">{{ "{:,}".format(total_municipalities|default(0)) }}</div>
-                            <div class="stat-label">Municipalities</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-number" id="totalFiles">{{ "{:,}".format(total_files|default(0)) }}</div>
-                            <div class="stat-label">GPKG Files</div>
-                        </div>
-                    </div>
-
-                    <div class="cadastral-step">
-                        <label for="cadastralRegions">Select Region(s):</label>
-                        <select id="cadastralRegions" multiple size="4">
-                        </select>
-                    </div>
-
-                    <div class="cadastral-step">
-                        <label for="cadastralProvinces">Select Province(s):</label>
-                        <select id="cadastralProvinces" multiple size="3" disabled>
-                        </select>
-                    </div>
-
-                    <div class="cadastral-step">
-                        <label for="cadastralMunicipalities">Select Municipality(ies):</label>
-                        <select id="cadastralMunicipalities" multiple size="3" disabled>
-                        </select>
-                    </div>
-
-                    <div class="cadastral-step">
-                        <label>Select File Type(s):</label>
-                        <div class="file-type-checkboxes" id="cadastralFileTypes">
-                            <div class="file-type-checkbox selected" onclick="toggleFileType(this, 'MAP')">
-                                <input type="checkbox" id="fileTypeMAP" value="MAP" checked>
-                                <label for="fileTypeMAP">Mappa (MAP)</label>
-                            </div>
-                            <div class="file-type-checkbox selected" onclick="toggleFileType(this, 'PLE')">
-                                <input type="checkbox" id="fileTypePLE" value="PLE">
-                                <label for="fileTypePLE">Particelle (PLE)</label>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div id="selectionSummary" class="selection-summary" style="display: none;">
-                        <h4>📊 Selection Summary</h4>
-                        <div id="summaryContent"></div>
-                        <div id="filesList" class="files-list"></div>
-                    </div>
-
-                    <button onclick="loadCadastralSelection()" id="loadCadastralBtn" disabled>Load Selected Files</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Selection Controls Section -->
-        <div class="controls">
-            <div class="control-group">
-                <label for="selectionMode">Selection Mode:</label>
-                <select id="selectionMode" onchange="changeSelectionMode()">
-                    <option value="adjacency">Find Adjacency</option>
-                </select>
-            </div>
-
-            <div class="control-group">
-                <label for="adjacencyMethod">Adjacency Method:</label>
-                <select id="adjacencyMethod">
-                    <option value="intersects">Intersects (any overlap)</option>
-                    <option value="touches">Touches (shared boundary)</option>
-                    <option value="overlaps">Overlaps (area overlap)</option>
-                </select>
-            </div>
-
-            <div id="selectionControls">
-                <div class="adjacency-buttons">
-                    <button onclick="findAdjacencyForSelected()" id="findAdjacencyBtn" disabled>Find Adjacent Polygons</button>
-                    <button onclick="clearPolygonSelection()" id="clearSelectionBtn" disabled style="margin-left: 10px;">Clear Selection</button>
-                 </div>
-                <div id="selectedCount" class="table-info">0 polygons selected</div>
-            </div>
-
-            <!-- Polygon Management Controls -->
-            <div class="polygon-management">
-                <h4>🗂️ Polygon Management</h4>
-                <div class="control-row">
-                    <button onclick="removeAllPolygons()" id="removePolygonsBtn" disabled class="remove-btn">🗑️ Remove All Polygons</button>
-                    <button onclick="autoZoomToAllPolygons()" id="zoomToPolygonsBtn" disabled class="zoom-btn">🔍 Zoom to Fit</button>
-                </div>
-                <div id="polygonCount" class="table-info">No polygons loaded</div>
-            </div>
-
-            <!-- Auction Properties Controls -->
-            <div class="auctionControls">
-                <h4>🏠 Properties at Auction</h4>
-                <div class="control-row">
-                    <button onclick="toggleAuctionLayer()" class="control-btn">Toggle Auctions</button>
-                    <button onclick="filterActiveAuctions()" class="control-btn">Active Only</button>
-                </div>
-                <div class="control-row">
-                    <select id="auctionTypeFilter" onchange="filterAuctionsByType()">
-                        <option value="">All Types</option>
-                        <option value="residential">Residential</option>
-                        <option value="commercial">Commercial</option>
-                        <option value="agricultural">Agricultural</option>
-                        <option value="industrial">Industrial</option>
-                    </select>
-                </div>
-                <div class="control-row">
-                    <label>Max Price: €</label>
-                    <input type="number" id="maxPriceFilter" onchange="filterAuctionsByPrice()" placeholder="150000">
-                </div>
-            </div>
-        </div>
-
-        <!-- Plugin Status Indicators -->
-        <div class="plugin-status">
-            <h4>🔌 Active Plugins</h4>
-            <div class="plugin-indicators">
-                <div class="plugin-item" title="Leaflet Geocoder - Search locations">
-                    <span class="plugin-icon">🔍</span>
-                    <span class="plugin-name">Geocoder</span>
-                </div>
-                <div class="plugin-item" title="MiniMap - Overview map">
-                    <span class="plugin-icon">🗺️</span>
-                    <span class="plugin-name">MiniMap</span>
-                </div>
-                <div class="plugin-item" title="Locate Control - Find your location">
-                    <span class="plugin-icon">📍</span>
-                    <span class="plugin-name">Locate</span>
-                </div>
-                <div class="plugin-item" title="Mouse Position - Coordinate display">
-                    <span class="plugin-icon">🖱️</span>
-                    <span class="plugin-name">Coordinates</span>
-                </div>
-                <div class="plugin-item" title="Measure Tool - Distance/area measurement">
-                    <span class="plugin-icon">📏</span>
-                    <span class="plugin-name">Measure</span>
-                </div>
-                <div class="plugin-item" title="Fullscreen - Full screen mode">
-                    <span class="plugin-icon">⛶</span>
-                    <span class="plugin-name">Fullscreen</span>
-                </div>
-                <div class="plugin-item" title="Tree Layers - Advanced layer control">
-                    <span class="plugin-icon">🌳</span>
-                    <span class="plugin-name">Layers</span>
-                </div>
-                <div class="plugin-item" title="Draw Controls - Drawing tools">
-                    <span class="plugin-icon">✏️</span>
-                    <span class="plugin-name">Drawing</span>
-                </div>
-            </div>
-        </div>
-
-        <!-- Advanced Plugin Controls -->
-        <div class="advanced-controls">
-            <h4>🚀 Advanced Tools</h4>
-            <div class="control-row">
-                <button onclick="toggleMiniMap()" class="control-btn" title="Toggle overview minimap">Toggle MiniMap</button>
-                <button onclick="showPluginInfo()" class="control-btn" title="Show plugin information">Plugin Info</button>
-            </div>
-            <div class="control-row">
-                <button onclick="resetMapView()" class="control-btn" title="Reset map to default view">Reset View</button>
-                <button onclick="toggleCoordinates()" class="control-btn" title="Toggle coordinate display">Coordinates</button>
-            </div>
-        </div>
-
-        <!-- TreeLayers Control Management -->
-        <div class="treelayers-controls">
-            <h4>🌳 Layer Manager</h4>
-            <div class="control-row">
-                <button onclick="toggleTreeLayers()" class="control-btn" title="Show/hide the layers panel">Toggle Layers</button>
-                <button onclick="refreshTreeLayers()" class="control-btn" title="Refresh layers panel">Refresh</button>
-            </div>
-            <div class="control-row">
-                <button onclick="expandAllTreeLayers()" class="control-btn" title="Expand all layer groups">Expand All</button>
-                <button onclick="collapseAllTreeLayers()" class="control-btn" title="Collapse all layer groups">Collapse All</button>
-            </div>
-            <div class="treelayers-info">
-                <small>🗺️ Base maps, 📊 Data layers, 🌤️ Weather overlays</small>
-            </div>
-        </div>
-
-        <!-- Note: Controls now implemented as native Leaflet controls -->
+    <!-- 1. Navigation -->
+    <div class="navigation-links">
+      <a href="/cadastral-data" target="_blank" class="nav-link"
+        >📊 Browse All Cadastral Data</a
+      >
     </div>
 
-    <div class="main-content">
-        <!-- View Toggle Buttons -->
-        <div class="view-toggle">
-            <button id="mapViewBtn" class="active" onclick="showMapView()">Map View</button>
-            <button id="tableViewBtn" onclick="handleTableViewClick()" class="">Table View</button>
-            <button id="adjacencyViewBtn" onclick="showAdjacencyView()" class="">Adjacency</button>
-            <button id="mappingViewBtn" onclick="showMappingView()" class="">Mapping</button>
+    <!-- 2. Data Input (Upload, Selection & Database) -->
+    <div class="upload-section">
+      <div class="upload-tabs">
+        <div class="upload-tab" onclick="showUploadTab('file')">
+          📁 File Upload
         </div>
-        <!-- Map View -->
-        <div id="mapView" class="view-content active" style="display: block;">
-            <div class="map-header">
-                <h2>Map</h2>
-                <div id="tableInfo" class="table-info">No data loaded</div>
-            </div>
+        <div class="upload-tab active" onclick="showUploadTab('cadastral')">
+          🏛️ Cadastral Selection
+        </div>
+        <div class="upload-tab" onclick="showUploadTab('database')">
+          🗄️ Local Database
+        </div>
+      </div>
 
-            <div class="map-container">
-                <div id="folium-map-container">
-                    {% if folium_map_html %}
-                    {{ folium_map_html|safe }}
-                    {% else %}
-                    <div class="no-map-message">
-                        <p>No map data available. Please upload a file or select cadastral data.</p>
-                    </div>
-                    {% endif %}
-                </div>
-            </div>
+      <div class="upload-content">
+        <div id="fileUpload" class="file-upload" style="display: none">
+          <label for="fileInput">Upload QPKG or GPKG File:</label>
+          <input type="file" id="fileInput" accept=".qpkg,.gpkg" />
+          <button onclick="uploadFile()">Upload & Visualize</button>
         </div>
 
-        <!-- Table View -->
-        <div id="tableView" class="view-content" style="display: none;">
-            <div class="table-container">
-                <div class="table-header">
-                    <h2>Polygon Attributes Table</h2>
-                    <div id="tableInfo" class="table-info">No data loaded</div>
-                </div>
-                <div id="attributeTable" class="attribute-table">
-                    <div class="no-data-message">
-                        <p>No geospatial data loaded. Please upload a file or select cadastral data to view attributes.</p>
-                    </div>
-                    {% if map_table %}
-                    {{ map_table|safe }}
-                    {% endif %}
-                </div>
+        <!-- Database Query Tab (NEW) -->
+        <div id="databaseQuery" class="database-query" style="display: none">
+          <!-- Data Source Selector -->
+          <div class="db-source-section">
+            <label>Data Source:</label>
+            <div class="source-toggle">
+              <button type="button" id="sourceSpatialite" class="source-btn active" onclick="selectDataSource('spatialite')">
+                🗄️ SpatiaLite
+              </button>
+              <button type="button" id="sourceFgb" class="source-btn" onclick="selectDataSource('fgb')">
+                📦 FlatGeobuf
+              </button>
             </div>
+            <small class="help-text" id="sourceHelp">SpatiaLite: Full query support | FlatGeobuf: Faster loading, per-region files</small>
+          </div>
+
+          <div class="db-status" id="dbStatusIndicator">
+            <span class="db-icon">🗄️</span>
+            <span id="dbStatusText">Checking database...</span>
+          </div>
+
+          <!-- Geographic Filters (SpatiaLite) -->
+          <div class="db-filter-section" id="spatialiteFilters">
+            <div class="cadastral-step">
+              <label for="dbRegion">Region:</label>
+              <select id="dbRegion" onchange="loadDbProvinces()">
+                <option value="">All Regions</option>
+              </select>
+            </div>
+
+            <div class="cadastral-step">
+              <label for="dbProvince">Province:</label>
+              <select id="dbProvince" onchange="loadDbComuni()" disabled>
+                <option value="">All Provinces</option>
+              </select>
+            </div>
+
+            <div class="cadastral-step">
+              <label for="dbComune">Comune:</label>
+              <select id="dbComune" disabled>
+                <option value="">All Comuni</option>
+              </select>
+            </div>
+
+            <div class="cadastral-step">
+              <label for="dbLayerType">Layer Type:</label>
+              <select id="dbLayerType">
+                <option value="">All Types</option>
+                <option value="map">Mappa (Fogli)</option>
+                <option value="ple">Particelle (PLE)</option>
+              </select>
+            </div>
+
+            <div class="cadastral-step">
+              <label for="dbLimit">Max Records:</label>
+              <select id="dbLimit">
+                <option value="100">100</option>
+                <option value="500">500</option>
+                <option value="1000" selected>1,000</option>
+                <option value="5000">5,000</option>
+                <option value="10000">10,000</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- FlatGeobuf Region Selector -->
+          <div class="db-filter-section" id="fgbFilters" style="display: none;">
+            <div class="cadastral-step">
+              <label for="fgbRegione">Region:</label>
+              <select id="fgbRegione" onchange="updateFgbLayerInfo()">
+                <option value="">Select a Region</option>
+              </select>
+            </div>
+            <div class="cadastral-step">
+              <label>Layer Type:</label>
+              <div class="layer-type-radios">
+                <label><input type="radio" name="fgbLayerType" value="map" checked /> MAP (Fogli)</label>
+                <label><input type="radio" name="fgbLayerType" value="ple" /> PLE (Particelle)</label>
+              </div>
+            </div>
+            <div id="fgbFileInfo" class="fgb-file-info" style="display: none;">
+              <div class="fgb-info-row">
+                <span class="fgb-label">File:</span>
+                <span id="fgbFileName">--</span>
+              </div>
+              <div class="fgb-info-row">
+                <span class="fgb-label">Size:</span>
+                <span id="fgbFileSize">--</span>
+              </div>
+              <div class="fgb-info-row">
+                <span class="fgb-label">Features:</span>
+                <span id="fgbFeatureCount">--</span>
+              </div>
+            </div>
+            <small class="help-text">FlatGeobuf files are loaded per-region for faster performance. Select a region and layer type to load.</small>
+          </div>
+
+          <!-- Action Buttons (SpatiaLite) -->
+          <div class="db-actions" id="spatialiteActions">
+            <button onclick="loadFromDatabase()" id="loadDbBtn" class="load-db-btn">
+              🔍 Query Database
+            </button>
+          </div>
+
+          <!-- Action Buttons (FlatGeobuf) -->
+          <div class="db-actions" id="fgbActions" style="display: none;">
+            <button onclick="loadFgbRegion()" id="loadFgbBtn" class="primary-btn" disabled>Load Region Data</button>
+          </div>
+          <div class="db-actions" id="fgbClear" style="display: none;">
+            <button onclick="clearFgbSelection()" class="clear-btn">Clear Selection</button>
+          </div>
+
+          <div id="dbResultInfo" class="db-result-info" style="display: none">
+            <span id="dbResultText"></span>
+          </div>
         </div>
 
-        <!-- Adjacency View -->
-        <div id="adjacencyView" class="view-content" style="display: none;">
-            <div class="adjacency-container">
-                <div class="adjacency-header">
-                    <h2>Adjacency Analysis Results</h2>
-                    <div id="adjacencyInfo" class="table-info">Select a polygon to find adjacent features</div>
-                </div>
-                <div id="adjacencyResults" class="adjacency-results">
-                    <div class="adjacency-section">
-                        <h3>Selected Polygon</h3>
-                        <div id="selectedPolygonInfo" class="polygon-info">
-                            <p>No polygon selected</p>
-                        </div>
-                    </div>
-                    <div class="adjacency-section">
-                        <h3>Adjacent Polygons</h3>
-                        <div id="adjacentPolygonsInfo" class="polygon-info">
-                            <p>Select a polygon to find adjacent features</p>
-                        </div>
-                    </div>
-                    {% if adjacency_table %}
-                    {{ adjacency_table|safe }}
-                    {% endif %}
-                </div>
+        <div
+          id="cadastralSelection"
+          class="cadastral-selection active"
+          style="display: block"
+        >
+          <div class="cadastral-stats">
+            <div class="stat-card">
+              <div class="stat-number" id="totalRegions">
+                {{ "{:,}".format(total_regions|default(0)) }}
+              </div>
+              <div class="stat-label">Regions</div>
             </div>
-        </div>
-
-        <!-- Mapping View -->
-        <div id="mappingView" class="view-content" style="display: none;">
-            <div class="mapping-container">
-                <div class="mapping-header">
-                    <h2>Mapping Results</h2>
-                    <div class="mapping-info">Use the drawing tools to create and edit polygons</div>
-                </div>
-                <div class="drawing-controls">
-                    <div class="drawing-section">
-                        <h3>Drawn Polygons</h3>
-                        <div id="drawnPolygonsList" class="drawn-polygons-list">
-                            <p>No polygons drawn yet</p>
-                        </div>
-                        <div class="drawing-actions">
-                            <button onclick="saveDrawnPolygons()">Save Drawn Polygons</button>
-                            <button onclick="clearDrawnPolygons()">Clear All Drawings</button>
-                        </div>
-                    </div>
-
-                    <div class="drawing-section">
-                        <h3>Drawn Polylines</h3>
-                        <div id="drawnPolylinesList" class="drawn-polylines-list">
-                            <p>No polylines drawn yet</p>
-                        </div>
-                        <div class="polyline-actions">
-                            <button onclick="saveDrawnPolylines()" id="savePolylinesBtn">Save Polylines</button>
-                            <button onclick="deleteSelectedPolyline()" id="deletePolylineBtn" disabled>Delete Selected</button>
-                            <button onclick="undoLastPolyline()" id="undoPolylineBtn" disabled>Undo Last</button>
-                            <button onclick="clearAllPolylines()" id="clearPolylinesBtn" disabled>Clear All Polylines</button>
-                        </div>
-                    </div>
-
-                    <div class="mapping-stats">
-                        <div class="stat-item">
-                            <span class="stat-label">Total Drawn:</span>
-                            <span id="drawnCount" class="stat-value">0</span>
-                        </div>
-                        <div class="stat-item">
-                            <span class="stat-label">Selected:</span>
-                            <span id="drawnSelected" class="stat-value">0</span>
-                        </div>
-                        <div class="stat-item">
-                            <span class="stat-label">Polylines:</span>
-                            <span id="polylineCount" class="stat-value">0</span>
-                        </div>
-                        <div class="stat-item">
-                            <span class="stat-label">Selected Polyline:</span>
-                            <span id="selectedPolyline" class="stat-value">None</span>
-                        </div>
-                    </div>
-                    {% if mapping_table %}
-                    {{ mapping_table|safe }}
-                    {% endif %}
-                </div>
+            <div class="stat-card">
+              <div class="stat-number" id="totalProvinces">
+                {{ "{:,}".format(total_provinces|default(0)) }}
+              </div>
+              <div class="stat-label">Provinces</div>
             </div>
+            <div class="stat-card">
+              <div class="stat-number" id="totalMunicipalities">
+                {{ "{:,}".format(total_municipalities|default(0)) }}
+              </div>
+              <div class="stat-label">Municipalities</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-number" id="totalFiles">
+                {{ "{:,}".format(total_files|default(0)) }}
+              </div>
+              <div class="stat-label">GPKG Files</div>
+            </div>
+          </div>
+
+          <div class="cadastral-step">
+            <label for="cadastralRegions">Select Region(s):</label>
+            <select id="cadastralRegions" multiple size="4"></select>
+          </div>
+
+          <div class="cadastral-step">
+            <label for="cadastralProvinces">Select Province(s):</label>
+            <select id="cadastralProvinces" multiple size="3" disabled></select>
+          </div>
+
+          <div class="cadastral-step">
+            <label for="cadastralMunicipalities"
+              >Select Municipality(ies):</label
+            >
+            <select
+              id="cadastralMunicipalities"
+              multiple
+              size="3"
+              disabled
+            ></select>
+          </div>
+
+          <div class="cadastral-step">
+            <label>Select File Type(s):</label>
+            <div class="file-type-checkboxes" id="cadastralFileTypes">
+              <div
+                class="file-type-checkbox selected"
+                onclick="toggleFileType(this, 'MAP')"
+              >
+                <input type="checkbox" id="fileTypeMAP" value="MAP" checked />
+                <label for="fileTypeMAP">Mappa (MAP)</label>
+              </div>
+              <div
+                class="file-type-checkbox selected"
+                onclick="toggleFileType(this, 'PLE')"
+              >
+                <input type="checkbox" id="fileTypePLE" value="PLE" />
+                <label for="fileTypePLE">Particelle (PLE)</label>
+              </div>
+            </div>
+          </div>
+
+          <div
+            id="selectionSummary"
+            class="selection-summary"
+            style="display: none"
+          >
+            <h4>📊 Selection Summary</h4>
+            <div id="summaryContent"></div>
+            <div id="filesList" class="files-list"></div>
+          </div>
+
+          <button
+            onclick="loadCadastralSelection()"
+            id="loadCadastralBtn"
+            disabled
+          >
+            Load Selected Files
+          </button>
         </div>
+      </div>
     </div>
+
+    <!-- 3. Map Configuration (Layers & View) -->
+    <div class="config-section">
+      <!-- TreeLayers Control Management -->
+      <div class="treelayers-controls">
+        <h4>🌳 Layer Manager</h4>
+        <div class="control-row">
+          <button
+            onclick="toggleTreeLayers()"
+            class="control-btn"
+            title="Show/hide the layers panel"
+          >
+            Toggle Layers
+          </button>
+          <button
+            onclick="refreshTreeLayers()"
+            class="control-btn"
+            title="Refresh layers panel"
+          >
+            Refresh
+          </button>
+        </div>
+        <div class="control-row">
+          <button
+            onclick="expandAllTreeLayers()"
+            class="control-btn"
+            title="Expand all layer groups"
+          >
+            Expand All
+          </button>
+          <button
+            onclick="collapseAllTreeLayers()"
+            class="control-btn"
+            title="Collapse all layer groups"
+          >
+            Collapse All
+          </button>
+        </div>
+        <div class="treelayers-info">
+          <small>🗺️ Base maps, 📊 Data layers, 🌤️ Weather overlays</small>
+        </div>
+      </div>
+
+      <!-- Advanced Tools -->
+      <div class="advanced-controls">
+        <h4>🚀 View Tools</h4>
+        <div class="control-row">
+          <button
+            onclick="resetMapView()"
+            class="control-btn"
+            title="Reset map to default view"
+          >
+            Reset View
+          </button>
+          <button
+            onclick="toggleCoordinates()"
+            class="control-btn"
+            title="Toggle coordinate display"
+          >
+            Coordinates
+          </button>
+        </div>
+        <div class="control-row">
+          <button
+            onclick="toggleMiniMap()"
+            class="control-btn"
+            title="Toggle overview minimap"
+          >
+            Toggle MiniMap
+          </button>
+          <button
+            onclick="showPluginInfo()"
+            class="control-btn"
+            title="Show plugin information"
+          >
+            Plugin Info
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. Analysis & Selection -->
+    <div class="controls">
+      <h4>🔍 Analysis Tools</h4>
+
+      <div class="control-group">
+        <label for="selectionMode">Selection Mode:</label>
+        <select id="selectionMode" onchange="changeSelectionMode()">
+          <option value="adjacency">Find Adjacency</option>
+        </select>
+      </div>
+
+      <div class="control-group">
+        <label for="adjacencyMethod">Adjacency Method:</label>
+        <select id="adjacencyMethod">
+          <option value="intersects">Intersects (any overlap)</option>
+          <option value="touches">Touches (shared boundary)</option>
+          <option value="overlaps">Overlaps (area overlap)</option>
+        </select>
+      </div>
+
+      <div id="selectionControls">
+        <div class="adjacency-buttons">
+          <button
+            onclick="findAdjacencyForSelected()"
+            id="findAdjacencyBtn"
+            disabled
+          >
+            Find Adjacent Polygons
+          </button>
+          <button
+            onclick="clearPolygonSelection()"
+            id="clearSelectionBtn"
+            disabled
+            style="margin-left: 10px"
+          >
+            Clear Selection
+          </button>
+        </div>
+        <div id="selectedCount" class="table-info">0 polygons selected</div>
+      </div>
+
+      <!-- Polygon Management (Restored) -->
+      <div class="polygon-management">
+        <h4>🗂️ Polygon Management</h4>
+        <div class="control-row">
+          <button
+            onclick="removeAllPolygons()"
+            id="removePolygonsBtn"
+            disabled
+            class="remove-btn"
+          >
+            🗑️ Remove All
+          </button>
+          <button
+            onclick="autoZoomToAllPolygons()"
+            id="zoomToPolygonsBtn"
+            disabled
+            class="zoom-btn"
+          >
+            🔍 Zoom to Fit
+          </button>
+        </div>
+        <div id="polygonCount" class="table-info">No polygons loaded</div>
+      </div>
+    </div>
+
+    <!-- 5. Filters -->
+    <div class="auctionControls">
+      <h4>🏠 Property Filters</h4>
+      <div class="control-row">
+        <button onclick="toggleAuctionLayer()" class="control-btn">
+          Toggle Auctions
+        </button>
+        <button onclick="filterActiveAuctions()" class="control-btn">
+          Active Only
+        </button>
+      </div>
+      <div class="control-row">
+        <select id="auctionTypeFilter" onchange="filterAuctionsByType()">
+          <option value="">All Types</option>
+          <option value="residential">Residential</option>
+          <option value="commercial">Commercial</option>
+          <option value="agricultural">Agricultural</option>
+          <option value="industrial">Industrial</option>
+        </select>
+      </div>
+      <div class="control-row">
+        <label>Max Price: €</label>
+        <input
+          type="number"
+          id="maxPriceFilter"
+          onchange="filterAuctionsByPrice()"
+          placeholder="150000"
+        />
+      </div>
+    </div>
+
+    <!-- 6. Authentication -->
+    <div class="auth-section">
+      <h4>👤 User Account</h4>
+      <div id="sidebar-auth-container" class="auth-container">
+        <!-- Clerk authentication status will be shown here -->
+        <div id="sidebar-auth-status" class="auth-status">
+          <div class="loading-text">Checking authentication...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="main-content">
+    <!-- View Toggle Buttons -->
+    <div class="view-toggle">
+      <button id="mapViewBtn" class="active" onclick="showMapView()">
+        Map View
+      </button>
+      <button id="tableViewBtn" onclick="handleTableViewClick()" class="">
+        Table View
+      </button>
+      <button id="adjacencyViewBtn" onclick="showAdjacencyView()" class="">
+        Adjacency
+      </button>
+      <button id="mappingViewBtn" onclick="showMappingView()" class="">
+        Mapping
+      </button>
+    </div>
+    <!-- Map View -->
+    <div id="mapView" class="view-content active" style="display: block">
+      <div class="map-header">
+        <h2>Map</h2>
+        <div id="tableInfo" class="table-info">No data loaded</div>
+      </div>
+
+      <div class="map-container">
+        <div id="folium-map-container">
+          {% if folium_map_html %} {{ folium_map_html|safe }} {% else %}
+          <div class="no-map-message">
+            <p>
+              No map data available. Please upload a file or select cadastral
+              data.
+            </p>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <!-- Table View -->
+    <div id="tableView" class="view-content" style="display: none">
+      <div class="table-container">
+        <div class="table-header">
+          <h2>Polygon Attributes Table</h2>
+          <div id="tableInfo" class="table-info">No data loaded</div>
+        </div>
+        <div id="attributeTable" class="attribute-table">
+          <div class="no-data-message">
+            <p>
+              No geospatial data loaded. Please upload a file or select
+              cadastral data to view attributes.
+            </p>
+          </div>
+          {% if map_table %} {{ map_table|safe }} {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <!-- Adjacency View -->
+    <div id="adjacencyView" class="view-content" style="display: none">
+      <div class="adjacency-container">
+        <div class="adjacency-header">
+          <h2>Adjacency Analysis Results</h2>
+          <div id="adjacencyInfo" class="table-info">
+            Select a polygon to find adjacent features
+          </div>
+        </div>
+        <div id="adjacencyResults" class="adjacency-results">
+          <div class="adjacency-section">
+            <h3>Selected Polygon</h3>
+            <div id="selectedPolygonInfo" class="polygon-info">
+              <p>No polygon selected</p>
+            </div>
+          </div>
+          <div class="adjacency-section">
+            <h3>Adjacent Polygons</h3>
+            <div id="adjacentPolygonsInfo" class="polygon-info">
+              <p>Select a polygon to find adjacent features</p>
+            </div>
+          </div>
+          {% if adjacency_table %} {{ adjacency_table|safe }} {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <!-- Mapping View -->
+    <div id="mappingView" class="view-content" style="display: none">
+      <div class="mapping-container">
+        <div class="mapping-header">
+          <h2>Mapping Results</h2>
+          <div class="mapping-info">
+            Use the drawing tools to create and edit polygons
+          </div>
+        </div>
+        <div class="drawing-controls">
+          <div class="drawing-section">
+            <h3>Drawn Polygons</h3>
+            <div id="drawnPolygonsList" class="drawn-polygons-list">
+              <p>No polygons drawn yet</p>
+            </div>
+            <div class="drawing-actions">
+              <button onclick="saveDrawnPolygons()">Save Drawn Polygons</button>
+              <button onclick="clearDrawnPolygons()">Clear All Drawings</button>
+            </div>
+          </div>
+
+          <div class="drawing-section">
+            <h3>Drawn Polylines</h3>
+            <div id="drawnPolylinesList" class="drawn-polylines-list">
+              <p>No polylines drawn yet</p>
+            </div>
+            <div class="polyline-actions">
+              <button onclick="saveDrawnPolylines()" id="savePolylinesBtn">
+                Save Polylines
+              </button>
+              <button
+                onclick="deleteSelectedPolyline()"
+                id="deletePolylineBtn"
+                disabled
+              >
+                Delete Selected
+              </button>
+              <button
+                onclick="undoLastPolyline()"
+                id="undoPolylineBtn"
+                disabled
+              >
+                Undo Last
+              </button>
+              <button
+                onclick="clearAllPolylines()"
+                id="clearPolylinesBtn"
+                disabled
+              >
+                Clear All Polylines
+              </button>
+            </div>
+          </div>
+
+          <div class="mapping-stats">
+            <div class="stat-item">
+              <span class="stat-label">Total Drawn:</span>
+              <span id="drawnCount" class="stat-value">0</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">Selected:</span>
+              <span id="drawnSelected" class="stat-value">0</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">Polylines:</span>
+              <span id="polylineCount" class="stat-value">0</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">Selected Polyline:</span>
+              <span id="selectedPolyline" class="stat-value">None</span>
+            </div>
+          </div>
+          {% if mapping_table %} {{ mapping_table|safe }} {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
-{% endblock %}
-
-{% block data_scripts %}
+{% endblock %} {% block data_scripts %}
 <script>
-    // Inject GeoJSON data into window for external JS to use
-    {% if geojson_data %}
-    window.geoJsonData = {{ geojson_data|safe }};
-    {% else %}
-    window.geoJsonData = null;
-    {% endif %}
+  // Inject GeoJSON data into window for external JS to use
+  {% if geojson_data %}
+  window.geoJsonData = JSON.parse('{{ geojson_data|tojson|safe }}');
+  {% else %}
+  window.geoJsonData = null;
+  {% endif %}
 
-    // Inject data availability status
-    window.hasData = {% if has_data %}true{% else %}false{% endif %};
+  // Inject data availability status
+  window.hasData = {% if has_data %}true{% else %}false{% endif %};
 
-    console.log('Server-generated Folium map loaded');
+  console.log('Server-generated Folium map loaded');
 
-    // Auto-zoom to fit all polygons when map is ready
-    document.addEventListener('DOMContentLoaded', function() {
-        // Update polygon management state on page load
-        setTimeout(function() {
-            updatePolygonManagementState();
-        }, 500);
+  // Auto-zoom to fit all polygons when map is ready
+  document.addEventListener('DOMContentLoaded', function() {
+      // Update polygon management state on page load
+      setTimeout(function() {
+          updatePolygonManagementState();
+      }, 500);
 
-        console.log('Window data check:', {
-            hasGeoJsonData: !!window.geoJsonData,
-            hasFeatures: window.geoJsonData && window.geoJsonData.features,
-            featureCount: window.geoJsonData && window.geoJsonData.features ? window.geoJsonData.features.length : 0,
-            hasData: window.hasData
-        });
+      console.log('Window data check:', {
+          hasGeoJsonData: !!window.geoJsonData,
+          hasFeatures: window.geoJsonData && window.geoJsonData.features,
+          featureCount: window.geoJsonData && window.geoJsonData.features ? window.geoJsonData.features.length : 0,
+          hasData: window.hasData
+      });
 
-        if (window.geoJsonData && window.geoJsonData.features && window.geoJsonData.features.length > 0) {
-            console.log('Scheduling auto-zoom for', window.geoJsonData.features.length, 'features');
-            // Wait for Folium map to be fully initialized
-            setTimeout(function() {
-                if (typeof autoZoomToAllPolygons === 'function') {
-                    autoZoomToAllPolygons();
-                } else {
-                    console.error('autoZoomToAllPolygons function not found');
-                }
-            }, 1000); // Wait 1 second for map to be fully loaded
-        } else {
-            console.log('No GeoJSON data available for auto-zoom');
-            // Still try to update polygon management state and potentially auto-zoom
-            // if there are layers on the map from server-side rendering
-            setTimeout(function() {
-                if (typeof autoZoomToAllPolygons === 'function') {
-                    autoZoomToAllPolygons();
-                } else {
-                    console.error('autoZoomToAllPolygons function not found');
-                }
-            }, 1500);
-        }
-    });
+      // Check if we have newly loaded layers (handled by folium-interface.js)
+      // Skip default auto-zoom in that case to avoid conflicting zooms
+      const hasNewLayerBounds = sessionStorage.getItem('newLayerBounds');
+      const hasNewlyLoadedLayers = sessionStorage.getItem('newlyLoadedLayers');
+      if (hasNewLayerBounds || hasNewlyLoadedLayers) {
+          console.log('Newly loaded layers detected - skipping default auto-zoom (handled by folium-interface.js)');
+          // The zoomToNewlyLoadedLayers function in folium-interface.js will handle this
+      } else if (window.geoJsonData && window.geoJsonData.features && window.geoJsonData.features.length > 0) {
+          console.log('Scheduling auto-zoom for', window.geoJsonData.features.length, 'features');
+          // Wait for Folium map to be fully initialized
+          setTimeout(function() {
+              if (typeof autoZoomToAllPolygons === 'function') {
+                  autoZoomToAllPolygons();
+              } else {
+                  console.error('autoZoomToAllPolygons function not found');
+              }
+          }, 1000); // Wait 1 second for map to be fully loaded
+      } else {
+          console.log('No GeoJSON data available for auto-zoom');
+          // Still try to update polygon management state and potentially auto-zoom
+          // if there are layers on the map from server-side rendering
+          setTimeout(function() {
+              if (typeof autoZoomToAllPolygons === 'function') {
+                  autoZoomToAllPolygons();
+              } else {
+                  console.error('autoZoomToAllPolygons function not found');
+              }
+          }, 1500);
+      }
+  });
 
-    // Auto-zoom functions are defined in folium-interface.js
-    // This template only calls them after ensuring they are loaded
+  // Auto-zoom functions are defined in folium-interface.js
+  // This template only calls them after ensuring they are loaded
 </script>
-{% endblock %}
-
-{% block app_js %}
+{% endblock %} {% block app_js %}
 <script src="/static/folium-interface.js"></script>
 <script>
-// JavaScript functions have been moved to /static/folium-interface.js for better organization
-// Only template-specific code remains here
+  // JavaScript functions have been moved to /static/folium-interface.js for better organization
+  // Only template-specific code remains here
 
-function handleTableViewClick() {
-    document.querySelectorAll('.view-content').forEach(el => el.classList.remove('active'));
-    document.querySelectorAll('.view-toggle button').forEach(el => el.classList.remove('active'));
-    document.getElementById('tableView').classList.add('active');
-    document.getElementById('tableViewBtn').classList.add('active');
+  // Update sidebar authentication status
+  function updateSidebarAuth() {
+    const sidebarAuth = document.getElementById('sidebar-auth-status');
+    if (!sidebarAuth) return;
 
-    // Load the Panel Tabulator widget if available
-    const tableContainer = document.getElementById('attributeTable');
-    if (tableContainer) {
-        {% if map_table %}
-        tableContainer.innerHTML = `{{ map_table|safe }}`;
-        {% else %}
-        tableContainer.innerHTML = '<div class="no-data-message"><p>No table data available. Please upload a file or load cadastral data.</p></div>';
-        {% endif %}
+    if (window.Clerk && window.Clerk.user) {
+      const user = window.Clerk.user;
+      sidebarAuth.innerHTML = `
+        <div class="user-logged-in">
+          <div class="user-email">${user.primaryEmailAddress?.emailAddress || 'User'}</div>
+          <button class="sidebar-logout-btn" onclick="handleSidebarLogout()">Sign Out</button>
+        </div>
+      `;
+    } else if (window.Clerk) {
+      sidebarAuth.innerHTML = `
+        <div class="user-not-logged-in">
+          <button class="sidebar-login-btn" onclick="window.location.href='/auth/login?next=' + encodeURIComponent(window.location.pathname)">Sign In</button>
+          <button class="sidebar-register-btn" onclick="window.location.href='/auth/register'">Register</button>
+        </div>
+      `;
+    } else {
+      sidebarAuth.innerHTML = '<div class="loading-text">Auth loading...</div>';
     }
-}
+  }
+
+  async function handleSidebarLogout() {
+    if (window.Clerk) {
+      await window.Clerk.signOut();
+      // Clear server session
+      await fetch('/auth/clerk/logout', { method: 'POST' });
+      window.location.reload();
+    }
+  }
+
+  // Initialize sidebar auth when Clerk is ready
+  window.addEventListener('load', async function() {
+    let attempts = 0;
+    while (!window.Clerk && attempts < 50) {
+      await new Promise(r => setTimeout(r, 100));
+      attempts++;
+    }
+    if (window.Clerk) {
+      await window.Clerk.load();
+      updateSidebarAuth();
+      window.Clerk.addListener(updateSidebarAuth);
+    } else {
+      const sidebarAuth = document.getElementById('sidebar-auth-status');
+      if (sidebarAuth) {
+        sidebarAuth.innerHTML = '<div class="loading-text">Auth unavailable</div>';
+      }
+    }
+  });
+
+  function handleTableViewClick() {
+      document.querySelectorAll('.view-content').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.view-toggle button').forEach(el => el.classList.remove('active'));
+      document.getElementById('tableView').classList.add('active');
+      document.getElementById('tableViewBtn').classList.add('active');
+
+      // Load the Panel Tabulator widget if available
+      const tableContainer = document.getElementById('attributeTable');
+      if (tableContainer) {
+          {% if map_table %}
+          tableContainer.innerHTML = `{{ map_table|safe }}`;
+          {% else %}
+          tableContainer.innerHTML = '<div class="no-data-message"><p>No table data available. Please upload a file or load cadastral data.</p></div>';
+          {% endif %}
+      }
+  }
 </script>
 {% endblock %}
