@@ -215,6 +215,9 @@ class SpatialiteSettings(BaseSettings):
     default_limit: int = 1000
     extension_path: Optional[str] = None  # Optional override for mod_spatialite path
 
+    # FlatGeobuf directory (for FGB data source)
+    fgb_directory: str = "/mnt/mobile/data/aecs4u.it/land-registry"
+
     class Config:
         env_prefix = "SPATIALITE_"
         case_sensitive = False

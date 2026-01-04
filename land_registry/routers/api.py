@@ -2488,12 +2488,16 @@ async def list_fgb_regions():
     Returns a list of regions with their available files.
     """
     try:
-        fgb_dir = Path("/mnt/mobile/data/aecs4u.it/land-registry")
+        from land_registry.config import spatialite_settings
+        fgb_dir = Path(spatialite_settings.fgb_directory)
+
+        # Check if directory exists and is accessible
         if not fgb_dir.exists():
+            logger.warning(f"FGB directory does not exist: {fgb_dir}")
             return {"regions": []}
-        
+
         regions = {}
-        
+
         # Find all FGB files
         for fgb_file in fgb_dir.glob("cadastral_*.fgb"):
             # Parse filename: cadastral_{type}.{region}.fgb
@@ -2541,10 +2545,12 @@ async def get_fgb_metadata(region_slug: str, layer_type: str):
     Get metadata for a specific FGB file.
     """
     try:
+        from land_registry.config import spatialite_settings
+
         if layer_type not in ["map", "ple"]:
             raise HTTPException(status_code=400, detail="layer_type must be 'map' or 'ple'")
-        
-        fgb_dir = Path("/mnt/mobile/data/aecs4u.it/land-registry")
+
+        fgb_dir = Path(spatialite_settings.fgb_directory)
         filename = f"cadastral_{layer_type}.{region_slug}.fgb"
         fgb_path = fgb_dir / filename
         
@@ -2578,10 +2584,12 @@ async def load_fgb_file(region_slug: str, layer_type: str):
     This endpoint reads the FGB file and converts it to GeoJSON for map display.
     """
     try:
+        from land_registry.config import spatialite_settings
+
         if layer_type not in ["map", "ple"]:
             raise HTTPException(status_code=400, detail="layer_type must be 'map' or 'ple'")
-        
-        fgb_dir = Path("/mnt/mobile/data/aecs4u.it/land-registry")
+
+        fgb_dir = Path(spatialite_settings.fgb_directory)
         filename = f"cadastral_{layer_type}.{region_slug}.fgb"
         fgb_path = fgb_dir / filename
         
