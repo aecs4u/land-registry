@@ -3878,3 +3878,542 @@ function calculateGeoJsonBounds(geoJsonData) {
         return null;
     }
 }
+
+
+// ============================================================================
+// Zone Manager
+// ============================================================================
+
+window.savedZones = {};       // zone_id -> { data, layer }
+window.zoneLayerGroup = null; // L.LayerGroup for all zone layers
+
+function initZoneManager() {
+    window.zoneLayerGroup = new L.LayerGroup();
+    var mapElements = document.querySelectorAll('.leaflet-container');
+    if (mapElements.length > 0) {
+        var mapId = mapElements[0].id;
+        if (window[mapId]) {
+            window[mapId].addLayer(window.zoneLayerGroup);
+        }
+    }
+    updateSaveAsZoneButton();
+    console.log('Zone Manager initialized');
+}
+
+function updateSaveAsZoneButton() {
+    var btn = document.getElementById('saveAsZoneBtn');
+    if (btn) {
+        btn.disabled = !window.drawnItems || window.drawnItems.getLayers().length === 0;
+    }
+}
+
+function showZoneSaveForm() {
+    if (!window.drawnItems || window.drawnItems.getLayers().length === 0) {
+        alert('Draw a shape on the map first.');
+        return;
+    }
+    document.getElementById('zoneSaveForm').style.display = 'block';
+    document.getElementById('zoneName').focus();
+}
+
+function cancelZoneSave() {
+    document.getElementById('zoneSaveForm').style.display = 'none';
+    document.getElementById('zoneName').value = '';
+    document.getElementById('zoneDescription').value = '';
+    document.getElementById('zoneColor').value = '#3388ff';
+    document.getElementById('zoneTags').value = '';
+}
+
+async function _authenticatedFetch(url, options) {
+    options = options || {};
+    options.headers = options.headers || {};
+    options.headers['Content-Type'] = 'application/json';
+
+    // Try to get auth token from Clerk
+    if (window.Clerk && window.Clerk.session) {
+        try {
+            var token = await window.Clerk.session.getToken();
+            if (token) {
+                options.headers['Authorization'] = 'Bearer ' + token;
+            }
+        } catch (e) {
+            console.warn('Could not get auth token:', e);
+        }
+    }
+    return fetch(url, options);
+}
+
+async function saveCurrentDrawingAsZone() {
+    var name = document.getElementById('zoneName').value.trim();
+    if (!name) {
+        alert('Please enter a zone name.');
+        return;
+    }
+
+    if (!window.drawnItems || window.drawnItems.getLayers().length === 0) {
+        alert('No drawn shapes to save.');
+        return;
+    }
+
+    // Get the last drawn layer
+    var layers = window.drawnItems.getLayers();
+    var layer = layers[layers.length - 1];
+    var geojson = layer.toGeoJSON();
+
+    // Ensure it's a Feature
+    if (geojson.type !== 'Feature') {
+        geojson = { type: 'Feature', geometry: geojson, properties: {} };
+    }
+
+    var description = document.getElementById('zoneDescription').value.trim();
+    var color = document.getElementById('zoneColor').value;
+    var tagsStr = document.getElementById('zoneTags').value.trim();
+    var tags = tagsStr ? tagsStr.split(',').map(function(t) { return t.trim(); }).filter(Boolean) : [];
+
+    // Determine polygon type
+    var polygonType = 'polygon';
+    if (layer instanceof L.Circle) polygonType = 'circle';
+    else if (layer instanceof L.Rectangle) polygonType = 'rectangle';
+    else if (layer instanceof L.Marker) polygonType = 'marker';
+    else if (layer instanceof L.Polyline && !(layer instanceof L.Polygon)) polygonType = 'polyline';
+
+    try {
+        var response = await _authenticatedFetch('/api/v1/zones/', {
+            method: 'POST',
+            body: JSON.stringify({
+                name: name,
+                description: description || null,
+                geojson: geojson,
+                polygon_type: polygonType,
+                color: color,
+                tags: tags
+            })
+        });
+
+        if (!response.ok) {
+            var err = await response.json();
+            alert('Error saving zone: ' + (err.detail || 'Unknown error'));
+            return;
+        }
+
+        var data = await response.json();
+        var zone = data.zone;
+
+        // Remove from drawnItems and add to zoneLayerGroup
+        window.drawnItems.removeLayer(layer);
+        renderZoneOnMap(zone);
+        updateSaveAsZoneButton();
+
+        // Add to zone list
+        addZoneToList(zone);
+
+        // Hide save form
+        cancelZoneSave();
+
+        console.log('Zone saved:', zone.id, zone.name);
+
+    } catch (e) {
+        console.error('Error saving zone:', e);
+        alert('Failed to save zone. Please try again.');
+    }
+}
+
+async function loadAllZones() {
+    try {
+        // Load zone list (without geometries)
+        var listResponse = await _authenticatedFetch('/api/v1/zones/');
+        if (!listResponse.ok) {
+            if (listResponse.status === 401) {
+                console.log('Not authenticated - skipping zone load');
+                return;
+            }
+            console.error('Failed to load zones:', listResponse.status);
+            return;
+        }
+
+        var listData = await listResponse.json();
+        var zones = listData.zones || [];
+
+        // Render list
+        renderZoneList(zones);
+
+        // Load visible geometries onto map
+        var geoResponse = await _authenticatedFetch('/api/v1/zones/geojson');
+        if (geoResponse.ok) {
+            var geoData = await geoResponse.json();
+
+            // Clear existing zone layers
+            if (window.zoneLayerGroup) {
+                window.zoneLayerGroup.clearLayers();
+            }
+            window.savedZones = {};
+
+            // Render each feature
+            if (geoData.features) {
+                geoData.features.forEach(function(feature) {
+                    var zoneId = feature.properties.zone_id;
+                    var zoneName = feature.properties.zone_name;
+                    var zoneColor = feature.properties.zone_color || '#3388ff';
+
+                    var zoneLayer = L.geoJSON(feature, {
+                        style: function() {
+                            return {
+                                color: zoneColor,
+                                weight: 3,
+                                opacity: 0.8,
+                                fillOpacity: 0.25,
+                                fillColor: zoneColor
+                            };
+                        },
+                        pointToLayer: function(f, latlng) {
+                            return L.circleMarker(latlng, {
+                                radius: 8,
+                                color: zoneColor,
+                                fillColor: zoneColor,
+                                fillOpacity: 0.5
+                            });
+                        }
+                    });
+
+                    zoneLayer.bindPopup(
+                        '<strong>' + (zoneName || 'Unnamed Zone') + '</strong>' +
+                        '<br><small>ID: ' + zoneId + '</small>'
+                    );
+
+                    if (window.zoneLayerGroup) {
+                        window.zoneLayerGroup.addLayer(zoneLayer);
+                    }
+
+                    window.savedZones[zoneId] = {
+                        layer: zoneLayer,
+                        visible: true
+                    };
+                });
+            }
+        }
+
+        console.log('Loaded', zones.length, 'zones');
+
+    } catch (e) {
+        console.error('Error loading zones:', e);
+    }
+}
+
+function renderZoneList(zones) {
+    var container = document.getElementById('zoneList');
+    var bulkActions = document.getElementById('zoneBulkActions');
+    if (!container) return;
+
+    if (!zones || zones.length === 0) {
+        container.innerHTML = '<p class="zone-empty-message">No zones saved yet. Draw a shape and save it as a zone.</p>';
+        if (bulkActions) bulkActions.style.display = 'none';
+        return;
+    }
+
+    if (bulkActions) bulkActions.style.display = 'block';
+
+    var html = '';
+    zones.forEach(function(zone) {
+        var visibleClass = zone.is_visible ? '' : ' hidden';
+        var eyeIcon = zone.is_visible ? '\u{1F441}' : '\u{1F441}\u{200D}\u{1F5E8}';
+        var areaTxt = zone.area_sqm ? zone.area_sqm.toFixed(6) : '-';
+        var dateTxt = zone.created_at ? zone.created_at.substring(0, 10) : '';
+
+        html += '<div class="zone-item' + visibleClass + '" data-zone-id="' + zone.id + '">';
+        html += '  <div class="zone-item-header">';
+        html += '    <span class="zone-color-swatch" style="background:' + (zone.color || '#3388ff') + ';"></span>';
+        html += '    <span class="zone-name">' + (zone.name || 'Unnamed') + '</span>';
+        html += '    <div class="zone-item-actions">';
+        html += '      <button onclick="toggleZoneVisibility(' + zone.id + ')" title="Toggle visibility">' + eyeIcon + '</button>';
+        html += '      <button onclick="zoomToZone(' + zone.id + ')" title="Zoom to zone">&#x1F50D;</button>';
+        html += '      <button onclick="editZone(' + zone.id + ')" title="Edit zone">&#x270F;</button>';
+        html += '      <button onclick="deleteZone(' + zone.id + ')" title="Delete zone">&#x1F5D1;</button>';
+        html += '    </div>';
+        html += '  </div>';
+        html += '  <div class="zone-item-meta">';
+        html += '    <small>' + zone.polygon_type + ' | ' + dateTxt + '</small>';
+        html += '  </div>';
+        html += '</div>';
+    });
+
+    container.innerHTML = html;
+}
+
+function addZoneToList(zone) {
+    var container = document.getElementById('zoneList');
+    if (!container) return;
+
+    // Remove empty message if present
+    var emptyMsg = container.querySelector('.zone-empty-message');
+    if (emptyMsg) emptyMsg.remove();
+
+    var bulkActions = document.getElementById('zoneBulkActions');
+    if (bulkActions) bulkActions.style.display = 'block';
+
+    var dateTxt = zone.created_at ? zone.created_at.substring(0, 10) : '';
+    var div = document.createElement('div');
+    div.className = 'zone-item';
+    div.dataset.zoneId = zone.id;
+    div.innerHTML =
+        '<div class="zone-item-header">' +
+        '  <span class="zone-color-swatch" style="background:' + (zone.color || '#3388ff') + ';"></span>' +
+        '  <span class="zone-name">' + (zone.name || 'Unnamed') + '</span>' +
+        '  <div class="zone-item-actions">' +
+        '    <button onclick="toggleZoneVisibility(' + zone.id + ')" title="Toggle visibility">\u{1F441}</button>' +
+        '    <button onclick="zoomToZone(' + zone.id + ')" title="Zoom to zone">&#x1F50D;</button>' +
+        '    <button onclick="editZone(' + zone.id + ')" title="Edit zone">&#x270F;</button>' +
+        '    <button onclick="deleteZone(' + zone.id + ')" title="Delete zone">&#x1F5D1;</button>' +
+        '  </div>' +
+        '</div>' +
+        '<div class="zone-item-meta">' +
+        '  <small>' + (zone.polygon_type || 'polygon') + ' | ' + dateTxt + '</small>' +
+        '</div>';
+
+    container.prepend(div);
+}
+
+function renderZoneOnMap(zone) {
+    if (!window.zoneLayerGroup) return;
+
+    var geojson = zone.geojson;
+    var color = zone.color || '#3388ff';
+    var name = zone.name || 'Unnamed Zone';
+
+    var zoneLayer = L.geoJSON(geojson, {
+        style: function() {
+            return {
+                color: color,
+                weight: 3,
+                opacity: 0.8,
+                fillOpacity: 0.25,
+                fillColor: color
+            };
+        },
+        pointToLayer: function(f, latlng) {
+            return L.circleMarker(latlng, {
+                radius: 8,
+                color: color,
+                fillColor: color,
+                fillOpacity: 0.5
+            });
+        }
+    });
+
+    zoneLayer.bindPopup('<strong>' + name + '</strong><br><small>ID: ' + zone.id + '</small>');
+    window.zoneLayerGroup.addLayer(zoneLayer);
+
+    window.savedZones[zone.id] = {
+        layer: zoneLayer,
+        visible: true
+    };
+}
+
+async function toggleZoneVisibility(zoneId) {
+    var entry = window.savedZones[zoneId];
+    var newVisible = !(entry && entry.visible);
+
+    try {
+        var response = await _authenticatedFetch('/api/v1/zones/' + zoneId, {
+            method: 'PATCH',
+            body: JSON.stringify({ is_visible: newVisible })
+        });
+
+        if (!response.ok) return;
+
+        if (entry && entry.layer && window.zoneLayerGroup) {
+            if (newVisible) {
+                window.zoneLayerGroup.addLayer(entry.layer);
+            } else {
+                window.zoneLayerGroup.removeLayer(entry.layer);
+            }
+            entry.visible = newVisible;
+        }
+
+        // Update list item styling
+        var item = document.querySelector('.zone-item[data-zone-id="' + zoneId + '"]');
+        if (item) {
+            item.classList.toggle('hidden', !newVisible);
+        }
+
+    } catch (e) {
+        console.error('Error toggling zone visibility:', e);
+    }
+}
+
+async function zoomToZone(zoneId) {
+    var entry = window.savedZones[zoneId];
+    if (entry && entry.layer) {
+        var mapElements = document.querySelectorAll('.leaflet-container');
+        if (mapElements.length > 0) {
+            var map = window[mapElements[0].id];
+            if (map) {
+                map.fitBounds(entry.layer.getBounds(), { padding: [30, 30] });
+            }
+        }
+        return;
+    }
+
+    // If layer not loaded, fetch from API
+    try {
+        var response = await _authenticatedFetch('/api/v1/zones/' + zoneId);
+        if (response.ok) {
+            var data = await response.json();
+            renderZoneOnMap(data.zone);
+            // Now zoom
+            var newEntry = window.savedZones[zoneId];
+            if (newEntry && newEntry.layer) {
+                var mapElements = document.querySelectorAll('.leaflet-container');
+                if (mapElements.length > 0) {
+                    var map = window[mapElements[0].id];
+                    if (map) {
+                        map.fitBounds(newEntry.layer.getBounds(), { padding: [30, 30] });
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        console.error('Error zooming to zone:', e);
+    }
+}
+
+async function editZone(zoneId) {
+    var item = document.querySelector('.zone-item[data-zone-id="' + zoneId + '"]');
+    if (!item) return;
+
+    // Fetch current zone data
+    try {
+        var response = await _authenticatedFetch('/api/v1/zones/' + zoneId);
+        if (!response.ok) return;
+        var data = await response.json();
+        var zone = data.zone;
+
+        // Replace item content with inline edit form
+        var originalHtml = item.innerHTML;
+        item.innerHTML =
+            '<div class="zone-edit-form">' +
+            '  <input type="text" class="zone-edit-name" value="' + (zone.name || '').replace(/"/g, '&quot;') + '" placeholder="Zone name" />' +
+            '  <textarea class="zone-edit-desc" rows="2" placeholder="Description">' + (zone.description || '') + '</textarea>' +
+            '  <div style="display:flex;gap:6px;align-items:center;">' +
+            '    <input type="color" class="zone-edit-color" value="' + (zone.color || '#3388ff') + '" />' +
+            '    <button onclick="submitZoneEdit(' + zoneId + ')" class="zone-save-btn" style="flex:1;">Save</button>' +
+            '    <button onclick="loadAllZones()" class="zone-cancel-btn">Cancel</button>' +
+            '  </div>' +
+            '</div>';
+
+    } catch (e) {
+        console.error('Error editing zone:', e);
+    }
+}
+
+async function submitZoneEdit(zoneId) {
+    var item = document.querySelector('.zone-item[data-zone-id="' + zoneId + '"]');
+    if (!item) return;
+
+    var nameInput = item.querySelector('.zone-edit-name');
+    var descInput = item.querySelector('.zone-edit-desc');
+    var colorInput = item.querySelector('.zone-edit-color');
+
+    var updates = {};
+    if (nameInput) updates.name = nameInput.value.trim() || null;
+    if (descInput) updates.description = descInput.value.trim() || null;
+    if (colorInput) updates.color = colorInput.value;
+
+    try {
+        var response = await _authenticatedFetch('/api/v1/zones/' + zoneId, {
+            method: 'PATCH',
+            body: JSON.stringify(updates)
+        });
+
+        if (response.ok) {
+            // Refresh zone list and map
+            loadAllZones();
+        } else {
+            alert('Failed to update zone.');
+        }
+
+    } catch (e) {
+        console.error('Error submitting zone edit:', e);
+    }
+}
+
+async function deleteZone(zoneId) {
+    if (!confirm('Delete this zone? This cannot be undone.')) return;
+
+    try {
+        var response = await _authenticatedFetch('/api/v1/zones/' + zoneId, {
+            method: 'DELETE'
+        });
+
+        if (!response.ok) {
+            alert('Failed to delete zone.');
+            return;
+        }
+
+        // Remove from map
+        var entry = window.savedZones[zoneId];
+        if (entry && entry.layer && window.zoneLayerGroup) {
+            window.zoneLayerGroup.removeLayer(entry.layer);
+        }
+        delete window.savedZones[zoneId];
+
+        // Remove from list
+        var item = document.querySelector('.zone-item[data-zone-id="' + zoneId + '"]');
+        if (item) item.remove();
+
+        // Check if list is now empty
+        var container = document.getElementById('zoneList');
+        if (container && container.querySelectorAll('.zone-item').length === 0) {
+            container.innerHTML = '<p class="zone-empty-message">No zones saved yet. Draw a shape and save it as a zone.</p>';
+            var bulkActions = document.getElementById('zoneBulkActions');
+            if (bulkActions) bulkActions.style.display = 'none';
+        }
+
+        console.log('Zone deleted:', zoneId);
+
+    } catch (e) {
+        console.error('Error deleting zone:', e);
+    }
+}
+
+async function showAllZones() {
+    var ids = Object.keys(window.savedZones).map(Number).filter(Boolean);
+    if (ids.length === 0) return;
+
+    try {
+        await _authenticatedFetch('/api/v1/zones/visibility', {
+            method: 'POST',
+            body: JSON.stringify({ zone_ids: ids, is_visible: true })
+        });
+        loadAllZones();
+    } catch (e) {
+        console.error('Error showing all zones:', e);
+    }
+}
+
+async function hideAllZones() {
+    var ids = Object.keys(window.savedZones).map(Number).filter(Boolean);
+    if (ids.length === 0) return;
+
+    try {
+        await _authenticatedFetch('/api/v1/zones/visibility', {
+            method: 'POST',
+            body: JSON.stringify({ zone_ids: ids, is_visible: false })
+        });
+
+        // Remove all layers from map
+        Object.values(window.savedZones).forEach(function(entry) {
+            if (entry.layer && window.zoneLayerGroup) {
+                window.zoneLayerGroup.removeLayer(entry.layer);
+            }
+            entry.visible = false;
+        });
+
+        // Update list styling
+        document.querySelectorAll('.zone-item').forEach(function(item) {
+            item.classList.add('hidden');
+        });
+
+    } catch (e) {
+        console.error('Error hiding all zones:', e);
+    }
+}

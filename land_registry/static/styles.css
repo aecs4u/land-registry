@@ -3443,6 +3443,227 @@ button:hover {
   }
 }
 
+/* ============================================================================
+   Zone Manager Styles
+   ============================================================================ */
+
+.zone-manager-section {
+  background: #f1f3f4;
+  border: 1px solid #dadce0;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.zone-manager-section h4 {
+  margin: 0 0 12px 0;
+  color: #3c4043;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.zone-save-form {
+  background: #fff;
+  border: 1px solid #dadce0;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.zone-form-field {
+  margin-bottom: 8px;
+}
+
+.zone-form-field label {
+  display: block;
+  font-size: 12px;
+  color: #5f6368;
+  margin-bottom: 4px;
+  font-weight: 500;
+}
+
+.zone-form-field input[type="text"],
+.zone-form-field textarea {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #dadce0;
+  border-radius: 4px;
+  font-size: 12px;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+
+.zone-form-field input[type="text"]:focus,
+.zone-form-field textarea:focus {
+  border-color: #1a73e8;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.15);
+}
+
+.zone-form-field input[type="color"] {
+  width: 40px;
+  height: 30px;
+  border: 1px solid #dadce0;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 2px;
+}
+
+.zone-form-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.zone-save-btn {
+  padding: 6px 12px;
+  background: #1a73e8;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  transition: background 0.2s;
+}
+
+.zone-save-btn:hover {
+  background: #1557b0;
+}
+
+.zone-cancel-btn {
+  padding: 6px 12px;
+  background: #f1f3f4;
+  color: #3c4043;
+  border: 1px solid #dadce0;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.2s;
+}
+
+.zone-cancel-btn:hover {
+  background: #e8eaed;
+}
+
+.zone-list {
+  max-height: 280px;
+  overflow-y: auto;
+  margin-top: 12px;
+}
+
+.zone-item {
+  background: #fff;
+  border: 1px solid #dadce0;
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 6px;
+  transition: box-shadow 0.2s, opacity 0.2s;
+}
+
+.zone-item:hover {
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+}
+
+.zone-item.hidden {
+  opacity: 0.45;
+}
+
+.zone-item-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.zone-color-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+}
+
+.zone-name {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 500;
+  color: #3c4043;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zone-item-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.zone-item-actions button {
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background 0.15s;
+}
+
+.zone-item-actions button:hover {
+  background: #e8eaed;
+}
+
+.zone-item-meta {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #80868b;
+}
+
+.zone-empty-message {
+  font-size: 12px;
+  color: #80868b;
+  text-align: center;
+  padding: 12px;
+  margin: 0;
+}
+
+.zone-bulk-actions {
+  margin-top: 8px;
+}
+
+.zone-edit-form input[type="text"],
+.zone-edit-form textarea {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #dadce0;
+  border-radius: 4px;
+  font-size: 12px;
+  box-sizing: border-box;
+  font-family: inherit;
+  margin-bottom: 6px;
+}
+
+.zone-edit-form input[type="color"] {
+  width: 36px;
+  height: 28px;
+  border: 1px solid #dadce0;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 2px;
+}
+
+@media (max-width: 768px) {
+  .zone-form-row {
+    flex-direction: column;
+  }
+}
+
 /* Enhanced Drawing Controls Styles */
 
 .drawing-info {

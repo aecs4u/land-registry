@@ -38,6 +38,7 @@ class SQLiteDatabase:
     def __init__(self, db_path: Optional[str] = None):
         self.db_path = db_path or get_sqlite_path()
         self._ensure_database_exists()
+        self._upgrade_database()
 
     def _ensure_database_exists(self):
         """Ensure the database file and directory exist."""
@@ -116,6 +117,9 @@ class SQLiteDatabase:
                     area_sqm REAL,
                     centroid_lat REAL,
                     centroid_lng REAL,
+                    color TEXT DEFAULT '#3388ff',
+                    is_visible INTEGER DEFAULT 1,
+                    tags TEXT DEFAULT '[]',
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
@@ -154,6 +158,26 @@ class SQLiteDatabase:
 
             conn.commit()
             logger.info(f"SQLite database initialized at {self.db_path}")
+
+    def _upgrade_database(self):
+        """Run schema upgrades for existing databases."""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("PRAGMA table_info(drawn_polygons)")
+                existing_columns = {row['name'] for row in cursor.fetchall()}
+
+                if 'color' not in existing_columns:
+                    cursor.execute("ALTER TABLE drawn_polygons ADD COLUMN color TEXT DEFAULT '#3388ff'")
+                    logger.info("Added 'color' column to drawn_polygons")
+                if 'is_visible' not in existing_columns:
+                    cursor.execute("ALTER TABLE drawn_polygons ADD COLUMN is_visible INTEGER DEFAULT 1")
+                    logger.info("Added 'is_visible' column to drawn_polygons")
+                if 'tags' not in existing_columns:
+                    cursor.execute("ALTER TABLE drawn_polygons ADD COLUMN tags TEXT DEFAULT '[]'")
+                    logger.info("Added 'tags' column to drawn_polygons")
+        except Exception as e:
+            logger.warning(f"Database upgrade check failed (non-fatal): {e}")
 
     @contextmanager
     def get_connection(self) -> Generator[sqlite3.Connection, None, None]:
@@ -311,13 +335,16 @@ class SQLiteDatabase:
         polygon_type: str = "polygon",
         area_sqm: float = None,
         centroid_lat: float = None,
-        centroid_lng: float = None
+        centroid_lng: float = None,
+        color: str = "#3388ff",
+        tags: List[str] = None
     ) -> int:
-        """Save a drawn polygon."""
+        """Save a drawn polygon/zone."""
         return self.execute_insert("""
             INSERT INTO drawn_polygons
-            (user_id, name, description, geojson, polygon_type, area_sqm, centroid_lat, centroid_lng)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (user_id, name, description, geojson, polygon_type, area_sqm,
+             centroid_lat, centroid_lng, color, tags)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             user_id,
             name,
@@ -326,12 +353,96 @@ class SQLiteDatabase:
             polygon_type,
             area_sqm,
             centroid_lat,
-            centroid_lng
+            centroid_lng,
+            color,
+            json.dumps(tags or [])
         ))
 
-    def delete_drawn_polygon(self, polygon_id: int) -> None:
-        """Delete a drawn polygon."""
-        self.execute("DELETE FROM drawn_polygons WHERE id = ?", (polygon_id,))
+    def get_drawn_polygon(self, polygon_id: int, user_id: str = None) -> Optional[Dict[str, Any]]:
+        """Get a single drawn polygon by ID, optionally filtered by user."""
+        if user_id:
+            row = self.execute_one(
+                "SELECT * FROM drawn_polygons WHERE id = ? AND user_id = ?",
+                (polygon_id, user_id)
+            )
+        else:
+            row = self.execute_one(
+                "SELECT * FROM drawn_polygons WHERE id = ?",
+                (polygon_id,)
+            )
+        return dict(row) if row else None
+
+    def update_drawn_polygon(
+        self,
+        polygon_id: int,
+        user_id: str,
+        name: str = None,
+        description: str = None,
+        color: str = None,
+        geojson: Dict[str, Any] = None,
+        is_visible: bool = None,
+        tags: List[str] = None,
+        area_sqm: float = None,
+        centroid_lat: float = None,
+        centroid_lng: float = None
+    ) -> bool:
+        """Update a drawn polygon. Returns True if updated, False if not found."""
+        updates = []
+        params = []
+
+        if name is not None:
+            updates.append("name = ?")
+            params.append(name)
+        if description is not None:
+            updates.append("description = ?")
+            params.append(description)
+        if color is not None:
+            updates.append("color = ?")
+            params.append(color)
+        if geojson is not None:
+            updates.append("geojson = ?")
+            params.append(json.dumps(geojson))
+        if is_visible is not None:
+            updates.append("is_visible = ?")
+            params.append(int(is_visible))
+        if tags is not None:
+            updates.append("tags = ?")
+            params.append(json.dumps(tags))
+        if area_sqm is not None:
+            updates.append("area_sqm = ?")
+            params.append(area_sqm)
+        if centroid_lat is not None:
+            updates.append("centroid_lat = ?")
+            params.append(centroid_lat)
+        if centroid_lng is not None:
+            updates.append("centroid_lng = ?")
+            params.append(centroid_lng)
+
+        if not updates:
+            return False
+
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+        params.extend([polygon_id, user_id])
+        query = f"UPDATE drawn_polygons SET {', '.join(updates)} WHERE id = ? AND user_id = ?"
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, tuple(params))
+            return cursor.rowcount > 0
+
+    def delete_drawn_polygon(self, polygon_id: int, user_id: str = None) -> bool:
+        """Delete a drawn polygon. Returns True if deleted."""
+        if user_id:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "DELETE FROM drawn_polygons WHERE id = ? AND user_id = ?",
+                    (polygon_id, user_id)
+                )
+                return cursor.rowcount > 0
+        else:
+            self.execute("DELETE FROM drawn_polygons WHERE id = ?", (polygon_id,))
+            return True
 
     # -------------------------------------------------------------------------
     # Cadastral Query Cache

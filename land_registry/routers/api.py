@@ -1937,6 +1937,272 @@ async def clear_drawn_polygons():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to clear drawings: {str(e)}")
 
+
+# ============================================================================
+# Zone Management Endpoints (database-backed CRUD)
+# ============================================================================
+
+from land_registry.models import (
+    ZoneCreateRequest, ZoneUpdateRequest, ZoneResponse,
+    ZoneDetailResponse, ZoneListResponse, ZoneBulkVisibilityRequest
+)
+from land_registry.sqlite_db import get_sqlite_db
+
+
+def _zone_row_to_response(row: dict, include_geojson: bool = False) -> dict:
+    """Convert a database row to a zone response dict."""
+    tags = []
+    if row.get('tags'):
+        try:
+            tags = json.loads(row['tags'])
+        except (json.JSONDecodeError, TypeError):
+            tags = []
+
+    result = {
+        'id': row['id'],
+        'name': row.get('name'),
+        'description': row.get('description'),
+        'polygon_type': row.get('polygon_type', 'polygon'),
+        'color': row.get('color', '#3388ff'),
+        'area_sqm': row.get('area_sqm'),
+        'centroid_lat': row.get('centroid_lat'),
+        'centroid_lng': row.get('centroid_lng'),
+        'is_visible': bool(row.get('is_visible', 1)),
+        'tags': tags,
+        'created_at': row.get('created_at', ''),
+        'updated_at': row.get('updated_at', ''),
+    }
+
+    if include_geojson:
+        try:
+            result['geojson'] = json.loads(row['geojson']) if isinstance(row['geojson'], str) else row['geojson']
+        except (json.JSONDecodeError, TypeError):
+            result['geojson'] = {}
+
+    return result
+
+
+@api_router.post("/zones/", status_code=201)
+async def create_zone(
+    request: ZoneCreateRequest,
+    user: ClerkUser = Depends(get_current_user)
+):
+    """Create a new zone from a drawn geometry."""
+    try:
+        from shapely.geometry import shape as shapely_shape
+
+        db = get_sqlite_db()
+
+        # Compute area and centroid from geometry
+        area_sqm = None
+        centroid_lat = None
+        centroid_lng = None
+        try:
+            geom = shapely_shape(request.geojson.get('geometry', {}))
+            if geom.is_valid and not geom.is_empty:
+                centroid = geom.centroid
+                centroid_lat = centroid.y
+                centroid_lng = centroid.x
+                # Approximate area (degrees squared; useful for relative comparison)
+                area_sqm = geom.area
+        except Exception as e:
+            logger.warning(f"Could not compute geometry metrics: {e}")
+
+        zone_id = db.save_drawn_polygon(
+            geojson=request.geojson,
+            user_id=user.id,
+            name=request.name,
+            description=request.description,
+            polygon_type=request.polygon_type,
+            area_sqm=area_sqm,
+            centroid_lat=centroid_lat,
+            centroid_lng=centroid_lng,
+            color=request.color,
+            tags=request.tags,
+        )
+
+        zone = db.get_drawn_polygon(zone_id, user_id=user.id)
+        return {"success": True, "zone": _zone_row_to_response(zone, include_geojson=True)}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating zone: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error creating zone: {str(e)}")
+
+
+@api_router.get("/zones/geojson")
+async def get_zones_geojson(
+    user: ClerkUser = Depends(get_current_user)
+):
+    """Get all visible zones as a GeoJSON FeatureCollection for map rendering."""
+    try:
+        db = get_sqlite_db()
+        rows = db.execute(
+            "SELECT * FROM drawn_polygons WHERE user_id = ? AND is_visible = 1 ORDER BY created_at DESC",
+            (user.id,)
+        )
+        features = []
+        for row in rows:
+            row_dict = dict(row)
+            try:
+                geojson = json.loads(row_dict['geojson']) if isinstance(row_dict['geojson'], str) else row_dict['geojson']
+                feature = geojson if geojson.get('type') == 'Feature' else {'type': 'Feature', 'geometry': geojson}
+                # Inject zone metadata into properties
+                props = feature.get('properties', {}) or {}
+                props.update({
+                    'zone_id': row_dict['id'],
+                    'zone_name': row_dict.get('name', ''),
+                    'zone_color': row_dict.get('color', '#3388ff'),
+                    'zone_type': row_dict.get('polygon_type', 'polygon'),
+                })
+                feature['properties'] = props
+                features.append(feature)
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+        return {
+            "type": "FeatureCollection",
+            "features": features
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting zones GeoJSON: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error getting zones: {str(e)}")
+
+
+@api_router.get("/zones/")
+async def list_zones(
+    polygon_type: Optional[str] = None,
+    tag: Optional[str] = None,
+    user: ClerkUser = Depends(get_current_user)
+):
+    """List all zones for the authenticated user (without geometry bodies)."""
+    try:
+        db = get_sqlite_db()
+
+        conditions = ["user_id = ?"]
+        params: list = [user.id]
+
+        if polygon_type:
+            conditions.append("polygon_type = ?")
+            params.append(polygon_type)
+
+        query = f"SELECT * FROM drawn_polygons WHERE {' AND '.join(conditions)} ORDER BY created_at DESC"
+        rows = db.execute(query, tuple(params))
+
+        zones = []
+        for row in rows:
+            zone = _zone_row_to_response(dict(row))
+            # Filter by tag if requested
+            if tag and tag not in zone.get('tags', []):
+                continue
+            zones.append(zone)
+
+        return {"success": True, "zones": zones, "total": len(zones)}
+
+    except Exception as e:
+        logger.error(f"Error listing zones: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error listing zones: {str(e)}")
+
+
+@api_router.get("/zones/{zone_id}")
+async def get_zone(
+    zone_id: int,
+    user: ClerkUser = Depends(get_current_user)
+):
+    """Get a single zone with full geometry."""
+    db = get_sqlite_db()
+    zone = db.get_drawn_polygon(zone_id, user_id=user.id)
+    if not zone:
+        raise HTTPException(status_code=404, detail="Zone not found")
+    return {"success": True, "zone": _zone_row_to_response(zone, include_geojson=True)}
+
+
+@api_router.patch("/zones/{zone_id}")
+async def update_zone(
+    zone_id: int,
+    request: ZoneUpdateRequest,
+    user: ClerkUser = Depends(get_current_user)
+):
+    """Update a zone's metadata or geometry."""
+    try:
+        db = get_sqlite_db()
+
+        # Build update kwargs from non-None fields
+        kwargs: Dict[str, Any] = {}
+        if request.name is not None:
+            kwargs['name'] = request.name
+        if request.description is not None:
+            kwargs['description'] = request.description
+        if request.color is not None:
+            kwargs['color'] = request.color
+        if request.is_visible is not None:
+            kwargs['is_visible'] = request.is_visible
+        if request.tags is not None:
+            kwargs['tags'] = request.tags
+
+        if request.geojson is not None:
+            kwargs['geojson'] = request.geojson
+            # Recompute area and centroid
+            try:
+                from shapely.geometry import shape as shapely_shape
+                geom = shapely_shape(request.geojson.get('geometry', {}))
+                if geom.is_valid and not geom.is_empty:
+                    kwargs['area_sqm'] = geom.area
+                    kwargs['centroid_lat'] = geom.centroid.y
+                    kwargs['centroid_lng'] = geom.centroid.x
+            except Exception:
+                pass
+
+        if not kwargs:
+            raise HTTPException(status_code=400, detail="No fields to update")
+
+        updated = db.update_drawn_polygon(zone_id, user.id, **kwargs)
+        if not updated:
+            raise HTTPException(status_code=404, detail="Zone not found")
+
+        zone = db.get_drawn_polygon(zone_id, user_id=user.id)
+        return {"success": True, "zone": _zone_row_to_response(zone, include_geojson=True)}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating zone: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error updating zone: {str(e)}")
+
+
+@api_router.delete("/zones/{zone_id}")
+async def delete_zone(
+    zone_id: int,
+    user: ClerkUser = Depends(get_current_user)
+):
+    """Delete a zone."""
+    db = get_sqlite_db()
+    deleted = db.delete_drawn_polygon(zone_id, user_id=user.id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Zone not found")
+    return {"success": True, "message": "Zone deleted"}
+
+
+@api_router.post("/zones/visibility")
+async def bulk_toggle_zone_visibility(
+    request: ZoneBulkVisibilityRequest,
+    user: ClerkUser = Depends(get_current_user)
+):
+    """Set visibility for multiple zones at once."""
+    try:
+        db = get_sqlite_db()
+        updated = 0
+        for zone_id in request.zone_ids:
+            if db.update_drawn_polygon(zone_id, user.id, is_visible=request.is_visible):
+                updated += 1
+        return {"success": True, "updated": updated}
+    except Exception as e:
+        logger.error(f"Error updating zone visibility: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error updating visibility: {str(e)}")
+
+
 # User Profile and Dashboard Endpoints
 
 @api_router.get("/user/profile")

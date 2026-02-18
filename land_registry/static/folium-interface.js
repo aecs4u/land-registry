@@ -417,6 +417,17 @@ function initializeDrawingControls() {
                     
                     window.drawnItems.addLayer(layer);
                     console.log('Feature drawn:', type);
+
+                    // Update Zone Manager button state
+                    if (typeof updateSaveAsZoneButton === 'function') {
+                        updateSaveAsZoneButton();
+                    }
+                });
+
+                map.on('draw:deleted', function() {
+                    if (typeof updateSaveAsZoneButton === 'function') {
+                        updateSaveAsZoneButton();
+                    }
                 });
 
                 window.drawingInitialized = true;

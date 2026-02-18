@@ -387,6 +387,58 @@
         </div>
         <div id="polygonCount" class="table-info">No polygons loaded</div>
       </div>
+
+      <!-- Zone Manager -->
+      <div class="zone-manager-section">
+        <h4>Zone Manager</h4>
+
+        <!-- Save form (hidden by default) -->
+        <div class="zone-save-form" id="zoneSaveForm" style="display: none;">
+          <div class="zone-form-field">
+            <label for="zoneName">Zone Name</label>
+            <input type="text" id="zoneName" placeholder="Enter zone name..." maxlength="200" />
+          </div>
+          <div class="zone-form-field">
+            <label for="zoneDescription">Description</label>
+            <textarea id="zoneDescription" placeholder="Optional description..." rows="2" maxlength="2000"></textarea>
+          </div>
+          <div class="zone-form-row">
+            <div class="zone-form-field" style="flex:1;">
+              <label for="zoneColor">Color</label>
+              <input type="color" id="zoneColor" value="#3388ff" />
+            </div>
+            <div class="zone-form-field" style="flex:2;">
+              <label for="zoneTags">Tags (comma-separated)</label>
+              <input type="text" id="zoneTags" placeholder="e.g., residential, priority" />
+            </div>
+          </div>
+          <div class="control-row">
+            <button onclick="saveCurrentDrawingAsZone()" class="zone-save-btn">Save Zone</button>
+            <button onclick="cancelZoneSave()" class="zone-cancel-btn">Cancel</button>
+          </div>
+        </div>
+
+        <div class="control-row">
+          <button onclick="showZoneSaveForm()" id="saveAsZoneBtn" class="control-btn" disabled>
+            Save Drawing as Zone
+          </button>
+          <button onclick="loadAllZones()" id="loadZonesBtn" class="control-btn">
+            Load Saved Zones
+          </button>
+        </div>
+
+        <!-- Zone list -->
+        <div id="zoneList" class="zone-list">
+          <p class="zone-empty-message">No zones saved yet. Draw a shape and save it as a zone.</p>
+        </div>
+
+        <div class="zone-bulk-actions" id="zoneBulkActions" style="display: none;">
+          <div class="control-row">
+            <button onclick="showAllZones()" class="control-btn">Show All</button>
+            <button onclick="hideAllZones()" class="control-btn">Hide All</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- 5. Filters -->
@@ -650,6 +702,19 @@
               }
           }, 1500);
       }
+
+      // Auto-load saved zones for authenticated users
+      setTimeout(function() {
+          if (typeof initZoneManager === 'function') {
+              initZoneManager();
+          }
+          // Wait for auth to initialize before loading zones
+          setTimeout(function() {
+              if (window.Clerk && window.Clerk.user && typeof loadAllZones === 'function') {
+                  loadAllZones();
+              }
+          }, 1500);
+      }, 3000);
   });
 
   // Auto-zoom functions are defined in folium-interface.js
