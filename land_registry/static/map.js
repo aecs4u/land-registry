@@ -3901,10 +3901,13 @@ function initZoneManager() {
 }
 
 function updateSaveAsZoneButton() {
-    var btn = document.getElementById('saveAsZoneBtn');
-    if (btn) {
-        btn.disabled = !window.drawnItems || window.drawnItems.getLayers().length === 0;
-    }
+    var hasDrawings = !!window.drawnItems && window.drawnItems.getLayers().length > 0;
+    ['saveAsZoneBtn', 'addZoneBtn'].forEach(function(btnId) {
+        var btn = document.getElementById(btnId);
+        if (btn) {
+            btn.disabled = !hasDrawings;
+        }
+    });
 }
 
 function showZoneSaveForm() {
@@ -4025,6 +4028,7 @@ async function loadAllZones() {
         if (!listResponse.ok) {
             if (listResponse.status === 401) {
                 console.log('Not authenticated - skipping zone load');
+                updateZoneCountBadge(0);
                 return;
             }
             console.error('Failed to load zones:', listResponse.status);
@@ -4033,6 +4037,7 @@ async function loadAllZones() {
 
         var listData = await listResponse.json();
         var zones = listData.zones || [];
+        updateZoneCountBadge(zones.length);
 
         // Render list
         renderZoneList(zones);
@@ -4099,6 +4104,54 @@ async function loadAllZones() {
     }
 }
 
+function updateZoneCountBadge(count) {
+    var badge = document.getElementById('zoneCount');
+    if (badge) {
+        badge.textContent = String(count || 0);
+    }
+}
+
+function toggleZoneCard(zoneId) {
+    var body = document.getElementById('zoneBody_' + zoneId);
+    if (!body) return;
+
+    var isOpen = body.style.display === 'block';
+    body.style.display = isOpen ? 'none' : 'block';
+
+    var indicator = document.querySelector('.zone-item[data-zone-id="' + zoneId + '"] .zone-expand-indicator');
+    if (indicator) {
+        indicator.textContent = isOpen ? '▼' : '▲';
+    }
+}
+
+function zoneCardHtml(zone) {
+    var visibleClass = zone.is_visible ? '' : ' hidden';
+    var dateTxt = zone.created_at ? zone.created_at.substring(0, 10) : '';
+    var typeTxt = zone.polygon_type || 'polygon';
+    var safeName = zone.name || 'Unnamed';
+    var color = zone.color || '#3388ff';
+    var checked = zone.is_visible ? ' checked' : '';
+
+    return '' +
+        '<div class="zone-item' + visibleClass + '" data-zone-id="' + zone.id + '">' +
+        '  <div class="zone-item-header" onclick="toggleZoneCard(' + zone.id + ')">' +
+        '    <div class="zone-item-main">' +
+        '      <input class="zone-vis-toggle" type="checkbox"' + checked + ' onchange="event.stopPropagation(); toggleZoneVisibility(' + zone.id + ', this.checked);" />' +
+        '      <span class="zone-color-swatch" style="background:' + color + ';"></span>' +
+        '      <span class="zone-name">' + safeName + '</span>' +
+        '      <span class="zone-expand-indicator">▼</span>' +
+        '    </div>' +
+        '    <div class="zone-item-actions">' +
+        '      <button class="zone-rename-btn" onclick="event.stopPropagation(); editZone(' + zone.id + ')" title="Rename zone">&#x270F;</button>' +
+        '      <button class="zone-delete-btn" onclick="event.stopPropagation(); deleteZone(' + zone.id + ')" title="Delete zone">&#x1F5D1;</button>' +
+        '    </div>' +
+        '  </div>' +
+        '  <div class="zone-item-body" id="zoneBody_' + zone.id + '" style="display:none;">' +
+        '    <div class="zone-item-meta"><small>' + typeTxt + ' | ' + dateTxt + '</small></div>' +
+        '  </div>' +
+        '</div>';
+}
+
 function renderZoneList(zones) {
     var container = document.getElementById('zoneList');
     var bulkActions = document.getElementById('zoneBulkActions');
@@ -4107,33 +4160,16 @@ function renderZoneList(zones) {
     if (!zones || zones.length === 0) {
         container.innerHTML = '<p class="zone-empty-message">No zones saved yet. Draw a shape and save it as a zone.</p>';
         if (bulkActions) bulkActions.style.display = 'none';
+        updateZoneCountBadge(0);
         return;
     }
 
     if (bulkActions) bulkActions.style.display = 'block';
+    updateZoneCountBadge(zones.length);
 
     var html = '';
     zones.forEach(function(zone) {
-        var visibleClass = zone.is_visible ? '' : ' hidden';
-        var eyeIcon = zone.is_visible ? '\u{1F441}' : '\u{1F441}\u{200D}\u{1F5E8}';
-        var areaTxt = zone.area_sqm ? zone.area_sqm.toFixed(6) : '-';
-        var dateTxt = zone.created_at ? zone.created_at.substring(0, 10) : '';
-
-        html += '<div class="zone-item' + visibleClass + '" data-zone-id="' + zone.id + '">';
-        html += '  <div class="zone-item-header">';
-        html += '    <span class="zone-color-swatch" style="background:' + (zone.color || '#3388ff') + ';"></span>';
-        html += '    <span class="zone-name">' + (zone.name || 'Unnamed') + '</span>';
-        html += '    <div class="zone-item-actions">';
-        html += '      <button onclick="toggleZoneVisibility(' + zone.id + ')" title="Toggle visibility">' + eyeIcon + '</button>';
-        html += '      <button onclick="zoomToZone(' + zone.id + ')" title="Zoom to zone">&#x1F50D;</button>';
-        html += '      <button onclick="editZone(' + zone.id + ')" title="Edit zone">&#x270F;</button>';
-        html += '      <button onclick="deleteZone(' + zone.id + ')" title="Delete zone">&#x1F5D1;</button>';
-        html += '    </div>';
-        html += '  </div>';
-        html += '  <div class="zone-item-meta">';
-        html += '    <small>' + zone.polygon_type + ' | ' + dateTxt + '</small>';
-        html += '  </div>';
-        html += '</div>';
+        html += zoneCardHtml(zone);
     });
 
     container.innerHTML = html;
@@ -4149,25 +4185,12 @@ function addZoneToList(zone) {
 
     var bulkActions = document.getElementById('zoneBulkActions');
     if (bulkActions) bulkActions.style.display = 'block';
+    updateZoneCountBadge(container.querySelectorAll('.zone-item').length + 1);
 
-    var dateTxt = zone.created_at ? zone.created_at.substring(0, 10) : '';
     var div = document.createElement('div');
     div.className = 'zone-item';
     div.dataset.zoneId = zone.id;
-    div.innerHTML =
-        '<div class="zone-item-header">' +
-        '  <span class="zone-color-swatch" style="background:' + (zone.color || '#3388ff') + ';"></span>' +
-        '  <span class="zone-name">' + (zone.name || 'Unnamed') + '</span>' +
-        '  <div class="zone-item-actions">' +
-        '    <button onclick="toggleZoneVisibility(' + zone.id + ')" title="Toggle visibility">\u{1F441}</button>' +
-        '    <button onclick="zoomToZone(' + zone.id + ')" title="Zoom to zone">&#x1F50D;</button>' +
-        '    <button onclick="editZone(' + zone.id + ')" title="Edit zone">&#x270F;</button>' +
-        '    <button onclick="deleteZone(' + zone.id + ')" title="Delete zone">&#x1F5D1;</button>' +
-        '  </div>' +
-        '</div>' +
-        '<div class="zone-item-meta">' +
-        '  <small>' + (zone.polygon_type || 'polygon') + ' | ' + dateTxt + '</small>' +
-        '</div>';
+    div.innerHTML = zoneCardHtml(zone);
 
     container.prepend(div);
 }
@@ -4208,9 +4231,9 @@ function renderZoneOnMap(zone) {
     };
 }
 
-async function toggleZoneVisibility(zoneId) {
+async function toggleZoneVisibility(zoneId, forceVisible) {
     var entry = window.savedZones[zoneId];
-    var newVisible = !(entry && entry.visible);
+    var newVisible = typeof forceVisible === 'boolean' ? forceVisible : !(entry && entry.visible);
 
     try {
         var response = await _authenticatedFetch('/api/v1/zones/' + zoneId, {
@@ -4233,6 +4256,10 @@ async function toggleZoneVisibility(zoneId) {
         var item = document.querySelector('.zone-item[data-zone-id="' + zoneId + '"]');
         if (item) {
             item.classList.toggle('hidden', !newVisible);
+        }
+        var toggle = document.querySelector('.zone-item[data-zone-id="' + zoneId + '"] .zone-vis-toggle');
+        if (toggle) {
+            toggle.checked = newVisible;
         }
 
     } catch (e) {
@@ -4366,6 +4393,9 @@ async function deleteZone(zoneId) {
             container.innerHTML = '<p class="zone-empty-message">No zones saved yet. Draw a shape and save it as a zone.</p>';
             var bulkActions = document.getElementById('zoneBulkActions');
             if (bulkActions) bulkActions.style.display = 'none';
+            updateZoneCountBadge(0);
+        } else if (container) {
+            updateZoneCountBadge(container.querySelectorAll('.zone-item').length);
         }
 
         console.log('Zone deleted:', zoneId);
@@ -4411,6 +4441,9 @@ async function hideAllZones() {
         // Update list styling
         document.querySelectorAll('.zone-item').forEach(function(item) {
             item.classList.add('hidden');
+        });
+        document.querySelectorAll('.zone-vis-toggle').forEach(function(toggle) {
+            toggle.checked = false;
         });
 
     } catch (e) {

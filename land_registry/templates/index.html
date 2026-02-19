@@ -394,7 +394,15 @@
 
     <div class="sidebar-group-title">Zones</div>
     <div class="zone-manager-section">
-      <h4>Zone Manager</h4>
+      <div class="zone-manager-header">
+        <h4>
+          Zone Manager
+          <span id="zoneCount" class="zone-count-badge">0</span>
+        </h4>
+        <button onclick="showZoneSaveForm()" id="addZoneBtn" class="control-btn" disabled>
+          New Zone
+        </button>
+      </div>
 
       <!-- Save form (hidden by default) -->
       <div class="zone-save-form" id="zoneSaveForm" style="display: none;">
@@ -423,11 +431,8 @@
       </div>
 
       <div class="control-row">
-        <button onclick="showZoneSaveForm()" id="saveAsZoneBtn" class="control-btn" disabled>
-          Save Drawing as Zone
-        </button>
         <button onclick="loadAllZones()" id="loadZonesBtn" class="control-btn">
-          Load Saved Zones
+          Refresh Zones
         </button>
       </div>
 
