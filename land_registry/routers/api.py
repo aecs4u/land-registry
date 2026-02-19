@@ -6,7 +6,7 @@ Centralizes all API endpoints for better organization and maintainability
 import boto3
 from botocore import UNSIGNED
 from botocore.config import Config
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Header
+from fastapi import APIRouter, Body, UploadFile, File, HTTPException, Depends, Header
 from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPBearer
 import geopandas as gpd
@@ -18,7 +18,7 @@ import pandas as pd
 from pathlib import Path
 from pydantic import BaseModel
 import tempfile
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Literal, Optional
 import base64
 import hashlib
 
@@ -245,6 +245,67 @@ class CadastralQueryRequest(BaseModel):
             limit=self.limit,
             offset=self.offset,
         )
+
+
+class PointLookupRequest(BaseModel):
+    """Request for point-in-cadastral lookup."""
+
+    lon: float = Field(..., ge=-180, le=180, description="Longitude (WGS84)")
+    lat: float = Field(..., ge=-90, le=90, description="Latitude (WGS84)")
+    regione: Optional[str] = Field(default=None, max_length=50)
+    provincia: Optional[str] = Field(default=None, max_length=10)
+    comune: Optional[str] = Field(default=None, max_length=10)
+    layer_type: Optional[str] = Field(default=None, pattern="^(map|ple)$", description="map=fogli, ple=particelle")
+    limit: int = Field(default=200, ge=1, le=5000)
+
+
+class ZoneOverlayLookupRequest(BaseModel):
+    """Request for cadastral lookup using a zone geometry."""
+
+    zone_geojson: Dict[str, Any] = Field(..., description="GeoJSON Feature geometry used as overlay")
+    relation: Literal["within", "intersects"] = Field(default="intersects")
+    regione: Optional[str] = Field(default=None, max_length=50)
+    provincia: Optional[str] = Field(default=None, max_length=10)
+    comune: Optional[str] = Field(default=None, max_length=10)
+    layer_type: Optional[str] = Field(default=None, pattern="^(map|ple)$", description="map=fogli, ple=particelle")
+    limit: int = Field(default=2000, ge=1, le=20000)
+
+    @field_validator("zone_geojson")
+    @classmethod
+    def validate_zone_geojson(cls, value: Dict[str, Any]) -> Dict[str, Any]:
+        if value.get("type") != "Feature":
+            raise ValueError("zone_geojson must be a GeoJSON Feature")
+        geometry = value.get("geometry")
+        if not isinstance(geometry, dict):
+            raise ValueError("zone_geojson must contain a geometry object")
+        if geometry.get("type") not in {"Polygon", "MultiPolygon"}:
+            raise ValueError("zone_geojson geometry must be Polygon or MultiPolygon")
+        return value
+
+
+class CadastralLookupItem(BaseModel):
+    """Normalized lookup item for point/overlay responses."""
+
+    feature_id: int
+    regione: str
+    provincia: str
+    comune_code: str
+    comune_name: Optional[str] = None
+    foglio: Optional[int] = None
+    particella: Optional[int] = None
+    layer_type: str
+    label: Optional[str] = None
+    national_reference: Optional[str] = None
+    relation: Optional[Literal["within", "intersects"]] = None
+    geometry: Optional[Dict[str, Any]] = None
+
+
+class CadastralLookupResponse(BaseModel):
+    """Response for point/overlay lookups."""
+
+    success: bool = True
+    total: int
+    items: List[CadastralLookupItem]
 
 
 # ============================================================================
@@ -2286,6 +2347,7 @@ async def create_microzone(
 @api_router.get("/zones/{zone_id}/microzones/")
 async def list_microzones(
     zone_id: int,
+    include_geojson: bool = False,
     user: ClerkUser = Depends(get_current_user)
 ):
     """List all microzones for a zone."""
@@ -2296,7 +2358,7 @@ async def list_microzones(
             raise HTTPException(status_code=404, detail="Zone not found")
 
         rows = db.get_microzones(zone_id=zone_id, user_id=user.id)
-        microzones = [_microzone_row_to_response(dict(row)) for row in rows]
+        microzones = [_microzone_row_to_response(dict(row), include_geojson=include_geojson) for row in rows]
         return {"success": True, "microzones": microzones, "total": len(microzones)}
 
     except HTTPException:
@@ -2603,6 +2665,171 @@ def get_cadastral_db(layer_type: Optional[str] = None, region: Optional[str] = N
     if layer_type == 'map':
         return get_cadastral_db_map()
     return get_cadastral_db_ple(region)
+
+
+def _feature_to_lookup_item(
+    feature: Dict[str, Any],
+    relation: Optional[Literal["within", "intersects"]] = None,
+) -> CadastralLookupItem:
+    props = feature.get("properties", {}) or {}
+    return CadastralLookupItem(
+        feature_id=int(feature.get("id") or 0),
+        regione=str(props.get("regione", "")),
+        provincia=str(props.get("provincia", "")),
+        comune_code=str(props.get("comune_code", "")),
+        comune_name=props.get("comune_name"),
+        foglio=props.get("foglio"),
+        particella=props.get("particella"),
+        layer_type=str(props.get("layer_type", "")),
+        label=props.get("label"),
+        national_reference=props.get("national_reference"),
+        relation=relation,
+        geometry=feature.get("geometry"),
+    )
+
+
+@api_router.post(
+    "/cadastral/point-lookup",
+    response_model=CadastralLookupResponse,
+)
+async def point_lookup(
+    request: PointLookupRequest = Body(
+        ...,
+        examples={
+            "point_lookup_example": {
+                "summary": "Point lookup in PLE layer",
+                "value": {
+                    "lon": 12.4964,
+                    "lat": 41.9028,
+                    "regione": "LAZIO",
+                    "layer_type": "ple",
+                    "limit": 100,
+                },
+            }
+        },
+    )
+):
+    """Lookup cadastral entities containing the provided point."""
+    try:
+        db = get_cadastral_db(request.layer_type, request.regione)
+        if db is None:
+            if request.layer_type == "ple" and not request.regione:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Region (regione) is required for PLE point lookup.",
+                )
+            raise HTTPException(status_code=404, detail="No cadastral database available for requested filters")
+
+        cadastral_filter = CadastralFilter(
+            regione=request.regione,
+            provincia=request.provincia,
+            comune=request.comune,
+            layer_type=request.layer_type,
+            point=(request.lon, request.lat),
+            limit=request.limit,
+            offset=0,
+        )
+        result = db.query(cadastral_filter, as_geojson=True)
+        features = result.get("features", [])
+        items = [_feature_to_lookup_item(feature) for feature in features]
+        return {"success": True, "total": len(items), "items": items}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Point lookup error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Point lookup failed: {str(e)}")
+
+
+@api_router.post(
+    "/cadastral/zone-overlay-lookup",
+    response_model=CadastralLookupResponse,
+)
+async def zone_overlay_lookup(
+    request: ZoneOverlayLookupRequest = Body(
+        ...,
+        examples={
+            "overlay_lookup_example": {
+                "summary": "Intersecting parcels for a zone geometry",
+                "value": {
+                    "relation": "intersects",
+                    "layer_type": "ple",
+                    "regione": "LAZIO",
+                    "limit": 1000,
+                    "zone_geojson": {
+                        "type": "Feature",
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [
+                                [
+                                    [12.49, 41.89],
+                                    [12.49, 41.91],
+                                    [12.52, 41.91],
+                                    [12.52, 41.89],
+                                    [12.49, 41.89],
+                                ]
+                            ],
+                        },
+                        "properties": {},
+                    },
+                },
+            }
+        },
+    )
+):
+    """Lookup cadastral entities related to a provided zone geometry."""
+    try:
+        from shapely.geometry import shape as shapely_shape
+
+        db = get_cadastral_db(request.layer_type, request.regione)
+        if db is None:
+            if request.layer_type == "ple" and not request.regione:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Region (regione) is required for PLE overlay lookup.",
+                )
+            raise HTTPException(status_code=404, detail="No cadastral database available for requested filters")
+
+        zone_geom = shapely_shape(request.zone_geojson.get("geometry", {}))
+        if zone_geom.is_empty or not zone_geom.is_valid:
+            raise HTTPException(status_code=400, detail="Invalid zone geometry")
+
+        min_lon, min_lat, max_lon, max_lat = zone_geom.bounds
+        cadastral_filter = CadastralFilter(
+            regione=request.regione,
+            provincia=request.provincia,
+            comune=request.comune,
+            layer_type=request.layer_type,
+            bbox=(min_lon, min_lat, max_lon, max_lat),
+            limit=request.limit,
+            offset=0,
+        )
+        result = db.query(cadastral_filter, as_geojson=True)
+        features = result.get("features", [])
+
+        filtered_items: List[CadastralLookupItem] = []
+        for feature in features:
+            geometry_data = feature.get("geometry")
+            if not geometry_data:
+                continue
+            try:
+                parcel_geom = shapely_shape(geometry_data)
+            except Exception:
+                continue
+
+            is_match = (
+                parcel_geom.within(zone_geom)
+                if request.relation == "within"
+                else parcel_geom.intersects(zone_geom)
+            )
+            if is_match:
+                filtered_items.append(_feature_to_lookup_item(feature, relation=request.relation))
+
+        return {"success": True, "total": len(filtered_items), "items": filtered_items}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Zone overlay lookup error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Zone overlay lookup failed: {str(e)}")
 
 
 @api_router.post("/cadastral/query")
