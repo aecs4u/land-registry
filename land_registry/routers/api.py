@@ -1949,6 +1949,12 @@ from land_registry.models import (
     MicrozoneDetailResponse, MicrozoneListResponse
 )
 from land_registry.sqlite_db import get_sqlite_db
+from land_registry.zone_rules import (
+    MICROZONE_WARNING_THRESHOLD_KM2,
+    area_sqm_to_km2,
+    geometry_metrics_from_geojson,
+    is_large_microzone,
+)
 
 
 def _zone_row_to_response(row: dict, include_geojson: bool = False) -> dict:
@@ -1993,6 +1999,8 @@ def _microzone_row_to_response(row: dict, include_geojson: bool = False) -> dict
         except (json.JSONDecodeError, TypeError):
             tags = []
 
+    area_sqm = row.get('area_sqm')
+    area_km2 = area_sqm_to_km2(area_sqm)
     result = {
         'id': row['id'],
         'zone_id': row['zone_id'],
@@ -2000,7 +2008,10 @@ def _microzone_row_to_response(row: dict, include_geojson: bool = False) -> dict
         'description': row.get('description'),
         'microzone_type': row.get('microzone_type', 'polygon'),
         'color': row.get('color', '#3388ff'),
-        'area_sqm': row.get('area_sqm'),
+        'area_sqm': area_sqm,
+        'area_km2': area_km2,
+        'is_large_area': is_large_microzone(area_sqm),
+        'warning_threshold_km2': MICROZONE_WARNING_THRESHOLD_KM2,
         'centroid_lat': row.get('centroid_lat'),
         'centroid_lng': row.get('centroid_lng'),
         'is_visible': bool(row.get('is_visible', 1)),
@@ -2025,24 +2036,10 @@ async def create_zone(
 ):
     """Create a new zone from a drawn geometry."""
     try:
-        from shapely.geometry import shape as shapely_shape
-
         db = get_sqlite_db()
 
         # Compute area and centroid from geometry
-        area_sqm = None
-        centroid_lat = None
-        centroid_lng = None
-        try:
-            geom = shapely_shape(request.geojson.get('geometry', {}))
-            if geom.is_valid and not geom.is_empty:
-                centroid = geom.centroid
-                centroid_lat = centroid.y
-                centroid_lng = centroid.x
-                # Approximate area (degrees squared; useful for relative comparison)
-                area_sqm = geom.area
-        except Exception as e:
-            logger.warning(f"Could not compute geometry metrics: {e}")
+        area_sqm, centroid_lat, centroid_lng = geometry_metrics_from_geojson(request.geojson)
 
         zone_id = db.create_zone(
             geojson=request.geojson,
@@ -2173,15 +2170,13 @@ async def update_zone(
         if request.geojson is not None:
             kwargs['geojson'] = request.geojson
             # Recompute area and centroid
-            try:
-                from shapely.geometry import shape as shapely_shape
-                geom = shapely_shape(request.geojson.get('geometry', {}))
-                if geom.is_valid and not geom.is_empty:
-                    kwargs['area_sqm'] = geom.area
-                    kwargs['centroid_lat'] = geom.centroid.y
-                    kwargs['centroid_lng'] = geom.centroid.x
-            except Exception:
-                pass
+            area_sqm, centroid_lat, centroid_lng = geometry_metrics_from_geojson(request.geojson)
+            if area_sqm is not None:
+                kwargs['area_sqm'] = area_sqm
+            if centroid_lat is not None:
+                kwargs['centroid_lat'] = centroid_lat
+            if centroid_lng is not None:
+                kwargs['centroid_lng'] = centroid_lng
 
         if not kwargs:
             raise HTTPException(status_code=400, detail="No fields to update")
@@ -2239,25 +2234,12 @@ async def create_microzone(
 ):
     """Create a microzone inside a zone."""
     try:
-        from shapely.geometry import shape as shapely_shape
-
         db = get_sqlite_db()
         zone = db.get_zone(zone_id, user_id=user.id)
         if not zone:
             raise HTTPException(status_code=404, detail="Zone not found")
 
-        area_sqm = None
-        centroid_lat = None
-        centroid_lng = None
-        try:
-            geom = shapely_shape(request.geojson.get('geometry', {}))
-            if geom.is_valid and not geom.is_empty:
-                centroid = geom.centroid
-                centroid_lat = centroid.y
-                centroid_lng = centroid.x
-                area_sqm = geom.area
-        except Exception as e:
-            logger.warning(f"Could not compute microzone geometry metrics: {e}")
+        area_sqm, centroid_lat, centroid_lng = geometry_metrics_from_geojson(request.geojson)
 
         microzone_id = db.create_microzone(
             zone_id=zone_id,
@@ -2355,15 +2337,13 @@ async def update_microzone(
 
         if request.geojson is not None:
             kwargs['geojson'] = request.geojson
-            try:
-                from shapely.geometry import shape as shapely_shape
-                geom = shapely_shape(request.geojson.get('geometry', {}))
-                if geom.is_valid and not geom.is_empty:
-                    kwargs['area_sqm'] = geom.area
-                    kwargs['centroid_lat'] = geom.centroid.y
-                    kwargs['centroid_lng'] = geom.centroid.x
-            except Exception:
-                pass
+            area_sqm, centroid_lat, centroid_lng = geometry_metrics_from_geojson(request.geojson)
+            if area_sqm is not None:
+                kwargs['area_sqm'] = area_sqm
+            if centroid_lat is not None:
+                kwargs['centroid_lat'] = centroid_lat
+            if centroid_lng is not None:
+                kwargs['centroid_lng'] = centroid_lng
 
         if not kwargs:
             raise HTTPException(status_code=400, detail="No fields to update")
