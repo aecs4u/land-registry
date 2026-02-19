@@ -3488,6 +3488,42 @@ button:hover {
   font-weight: 600;
 }
 
+.zone-manager-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.zone-manager-header h4 {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.zone-manager-header .control-btn {
+  width: auto;
+  margin: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.zone-count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #1a73e8;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .zone-save-form {
   background: #fff;
   border: 1px solid #dadce0;
@@ -3597,8 +3633,32 @@ button:hover {
 
 .zone-item-header {
   display: flex;
+  justify-content: space-between;
   align-items: center;
   gap: 8px;
+  cursor: pointer;
+}
+
+.zone-item-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.zone-vis-toggle {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.zone-expand-indicator {
+  color: #5f6368;
+  font-size: 10px;
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .zone-color-swatch {
@@ -3644,10 +3704,24 @@ button:hover {
   background: #e8eaed;
 }
 
+.zone-rename-btn {
+  color: #1a73e8;
+}
+
+.zone-delete-btn {
+  color: #b3261e;
+}
+
 .zone-item-meta {
   margin-top: 4px;
   font-size: 11px;
   color: #80868b;
+}
+
+.zone-item-body {
+  border-top: 1px dashed #dadce0;
+  margin-top: 8px;
+  padding-top: 8px;
 }
 
 .zone-empty-message {
