@@ -3627,6 +3627,11 @@ button:hover {
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
 }
 
+.zone-item.zone-item-focused {
+  border-color: #1a73e8;
+  box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
+}
+
 .zone-item.hidden {
   opacity: 0.45;
 }
@@ -3733,6 +3738,33 @@ button:hover {
   color: #80868b;
 }
 
+.zone-business-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 6px;
+}
+
+.zone-business-actions button {
+  border: 1px solid #dadce0;
+  background: #fff;
+  border-radius: 4px;
+  font-size: 11px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.zone-sales-btn {
+  color: #0b8043;
+}
+
+.zone-rents-btn {
+  color: #1a73e8;
+}
+
+.zone-business-actions button:hover {
+  background: #f1f3f4;
+}
+
 .zone-item-body {
   border-top: 1px dashed #dadce0;
   margin-top: 8px;
@@ -3741,6 +3773,9 @@ button:hover {
 
 .microzone-toolbar {
   margin: 8px 0;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .add-micro-btn {
@@ -3758,6 +3793,23 @@ button:hover {
 .add-micro-btn:hover {
   background: #f8fbff;
   border-color: #1a73e8;
+}
+
+.draw-all-micros-btn {
+  width: auto;
+  margin: 0;
+  padding: 5px 10px;
+  font-size: 11px;
+  border: 1px solid #dadce0;
+  border-radius: 4px;
+  color: #8f4d00;
+  background: #fff;
+  cursor: pointer;
+}
+
+.draw-all-micros-btn:hover {
+  background: #fff7e6;
+  border-color: #f29900;
 }
 
 .microzone-list {
@@ -3927,6 +3979,46 @@ button:hover {
   border-radius: 4px;
   cursor: pointer;
   padding: 2px;
+}
+
+.mapping-zone-context {
+  margin-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #e8f0fe;
+  border: 1px solid #d2e3fc;
+}
+
+.mapping-zone-context.is-error {
+  background: #fce8e6;
+  border-color: #f6c7c4;
+}
+
+.mapping-zone-workflow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 50px;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #fff;
+  background: #1a73e8;
+}
+
+.mapping-zone-context.is-error .mapping-zone-workflow {
+  background: #b3261e;
+}
+
+.mapping-zone-name {
+  font-size: 12px;
+  color: #3c4043;
+  font-weight: 500;
 }
 
 @media (max-width: 768px) {

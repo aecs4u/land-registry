@@ -3884,24 +3884,153 @@ function calculateGeoJsonBounds(geoJsonData) {
 // Zone Manager
 // ============================================================================
 
-window.savedZones = {};       // zone_id -> { data, layer }
+window.savedZones = {};       // zone_id -> { layer, visible }
 window.zoneLayerGroup = null; // L.LayerGroup for all zone layers
 window.zoneMicrozones = {};   // zone_id -> [microzones]
 window.zoneSearchTerm = '';
+window.savedMicrozones = {};  // microzone_id -> { zoneId, layer, visible }
+window.microzoneLayerGroup = null;
+window.microzonesDrawnByZone = {}; // zone_id -> boolean
+window.zoneKeyboardState = {
+    initialized: false,
+    pressedKeys: new Set(),
+    jumpIndex: -1
+};
+window.currentMappingZoneContext = null;
 
 var MICROZONE_WARNING_THRESHOLD_KM2 = 0.3;
+var ZONE_CARD_FOCUS_DURATION_MS = 1300;
 
-function initZoneManager() {
-    window.zoneLayerGroup = new L.LayerGroup();
+function getLeafletMapInstance() {
+    if (map && typeof map.addLayer === 'function') {
+        return map;
+    }
     var mapElements = document.querySelectorAll('.leaflet-container');
-    if (mapElements.length > 0) {
-        var mapId = mapElements[0].id;
-        if (window[mapId]) {
-            window[mapId].addLayer(window.zoneLayerGroup);
+    for (var i = 0; i < mapElements.length; i += 1) {
+        var mapId = mapElements[i].id;
+        var candidate = window[mapId];
+        if (candidate && typeof candidate.addLayer === 'function') {
+            return candidate;
         }
     }
+    return null;
+}
+
+function initZoneManager() {
+    if (!window.zoneLayerGroup) {
+        window.zoneLayerGroup = new L.LayerGroup();
+    }
+    if (!window.microzoneLayerGroup) {
+        window.microzoneLayerGroup = new L.LayerGroup();
+    }
+
+    var leafletMap = getLeafletMapInstance();
+    if (leafletMap) {
+        if (!leafletMap.hasLayer(window.zoneLayerGroup)) {
+            leafletMap.addLayer(window.zoneLayerGroup);
+        }
+        if (!leafletMap.hasLayer(window.microzoneLayerGroup)) {
+            leafletMap.addLayer(window.microzoneLayerGroup);
+        }
+    }
+
+    initializeZoneKeyboardShortcuts();
     updateSaveAsZoneButton();
     console.log('Zone Manager initialized');
+}
+
+function initializeZoneKeyboardShortcuts() {
+    if (window.zoneKeyboardState.initialized) return;
+    document.addEventListener('keydown', handleZoneManagerKeyDown);
+    document.addEventListener('keyup', handleZoneManagerKeyUp);
+    window.zoneKeyboardState.initialized = true;
+}
+
+function shouldIgnoreGlobalShortcut(event) {
+    if (event.defaultPrevented) return true;
+    if (event.ctrlKey || event.metaKey || event.altKey) return true;
+    var target = event.target;
+    if (!target) return false;
+    var tag = target.tagName ? target.tagName.toLowerCase() : '';
+    if (tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable) {
+        return true;
+    }
+    return false;
+}
+
+function handleZoneManagerKeyDown(event) {
+    if (shouldIgnoreGlobalShortcut(event)) return;
+
+    var key = event.key;
+    if (window.zoneKeyboardState.pressedKeys.has(key)) return;
+    window.zoneKeyboardState.pressedKeys.add(key);
+
+    var leafletMap = getLeafletMapInstance();
+    if (!leafletMap) return;
+
+    var handled = false;
+    if (key === 'ArrowUp') {
+        leafletMap.panBy([0, -120]);
+        handled = true;
+    } else if (key === 'ArrowDown') {
+        leafletMap.panBy([0, 120]);
+        handled = true;
+    } else if (key === 'ArrowLeft') {
+        leafletMap.panBy([-120, 0]);
+        handled = true;
+    } else if (key === 'ArrowRight') {
+        leafletMap.panBy([120, 0]);
+        handled = true;
+    } else if (key === '+' || key === '=') {
+        leafletMap.zoomIn();
+        handled = true;
+    } else if (key === '-' || key === '_') {
+        leafletMap.zoomOut();
+        handled = true;
+    } else if (key === '[') {
+        jumpToRelativeZone(-1);
+        handled = true;
+    } else if (key === ']') {
+        jumpToRelativeZone(1);
+        handled = true;
+    }
+
+    if (handled) {
+        event.preventDefault();
+    }
+}
+
+function handleZoneManagerKeyUp(event) {
+    window.zoneKeyboardState.pressedKeys.delete(event.key);
+}
+
+function getVisibleZoneIdsForJump() {
+    var ids = [];
+    document.querySelectorAll('#zoneList .zone-item').forEach(function(item) {
+        if (item.style.display === 'none') return;
+        var checkbox = item.querySelector('.zone-vis-toggle');
+        if (checkbox && !checkbox.checked) return;
+        var zoneId = parseInt(item.getAttribute('data-zone-id'), 10);
+        if (Number.isFinite(zoneId)) {
+            ids.push(zoneId);
+        }
+    });
+    return ids;
+}
+
+function jumpToRelativeZone(direction) {
+    var ids = getVisibleZoneIdsForJump();
+    if (ids.length === 0) return;
+
+    if (window.zoneKeyboardState.jumpIndex < 0 || window.zoneKeyboardState.jumpIndex >= ids.length) {
+        window.zoneKeyboardState.jumpIndex = direction > 0 ? 0 : ids.length - 1;
+    } else {
+        window.zoneKeyboardState.jumpIndex = (window.zoneKeyboardState.jumpIndex + direction + ids.length) % ids.length;
+    }
+
+    var zoneId = ids[window.zoneKeyboardState.jumpIndex];
+    focusZoneCard(zoneId, true);
+    zoomToZone(zoneId);
 }
 
 function updateSaveAsZoneButton() {
@@ -4008,7 +4137,7 @@ async function saveCurrentDrawingAsZone() {
 
         // Remove from drawnItems and add to zoneLayerGroup
         window.drawnItems.removeLayer(layer);
-        renderZoneOnMap(zone);
+        renderZoneOnMap(zone, true);
         updateSaveAsZoneButton();
 
         // Add to zone list
@@ -4022,6 +4151,251 @@ async function saveCurrentDrawingAsZone() {
     } catch (e) {
         console.error('Error saving zone:', e);
         alert('Failed to save zone. Please try again.');
+    }
+}
+
+function getZoneItemElement(zoneId) {
+    return document.querySelector('.zone-item[data-zone-id="' + zoneId + '"]');
+}
+
+function isZoneVisibleInUi(zoneId) {
+    var toggle = document.querySelector('.zone-item[data-zone-id="' + zoneId + '"] .zone-vis-toggle');
+    if (toggle) {
+        return !!toggle.checked;
+    }
+    var entry = window.savedZones[zoneId];
+    if (entry && typeof entry.visible === 'boolean') {
+        return entry.visible;
+    }
+    return false;
+}
+
+function microzonesContainGeojson(microzones) {
+    return Array.isArray(microzones) && microzones.length > 0 && microzones.every(function(item) {
+        return item && typeof item.geojson === 'object' && item.geojson !== null;
+    });
+}
+
+function getMicrozoneCacheForZone(zoneId) {
+    var cache = window.zoneMicrozones[zoneId];
+    return Array.isArray(cache) ? cache : [];
+}
+
+function findCachedMicrozone(zoneId, microzoneId) {
+    var microzones = getMicrozoneCacheForZone(zoneId);
+    for (var i = 0; i < microzones.length; i += 1) {
+        if (Number(microzones[i].id) === Number(microzoneId)) {
+            return microzones[i];
+        }
+    }
+    return null;
+}
+
+function formatWorkflowLabel(workflow) {
+    return workflow === 'rents' ? 'Rents' : 'Sales';
+}
+
+function shouldShowMicrozoneLayer(microzone) {
+    if (!microzone || !microzone.geojson) return false;
+    if (!microzone.is_visible) return false;
+    return isZoneVisibleInUi(microzone.zone_id);
+}
+
+function createMicrozoneLayer(microzone) {
+    if (!microzone || !microzone.geojson) return null;
+
+    var color = microzone.color || '#3388ff';
+    var zoneId = Number(microzone.zone_id || 0);
+    var name = escapeHtml(microzone.name || 'Unnamed microzone');
+    var layer = L.geoJSON(microzone.geojson, {
+        style: function() {
+            return {
+                color: color,
+                weight: 2,
+                opacity: 0.9,
+                dashArray: '5 4',
+                fillOpacity: 0.12,
+                fillColor: color
+            };
+        },
+        pointToLayer: function(feature, latlng) {
+            return L.circleMarker(latlng, {
+                radius: 6,
+                color: color,
+                fillColor: color,
+                fillOpacity: 0.45
+            });
+        }
+    });
+
+    layer.bindPopup(
+        '<strong>' + name + '</strong>' +
+        '<br><small>Microzone #' + microzone.id + ' in Zone #' + zoneId + '</small>'
+    );
+    return layer;
+}
+
+function cacheMicrozoneLayer(microzone) {
+    if (!microzone || !microzone.geojson) return null;
+
+    var microzoneId = Number(microzone.id);
+    var existing = window.savedMicrozones[microzoneId];
+    if (existing && existing.layer && window.microzoneLayerGroup) {
+        window.microzoneLayerGroup.removeLayer(existing.layer);
+    }
+
+    var layer = createMicrozoneLayer(microzone);
+    if (!layer) return null;
+
+    var entry = {
+        zoneId: Number(microzone.zone_id || 0),
+        layer: layer,
+        visible: !!microzone.is_visible
+    };
+    window.savedMicrozones[microzoneId] = entry;
+    return entry;
+}
+
+function removeMicrozoneLayer(microzoneId, purgeCache) {
+    var id = Number(microzoneId);
+    var entry = window.savedMicrozones[id];
+    if (!entry) return;
+
+    if (entry.layer && window.microzoneLayerGroup) {
+        window.microzoneLayerGroup.removeLayer(entry.layer);
+    }
+    if (purgeCache !== false) {
+        delete window.savedMicrozones[id];
+    }
+}
+
+function removeMicrozoneLayersForZone(zoneId, purgeCache) {
+    var targetZoneId = Number(zoneId);
+    Object.keys(window.savedMicrozones).forEach(function(key) {
+        var entry = window.savedMicrozones[key];
+        if (entry && Number(entry.zoneId) === targetZoneId) {
+            removeMicrozoneLayer(Number(key), purgeCache);
+        }
+    });
+}
+
+function pruneMicrozoneLayerCacheForZones(validZoneIdSet) {
+    Object.keys(window.savedMicrozones).forEach(function(key) {
+        var entry = window.savedMicrozones[key];
+        if (!entry || !validZoneIdSet.has(Number(entry.zoneId))) {
+            removeMicrozoneLayer(Number(key), true);
+        }
+    });
+}
+
+function pruneMicrozoneLayerCacheForZoneMicrozones(zoneId, microzones) {
+    var allowedIds = new Set();
+    (microzones || []).forEach(function(item) {
+        allowedIds.add(Number(item.id));
+    });
+    Object.keys(window.savedMicrozones).forEach(function(key) {
+        var entry = window.savedMicrozones[key];
+        if (!entry || Number(entry.zoneId) !== Number(zoneId)) return;
+        if (!allowedIds.has(Number(key))) {
+            removeMicrozoneLayer(Number(key), true);
+        }
+    });
+}
+
+function syncMicrozoneLayer(microzone) {
+    if (!microzone) return false;
+    var microzoneId = Number(microzone.id);
+    var entry = window.savedMicrozones[microzoneId];
+    if (!entry && microzone.geojson) {
+        entry = cacheMicrozoneLayer(microzone);
+    }
+    if (!entry || !entry.layer || !window.microzoneLayerGroup) {
+        return false;
+    }
+
+    entry.visible = !!microzone.is_visible;
+    var shouldShow = shouldShowMicrozoneLayer(microzone);
+    if (shouldShow) {
+        if (!window.microzoneLayerGroup.hasLayer(entry.layer)) {
+            window.microzoneLayerGroup.addLayer(entry.layer);
+        }
+        return true;
+    }
+
+    window.microzoneLayerGroup.removeLayer(entry.layer);
+    return false;
+}
+
+function syncMicrozoneLayersForZone(zoneId) {
+    var microzones = getMicrozoneCacheForZone(zoneId);
+    if (!microzones.length) {
+        removeMicrozoneLayersForZone(zoneId, false);
+        return 0;
+    }
+
+    var renderedCount = 0;
+    microzones.forEach(function(microzone) {
+        if (syncMicrozoneLayer(microzone)) {
+            renderedCount += 1;
+        }
+    });
+    return renderedCount;
+}
+
+function syncAllMicrozoneLayers() {
+    var total = 0;
+    Object.keys(window.zoneMicrozones).forEach(function(zoneId) {
+        total += syncMicrozoneLayersForZone(Number(zoneId));
+    });
+    return total;
+}
+
+function fitMapToLayerBounds(layers, padding) {
+    var leafletMap = getLeafletMapInstance();
+    if (!leafletMap || !Array.isArray(layers) || layers.length === 0) {
+        return false;
+    }
+
+    var bounds = null;
+    layers.forEach(function(layer) {
+        if (!layer || typeof layer.getBounds !== 'function') return;
+        var layerBounds = layer.getBounds();
+        if (!layerBounds || !layerBounds.isValid()) return;
+        if (!bounds) {
+            bounds = L.latLngBounds(layerBounds.getSouthWest(), layerBounds.getNorthEast());
+        } else {
+            bounds.extend(layerBounds);
+        }
+    });
+
+    if (!bounds || !bounds.isValid()) return false;
+    leafletMap.fitBounds(bounds, { padding: padding || [30, 30] });
+    return true;
+}
+
+async function drawAllMicrozonesForZone(zoneId, options) {
+    var opts = options || {};
+    var shouldZoom = opts.zoom !== false;
+    try {
+        var microzones = await loadMicrozonesForZone(zoneId, true, true);
+        window.microzonesDrawnByZone[zoneId] = true;
+
+        pruneMicrozoneLayerCacheForZoneMicrozones(zoneId, microzones);
+        var layersToZoom = [];
+        microzones.forEach(function(microzone) {
+            if (syncMicrozoneLayer(microzone)) {
+                var entry = window.savedMicrozones[microzone.id];
+                if (entry && entry.layer) {
+                    layersToZoom.push(entry.layer);
+                }
+            }
+        });
+
+        if (shouldZoom && layersToZoom.length > 0) {
+            fitMapToLayerBounds(layersToZoom, [28, 28]);
+        }
+    } catch (e) {
+        console.error('Error drawing microzones for zone', zoneId, e);
     }
 }
 
@@ -4043,11 +4417,29 @@ async function loadAllZones() {
         var zones = listData.zones || [];
         updateZoneCountBadge(zones.length);
 
+        var zoneIdSet = new Set();
+        zones.forEach(function(zone) {
+            zoneIdSet.add(Number(zone.id));
+        });
+
+        // Remove stale microzone cache state for deleted zones
+        Object.keys(window.microzonesDrawnByZone).forEach(function(zoneId) {
+            if (!zoneIdSet.has(Number(zoneId))) {
+                delete window.microzonesDrawnByZone[zoneId];
+            }
+        });
+        pruneMicrozoneLayerCacheForZones(zoneIdSet);
+
         // Render list
         renderZoneList(zones);
 
         // Load visible geometries onto map
         var geoResponse = await _authenticatedFetch('/api/v1/zones/geojson');
+        window.savedZones = {};
+        zones.forEach(function(zone) {
+            window.savedZones[zone.id] = { layer: null, visible: !!zone.is_visible };
+        });
+
         if (geoResponse.ok) {
             var geoData = await geoResponse.json();
 
@@ -4055,7 +4447,6 @@ async function loadAllZones() {
             if (window.zoneLayerGroup) {
                 window.zoneLayerGroup.clearLayers();
             }
-            window.savedZones = {};
 
             // Render each feature
             if (geoData.features) {
@@ -4100,6 +4491,19 @@ async function loadAllZones() {
                 });
             }
         }
+
+        // Re-draw previously rendered microzones with updated visibility
+        var redrawPromises = [];
+        Object.keys(window.microzonesDrawnByZone).forEach(function(zoneIdRaw) {
+            var zoneId = Number(zoneIdRaw);
+            if (!window.microzonesDrawnByZone[zoneId]) return;
+            if (!zoneIdSet.has(zoneId)) return;
+            redrawPromises.push(loadMicrozonesForZone(zoneId, true, true));
+        });
+        if (redrawPromises.length > 0) {
+            await Promise.all(redrawPromises);
+        }
+        syncAllMicrozoneLayers();
 
         console.log('Loaded', zones.length, 'zones');
 
@@ -4255,15 +4659,21 @@ function renderMicrozoneList(zoneId, microzones) {
     updateZoneMicroCount(zoneId, items.length);
 }
 
-async function loadMicrozonesForZone(zoneId, forceRefresh) {
+async function loadMicrozonesForZone(zoneId, forceRefresh, includeGeojson) {
+    var wantsGeojson = !!includeGeojson;
     var cached = window.zoneMicrozones[zoneId];
-    if (!forceRefresh && Array.isArray(cached)) {
+    var cacheHasGeojson = microzonesContainGeojson(cached);
+    if (!forceRefresh && Array.isArray(cached) && (!wantsGeojson || cacheHasGeojson)) {
         renderMicrozoneList(zoneId, cached);
         return cached;
     }
 
     try {
-        var response = await _authenticatedFetch('/api/v1/zones/' + zoneId + '/microzones/');
+        var url = '/api/v1/zones/' + zoneId + '/microzones/';
+        if (wantsGeojson) {
+            url += '?include_geojson=true';
+        }
+        var response = await _authenticatedFetch(url);
         if (!response.ok) {
             renderMicrozoneList(zoneId, []);
             return [];
@@ -4272,6 +4682,17 @@ async function loadMicrozonesForZone(zoneId, forceRefresh) {
         var microzones = data.microzones || [];
         window.zoneMicrozones[zoneId] = microzones;
         renderMicrozoneList(zoneId, microzones);
+
+        if (window.microzonesDrawnByZone[zoneId]) {
+            if (microzonesContainGeojson(microzones)) {
+                pruneMicrozoneLayerCacheForZoneMicrozones(zoneId, microzones);
+                syncMicrozoneLayersForZone(zoneId);
+            } else if (!wantsGeojson) {
+                loadMicrozonesForZone(zoneId, true, true).catch(function(e) {
+                    console.error('Error reloading microzones with geojson for zone', zoneId, e);
+                });
+            }
+        }
         return microzones;
     } catch (e) {
         console.error('Error loading microzones for zone', zoneId, e);
@@ -4342,6 +4763,10 @@ async function createMicrozoneFromDrawing(zoneId) {
         }
         window.zoneMicrozones[zoneId].unshift(microzone);
         renderMicrozoneList(zoneId, window.zoneMicrozones[zoneId]);
+
+        if (window.microzonesDrawnByZone[zoneId]) {
+            syncMicrozoneLayer(microzone);
+        }
     } catch (e) {
         console.error('Error creating microzone:', e);
         alert('Failed to create microzone. Please try again.');
@@ -4377,8 +4802,11 @@ async function renameMicrozone(zoneId, microzoneId) {
         if (index >= 0) {
             window.zoneMicrozones[zoneId][index] = data.microzone;
             renderMicrozoneList(zoneId, window.zoneMicrozones[zoneId]);
+            if (window.microzonesDrawnByZone[zoneId]) {
+                syncMicrozoneLayer(data.microzone);
+            }
         } else {
-            await loadMicrozonesForZone(zoneId, true);
+            await loadMicrozonesForZone(zoneId, true, window.microzonesDrawnByZone[zoneId]);
         }
     } catch (e) {
         console.error('Error renaming microzone:', e);
@@ -4397,13 +4825,15 @@ async function deleteMicrozone(zoneId, microzoneId) {
             return;
         }
 
+        removeMicrozoneLayer(microzoneId, true);
+
         if (Array.isArray(window.zoneMicrozones[zoneId])) {
             window.zoneMicrozones[zoneId] = window.zoneMicrozones[zoneId].filter(function(item) {
                 return Number(item.id) !== Number(microzoneId);
             });
             renderMicrozoneList(zoneId, window.zoneMicrozones[zoneId]);
         } else {
-            await loadMicrozonesForZone(zoneId, true);
+            await loadMicrozonesForZone(zoneId, true, window.microzonesDrawnByZone[zoneId]);
         }
     } catch (e) {
         console.error('Error deleting microzone:', e);
@@ -4427,7 +4857,13 @@ async function toggleMicrozoneVisibility(zoneId, microzoneId, forceVisible) {
             window.zoneMicrozones[zoneId][index] = data.microzone;
             renderMicrozoneList(zoneId, window.zoneMicrozones[zoneId]);
         } else {
-            await loadMicrozonesForZone(zoneId, true);
+            await loadMicrozonesForZone(zoneId, true, window.microzonesDrawnByZone[zoneId]);
+        }
+
+        if (window.microzonesDrawnByZone[zoneId]) {
+            syncMicrozoneLayer(data.microzone);
+        } else if (!visible) {
+            removeMicrozoneLayer(microzoneId, false);
         }
     } catch (e) {
         console.error('Error toggling microzone visibility:', e);
@@ -4447,9 +4883,118 @@ function toggleZoneCard(zoneId) {
     }
 
     if (!isOpen) {
-        loadMicrozonesForZone(zoneId, false);
+        loadMicrozonesForZone(zoneId, false, window.microzonesDrawnByZone[zoneId]);
     }
 }
+
+function highlightZoneCard(zoneId) {
+    var item = getZoneItemElement(zoneId);
+    if (!item) return;
+    item.classList.add('zone-item-focused');
+    window.setTimeout(function() {
+        item.classList.remove('zone-item-focused');
+    }, ZONE_CARD_FOCUS_DURATION_MS);
+}
+
+function focusZoneCard(zoneId, ensureOpen) {
+    var item = getZoneItemElement(zoneId);
+    if (!item) return;
+
+    if (ensureOpen) {
+        var body = document.getElementById('zoneBody_' + zoneId);
+        if (body && body.style.display !== 'block') {
+            body.style.display = 'block';
+            var indicator = item.querySelector('.zone-expand-indicator');
+            if (indicator) indicator.textContent = '▲';
+            loadMicrozonesForZone(zoneId, false, window.microzonesDrawnByZone[zoneId]);
+        }
+    }
+
+    item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    highlightZoneCard(zoneId);
+}
+
+function openZoneWorkflow(zoneId, workflow, event) {
+    if (event && typeof event.preventDefault === 'function') {
+        event.preventDefault();
+    }
+
+    var resolvedWorkflow = workflow === 'rents' ? 'rents' : 'sales';
+    if (typeof window.showMappingView === 'function') {
+        window.showMappingView({
+            zoneId: Number(zoneId),
+            workflow: resolvedWorkflow,
+            source: 'zone-card'
+        });
+    }
+    return false;
+}
+
+function ensureMappingZoneContextElement() {
+    var existing = document.getElementById('mappingZoneContext');
+    if (existing) return existing;
+
+    var header = document.querySelector('#mappingView .mapping-header');
+    if (!header) return null;
+
+    var element = document.createElement('div');
+    element.id = 'mappingZoneContext';
+    element.className = 'mapping-zone-context';
+    element.style.display = 'none';
+    header.appendChild(element);
+    return element;
+}
+
+window.applyMappingZoneContext = async function(context) {
+    var contextEl = ensureMappingZoneContextElement();
+    if (!contextEl) return;
+
+    if (!context || !Number.isFinite(Number(context.zoneId))) {
+        window.currentMappingZoneContext = null;
+        contextEl.style.display = 'none';
+        contextEl.classList.remove('is-error');
+        contextEl.innerHTML = '';
+        return;
+    }
+
+    var zoneId = Number(context.zoneId);
+    var workflow = context.workflow === 'rents' ? 'rents' : 'sales';
+    window.currentMappingZoneContext = {
+        zoneId: zoneId,
+        workflow: workflow
+    };
+
+    contextEl.style.display = 'inline-flex';
+    contextEl.classList.remove('is-error');
+    contextEl.innerHTML =
+        '<span class="mapping-zone-workflow">' + formatWorkflowLabel(workflow) + '</span>' +
+        '<span class="mapping-zone-name">Loading zone #' + zoneId + '...</span>';
+
+    try {
+        var response = await _authenticatedFetch('/api/v1/zones/' + zoneId);
+        if (!response.ok) {
+            throw new Error('Zone not found');
+        }
+        var data = await response.json();
+        var zone = data.zone || {};
+
+        contextEl.innerHTML =
+            '<span class="mapping-zone-workflow">' + formatWorkflowLabel(workflow) + '</span>' +
+            '<span class="mapping-zone-name">' + escapeHtml(zone.name || ('Zone #' + zoneId)) + '</span>';
+
+        if (!window.savedZones[zoneId] || !window.savedZones[zoneId].layer) {
+            renderZoneOnMap(zone, true);
+        }
+
+        focusZoneCard(zoneId, true);
+        await zoomToZone(zoneId);
+    } catch (e) {
+        contextEl.classList.add('is-error');
+        contextEl.innerHTML =
+            '<span class="mapping-zone-workflow">' + formatWorkflowLabel(workflow) + '</span>' +
+            '<span class="mapping-zone-name">Zone #' + zoneId + ' unavailable</span>';
+    }
+};
 
 function zoneCardHtml(zone) {
     var visibleClass = zone.is_visible ? '' : ' hidden';
@@ -4476,8 +5021,13 @@ function zoneCardHtml(zone) {
         '  </div>' +
         '  <div class="zone-item-body" id="zoneBody_' + zone.id + '" style="display:none;">' +
         '    <div class="zone-item-meta"><small>' + typeTxt + ' | ' + dateTxt + ' | micros: <span id="zoneMicroCountBody_' + zone.id + '">0</span></small></div>' +
+        '    <div class="zone-business-actions">' +
+        '      <button type="button" class="zone-sales-btn" onclick="event.stopPropagation(); return openZoneWorkflow(' + zone.id + ', &quot;sales&quot;, event);">Sales</button>' +
+        '      <button type="button" class="zone-rents-btn" onclick="event.stopPropagation(); return openZoneWorkflow(' + zone.id + ', &quot;rents&quot;, event);">Rents</button>' +
+        '    </div>' +
         '    <div class="microzone-toolbar">' +
-        '      <button class="add-micro-btn" onclick="event.stopPropagation(); createMicrozoneFromDrawing(' + zone.id + ')">Add Microzone</button>' +
+        '      <button type="button" class="add-micro-btn" onclick="event.stopPropagation(); createMicrozoneFromDrawing(' + zone.id + ')">Add Microzone</button>' +
+        '      <button type="button" class="draw-all-micros-btn" onclick="event.stopPropagation(); drawAllMicrozonesForZone(' + zone.id + ')">Draw All Micros</button>' +
         '    </div>' +
         '    <div class="microzone-list" id="microzoneList_' + zone.id + '">' +
         '      <p class="microzone-empty">No microzones yet.</p>' +
@@ -4497,6 +5047,7 @@ function renderZoneList(zones) {
         if (bulkActions) bulkActions.style.display = 'none';
         if (noResults) noResults.style.display = 'none';
         updateZoneCountBadge(0);
+        window.zoneMicrozones = {};
         return;
     }
 
@@ -4511,7 +5062,7 @@ function renderZoneList(zones) {
 
     container.innerHTML = html;
     zones.forEach(function(zone) {
-        loadMicrozonesForZone(zone.id, true);
+        loadMicrozonesForZone(zone.id, true, window.microzonesDrawnByZone[zone.id]);
     });
     applyZoneSearchFilter();
 }
@@ -4529,16 +5080,24 @@ function addZoneToList(zone) {
     container.insertAdjacentHTML('afterbegin', zoneCardHtml(zone));
     updateZoneCountBadge(container.querySelectorAll('.zone-item').length);
     window.zoneMicrozones[zone.id] = [];
-    loadMicrozonesForZone(zone.id, true);
+    window.savedZones[zone.id] = { layer: null, visible: zone.is_visible !== false };
+    loadMicrozonesForZone(zone.id, true, false);
     applyZoneSearchFilter();
 }
 
-function renderZoneOnMap(zone) {
-    if (!window.zoneLayerGroup) return;
+function renderZoneOnMap(zone, forceVisible) {
+    if (!window.zoneLayerGroup || !zone || !zone.geojson) return;
+
+    var zoneId = Number(zone.id);
+    var existing = window.savedZones[zoneId];
+    if (existing && existing.layer && window.zoneLayerGroup) {
+        window.zoneLayerGroup.removeLayer(existing.layer);
+    }
 
     var geojson = zone.geojson;
     var color = zone.color || '#3388ff';
     var name = zone.name || 'Unnamed Zone';
+    var shouldRender = forceVisible === true || zone.is_visible !== false;
 
     var zoneLayer = L.geoJSON(geojson, {
         style: function() {
@@ -4560,12 +5119,14 @@ function renderZoneOnMap(zone) {
         }
     });
 
-    zoneLayer.bindPopup('<strong>' + name + '</strong><br><small>ID: ' + zone.id + '</small>');
-    window.zoneLayerGroup.addLayer(zoneLayer);
+    zoneLayer.bindPopup('<strong>' + escapeHtml(name) + '</strong><br><small>ID: ' + zoneId + '</small>');
+    if (shouldRender) {
+        window.zoneLayerGroup.addLayer(zoneLayer);
+    }
 
-    window.savedZones[zone.id] = {
+    window.savedZones[zoneId] = {
         layer: zoneLayer,
-        visible: true
+        visible: shouldRender
     };
 }
 
@@ -4581,17 +5142,32 @@ async function toggleZoneVisibility(zoneId, forceVisible) {
 
         if (!response.ok) return;
 
-        if (entry && entry.layer && window.zoneLayerGroup) {
-            if (newVisible) {
+        if (!entry) {
+            entry = { layer: null, visible: false };
+            window.savedZones[zoneId] = entry;
+        }
+
+        if (newVisible) {
+            if (entry.layer && window.zoneLayerGroup) {
                 window.zoneLayerGroup.addLayer(entry.layer);
+                entry.visible = true;
             } else {
-                window.zoneLayerGroup.removeLayer(entry.layer);
+                var zoneResponse = await _authenticatedFetch('/api/v1/zones/' + zoneId);
+                if (zoneResponse.ok) {
+                    var zoneData = await zoneResponse.json();
+                    renderZoneOnMap(zoneData.zone, true);
+                    entry = window.savedZones[zoneId];
+                }
             }
-            entry.visible = newVisible;
+        } else if (entry.layer && window.zoneLayerGroup) {
+            window.zoneLayerGroup.removeLayer(entry.layer);
+            entry.visible = false;
+        } else {
+            entry.visible = false;
         }
 
         // Update list item styling
-        var item = document.querySelector('.zone-item[data-zone-id="' + zoneId + '"]');
+        var item = getZoneItemElement(zoneId);
         if (item) {
             item.classList.toggle('hidden', !newVisible);
         }
@@ -4600,6 +5176,7 @@ async function toggleZoneVisibility(zoneId, forceVisible) {
             toggle.checked = newVisible;
         }
 
+        syncMicrozoneLayersForZone(zoneId);
     } catch (e) {
         console.error('Error toggling zone visibility:', e);
     }
@@ -4608,13 +5185,7 @@ async function toggleZoneVisibility(zoneId, forceVisible) {
 async function zoomToZone(zoneId) {
     var entry = window.savedZones[zoneId];
     if (entry && entry.layer) {
-        var mapElements = document.querySelectorAll('.leaflet-container');
-        if (mapElements.length > 0) {
-            var map = window[mapElements[0].id];
-            if (map) {
-                map.fitBounds(entry.layer.getBounds(), { padding: [30, 30] });
-            }
-        }
+        fitMapToLayerBounds([entry.layer], [30, 30]);
         return;
     }
 
@@ -4623,17 +5194,10 @@ async function zoomToZone(zoneId) {
         var response = await _authenticatedFetch('/api/v1/zones/' + zoneId);
         if (response.ok) {
             var data = await response.json();
-            renderZoneOnMap(data.zone);
-            // Now zoom
+            renderZoneOnMap(data.zone, true);
             var newEntry = window.savedZones[zoneId];
             if (newEntry && newEntry.layer) {
-                var mapElements = document.querySelectorAll('.leaflet-container');
-                if (mapElements.length > 0) {
-                    var map = window[mapElements[0].id];
-                    if (map) {
-                        map.fitBounds(newEntry.layer.getBounds(), { padding: [30, 30] });
-                    }
-                }
+                fitMapToLayerBounds([newEntry.layer], [30, 30]);
             }
         }
     } catch (e) {
@@ -4642,7 +5206,7 @@ async function zoomToZone(zoneId) {
 }
 
 async function editZone(zoneId) {
-    var item = document.querySelector('.zone-item[data-zone-id="' + zoneId + '"]');
+    var item = getZoneItemElement(zoneId);
     if (!item) return;
 
     // Fetch current zone data
@@ -4652,8 +5216,6 @@ async function editZone(zoneId) {
         var data = await response.json();
         var zone = data.zone;
 
-        // Replace item content with inline edit form
-        var originalHtml = item.innerHTML;
         item.innerHTML =
             '<div class="zone-edit-form">' +
             '  <input type="text" class="zone-edit-name" value="' + (zone.name || '').replace(/"/g, '&quot;') + '" placeholder="Zone name" />' +
@@ -4671,7 +5233,7 @@ async function editZone(zoneId) {
 }
 
 async function submitZoneEdit(zoneId) {
-    var item = document.querySelector('.zone-item[data-zone-id="' + zoneId + '"]');
+    var item = getZoneItemElement(zoneId);
     if (!item) return;
 
     var nameInput = item.querySelector('.zone-edit-name');
@@ -4721,9 +5283,11 @@ async function deleteZone(zoneId) {
         }
         delete window.savedZones[zoneId];
         delete window.zoneMicrozones[zoneId];
+        delete window.microzonesDrawnByZone[zoneId];
+        removeMicrozoneLayersForZone(zoneId, true);
 
         // Remove from list
-        var item = document.querySelector('.zone-item[data-zone-id="' + zoneId + '"]');
+        var item = getZoneItemElement(zoneId);
         if (item) item.remove();
 
         // Check if list is now empty
