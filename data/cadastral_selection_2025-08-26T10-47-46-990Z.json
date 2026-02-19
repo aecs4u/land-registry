@@ -1,0 +1,25 @@
+{
+  "timestamp": "2025-08-26T10:47:32.118Z",
+  "selection": {
+    "regions": [
+      "SICILIA"
+    ],
+    "provinces": [
+      "TP"
+    ],
+    "municipalities": 1,
+    "fileTypes": [
+      "_map.gpkg"
+    ]
+  },
+  "files": [
+    {
+      "region": "SICILIA",
+      "province": "TP",
+      "municipalityCode": "D423",
+      "municipalityName": "ERICE",
+      "fileName": "D423_ERICE_map.gpkg",
+      "filePath": "SICILIA/TP/D423_ERICE/D423_ERICE_map.gpkg"
+    }
+  ]
+}

@@ -80,6 +80,8 @@ The Panel server will automatically start on `http://localhost:5006` for interac
 2. Load specific cadastral files (MAP/PLE types)
 3. Combine multiple files for comprehensive analysis
 
+The data were extracted from [servizio cartografico dell'Agenzia delle Entrate](https://www.agenziaentrate.gov.it/portale/accedi-al-servizio-cartografici).
+
 ## API Endpoints
 
 ### Main Application

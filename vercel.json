@@ -1,0 +1,14 @@
+{
+  "builds": [
+    {
+      "src": "app/land_registry_app.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "land_registry_app.py"
+    }
+  ]
+}

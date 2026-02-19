@@ -1,0 +1,3584 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Catasto Viewer</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
+    <link rel="stylesheet" href="../static/styles.css" />
+</head>
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <h1>Catasto Viewer</h1>
+      
+            <div class="upload-section">
+                <div class="upload-tabs">
+                    <div class="upload-tab" onclick="showUploadTab('file')">📁 File Upload</div>
+                    <div class="upload-tab active" onclick="showUploadTab('cadastral')">🏛️ Cadastral Selection</div>
+                </div>
+                
+                <div class="upload-content">
+                    <div id="fileUpload" class="file-upload" style="display: none;">
+                        <label for="fileInput">Upload QPKG or GPKG File:</label>
+                        <input type="file" id="fileInput" accept=".qpkg,.gpkg" />
+                        <button onclick="uploadFile()">Upload & Visualize</button>
+                    </div>
+                    
+                    <div id="cadastralSelection" class="cadastral-selection active" style="display: block;">
+                        <div class="cadastral-stats">
+                            <div class="stat-card">
+                                <div class="stat-number" id="totalRegions">0</div>
+                                <div class="stat-label">Regions</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-number" id="totalProvinces">0</div>
+                                <div class="stat-label">Provinces</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-number" id="totalMunicipalities">0</div>
+                                <div class="stat-label">Municipalities</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-number" id="totalFiles">0</div>
+                                <div class="stat-label">GPKG Files</div>
+                            </div>
+                        </div>
+                        
+                        <div class="cadastral-step">
+                            <label for="cadastralRegions">Select Region(s):</label>
+                            <select id="cadastralRegions" multiple size="4">
+                            </select>
+                        </div>
+                        
+                        <div class="cadastral-step">
+                            <label for="cadastralProvinces">Select Province(s):</label>
+                            <select id="cadastralProvinces" multiple size="3" disabled>
+                            </select>
+                        </div>
+                        
+                        <div class="cadastral-step">
+                            <label for="cadastralMunicipalities">Select Municipality(ies):</label>
+                            <select id="cadastralMunicipalities" multiple size="3" disabled>
+                            </select>
+                        </div>
+                        
+                        <div class="cadastral-step">
+                            <label>Select File Type(s):</label>
+                            <div class="file-type-checkboxes" id="cadastralFileTypes">
+                                <div class="file-type-checkbox selected" onclick="toggleFileType(this, 'MAP')">
+                                    <input type="checkbox" id="fileTypeMAP" value="MAP" checked>
+                                    <label for="fileTypeMAP">Mappa (MAP)</label>
+                                </div>
+                                <div class="file-type-checkbox selected" onclick="toggleFileType(this, 'PLE')">
+                                    <input type="checkbox" id="fileTypePLE" value="PLE">
+                                    <label for="fileTypePLE">Particelle (PLE)</label>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div id="selectionSummary" class="selection-summary" style="display: none;">
+                            <h4>📊 Selection Summary</h4>
+                            <div id="summaryContent"></div>
+                            <div id="filesList" class="files-list"></div>
+                        </div>
+                        
+                        <button onclick="loadCadastralSelection()" id="loadCadastralBtn" disabled>Load Selected Files</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="controls">
+                <div class="control-group">
+                    <label for="selectionMode">Selection Mode:</label>
+                    <select id="selectionMode" onchange="changeSelectionMode()">
+                        <option value="adjacency">Find Adjacency</option>
+                    </select>
+                </div>
+                
+                <div class="control-group">
+                    <label for="adjacencyMethod">Adjacency Method:</label>
+                    <select id="adjacencyMethod">
+                        <option value="intersects">Intersects (any overlap)</option>
+                        <option value="touches">Touches (shared boundary)</option>
+                        <option value="overlaps">Overlaps (area overlap)</option>
+                    </select>
+                </div>
+                
+                <div id="selectionControls">
+                    <button onclick="findAdjacencyForSelected()" id="findAdjacencyBtn" disabled>Find Adjacent Polygons</button>
+                    <button onclick="clearSelection()">Clear Selection</button>
+                    <button onclick="showAllPolygons()">Show All Polygons</button>
+                    <div id="selectedCount" class="table-info">0 polygons selected</div>
+                </div>
+            </div>
+            
+            <div id="statusDiv"></div>
+        </div>
+        
+        <div class="map-container">
+            <div class="main-content">
+                <div class="view-toggle">
+                    <button id="mapViewBtn" class="active" onclick="showMapView()">Map View</button>
+                    <button id="tableViewBtn" onclick="handleTableViewClick()">Table View</button>
+                    <button id="adjacencyViewBtn" onclick="showAdjacencyView()">Adjacency</button>
+                    <button id="mappingViewBtn" onclick="showMappingView()">Mapping</button>
+                </div>
+                
+                <!-- Python-Generated Map Controls -->
+                {{ controls_html | safe }}
+                
+                <!-- Hidden file input for loading drawings -->
+                <input type="file" id="loadDrawingsFile" accept=".json" onchange="loadDrawingsFromJSON(event)" style="display: none;">
+                
+                <!-- Drawing Status and Warning Panels -->
+                <div class="map-panel" id="drawingStatusPanel" style="display: none; top: 60px; left: 60px; width: 300px;">
+                    <div class="panel-content">
+                        <div id="drawingStatus" class="status"></div>
+                        <div id="areaWarning" class="warning" style="display: none; color: #e74c3c; font-weight: bold; margin-top: 10px;"></div>
+                    </div>
+                </div>
+                
+                <!-- Legend Panel -->
+                <div class="map-panel" id="legendPanel" style="display: none;">
+                    <div class="panel-header">
+                        <h3>Legend</h3>
+                        <button onclick="toggleLegend()" class="panel-close">✕</button>
+                    </div>
+                    <div class="panel-content">
+                        <div class="legend-item">
+                            <div class="legend-color" style="background-color: #00ff00;"></div>
+                            <span id="greenLegend">Selected Polygons</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background-color: #ff0000;"></div>
+                            <span id="redLegend">Selected Polygons Post Adjacency Search</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background-color: #ffa500;"></div>
+                            <span>Adjacent Polygons</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background-color: #0078ff;"></div>
+                            <span>Other Polygons</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Selection Info Panel -->
+                <div class="map-panel" id="selectionInfoPanel" style="display: none;">
+                    <div class="panel-header">
+                        <h3>Selection Info</h3>
+                        <button onclick="toggleSelectionInfo()" class="panel-close">✕</button>
+                    </div>
+                    <div class="panel-content">
+                        <div id="selectionInfo">Click on a polygon to see adjacency information</div>
+                    </div>
+                </div>
+                
+                <div id="map"></div>
+                
+                <div id="mainTableContainer" class="main-table-container">
+                    <div class="table-header">
+                        <h2>Feature Attributes</h2>
+                        <div id="mainAttributesInfo" class="table-info"></div>
+                    </div>
+                    <div id="columnSelector" class="column-selector" style="display: none;">
+                        <h4>Select Columns to Display</h4>
+                        <div class="column-controls">
+                            <button onclick="selectAllColumns()">Select All</button>
+                            <button onclick="selectNoColumns()">Select None</button>
+                            <button onclick="selectKeyColumns()">Key Columns Only</button>
+                            <button onclick="toggleColumnSelector()">Hide</button>
+                        </div>
+                        <div class="column-checkboxes"></div>
+                    </div>
+                    <div class="attributes-table-container">
+                        <div style="padding: 10px; border-bottom: 1px solid #ddd; background: #f8f9fa;">
+                            <button onclick="toggleColumnSelector()" id="columnSelectorToggle">Show Column Options</button>
+                            <span id="visibleColumnsInfo" style="margin-left: 10px; font-size: 12px; color: #666;"></span>
+                        </div>
+                        <table id="mainAttributesTable" class="attributes-table">
+                            <thead id="mainAttributesTableHead"></thead>
+                            <tbody id="mainAttributesTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+                
+                <div id="mainAdjacencyContainer" class="main-table-container" style="display: none;">
+                    <div class="table-header">
+                        <h2>Adjacent Polygons Analysis</h2>
+                        <div id="mainAdjacencyInfo" class="table-info">Select polygons and run adjacency analysis to see results</div>
+                    </div>
+                    <div class="adjacency-content">
+                        <div class="adjacency-table-main">
+                            <table id="mainAdjacencyTable" class="styled-table">
+                                <thead id="mainAdjacencyTableHead">
+                                    <tr>
+                                        <th>Selected Polygon ID</th>
+                                        <th>Adjacent Polygon IDs</th>
+                                        <th>Touch Method</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="mainAdjacencyTableBody">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                
+                <div id="mainMappingContainer" class="main-table-container" style="display: none;">
+                    <div class="table-header">
+                        <h2>Drawn Polygons Mapping</h2>
+                        <div id="mainMappingInfo" class="table-info">Shows relationship between drawn polygons and cadastral zones</div>
+                    </div>
+                    <div class="mapping-content">
+                        <div class="mapping-controls" style="margin-bottom: 20px;">
+                            <button onclick="analyzeMappingRelationships()" class="btn" id="analyzeMappingBtn">Analyze Relationships</button>
+                            <button onclick="exportMappingData()" class="btn" id="exportMappingBtn">Export Mapping</button>
+                            <button onclick="refreshMappingView()" class="btn" id="refreshMappingBtn">Refresh</button>
+                        </div>
+                        
+                        <div class="mapping-summary" id="mappingSummary" style="margin-bottom: 20px; display: none;">
+                            <div class="summary-stats">
+                                <div class="stat-item">
+                                    <span class="stat-label">Drawn Polygons:</span>
+                                    <span id="drawnPolygonCount" class="stat-value">0</span>
+                                </div>
+                                <div class="stat-item">
+                                    <span class="stat-label">Cadastral Zones:</span>
+                                    <span id="cadastralZoneCount" class="stat-value">0</span>
+                                </div>
+                                <div class="stat-item">
+                                    <span class="stat-label">Intersections:</span>
+                                    <span id="intersectionCount" class="stat-value">0</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="mapping-table-main">
+                            <table id="mainMappingTable" class="styled-table">
+                                <thead id="mainMappingTableHead">
+                                    <tr>
+                                        <th>Drawn Polygon ID</th>
+                                        <th>Area (km²)</th>
+                                        <th>Intersecting Cadastral Zones</th>
+                                        <th>Intersection Type</th>
+                                        <th>Coverage %</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="mainMappingTableBody">
+                                    <tr>
+                                        <td colspan="6" class="no-data">No drawn polygons to analyze. Use drawing tools to create polygons first.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+    <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+    <script>
+        // Initialize map
+        const map = L.map('map').setView([0, 0], 2);
+        
+        // Define basemap layers
+        const basemapLayers = {
+            osm: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: 'OpenStreetMap contributors'
+            }),
+            google_roadmap: L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+                maxZoom: 20,
+                subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+                attribution: 'Google Maps'
+            }),
+            google_satellite: L.tileLayer('https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+                maxZoom: 20,
+                subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+                attribution: 'Google Satellite'
+            }),
+            google_terrain: L.tileLayer('https://{s}.google.com/vt/lyrs=p&x={x}&y={y}&z={z}', {
+                maxZoom: 20,
+                subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+                attribution: 'Google Terrain'
+            }),
+            google_hybrid: L.tileLayer('https://{s}.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}', {
+                maxZoom: 20,
+                subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+                attribution: 'Google Hybrid'
+            }),
+            google_transit: L.tileLayer('https://{s}.google.com/vt/lyrs=m,transit&x={x}&y={y}&z={z}', {
+                maxZoom: 20,
+                subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+                attribution: 'Google Maps Transit'
+            }),
+            google_traffic: L.tileLayer('https://{s}.google.com/vt/lyrs=m,traffic&x={x}&y={y}&z={z}', {
+                maxZoom: 20,
+                subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+                attribution: 'Google Maps Traffic'
+            }),
+            esri_world: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                attribution: 'Tiles © Esri — Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+            }),
+            esri_terrain: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Terrain_Base/MapServer/tile/{z}/{y}/{x}', {
+                attribution: 'Tiles © Esri — Source: USGS, Esri, TANA, DeLorme, and NPS'
+            }),
+            cartodb_positron: L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+                attribution: '© OpenStreetMap contributors © CARTO'
+            }),
+            cartodb_dark: L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                attribution: '© OpenStreetMap contributors © CARTO'
+            }),
+            openweather_temp: L.tileLayer('https://tile.openweathermap.org/map/temp_new/{z}/{x}/{y}.png?appid=YOUR_API_KEY', {
+                attribution: 'Map data © OpenWeatherMap',
+                opacity: 0.6
+            }),
+            openweather_precipitation: L.tileLayer('https://tile.openweathermap.org/map/precipitation_new/{z}/{x}/{y}.png?appid=YOUR_API_KEY', {
+                attribution: 'Map data © OpenWeatherMap',
+                opacity: 0.6
+            }),
+            openweather_wind: L.tileLayer('https://tile.openweathermap.org/map/wind_new/{z}/{x}/{y}.png?appid=YOUR_API_KEY', {
+                attribution: 'Map data © OpenWeatherMap',
+                opacity: 0.6
+            }),
+            openweather_clouds: L.tileLayer('https://tile.openweathermap.org/map/clouds_new/{z}/{x}/{y}.png?appid=YOUR_API_KEY', {
+                attribution: 'Map data © OpenWeatherMap',
+                opacity: 0.6
+            })
+        };
+        
+        // Initialize with OpenStreetMap
+        let currentBasemap = 'osm';
+        basemapLayers[currentBasemap].addTo(map);
+        
+        // Initialize draggable controls
+        initializeDraggableControls();
+        
+        // Initialize polygon selection button state
+        initializePolygonSelectionButton();
+        
+        // Python-generated JavaScript initialization
+        {{ controls_js | safe }}
+        
+        // Global variables for layer management
+        let cadastralLayers = [];  // Array to store multiple cadastral layers
+        let layerControls = null;  // Layer control for managing visibility
+        let currentGeojsonLayer = null;  // Current single layer (for compatibility)
+        let highlightLayer = null;  // Highlight layer for selected/adjacent polygons
+        let currentLayer = null;
+        let allPolygonsLayer = null;
+        let selectedLayer = null;
+        let originalData = null;
+        let attributeMarker = null;
+        let selectedPolygons = [];
+        let currentSelectionMode = 'select';
+        let polygonLayers = new Map(); // Store references to individual polygon layers
+        let polygonSelectionMode = true;
+
+        function showStatus(message, type = 'success') {
+            const statusDiv = document.getElementById('statusDiv');
+            statusDiv.innerHTML = `<div class="status ${type}">${message}</div>`;
+            setTimeout(() => {
+                statusDiv.innerHTML = '';
+            }, 5000);
+        }
+
+        function changeSelectionMode() {
+            currentSelectionMode = document.getElementById('selectionMode').value;
+            const findBtn = document.getElementById('findAdjacencyBtn');
+            const redLegend = document.getElementById('redLegend');
+            const greenLegend = document.getElementById('greenLegend');
+            
+            if (currentSelectionMode === 'select') {
+                findBtn.disabled = selectedPolygons.length === 0;
+                greenLegend.textContent = 'Selected Polygons';
+                redLegend.textContent = 'Selected Polygons Post Adjacency Search';
+                showStatus('Selection mode: Click polygons to select/deselect them', 'success');
+            } else {
+                findBtn.disabled = true;
+                redLegend.textContent = 'Primary Selection';
+                greenLegend.textContent = 'Selected Polygons';
+                showStatus('Adjacency mode: Click a polygon to find adjacent ones', 'success');
+            }
+        }
+
+        function updateSelectedCount() {
+            const countDiv = document.getElementById('selectedCount');
+            const findBtn = document.getElementById('findAdjacencyBtn');
+            
+            countDiv.textContent = `${selectedPolygons.length} polygon${selectedPolygons.length !== 1 ? 's' : ''} selected`;
+            findBtn.disabled = selectedPolygons.length === 0;
+            updateFitSelectedButton();
+            updateExportSelectionButton();
+        }
+
+        function togglePolygonSelection(feature, layer) {
+            console.log(' togglePolygonSelection called with feature:', feature);
+            const featureId = getFeatureId(feature);
+            console.log(' Feature ID:', featureId);
+            const existingIndex = selectedPolygons.findIndex(p => getFeatureId(p) === featureId);
+            console.log(' Existing index in selected polygons:', existingIndex);
+            
+            if (existingIndex >= 0) {
+                // Deselect polygon
+                console.log(' Deselecting polygon');
+                selectedPolygons.splice(existingIndex, 1);
+                updatePolygonStyle(layer, feature, 'default');
+                showStatus(`Polygon ${featureId} deselected`, 'success');
+            } else {
+                // Select polygon
+                console.log(' Selecting polygon');
+                selectedPolygons.push(feature);
+                updatePolygonStyle(layer, feature, 'selected');
+                showStatus(`Polygon ${featureId} selected`, 'success');
+            }
+            
+            console.log(' Selected polygons count:', selectedPolygons.length);
+            updateSelectedCount();
+        }
+
+        function getFeatureId(feature) {
+            if (feature.properties.feature_id !== undefined) {
+                return feature.properties.feature_id;
+            } else if (feature.properties.index !== undefined) {
+                return feature.properties.index;
+            } else if (feature.properties.fid !== undefined) {
+                return feature.properties.fid;
+            } else if (feature.properties.id !== undefined) {
+                return feature.properties.id;
+            }
+            return 0;
+        }
+
+        function createHighlightLayer(selectedFeatures, adjacentFeatures) {
+            // Remove existing highlight layer
+            if (highlightLayer) {
+                map.removeLayer(highlightLayer);
+                highlightLayer = null;
+            }
+            
+            console.log(` Creating highlight layer with ${selectedFeatures.length} selected and ${adjacentFeatures.length} adjacent polygons`);
+            
+            // Create new layer group for highlights
+            highlightLayer = L.layerGroup().addTo(map);
+            
+            // Add selected polygons (red)
+            selectedFeatures.forEach(feature => {
+                const selectedStyle = {
+                    color: '#ff0000',
+                    weight: 5,
+                    opacity: 1,
+                    fillColor: '#ff0000',
+                    fillOpacity: 0.8
+                };
+                
+                const layer = L.geoJSON(feature, {
+                    style: selectedStyle
+                });
+                
+                highlightLayer.addLayer(layer);
+                console.log(` Added selected polygon ${getFeatureId(feature)} to highlight layer`);
+            });
+            
+            // Add adjacent polygons (orange)
+            adjacentFeatures.forEach(feature => {
+                const adjacentStyle = {
+                    color: '#ff8c00',
+                    weight: 5,
+                    opacity: 1,
+                    fillColor: '#ff8c00',
+                    fillOpacity: 0.8
+                };
+                
+                const layer = L.geoJSON(feature, {
+                    style: adjacentStyle
+                });
+                
+                highlightLayer.addLayer(layer);
+                console.log(` Added adjacent polygon ${getFeatureId(feature)} to highlight layer`);
+            });
+            
+            console.log(` Successfully created highlight layer with ${selectedFeatures.length + adjacentFeatures.length} polygons`);
+        }
+
+        function clearHighlightLayer() {
+            if (highlightLayer) {
+                map.removeLayer(highlightLayer);
+                highlightLayer = null;
+                console.log(` Cleared highlight layer`);
+            }
+        }
+
+        function updatePolygonStyle(layer, feature, styleType) {
+            let style;
+            switch (styleType) {
+                case 'selected':
+                    style = {
+                        color: '#00ff00',
+                        weight: 3,
+                        opacity: 1,
+                        fillColor: '#00ff00',
+                        fillOpacity: 0.4
+                    };
+                    break;
+                default: // 'default'
+                    style = {
+                        color: '#0078ff',
+                        weight: 2,
+                        opacity: 0.8,
+                        fillColor: '#0078ff',
+                        fillOpacity: 0.3
+                    };
+            }
+            
+            console.log(` Applying ${styleType} selection style to feature`);
+            
+            try {
+                if (layer.setStyle) {
+                    layer.setStyle(style);
+                    console.log(` Successfully applied ${styleType} selection style`);
+                } else {
+                    console.error(` Layer does not have setStyle method`);
+                }
+            } catch (error) {
+                console.error(` Error applying ${styleType} selection style:`, error);
+            }
+        }
+
+        async function uploadFile() {
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                showStatus('Please select a QPKG or GPKG file', 'error');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                showStatus('Uploading and processing file...', 'success');
+                
+                const response = await fetch('/upload-qpkg/', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error('Upload failed');
+                }
+
+                const data = await response.json();
+                visualizeGeoJSON(data.geojson);
+                originalData = data.geojson;
+                showAllPolygons();
+                resetAttributesData(); // Reset cached attributes data
+                selectedPolygons = []; // Reset selection
+                polygonLayers.clear(); // Clear layer references
+                updateSelectedCount();
+                showMapView(); // Ensure map view is shown
+                changeSelectionMode(); // Reset to selection mode instructions
+                
+                // Automatically load attributes table
+                await loadAttributesAutomatically();
+                
+                showStatus('File uploaded successfully! Select polygons first, then find adjacency.', 'success');
+                
+            } catch (error) {
+                showStatus('Error: ' + error.message, 'error');
+            }
+        }
+
+        function visualizeGeoJSON(geojson) {
+            // Remove previous layer if exists
+            if (currentLayer) {
+                map.removeLayer(currentLayer);
+            }
+
+            // Clear polygon layers map
+            polygonLayers.clear();
+            
+            // Add new GeoJSON layer
+            currentLayer = L.geoJSON(geojson, {
+                style: {
+                    color: '#ff7800',
+                    weight: 2,
+                    opacity: 0.65
+                },
+                onEachFeature: function(feature, layer) {
+                    // Ensure feature has an ID
+                    if (feature.properties.feature_id === undefined) {
+                        const featureIndex = geojson.features.indexOf(feature);
+                        feature.properties.feature_id = featureIndex;
+                    }
+                    
+                    // Store layer reference for styling
+                    const featureId = getFeatureId(feature);
+                    polygonLayers.set(featureId, layer);
+                    
+                    // Add popup with properties
+                    if (feature.properties) {
+                        const popupContent = Object.entries(feature.properties)
+                            .map(([key, value]) => `<b>${key}:</b> ${value}`)
+                            .join('<br>');
+                        layer.bindPopup(popupContent);
+                    }
+                    
+                    // Add click event for polygon selection
+                    layer.on('click', function(e) {
+                        console.log('Polygon clicked:', feature);
+                        console.log('Current selection mode:', currentSelectionMode);
+                        
+                        if (currentSelectionMode === 'select') {
+                            console.log('Multi-selection mode: toggling selection');
+                            togglePolygonSelection(feature, layer);
+                        } else {
+                            console.log('Adjacency mode: selecting polygon');
+                            selectPolygon(feature, layer);
+                        }
+                        e.originalEvent.stopPropagation();
+                    });
+                }
+            }).addTo(map);
+
+            // Fit map to layer bounds
+            if (currentLayer && currentLayer.getBounds) {
+                map.fitBounds(currentLayer.getBounds());
+            }
+        }
+
+        function showAllPolygons() {
+            if (!originalData) return;
+
+            // Remove existing layers
+            if (allPolygonsLayer) {
+                map.removeLayer(allPolygonsLayer);
+            }
+            if (selectedLayer) {
+                map.removeLayer(selectedLayer);
+            }
+
+            // Add all polygons with default styling
+            allPolygonsLayer = L.geoJSON(originalData, {
+                style: {
+                    color: '#0078ff',
+                    weight: 2,
+                    opacity: 0.8,
+                    fillColor: '#0078ff',
+                    fillOpacity: 0.3
+                },
+                onEachFeature: function(feature, layer) {
+                    // Ensure feature has an ID - use array index if needed
+                    if (feature.properties.feature_id === undefined) {
+                        const featureIndex = originalData.features.indexOf(feature);
+                        feature.properties.feature_id = featureIndex;
+                    }
+                    
+                    // Store layer reference for styling
+                    const featureId = getFeatureId(feature);
+                    polygonLayers.set(featureId, layer);
+                    console.log(`Stored layer for feature ID ${featureId} (type: ${typeof featureId})`);
+                    
+                    // Add click handler based on selection mode
+                    layer.on('click', function(e) {
+                        console.log(' Clicked feature:', feature); 
+                        console.log(' Current selection mode:', currentSelectionMode);
+                        
+                        if (currentSelectionMode === 'select') {
+                            console.log(' Multi-selection mode: toggling selection');
+                            togglePolygonSelection(feature, layer);
+                        } else {
+                            console.log(' Adjacency mode: selecting polygon');
+                            selectPolygon(feature, layer);
+                        }
+                        
+                        L.DomEvent.stopPropagation(e);
+                    });
+                    
+                    // Add popup with properties
+                    if (feature.properties) {
+                        const popupContent = Object.entries(feature.properties)
+                            .map(([key, value]) => `<b>${key}:</b> ${value}`)
+                            .join('<br>');
+                        layer.bindPopup(popupContent);
+                    }
+                }
+            }).addTo(map);
+
+            // Fit map to layer bounds
+            map.fitBounds(allPolygonsLayer.getBounds());
+            
+            // Clear selection info
+            document.getElementById('selectionInfo').innerHTML = 'Click on a polygon to see adjacency information';
+        }
+
+        async function selectPolygon(feature, layer) {
+            console.log('Selecting polygon with feature:', feature); // Debug log
+            
+            // Try different ways to get the feature ID
+            let featureId = null;
+            if (feature.properties.feature_id !== undefined) {
+                featureId = feature.properties.feature_id;
+            } else if (feature.properties.index !== undefined) {
+                featureId = feature.properties.index;
+            } else if (feature.properties.fid !== undefined) {
+                featureId = feature.properties.fid;
+            } else if (feature.properties.id !== undefined) {
+                featureId = feature.properties.id;
+            } else {
+                // Find the index in the original data
+                if (originalData && originalData.features) {
+                    featureId = originalData.features.findIndex(f => 
+                        JSON.stringify(f.geometry) === JSON.stringify(feature.geometry)
+                    );
+                }
+                if (featureId === -1) featureId = 0;
+            }
+            
+            console.log('Using feature ID:', featureId); // Debug log
+            
+            try {
+                showStatus('Finding adjacent polygons...', 'success');
+                
+                const method = document.getElementById('adjacencyMethod').value;
+                
+                const response = await fetch('/get-adjacent-polygons/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        feature_id: featureId,
+                        geometry: feature.geometry,
+                        touch_method: method
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to get adjacent polygons');
+                }
+
+                const data = await response.json();
+                visualizeSelection(data);
+                updateSelectionInfo(data);
+                showStatus(`Found ${data.adjacent_ids.length} adjacent polygons`, 'success');
+                
+            } catch (error) {
+                showStatus('Error: ' + error.message, 'error');
+            }
+        }
+
+        function visualizeSelection(data) {
+            console.log('Visualizing selection with data:', data);
+            
+            // Remove existing attribute marker
+            if (attributeMarker) {
+                map.removeLayer(attributeMarker);
+            }
+
+            // Instead of creating a new layer, update the existing polygon styles
+            const selectedId = data.selected_id;
+            const adjacentIds = new Set(data.adjacent_ids);
+            
+            console.log('Selected ID:', selectedId, 'type:', typeof selectedId);
+            console.log('Adjacent IDs:', Array.from(adjacentIds), 'types:', Array.from(adjacentIds).map(id => typeof id));
+            console.log('polygonLayers keys:', Array.from(polygonLayers.keys()), 'types:', Array.from(polygonLayers.keys()).map(id => typeof id));
+
+            // Style all polygons based on their relationship to the selection
+            console.log('Single polygon styling - polygonLayers size:', polygonLayers.size);
+            
+            let styledAdjacent = 0;
+            
+            polygonLayers.forEach((layer, featureId) => {
+                const feature = originalData.features.find(f => getFeatureId(f) === featureId);
+                if (!feature) {
+                    console.warn(`No feature found for single polygon styling, ID: ${featureId}`);
+                    return;
+                }
+                
+                // Convert to numbers for comparison
+                const numFeatureId = Number(featureId);
+                const numSelectedId = Number(selectedId);
+                const isSelected = numFeatureId === numSelectedId;
+                const isAdjacent = adjacentIds.has(numFeatureId) || adjacentIds.has(featureId);
+                
+                console.log(`Styling feature ${featureId} (${numFeatureId}): selected=${isSelected}, adjacent=${isAdjacent}`);
+                
+                if (isSelected) {
+                    updatePolygonStyle(layer, feature, 'primary');
+                } else if (isAdjacent) {
+                    updatePolygonStyle(layer, feature, 'adjacent');
+                    styledAdjacent++;
+                } else {
+                    updatePolygonStyle(layer, feature, 'default');
+                }
+            });
+            
+            console.log(`Styled ${styledAdjacent} adjacent polygons in single selection mode`);
+            
+            // Create attribute marker for the selected feature
+            const selectedFeature = originalData.features.find(f => getFeatureId(f) === selectedId);
+            if (selectedFeature) {
+                const centroid = getPolygonCentroid(selectedFeature);
+                createAttributeMarker(selectedFeature, centroid);
+            }
+
+            // Fit map to show selected and adjacent polygons
+            const relevantFeatures = originalData.features.filter(f => {
+                const id = getFeatureId(f);
+                return id === selectedId || adjacentIds.has(id);
+            });
+            
+            if (relevantFeatures.length > 0) {
+                const tempLayer = L.geoJSON({
+                    type: "FeatureCollection",
+                    features: relevantFeatures
+                });
+                map.fitBounds(tempLayer.getBounds());
+            }
+        }
+
+        function updateSelectionInfo(data) {
+            const infoDiv = document.getElementById('selectionInfo');
+            
+            let infoHTML = `
+                <div class="feature-info selected-info">
+                    <h4>Selected Polygon</h4>
+                    <p><strong>Feature ID:</strong> ${data.selected_id}</p>
+                    <p><strong>Adjacent Count:</strong> ${data.adjacent_ids.length}</p>
+                </div>
+            `;
+            
+            if (data.adjacent_ids.length > 0) {
+                infoHTML += `
+                    <div class="feature-info adjacent-info">
+                        <h4>Adjacent Polygons</h4>
+                        <p><strong>IDs:</strong> ${data.adjacent_ids.join(', ')}</p>
+                    </div>
+                `;
+            }
+            
+            infoDiv.innerHTML = infoHTML;
+        }
+
+        function clearSelection() {
+            if (selectedLayer) {
+                map.removeLayer(selectedLayer);
+                selectedLayer = null;
+            }
+            
+            if (attributeMarker) {
+                map.removeLayer(attributeMarker);
+                attributeMarker = null;
+            }
+            
+            // Clear highlight layer
+            clearHighlightLayer();
+            
+            // Clear multi-selection
+            selectedPolygons = [];
+            
+            updateSelectedCount();
+            document.getElementById('selectionInfo').innerHTML = 'Click on a polygon to see adjacency information';
+            
+            // Clear main adjacency table
+            const mainTableBody = document.getElementById('mainAdjacencyTableBody');
+            if (mainTableBody) {
+                mainTableBody.innerHTML = '';
+            }
+            const mainInfoDiv = document.getElementById('mainAdjacencyInfo');
+            if (mainInfoDiv) {
+                mainInfoDiv.innerHTML = 'Select polygons and run adjacency analysis to see results';
+            }
+            
+            showStatus('Selection cleared', 'success');
+        }
+
+        async function findAdjacencyForSelected() {
+            if (selectedPolygons.length === 0) {
+                showStatus('No polygons selected', 'error');
+                return;
+            }
+            
+            try {
+                showStatus('Finding adjacent polygons for selected set...', 'success');
+                
+                // Get adjacency method
+                const method = document.getElementById('adjacencyMethod').value;
+                
+                // Find adjacent polygons for all selected ones
+                let allAdjacent = new Set();
+                let adjacencyData = [];
+                
+                for (const selectedFeature of selectedPolygons) {
+                    const featureId = getFeatureId(selectedFeature);
+                    
+                    const response = await fetch('/get-adjacent-polygons/', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            feature_id: featureId,
+                            geometry: selectedFeature.geometry,
+                            touch_method: method
+                        })
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        console.log(`Backend response for feature ${featureId}:`, data);
+                        console.log('Adjacent IDs:', data.adjacent_ids, 'Types:', data.adjacent_ids.map(id => typeof id));
+                        adjacencyData.push(data);
+                        
+                        // Add adjacent IDs to the set (normalize as both string and number)
+                        data.adjacent_ids.forEach(id => {
+                            console.log(`Adding adjacent ID: ${id} (${typeof id})`);
+                            allAdjacent.add(id);
+                            allAdjacent.add(Number(id));
+                            allAdjacent.add(String(id));
+                        });
+                    }
+                }
+                
+                // Create highlight layer with selected and adjacent polygons
+                console.log('Creating highlight layer - Selected:', selectedPolygons.map(p => getFeatureId(p)), 'Adjacent:', Array.from(allAdjacent));
+                
+                // Find adjacent features from original data
+                const adjacentFeatures = [];
+                originalData.features.forEach(feature => {
+                    const featureId = getFeatureId(feature);
+                    const numFeatureId = Number(featureId);
+                    const stringFeatureId = String(featureId);
+                    
+                    if (allAdjacent.has(numFeatureId) || allAdjacent.has(featureId) || allAdjacent.has(stringFeatureId)) {
+                        adjacentFeatures.push(feature);
+                        console.log(` Found adjacent feature ${featureId}`);
+                    }
+                });
+                
+                // Create highlight layer with selected and adjacent polygons
+                createHighlightLayer(selectedPolygons, adjacentFeatures);
+                
+                console.log(`Created highlight layer with ${selectedPolygons.length} selected and ${adjacentFeatures.length} adjacent polygons`);
+                
+                // Update selection info and adjacency table
+                updateMultiSelectionInfo(selectedPolygons, Array.from(allAdjacent));
+                updateAdjacencyTable(adjacencyData, method);
+                
+                // Automatically switch to adjacency view to show results
+                showAdjacencyView();
+                
+                showStatus(`Found ${allAdjacent.size} adjacent polygons for ${selectedPolygons.length} selected polygon${selectedPolygons.length !== 1 ? 's' : ''}`, 'success');
+                
+            } catch (error) {
+                showStatus('Error: ' + error.message, 'error');
+            }
+        }
+
+        function updateMultiSelectionInfo(selectedFeatures, adjacentIds) {
+            const infoDiv = document.getElementById('selectionInfo');
+            
+            let infoHTML = `
+                <div class="feature-info selected-info">
+                    <h4>Selected Polygons (${selectedFeatures.length})</h4>
+                    <p><strong>Feature ID:</strong> ${selectedFeatures.map(f => getFeatureId(f)).join(', ')}</p>
+                    <p><strong>Total Adjacent:</strong> ${adjacentIds.length}</p>
+                </div>
+            `;
+            
+            if (adjacentIds.length > 0) {
+                infoHTML += `
+                    <div class="feature-info adjacent-info">
+                        <h4>Adjacent Polygons</h4>
+                        <p><strong>IDs:</strong> ${adjacentIds.join(', ')}</p>
+                    </div>
+                `;
+            }
+            
+            infoDiv.innerHTML = infoHTML;
+        }
+
+        function updateAdjacencyTable(adjacencyData, method) {
+            // Update main adjacency table
+            const mainTableBody = document.getElementById('mainAdjacencyTableBody');
+            const mainInfoDiv = document.getElementById('mainAdjacencyInfo');
+            
+            // Clear existing content
+            mainTableBody.innerHTML = '';
+            
+            // Populate table with adjacency data - one row per selected polygon
+            adjacencyData.forEach(data => {
+                const selectedId = data.selected_id;
+                const row = mainTableBody.insertRow();
+                
+                row.insertCell(0).textContent = selectedId;
+                
+                if (data.adjacent_ids.length === 0) {
+                    row.insertCell(1).textContent = 'None found';
+                } else {
+                    // Concatenate all adjacent IDs with commas
+                    row.insertCell(1).textContent = data.adjacent_ids.join(', ');
+                }
+                
+                row.insertCell(2).textContent = method;
+            });
+            
+            // Update info text
+            const totalAdjacent = adjacencyData.reduce((sum, data) => sum + data.adjacent_ids.length, 0);
+            mainInfoDiv.innerHTML = `Found ${totalAdjacent} adjacent polygons for ${adjacencyData.length} selected polygon${adjacencyData.length !== 1 ? 's' : ''} using ${method} method`;
+            
+            console.log('Updated main adjacency table with', adjacencyData.length, 'rows');
+        }
+
+        let attributesData = null;
+        let visibleColumns = [];
+        let allColumns = [];
+
+        async function loadAttributes() {
+            if (!originalData) {
+                showStatus('Please upload a file first', 'error');
+                return;
+            }
+
+            if (attributesData) {
+                return attributesData; // Return cached data
+            }
+
+            try {
+                showStatus('Loading attributes...', 'success');
+                
+                // Extract attributes directly from originalData instead of server call
+                const features = originalData.features || [];
+                if (features.length === 0) {
+                    throw new Error('No features found in the data');
+                }
+                
+                // Get all unique column names from all features
+                const columnSet = new Set();
+                features.forEach(feature => {
+                    if (feature.properties) {
+                        Object.keys(feature.properties).forEach(key => columnSet.add(key));
+                    }
+                });
+                
+                const columns = Array.from(columnSet);
+                
+                // Create the attributes data structure
+                attributesData = {
+                    columns: columns,
+                    total_features: features.length,
+                    features: features.map((feature, index) => ({
+                        index: index,
+                        ...feature.properties
+                    }))
+                };
+                
+                showStatus(`Loaded attributes for ${attributesData.total_features} features`, 'success');
+                return attributesData;
+                
+            } catch (error) {
+                showStatus('Error loading attributes: ' + error.message, 'error');
+                return null;
+            }
+        }
+
+        async function loadAttributesAutomatically() {
+            if (!originalData) {
+                updateAttributesStatus('No data loaded');
+                return;
+            }
+
+            try {
+                updateAttributesStatus('Loading attributes...');
+                const data = await loadAttributes();
+                if (data) {
+                    displayMainAttributesTable(data);
+                    updateAttributesStatus(`${data.total_features} features, ${data.columns.length} attributes loaded`);
+                }
+            } else {
+                // Data already loaded, just display it
+                displayMainAttributesTable(attributesData);
+                updateAttributesStatus(`${attributesData.total_features} features, ${attributesData.columns.length} attributes loaded`);
+            }
+        }
+
+        function updateAttributesStatus(message) {
+            const statusDiv = document.getElementById('attributesStatus');
+            if (statusDiv) {
+                statusDiv.textContent = message;
+            }
+        }
+
+        async function loadAndShowAttributesTable() {
+            if (!originalData) {
+                showStatus('Please upload a file first', 'error');
+                return;
+            }
+
+            try {
+                const data = await loadAttributes();
+                if (data) {
+                    displayMainAttributesTable(data);
+                    showTableView();
+                } else {
+                    showStatus('Failed to load attributes data', 'error');
+                }
+            } catch (error) {
+                showStatus('Error loading table: ' + error.message, 'error');
+            }
+        }
+
+        function displayAttributesTable(data) {
+            console.log('Displaying main attributes table with data:', data); // Debug log
+            
+            const tableHead = document.getElementById('mainAttributesTableHead');
+            const tableBody = document.getElementById('mainAttributesTableBody');
+            const attributesInfo = document.getElementById('mainAttributesInfo');
+            
+            if (!tableHead || !tableBody || !attributesInfo) {
+                console.error('Table elements not found!');
+                return;
+            }
+            
+            // Initialize columns arrays if needed
+            if (allColumns.length === 0) {
+                allColumns = [...data.columns];
+                selectKeyColumns(); // Show only key columns by default
+                createColumnCheckboxes();
+                updateVisibleColumnsInfo();
+            }
+            
+            // Filter columns based on visibility selection
+            const displayColumns = visibleColumns.length > 0 ? visibleColumns : data.columns;
+            
+            // Update info
+            attributesInfo.innerHTML = `${data.total_features} features, showing ${displayColumns.length} of ${data.columns.length} attributes`;
+            
+            // Clear existing content
+            tableHead.innerHTML = '';
+            tableBody.innerHTML = '';
+            
+            // Create header row
+            const headerRow = document.createElement('tr');
+            
+            // Add index column
+            const indexHeader = document.createElement('th');
+            indexHeader.textContent = 'Index';
+            indexHeader.style.minWidth = '50px';
+            headerRow.appendChild(indexHeader);
+            
+            // Add attribute columns
+            data.columns.forEach(column => {
+                const th = document.createElement('th');
+                th.textContent = column;
+                th.title = column; // Show full name on hover
+                headerRow.appendChild(th);
+            });
+            
+            tableHead.appendChild(headerRow);
+            
+            // Create data rows
+            data.data.forEach(row => {
+                const tr = document.createElement('tr');
+                tr.dataset.featureIndex = row.index;
+                
+                // Add index cell
+                const indexCell = document.createElement('td');
+                indexCell.textContent = row.index;
+                indexCell.style.fontWeight = 'bold';
+                tr.appendChild(indexCell);
+                
+                // Add attribute cells
+                data.columns.forEach(column => {
+                    const td = document.createElement('td');
+                    const value = row[column];
+                    
+                    if (value === null || value === undefined) {
+                        td.textContent = 'null';
+                        td.style.fontStyle = 'italic';
+                        td.style.color = '#999';
+                    } else {
+                        td.textContent = String(value);
+                        td.title = String(value); // Show full value on hover
+                    }
+                    
+                    tr.appendChild(td);
+                });
+                
+                // Add click handler to highlight feature
+                tr.addEventListener('click', function() {
+                    highlightFeatureFromTable(row.index);
+                    
+                    // Remove previous selection in table
+                    document.querySelectorAll('.attributes-table tr').forEach(r => {
+                        r.classList.remove('selected-row');
+                    });
+                    
+                    // Add selection to clicked row
+                    tr.classList.add('selected-row');
+                });
+                
+                tableBody.appendChild(tr);
+            });
+        }
+
+        function highlightFeatureFromTable(featureIndex) {
+            if (!originalData || !originalData.features) return;
+            
+            // Find the feature with the matching index
+            const feature = originalData.features.find(f => 
+                (f.properties.feature_id !== undefined && f.properties.feature_id === featureIndex) ||
+                (f.properties.index !== undefined && f.properties.index === featureIndex)
+            );
+            
+            if (feature) {
+                // Create a temporary layer to highlight the selected feature
+                if (selectedLayer) {
+                    map.removeLayer(selectedLayer);
+                }
+                
+                if (attributeMarker) {
+                    map.removeLayer(attributeMarker);
+                }
+                
+                selectedLayer = L.geoJSON(feature, {
+                    style: {
+                        color: '#ff0000',
+                        weight: 4,
+                        opacity: 1,
+                        fillColor: '#ff0000',
+                        fillOpacity: 0.3
+                    },
+                    onEachFeature: function(feature, layer) {
+                        let popupContent = '<h4>SELECTED FEATURE</h4>';
+                        Object.entries(feature.properties).forEach(([key, value]) => {
+                            popupContent += `<b>${key}:</b> ${value}<br>`;
+                        });
+                        layer.bindPopup(popupContent);
+                    }
+                }).addTo(map);
+                
+                // Create attribute marker
+                const centroid = getPolygonCentroid(feature);
+                createAttributeMarker(feature, centroid);
+                
+                // Zoom to feature
+                map.fitBounds(selectedLayer.getBounds());
+                
+                showStatus(`Selected feature ${featureIndex}`, 'success');
+            }
+        }
+
+        function showMapView() {
+            document.getElementById('map').style.display = 'block';
+            document.getElementById('mainTableContainer').style.display = 'none';
+            document.getElementById('mainAdjacencyContainer').style.display = 'none';
+            document.getElementById('mainMappingContainer').style.display = 'none';
+            
+            // Show all control groups and their labels
+            document.getElementById('navigationControls').style.display = 'block';
+            document.getElementById('selectionDrawingControls').style.display = 'block';
+            document.getElementById('viewDisplayControls').style.display = 'block';
+            document.getElementById('dataOperationsControls').style.display = 'block';
+            
+            // Show control labels
+            document.querySelectorAll('.control-group-label').forEach(label => {
+                label.style.display = 'block';
+            });
+            
+            document.getElementById('mapViewBtn').classList.add('active');
+            document.getElementById('tableViewBtn').classList.remove('active');
+            document.getElementById('adjacencyViewBtn').classList.remove('active');
+            document.getElementById('mappingViewBtn').classList.remove('active');
+        }
+
+        function showTableView() {
+            document.getElementById('map').style.display = 'none';
+            document.getElementById('mainTableContainer').style.display = 'flex';
+            document.getElementById('mainAdjacencyContainer').style.display = 'none';
+            document.getElementById('mainMappingContainer').style.display = 'none';
+            
+            // Hide all control groups
+            document.getElementById('navigationControls').style.display = 'none';
+            document.getElementById('selectionDrawingControls').style.display = 'none';
+            document.getElementById('viewDisplayControls').style.display = 'none';
+            document.getElementById('dataOperationsControls').style.display = 'none';
+            
+            // Hide control labels
+            document.querySelectorAll('.control-group-label').forEach(label => {
+                label.style.display = 'none';
+            });
+            // Hide any open panels
+            document.getElementById('legendPanel').style.display = 'none';
+            document.getElementById('selectionInfoPanel').style.display = 'none';
+            
+            document.getElementById('mapViewBtn').classList.remove('active');
+            document.getElementById('tableViewBtn').classList.add('active');
+            document.getElementById('adjacencyViewBtn').classList.remove('active');
+            document.getElementById('mappingViewBtn').classList.remove('active');
+        }
+
+        function showAdjacencyView() {
+            document.getElementById('map').style.display = 'none';
+            document.getElementById('mainTableContainer').style.display = 'none';
+            document.getElementById('mainAdjacencyContainer').style.display = 'flex';
+            document.getElementById('mainMappingContainer').style.display = 'none';
+            
+            // Hide all control groups
+            document.getElementById('navigationControls').style.display = 'none';
+            document.getElementById('selectionDrawingControls').style.display = 'none';
+            document.getElementById('viewDisplayControls').style.display = 'none';
+            document.getElementById('dataOperationsControls').style.display = 'none';
+            
+            // Hide control labels
+            document.querySelectorAll('.control-group-label').forEach(label => {
+                label.style.display = 'none';
+            });
+            // Hide any open panels
+            document.getElementById('legendPanel').style.display = 'none';
+            document.getElementById('selectionInfoPanel').style.display = 'none';
+            
+            document.getElementById('mapViewBtn').classList.remove('active');
+            document.getElementById('tableViewBtn').classList.remove('active');
+            document.getElementById('adjacencyViewBtn').classList.add('active');
+            document.getElementById('mappingViewBtn').classList.remove('active');
+        }
+
+        function showMappingView() {
+            document.getElementById('map').style.display = 'none';
+            document.getElementById('mainTableContainer').style.display = 'none';
+            document.getElementById('mainAdjacencyContainer').style.display = 'none';
+            document.getElementById('mainMappingContainer').style.display = 'flex';
+            
+            // Hide all control groups
+            document.getElementById('navigationControls').style.display = 'none';
+            document.getElementById('selectionDrawingControls').style.display = 'none';
+            document.getElementById('viewDisplayControls').style.display = 'none';
+            document.getElementById('dataOperationsControls').style.display = 'none';
+            
+            // Hide control labels
+            document.querySelectorAll('.control-group-label').forEach(label => {
+                label.style.display = 'none';
+            });
+            // Hide any open panels
+            document.getElementById('legendPanel').style.display = 'none';
+            document.getElementById('selectionInfoPanel').style.display = 'none';
+            
+            document.getElementById('mapViewBtn').classList.remove('active');
+            document.getElementById('tableViewBtn').classList.remove('active');
+            document.getElementById('adjacencyViewBtn').classList.remove('active');
+            document.getElementById('mappingViewBtn').classList.add('active');
+            
+            // Automatically refresh mapping view when opened
+            refreshMappingView();
+        }
+
+        async function handleTableViewClick() {
+            // Always switch to table view first
+            showTableView();
+            
+            if (!originalData) {
+                // Show message that no data is loaded
+                const tableBody = document.getElementById('mainAttributesTableBody');
+                const tableHead = document.getElementById('mainAttributesTableHead');
+                const attributesInfo = document.getElementById('mainAttributesInfo');
+                
+                if (tableHead) tableHead.innerHTML = '';
+                if (tableBody) tableBody.innerHTML = '<tr><td colspan="100%" class="no-data">No data loaded. Please upload a QPKG/GPKG file or load cadastral data first.</td></tr>';
+                if (attributesInfo) attributesInfo.innerHTML = 'No data loaded';
+                
+                showStatus('Please upload a file first to view attributes table', 'error');
+                return;
+            }
+
+            // Ensure attributes are loaded and displayed
+            if (!attributesData) {
+                updateAttributesStatus('Loading attributes...');
+                const data = await loadAttributes();
+                if (data) {
+                    displayMainAttributesTable(data);
+                    updateAttributesStatus(`${data.total_features} features, ${data.columns.length} attributes loaded`);
+                }
+            } else {
+                // Data already loaded, just display it
+                displayMainAttributesTable(attributesData);
+                updateAttributesStatus(`${attributesData.total_features} features, ${attributesData.columns.length} attributes loaded`);
+            }
+        }
+
+        function displayMainAttributesTable(data) {
+            console.log('Displaying main attributes table with data:', data); // Debug log
+            
+            const tableHead = document.getElementById('mainAttributesTableHead');
+            const tableBody = document.getElementById('mainAttributesTableBody');
+            const attributesInfo = document.getElementById('mainAttributesInfo');
+            
+            if (!tableHead || !tableBody || !attributesInfo) {
+                console.error('Table elements not found!');
+                return;
+            }
+            
+            // Initialize columns arrays if needed
+            if (allColumns.length === 0) {
+                allColumns = [...data.columns];
+                selectKeyColumns(); // Show only key columns by default
+                createColumnCheckboxes();
+                updateVisibleColumnsInfo();
+            }
+            
+            // Filter columns based on visibility selection
+            const displayColumns = visibleColumns.length > 0 ? visibleColumns : data.columns;
+            
+            // Update info
+            attributesInfo.innerHTML = `${data.total_features} features, showing ${displayColumns.length} of ${data.columns.length} attributes`;
+            
+            // Clear existing content
+            tableHead.innerHTML = '';
+            tableBody.innerHTML = '';
+            
+            // Create header row
+            const headerRow = document.createElement('tr');
+            
+            // Add index column
+            const indexHeader = document.createElement('th');
+            indexHeader.textContent = 'Index';
+            indexHeader.style.minWidth = '60px';
+            headerRow.appendChild(indexHeader);
+            
+            // Add attribute columns (only visible ones)
+            displayColumns.forEach(column => {
+                const th = document.createElement('th');
+                th.textContent = column;
+                th.title = column; // Show full name on hover
+                headerRow.appendChild(th);
+            });
+            
+            tableHead.appendChild(headerRow);
+            
+            // Create data rows
+            console.log('Data to display:', data.data.length, 'rows'); // Debug log
+            
+            if (data.data.length === 0) {
+                // Add a "no data" row
+                const noDataRow = document.createElement('tr');
+                const noDataCell = document.createElement('td');
+                noDataCell.colSpan = displayColumns.length + 1;
+                noDataCell.textContent = 'No data available';
+                noDataCell.style.textAlign = 'center';
+                noDataCell.style.fontStyle = 'italic';
+                noDataCell.style.padding = '20px';
+                noDataRow.appendChild(noDataCell);
+                tableBody.appendChild(noDataRow);
+                return;
+            }
+            
+            data.data.forEach((row, index) => {
+                console.log(`Creating row ${index} with data:`, row); // Debug log
+                
+                const tr = document.createElement('tr');
+                tr.dataset.featureIndex = row.index;
+                
+                // Add index cell
+                const indexCell = document.createElement('td');
+                indexCell.textContent = row.index;
+                indexCell.style.fontWeight = 'bold';
+                tr.appendChild(indexCell);
+                
+                // Add attribute cells (only visible ones)
+                displayColumns.forEach(column => {
+                    const td = document.createElement('td');
+                    const value = row[column];
+                    
+                    if (value === null || value === undefined) {
+                        td.textContent = 'null';
+                        td.style.fontStyle = 'italic';
+                        td.style.color = '#999';
+                    } else {
+                        td.textContent = String(value);
+                        td.title = String(value); // Show full value on hover
+                    }
+                    
+                    tr.appendChild(td);
+                });
+                
+                // Add click handler to highlight feature on map
+                tr.addEventListener('click', function() {
+                    highlightFeatureFromMainTable(row.index);
+                    
+                    // Remove previous selection in table
+                    document.querySelectorAll('.attributes-table tr').forEach(r => {
+                        r.classList.remove('selected-row');
+                    });
+                    
+                    // Add selection to clicked row
+                    tr.classList.add('selected-row');
+                });
+                
+                tableBody.appendChild(tr);
+            });
+        }
+
+        function highlightFeatureFromMainTable(featureIndex) {
+            if (!originalData || !originalData.features) return;
+            
+            // Switch to map view to show the highlighted feature
+            showMapView();
+            
+            // Find the feature with the matching index
+            const feature = originalData.features.find(f => 
+                (f.properties.feature_id !== undefined && f.properties.feature_id === featureIndex) ||
+                (f.properties.index !== undefined && f.properties.index === featureIndex)
+            );
+            
+            if (feature) {
+                // Create a temporary layer to highlight the selected feature
+                if (selectedLayer) {
+                    map.removeLayer(selectedLayer);
+                }
+                
+                if (attributeMarker) {
+                    map.removeLayer(attributeMarker);
+                }
+                
+                selectedLayer = L.geoJSON(feature, {
+                    style: {
+                        color: '#ff0000',
+                        weight: 4,
+                        opacity: 1,
+                        fillColor: '#ff0000',
+                        fillOpacity: 0.3
+                    },
+                    onEachFeature: function(feature, layer) {
+                        let popupContent = '<h4>SELECTED FEATURE</h4>';
+                        Object.entries(feature.properties).forEach(([key, value]) => {
+                            popupContent += `<b>${key}:</b> ${value}<br>`;
+                        });
+                        layer.bindPopup(popupContent);
+                    }
+                }).addTo(map);
+                
+                // Create attribute marker
+                const centroid = getPolygonCentroid(feature);
+                createAttributeMarker(feature, centroid);
+                
+                // Zoom to feature
+                map.fitBounds(selectedLayer.getBounds());
+                
+                showStatus(`Selected feature ${featureIndex}`, 'success');
+            }
+        }
+
+        // Reset attributes data when new file is uploaded
+        function resetAttributesData() {
+            attributesData = null;
+            allColumns = [];
+            visibleColumns = [];
+            
+            // Clear the table
+            const tableHead = document.getElementById('mainAttributesTableHead');
+            const tableBody = document.getElementById('mainAttributesTableBody');
+            const attributesInfo = document.getElementById('mainAttributesInfo');
+            const columnCheckboxes = document.getElementById('columnCheckboxes');
+            const visibleColumnsInfo = document.getElementById('visibleColumnsInfo');
+            
+            if (tableHead) tableHead.innerHTML = '';
+            if (tableBody) tableBody.innerHTML = '';
+            if (attributesInfo) attributesInfo.innerHTML = '';
+            if (columnCheckboxes) columnCheckboxes.innerHTML = '';
+            if (visibleColumnsInfo) visibleColumnsInfo.textContent = '';
+            
+            // Reset column selector visibility
+            const selector = document.getElementById('columnSelector');
+            const toggle = document.getElementById('columnSelectorToggle');
+            if (selector) selector.style.display = 'none';
+            if (toggle) toggle.textContent = 'Show Column Options';
+            
+            // Reset status
+            updateAttributesStatus('Upload a file to view attributes');
+        }
+
+        function getKeyAttributes(properties) {
+            // Define priority order for common attribute names
+            const keyAttributeNames = [
+                // ID fields
+                'id', 'ID', 'fid', 'FID', 'objectid', 'OBJECTID', 'feature_id',
+                // Name fields
+                'name', 'Name', 'NAME', 'nom', 'NOM', 'denominazione', 'DENOMINAZIONE',
+                // Type/Category fields
+                'type', 'Type', 'TYPE', 'category', 'Category', 'CATEGORY', 'classe', 'CLASSE',
+                // Area/Size fields
+                'area', 'Area', 'AREA', 'superficie', 'SUPERFICIE',
+                // Population fields
+                'pop', 'population', 'Population', 'POPULATION', 'abitanti', 'ABITANTI',
+                // Administrative fields
+                'comune', 'COMUNE', 'provincia', 'PROVINCIA', 'regione', 'REGIONE',
+                // Code fields
+                'code', 'Code', 'CODE', 'codice', 'CODICE', 'cod_', 'COD_'
+            ];
+            
+            const keyAttributes = {};
+            const maxAttributes = 5; // Limit to 5 key attributes
+            let count = 0;
+            
+            // First pass: look for priority attributes
+            for (const key of keyAttributeNames) {
+                if (count >= maxAttributes) break;
+                if (properties.hasOwnProperty(key) && properties[key] !== null && properties[key] !== undefined) {
+                    keyAttributes[key] = properties[key];
+                    count++;
+                }
+            }
+            
+            // Second pass: add any remaining interesting attributes
+            if (count < maxAttributes) {
+                for (const [key, value] of Object.entries(properties)) {
+                    if (count >= maxAttributes) break;
+                    if (!keyAttributes.hasOwnProperty(key) && 
+                        key !== 'geometry' && 
+                        key !== 'selection_type' &&
+                        value !== null && value !== undefined &&
+                        String(value).trim() !== '') {
+                        keyAttributes[key] = value;
+                        count++;
+                    }
+                }
+            }
+            
+            return keyAttributes;
+        }
+
+        function createAttributeMarker(feature, latLng) {
+            const keyAttributes = getKeyAttributes(feature.properties);
+            
+            // Create marker content
+            let markerContent = '<div class="attribute-marker">';
+            markerContent += '<h4>Feature Attributes</h4>';
+            markerContent += '<div class="key-attributes">';
+            
+            for (const [key, value] of Object.entries(keyAttributes)) {
+                const truncatedValue = String(value).length > 30 ? 
+                    String(value).substring(0, 30) + '...' : String(value);
+                markerContent += `
+                    <div class="attr-row">
+                        <span class="attr-key">${key}:</span>
+                        <span class="attr-value" title="${String(value)}">${truncatedValue}</span>
+                    </div>
+                `;
+            }
+            
+            markerContent += '</div></div>';
+            
+            // Remove existing attribute marker
+            if (attributeMarker) {
+                map.removeLayer(attributeMarker);
+            }
+
+            // Create custom icon
+            const customIcon = L.divIcon({
+                html: markerContent,
+                className: 'custom-attribute-marker',
+                iconSize: [250, 'auto'],
+                iconAnchor: [125, 0]
+            });
+            
+            // Create and add marker
+            attributeMarker = L.marker(latLng, { icon: customIcon }).addTo(map);
+            
+            return attributeMarker;
+        }
+
+        function getPolygonCentroid(feature) {
+            if (feature.geometry.type === 'Point') {
+                return [feature.geometry.coordinates[1], feature.geometry.coordinates[0]];
+            } else if (feature.geometry.type === 'Polygon') {
+                // Calculate centroid of first ring
+                const coordinates = feature.geometry.coordinates[0];
+                let lat = 0, lng = 0;
+                for (const coord of coordinates) {
+                    lng += coord[0];
+                    lat += coord[1];
+                }
+                return [lat / coordinates.length, lng / coordinates.length];
+            } else if (feature.geometry.type === 'MultiPolygon') {
+                // Use centroid of first polygon
+                const coordinates = feature.geometry.coordinates[0][0];
+                let lat = 0, lng = 0;
+                for (const coord of coordinates) {
+                    lng += coord[0];
+                    lat += coord[1];
+                }
+                return [lat / coordinates.length, lng / coordinates.length];
+            }
+            return [0, 0];
+        }
+
+        function toggleColumnSelector() {
+            const selector = document.getElementById('columnSelector');
+            const toggle = document.getElementById('columnSelectorToggle');
+            
+            if (selector.style.display === 'none') {
+                selector.style.display = 'block';
+                toggle.textContent = 'Hide Column Options';
+            } else {
+                selector.style.display = 'none';
+                toggle.textContent = 'Show Column Options';
+            }
+        }
+
+        function createColumnCheckboxes() {
+            const container = document.getElementById('columnCheckboxes');
+            container.innerHTML = '';
+            
+            allColumns.forEach(column => {
+                const checkboxDiv = document.createElement('div');
+                checkboxDiv.className = 'column-checkbox';
+                
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.id = `col_${column}`;
+                checkbox.checked = visibleColumns.includes(column);
+                checkbox.addEventListener('change', function() {
+                    updateColumnVisibility(column, this.checked);
+                });
+                
+                const label = document.createElement('label');
+                label.htmlFor = `col_${column}`;
+                label.textContent = column;
+                
+                checkboxDiv.appendChild(checkbox);
+                checkboxDiv.appendChild(label);
+                container.appendChild(checkboxDiv);
+            });
+        }
+
+        function updateColumnVisibility(column, isVisible) {
+            if (isVisible && !visibleColumns.includes(column)) {
+                visibleColumns.push(column);
+            } else if (!isVisible && visibleColumns.includes(column)) {
+                visibleColumns = visibleColumns.filter(col => col !== column);
+            }
+            
+            // Redisplay the table with updated columns
+            if (attributesData) {
+                displayMainAttributesTable(attributesData);
+            }
+            
+            updateVisibleColumnsInfo();
+        }
+
+        function selectAllColumns() {
+            visibleColumns = [...allColumns];
+            updateColumnCheckboxes();
+            if (attributesData) {
+                displayMainAttributesTable(attributesData);
+            }
+            updateVisibleColumnsInfo();
+        }
+
+        function selectNoColumns() {
+            visibleColumns = [];
+            updateColumnCheckboxes();
+            if (attributesData) {
+                displayMainAttributesTable(attributesData);
+            }
+            updateVisibleColumnsInfo();
+        }
+
+        function selectKeyColumns() {
+            // Select commonly important columns
+            const keyColumnPatterns = [
+                'id', 'ID', 'fid', 'FID', 'objectid', 'OBJECTID', 'feature_id',
+                'name', 'Name', 'NAME', 'nom', 'NOM', 'denominazione', 'DENOMINAZIONE',
+                'type', 'Type', 'TYPE', 'category', 'Category', 'CATEGORY', 'classe', 'CLASSE',
+                'area', 'Area', 'AREA', 'superficie', 'SUPERFICIE',
+                'population', 'Population', 'POPULATION', 'abitanti', 'ABITANTI'
+            ];
+            
+            visibleColumns = allColumns.filter(col => 
+                keyColumnPatterns.some(pattern => col.toLowerCase().includes(pattern.toLowerCase()))
+            );
+            
+            // If no key columns found, show first 5 columns
+            if (visibleColumns.length === 0) {
+                visibleColumns = allColumns.slice(0, Math.min(5, allColumns.length));
+            }
+            
+            updateColumnCheckboxes();
+            if (attributesData) {
+                displayMainAttributesTable(attributesData);
+            }
+            updateVisibleColumnsInfo();
+        }
+
+        function updateColumnCheckboxes() {
+            allColumns.forEach(column => {
+                const checkbox = document.getElementById(`col_${column}`);
+                if (checkbox) {
+                    checkbox.checked = visibleColumns.includes(column);
+                }
+            });
+        }
+
+        function updateVisibleColumnsInfo() {
+            const info = document.getElementById('visibleColumnsInfo');
+            if (info) {
+                info.textContent = `Showing ${visibleColumns.length} of ${allColumns.length} columns`;
+            }
+        }
+
+        // Map control functions
+        function zoomIn() {
+            if (map) {
+                map.zoomIn();
+                showStatus('Zoomed in', 'success');
+            }
+        }
+
+        function zoomOut() {
+            if (map) {
+                map.zoomOut();
+                showStatus('Zoomed out', 'success');
+            }
+        }
+
+        function switchBasemap() {
+            const selector = document.getElementById('basemapSelector');
+            if (!selector) return;
+            
+            const newBasemap = selector.value;
+            const weatherLayers = ['openweather_temp', 'openweather_precipitation', 'openweather_wind', 'openweather_clouds'];
+            const isWeatherLayer = weatherLayers.includes(newBasemap);
+            const isCurrentWeatherLayer = weatherLayers.includes(currentBasemap);
+            
+            // Remove current layers
+            if (basemapLayers[currentBasemap]) {
+                map.removeLayer(basemapLayers[currentBasemap]);
+            }
+            
+            // For weather layers, add OpenStreetMap as base layer first
+            if (isWeatherLayer) {
+                // Add base layer (OSM) if not already there
+                if (!isCurrentWeatherLayer) {
+                    basemapLayers.osm.addTo(map);
+                }
+                // Add weather overlay layer
+                if (basemapLayers[newBasemap]) {
+                    basemapLayers[newBasemap].addTo(map);
+                    currentBasemap = newBasemap;
+                }
+            } else {
+                // Regular basemap switch
+                if (basemapLayers[newBasemap]) {
+                    basemapLayers[newBasemap].addTo(map);
+                    currentBasemap = newBasemap;
+                }
+            }
+            
+            // Update selector display
+            const selectedOption = selector.options[selector.selectedIndex];
+            showStatus(`Switched to ${selectedOption.text}`, 'success');
+        }
+
+        function fitToPolygons() {
+            if (allPolygonsLayer && map) {
+                try {
+                    map.fitBounds(allPolygonsLayer.getBounds(), { padding: [20, 20] });
+                    showStatus('Fitted to all polygons', 'success');
+                } catch (error) {
+                    showStatus('No polygons to fit to', 'error');
+                }
+            } else {
+                showStatus('No polygons loaded', 'error');
+            }
+        }
+
+        function fitToSelected() {
+            if (selectedPolygons.length === 0) {
+                showStatus('No polygons selected', 'error');
+                return;
+            }
+
+            try {
+                const selectedLayers = [];
+                selectedPolygons.forEach(feature => {
+                    const featureId = getFeatureId(feature);
+                    const layer = polygonLayers.get(featureId);
+                    if (layer) {
+                        selectedLayers.push(layer);
+                    }
+                });
+
+                if (selectedLayers.length > 0) {
+                    const group = L.featureGroup(selectedLayers);
+                    map.fitBounds(group.getBounds(), { padding: [20, 20] });
+                    showStatus(`Fitted to ${selectedLayers.length} selected polygon${selectedLayers.length !== 1 ? 's' : ''}`, 'success');
+                } else {
+                    showStatus('Selected polygons not found on map', 'error');
+                }
+            } catch (error) {
+                showStatus('Error fitting to selected polygons', 'error');
+            }
+        }
+
+        // Update fit to selected button state
+        async function updateFitSelectedButton() {
+            const btn = document.getElementById('fitSelectedBtn');
+            const shouldEnable = selectedPolygons.length > 0;
+            
+            if (btn) {
+                btn.disabled = !shouldEnable;
+                
+                // Sync with Python backend
+                if (typeof syncControlState === 'function') {
+                    await syncControlState('fitSelectedBtn', shouldEnable);
+                }
+            }
+        }
+
+        // Update export selection button state
+        async function updateExportSelectionButton() {
+            const btn = document.getElementById('exportSelectionBtn');
+            const shouldEnable = selectedPolygons.length > 0;
+            
+            if (btn) {
+                btn.disabled = !shouldEnable;
+                
+                // Sync with Python backend
+                if (typeof syncControlState === 'function') {
+                    await syncControlState('exportSelectionBtn', shouldEnable);
+                }
+            }
+        }
+
+        // Layer visibility controls
+        let polygonsVisible = true;
+        let basemapVisible = true;
+        let tileLayer = null;
+
+        function togglePolygonsVisibility() {
+            const btn = document.getElementById('togglePolygonsBtn');
+            
+            if (polygonsVisible) {
+                // Hide polygons
+                if (allPolygonsLayer && map.hasLayer(allPolygonsLayer)) {
+                    map.removeLayer(allPolygonsLayer);
+                }
+                if (highlightLayer && map.hasLayer(highlightLayer)) {
+                    map.removeLayer(highlightLayer);
+                }
+                polygonsVisible = false;
+                btn.innerHTML = '👁️⚪';
+                btn.title = 'Show Polygons';
+                showStatus('Polygons hidden', 'success');
+            } else {
+                // Show polygons
+                if (allPolygonsLayer) {
+                    map.addLayer(allPolygonsLayer);
+                }
+                if (highlightLayer) {
+                    map.addLayer(highlightLayer);
+                }
+                polygonsVisible = true;
+                btn.innerHTML = '👁️';
+                btn.title = 'Hide Polygons';
+                showStatus('Polygons visible', 'success');
+            }
+        }
+
+        function toggleBasemapVisibility() {
+            const btn = document.getElementById('toggleBasemapBtn');
+            
+            if (!tileLayer) {
+                // Find the tile layer
+                map.eachLayer(function(layer) {
+                    if (layer instanceof L.TileLayer) {
+                        tileLayer = layer;
+                    }
+                });
+            }
+            
+            if (basemapVisible) {
+                // Hide basemap
+                if (tileLayer && map.hasLayer(tileLayer)) {
+                    map.removeLayer(tileLayer);
+                }
+                basemapVisible = false;
+                btn.innerHTML = '🗺️⚪';
+                btn.title = 'Show Basemap';
+                showStatus('Basemap hidden', 'success');
+            } else {
+                // Show basemap
+                if (tileLayer) {
+                    map.addLayer(tileLayer);
+                } else {
+                    // Recreate tile layer if needed
+                    tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        attribution: 'OpenStreetMap contributors'
+                    });
+                    map.addLayer(tileLayer);
+                }
+                basemapVisible = true;
+                btn.innerHTML = '🗺️';
+                btn.title = 'Hide Basemap';
+                showStatus('Basemap visible', 'success');
+            }
+        }
+
+        // Selection Import/Export Functions
+        function exportSelection() {
+            if (selectedPolygons.length === 0) {
+                showStatus('No polygons selected to export', 'error');
+                return;
+            }
+
+            try {
+                // Create comprehensive selection data
+                const selectionData = {
+                    version: "1.0",
+                    exportTimestamp: new Date().toISOString(),
+                    mapCenter: map.getCenter(),
+                    mapZoom: map.getZoom(),
+                    selectedPolygons: selectedPolygons.map(polygon => ({
+                        featureId: getFeatureId(polygon),
+                        properties: polygon.properties,
+                        geometry: polygon.geometry,
+                        geometryType: polygon.geometry.type
+                    })),
+                    totalSelected: selectedPolygons.length,
+                    selectionMode: currentSelectionMode,
+                    // Include file hash/checksum for verification
+                    dataChecksum: generateDataChecksum(originalData),
+                    fileMetadata: {
+                        totalFeatures: originalData ? originalData.features.length : 0,
+                        featureTypes: originalData ? [...new Set(originalData.features.map(f => f.geometry.type))] : []
+                    }
+                };
+
+                // Create and download JSON file
+                const blob = new Blob([JSON.stringify(selectionData, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `polygon_selection_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+
+                showStatus(`Exported ${selectedPolygons.length} selected polygon${selectedPolygons.length !== 1 ? 's' : ''}`, 'success');
+                console.log(' Exported selection data:', selectionData);
+            } catch (error) {
+                showStatus('Error exporting selection: ' + error.message, 'error');
+                console.error(' Export error:', error);
+            }
+        }
+
+        function importSelection() {
+            if (!originalData) {
+                showStatus('Please load a map file first', 'error');
+                return;
+            }
+
+            // Create file input element
+            const fileInput = document.createElement('input');
+            fileInput.type = 'file';
+            fileInput.accept = '.json';
+            fileInput.style.display = 'none';
+
+            fileInput.onchange = async function(event) {
+                const file = event.target.files[0];
+                if (!file) return;
+
+                try {
+                    const text = await file.text();
+                    const selectionData = JSON.parse(text);
+
+                    // Validate selection data
+                    if (!validateSelectionData(selectionData)) {
+                        showStatus('Invalid selection file format', 'error');
+                        return;
+                    }
+
+                    // Verify data compatibility
+                    if (!verifyDataCompatibility(selectionData)) {
+                        showStatus('Selection file may not be compatible with current map data', 'error');
+                        return;
+                    }
+
+                    // Clear current selection
+                    clearSelection();
+
+                    // Import selected polygons
+                    const importedPolygons = [];
+                    let importErrors = 0;
+
+                    for (const savedPolygon of selectionData.selectedPolygons) {
+                        // Find matching polygon in current data
+                        const matchingPolygon = findMatchingPolygon(savedPolygon);
+                        
+                        if (matchingPolygon) {
+                            importedPolygons.push(matchingPolygon);
+                            
+                            // Apply visual selection
+                            const featureId = getFeatureId(matchingPolygon);
+                            const layer = polygonLayers.get(featureId);
+                            if (layer) {
+                                updatePolygonStyle(layer, matchingPolygon, 'selected');
+                            }
+                        } else {
+                            importErrors++;
+                            console.warn(' Could not find matching polygon for:', savedPolygon.featureId);
+                        }
+                    }
+
+                    // Update selection
+                    selectedPolygons = importedPolygons;
+                    updateSelectedCount();
+
+                    // Restore map view if requested
+                    if (selectionData.mapCenter && selectionData.mapZoom) {
+                        map.setView(selectionData.mapCenter, selectionData.mapZoom);
+                    }
+
+                    // Show import results
+                    const importedCount = importedPolygons.length;
+                    const totalCount = selectionData.selectedPolygons.length;
+                    
+                    if (importErrors === 0) {
+                        showStatus(`Successfully imported ${importedCount} selected polygon${importedCount !== 1 ? 's' : ''}`, 'success');
+                    } else {
+                        showStatus(`Imported ${importedCount} of ${totalCount} polygons (${importErrors} not found)`, 'error');
+                    }
+
+                    console.log(' Imported selection:', {
+                        imported: importedCount,
+                        total: totalCount,
+                        errors: importErrors
+                    });
+
+                } catch (error) {
+                    showStatus('Error importing selection: ' + error.message, 'error');
+                    console.error(' Import error:', error);
+                }
+            };
+
+            // Trigger file selection
+            document.body.appendChild(fileInput);
+            fileInput.click();
+            document.body.removeChild(fileInput);
+        }
+
+        function generateDataChecksum(data) {
+            if (!data || !data.features) return null;
+            
+            // Create a simple checksum based on feature count and geometry types
+            const featureCount = data.features.length;
+            const geometryTypes = data.features.map(f => f.geometry.type).sort().join('');
+            const firstFeatureProps = data.features[0] ? Object.keys(data.features[0].properties || {}).sort().join('') : '';
+            
+            return `${featureCount}_${geometryTypes}_${firstFeatureProps}`;
+        }
+
+        function validateSelectionData(data) {
+            return data &&
+                   data.version &&
+                   data.selectedPolygons &&
+                   Array.isArray(data.selectedPolygons) &&
+                   data.exportTimestamp;
+        }
+
+        function verifyDataCompatibility(selectionData) {
+            if (!originalData || !selectionData.dataChecksum) {
+                return true; // Skip verification if no checksum available
+            }
+
+            const currentChecksum = generateDataChecksum(originalData);
+            const compatible = currentChecksum === selectionData.dataChecksum;
+            
+            if (!compatible) {
+                console.warn(' Data compatibility warning:', {
+                    current: currentChecksum,
+                    selection: selectionData.dataChecksum
+                });
+            }
+
+            return compatible;
+        }
+
+        function findMatchingPolygon(savedPolygon) {
+            if (!originalData || !originalData.features) return null;
+
+            // Try to find by feature ID first
+            const byId = originalData.features.find(f => getFeatureId(f) === savedPolygon.featureId);
+            if (byId) return byId;
+
+            // Try to find by geometry match
+            const byGeometry = originalData.features.find(f => 
+                f.geometry && 
+                f.geometry.type === savedPolygon.geometryType &&
+                JSON.stringify(f.geometry) === JSON.stringify(savedPolygon.geometry)
+            );
+            if (byGeometry) return byGeometry;
+
+            // Try to find by properties match
+            const byProperties = originalData.features.find(f => 
+                f.properties &&
+                JSON.stringify(f.properties) === JSON.stringify(savedPolygon.properties)
+            );
+            
+            return byProperties;
+        }
+
+        // Map panel toggle functions
+        function toggleLegend() {
+            const panel = document.getElementById('legendPanel');
+            const isVisible = panel.style.display !== 'none';
+            
+            if (isVisible) {
+                panel.style.display = 'none';
+                console.log(' Legend panel hidden');
+            } else {
+                // Hide other panels first
+                document.getElementById('selectionInfoPanel').style.display = 'none';
+                panel.style.display = 'block';
+                console.log(' Legend panel shown');
+            }
+        }
+
+        function toggleSelectionInfo() {
+            const panel = document.getElementById('selectionInfoPanel');
+            const isVisible = panel.style.display !== 'none';
+            
+            if (isVisible) {
+                panel.style.display = 'none';
+                console.log(' Selection info panel hidden');
+            } else {
+                // Hide other panels first
+                document.getElementById('legendPanel').style.display = 'none';
+                panel.style.display = 'block';
+                console.log(' Selection info panel shown');
+            }
+        }
+
+        // Upload tab functionality
+        function showUploadTab(tabType) {
+            // Update tab active states
+            const tabs = document.querySelectorAll('.upload-tab');
+            tabs.forEach(tab => tab.classList.remove('active'));
+            
+            // Update content visibility
+            document.getElementById('fileUpload').classList.remove('active');
+            document.getElementById('cadastralSelection').classList.remove('active');
+            
+            if (tabType === 'file') {
+                tabs[0].classList.add('active');
+                document.getElementById('fileUpload').style.display = 'block';
+                document.getElementById('cadastralSelection').style.display = 'none';
+            } else if (tabType === 'cadastral') {
+                tabs[1].classList.add('active');
+                document.getElementById('cadastralSelection').classList.add('active');
+                document.getElementById('fileUpload').style.display = 'none';
+                document.getElementById('cadastralSelection').style.display = 'block';
+            }
+        }
+
+        // Cadastral data structure - will be loaded from server
+        let cadastralData = {};
+
+        // Cadastral selection variables
+        let selectedRegions = [];
+        let selectedProvinces = [];
+        let selectedMunicipalities = [];
+        let selectedFileTypes = ['MAP', 'PLE']; // Default both types selected
+
+        // Load cadastral data from API endpoint
+        document.addEventListener('DOMContentLoaded', function() {
+            // Add event listeners
+            document.getElementById('cadastralRegions').addEventListener('change', updateCadastralProvinces);
+            document.getElementById('cadastralProvinces').addEventListener('change', updateCadastralMunicipalities);
+            document.getElementById('cadastralMunicipalities').addEventListener('change', updateCadastralSelection);
+            
+            // Load cadastral data from server
+            loadCadastralDataFromAPI();
+        });
+
+        async function loadCadastralDataFromAPI() {
+            try {
+                const response = await fetch('/get-cadastral-structure/');
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const rawData = await response.json();
+                console.log('Loaded cadastral data from API:', Object.keys(rawData).length, 'regions');
+                
+                // Transform the raw data to our expected format
+                cadastralData = transformRawCadastralData(rawData);
+                console.log('Transformed cadastral data:', Object.keys(cadastralData).length, 'regions');
+                
+                // Populate interface with real data
+                populateRegionsDropdown();
+                updateCadastralStats();
+                updateCadastralSelection();
+                
+                console.log('Cadastral data loading completed successfully');
+                
+            } catch (error) {
+                console.error('Failed to load cadastral data from API:', error);
+                
+                // Fall back to sample data
+                cadastralData = {
+                    "LOMBARDIA": {
+                        "MILANO": {
+                            "Milano": { "code": "MI", "name": "Milano", "files": {"MAP": ["milano_map.gpkg"], "PLE": ["milano_ple.gpkg"]} }
+                        }
+                    },
+                    "LAZIO": {
+                        "ROMA": {
+                            "Roma": { "code": "RM", "name": "Roma", "files": {"MAP": ["roma_map.gpkg"], "PLE": ["roma_ple.gpkg"]} }
+                        }
+                    }
+                };
+                
+                console.log('Using fallback data');
+                populateRegionsDropdown();
+                updateCadastralStats();
+                updateCadastralSelection();
+            }
+        }
+
+        function transformRawCadastralData(rawData) {
+            console.log('transformRawCadastralData called with data keys:', Object.keys(rawData));
+            const transformedData = {};
+            
+            Object.entries(rawData).forEach(([region, provinces]) => {
+                transformedData[region] = {};
+                
+                Object.entries(provinces).forEach(([province, municipalities]) => {
+                    transformedData[region][province] = {};
+                    
+                    Object.entries(municipalities).forEach(([municipalityFolder, municipalityData]) => {
+                        // Separate files by type (MAP vs PLE)
+                        const mapFiles = municipalityData.files.filter(f => f.toLowerCase().includes('_map.') || f.toLowerCase().includes('map'));
+                        const pleFiles = municipalityData.files.filter(f => f.toLowerCase().includes('_ple.') || f.toLowerCase().includes('ple'));
+                        
+                        transformedData[region][province][municipalityFolder] = {
+                            code: municipalityData.code,
+                            name: municipalityData.name,
+                            files: {
+                                "MAP": mapFiles,
+                                "PLE": pleFiles
+                            }
+                        };
+                    });
+                });
+            });
+            
+            return transformedData;
+        }
+
+        function updateCadastralProvinces() {
+            const regionSelect = document.getElementById('cadastralRegions');
+            const provinceSelect = document.getElementById('cadastralProvinces');
+            const municipalitySelect = document.getElementById('cadastralMunicipalities');
+            
+            selectedRegions = Array.from(regionSelect.selectedOptions).map(option => option.value);
+            
+            // Clear and populate provinces
+            provinceSelect.innerHTML = '';
+            provinceSelect.disabled = selectedRegions.length === 0;
+            
+            // Clear dependent selects
+            municipalitySelect.innerHTML = '';
+            municipalitySelect.disabled = true;
+            
+            // Clear selection arrays
+            selectedProvinces = [];
+            selectedMunicipalities = [];
+            
+            const provinces = new Set();
+            selectedRegions.forEach(region => {
+                if (cadastralData[region]) {
+                    Object.keys(cadastralData[region]).forEach(province => {
+                        provinces.add(province);
+                    });
+                }
+            });
+            
+            Array.from(provinces).sort().forEach(province => {
+                const option = document.createElement('option');
+                option.value = province;
+                option.textContent = province;
+                provinceSelect.appendChild(option);
+            });
+            
+            updateCadastralSelection();
+        }
+
+        function updateCadastralMunicipalities() {
+            const provinceSelect = document.getElementById('cadastralProvinces');
+            const municipalitySelect = document.getElementById('cadastralMunicipalities');
+            
+            selectedProvinces = Array.from(provinceSelect.selectedOptions).map(option => option.value);
+            
+            // Clear and populate municipalities
+            municipalitySelect.innerHTML = '';
+            municipalitySelect.disabled = selectedProvinces.length === 0;
+            
+            // Clear selection array
+            selectedMunicipalities = [];
+            
+            if (selectedProvinces.length > 0) {
+                const municipalities = [];
+                selectedRegions.forEach(region => {
+                    if (cadastralData[region]) {
+                        selectedProvinces.forEach(province => {
+                            if (cadastralData[region][province]) {
+                                Object.entries(cadastralData[region][province]).forEach(([folder, data]) => {
+                                    municipalities.push({
+                                        folder: folder,
+                                        code: data.code,
+                                        name: data.name,
+                                        region: region,
+                                        province: province,
+                                        fileCount: Object.values(data.files).reduce((sum, typeFiles) => sum + typeFiles.length, 0)
+                                    });
+                                });
+                            }
+                        });
+                    }
+                });
+                
+                municipalities.sort((a, b) => a.name.localeCompare(b.name)).forEach(municipality => {
+                    const option = document.createElement('option');
+                    option.value = `${municipality.region}|${municipality.province}|${municipality.folder}`;
+                    option.textContent = `${municipality.code} - ${municipality.name}${municipality.fileCount !== 2 ? ` (${municipality.fileCount} files)` : ''}`;
+                    municipalitySelect.appendChild(option);
+                });
+            }
+            
+            updateCadastralSelection();
+        }
+
+        function updateCadastralSelection() {
+            const municipalitySelect = document.getElementById('cadastralMunicipalities');
+            const loadBtn = document.getElementById('loadCadastralBtn');
+            const summaryDiv = document.getElementById('selectionSummary');
+            const summaryContent = document.getElementById('summaryContent');
+            
+            selectedMunicipalities = Array.from(municipalitySelect.selectedOptions).map(option => option.value);
+            
+            // Get selected file types from checkboxes
+            selectedFileTypes = [];
+            const fileTypeCheckboxes = document.querySelectorAll('#cadastralFileTypes input[type="checkbox"]:checked');
+            fileTypeCheckboxes.forEach(checkbox => {
+                selectedFileTypes.push(checkbox.value);
+            });
+            
+            // Enable/disable load button
+            loadBtn.disabled = selectedMunicipalities.length === 0 || selectedFileTypes.length === 0;
+            
+            // Update selection summary
+            if (selectedMunicipalities.length > 0 && selectedFileTypes.length > 0) {
+                let totalFiles = 0;
+                const filesList = [];
+                
+                selectedMunicipalities.forEach(municipalityPath => {
+                    const [region, province, folder] = municipalityPath.split('|');
+                    const municipalityData = cadastralData[region][province][folder];
+                    
+                    selectedFileTypes.forEach(fileType => {
+                        if (municipalityData.files[fileType]) {
+                            municipalityData.files[fileType].forEach(file => {
+                                filesList.push({
+                                    file: file,
+                                    type: fileType,
+                                    municipality: municipalityData.name,
+                                    province: province,
+                                    region: region
+                                });
+                                totalFiles++;
+                            });
+                        }
+                    });
+                });
+                
+                summaryContent.innerHTML = `
+                    <div><strong>Regions:</strong> ${selectedRegions.join(', ')}</div>
+                    <div><strong>Provinces:</strong> ${selectedProvinces.join(', ')}</div>
+                    <div><strong>Municipalities:</strong> ${selectedMunicipalities.length}</div>
+                    <div><strong>File Types:</strong> ${selectedFileTypes.join(', ')}</div>
+                    <div><strong>Total Files:</strong> ${totalFiles}</div>
+                `;
+                
+                // Generate files list
+                generateFilesList(filesList);
+                
+                summaryDiv.style.display = 'block';
+            } else {
+                summaryDiv.style.display = 'none';
+            }
+        }
+
+        async function loadCadastralSelection() {
+            if (selectedMunicipalities.length === 0 || selectedFileTypes.length === 0) {
+                alert('Please select at least one municipality and one file type.');
+                return;
+            }
+
+            const statusDiv = document.getElementById('statusDiv');
+            statusDiv.innerHTML = '<div class="status">Processing selection...</div>';
+
+            try {
+                // Clear existing layers first
+                clearMapLayers();
+
+                // Collect all files to load
+                const filesToLoad = [];
+                selectedMunicipalities.forEach(municipalityPath => {
+                    const [region, province, folder] = municipalityPath.split('|');
+                    const municipalityData = cadastralData[region][province][folder];
+                    
+                    selectedFileTypes.forEach(fileType => {
+                        if (municipalityData.files[fileType]) {
+                            municipalityData.files[fileType].forEach(file => {
+                                filesToLoad.push({
+                                    path: `${region}/${province}/${folder}/${file}`,
+                                    name: `${municipalityData.name} - ${fileType} - ${file}`,
+                                    municipality: municipalityData.name,
+                                    type: fileType,
+                                    region: region,
+                                    province: province
+                                });
+                            });
+                        }
+                    });
+                });
+
+                if (filesToLoad.length === 0) {
+                    statusDiv.innerHTML = '<div class="status error">No files found for selected criteria.</div>';
+                    return;
+                }
+
+                statusDiv.innerHTML = `<div class="status">Loading ${filesToLoad.length} files...</div>`;
+
+                // Debug: log the files being requested
+                console.log('Files to load:', filesToLoad.map(f => f.path));
+
+                // Load files via API
+                const response = await fetch('/load-cadastral-files/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        files: filesToLoad.map(f => f.path)
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('Server response:', errorText);
+                    throw new Error(`HTTP error! status: ${response.status} - ${errorText}`);
+                }
+
+                const data = await response.json();
+
+                // Create layers for each loaded file
+                const overlays = {};
+                const colors = [
+                    '#e31a1c', '#1f78b4', '#33a02c', '#ff7f00', '#6a3d9a', 
+                    '#b15928', '#a6cee3', '#b2df8a', '#fb9a99', '#fdbf6f',
+                    '#cab2d6', '#ffff99', '#8dd3c7', '#bebada', '#fb8072'
+                ];
+
+                data.layers.forEach((layerData, index) => {
+                    const color = colors[index % colors.length];
+                    
+                    const geojsonLayer = L.geoJSON(layerData.geojson, {
+                        style: function(feature) {
+                            return {
+                                fillColor: color,
+                                weight: 2,
+                                opacity: 1,
+                                color: 'white',
+                                fillOpacity: 0.6
+                            };
+                        },
+                        onEachFeature: function(feature, layer) {
+                            // Add popup with feature information
+                            let popupContent = `<strong>Layer:</strong> ${layerData.name}<br>`;
+                            popupContent += `<strong>File:</strong> ${layerData.file}<br>`;
+                            
+                            // Add feature properties
+                            if (feature.properties) {
+                                Object.keys(feature.properties).forEach(key => {
+                                    if (key !== 'layer_name' && key !== 'source_file') {
+                                        popupContent += `<strong>${key}:</strong> ${feature.properties[key]}<br>`;
+                                    }
+                                });
+                            }
+                            layer.bindPopup(popupContent);
+
+                            // Add click event for polygon selection
+                            layer.on('click', function(e) {
+                                onPolygonClick(e, feature, layerData.name);
+                            });
+                        }
+                    });
+                    
+                    overlays[layerData.name] = geojsonLayer;
+                    geojsonLayer.addTo(map);
+                });
+                
+                // Add layer controls
+                if (layerControls) {
+                    map.removeControl(layerControls);
+                }
+                layerControls = L.control.layers(null, overlays, {
+                    position: 'bottomleft',
+                    collapsed: false
+                }).addTo(map);
+
+                // Fit map to all layer bounds
+                const group = new L.featureGroup(Object.values(overlays));
+                if (group.getBounds().isValid()) {
+                    map.fitBounds(group.getBounds());
+                }
+
+                statusDiv.innerHTML = `<div class="status success">
+                    <strong>Success!</strong> Loaded ${data.layers.length} layers with ${data.total_features} total features.<br>
+                    <small>Use the layer control panel on the top-right to toggle layer visibility.</small>
+                </div>`;
+                
+            } catch (error) {
+                console.error('Error loading cadastral files:', error);
+                statusDiv.innerHTML = `<div class="status error">Error loading files: ${error.message}</div>`;
+            }
+        }
+
+        // Function to update cadastral stats based on data
+        function updateCadastralStats() {
+            console.log('updateCadastralStats called, cadastralData keys:', Object.keys(cadastralData));
+            const regionCount = Object.keys(cadastralData).length;
+            let provinceCount = 0;
+            let municipalityCount = 0;
+            let fileCount = 0;
+
+            Object.values(cadastralData).forEach(regionData => {
+                const provinces = Object.keys(regionData);
+                provinceCount += provinces.length;
+                
+                provinces.forEach(province => {
+                    const municipalities = Object.keys(regionData[province]);
+                    municipalityCount += municipalities.length;
+                    
+                    municipalities.forEach(municipality => {
+                        const municipalityData = regionData[province][municipality];
+                        if (municipalityData && municipalityData.files) {
+                            // Count files across all file types (MAP, PLE)
+                            Object.values(municipalityData.files).forEach(typeFiles => {
+                                if (Array.isArray(typeFiles)) {
+                                    fileCount += typeFiles.length;
+                                }
+                            });
+                        }
+                    });
+                });
+            });
+
+            // Update the stats display
+            document.getElementById('totalRegions').textContent = regionCount;
+            document.getElementById('totalProvinces').textContent = provinceCount;
+            document.getElementById('totalMunicipalities').textContent = municipalityCount;
+            document.getElementById('totalFiles').textContent = fileCount;
+        }
+
+
+
+        // Function to populate regions dropdown from loaded data
+        function populateRegionsDropdown() {
+            console.log('populateRegionsDropdown called');
+            const regionSelect = document.getElementById('cadastralRegions');
+            
+            if (!regionSelect) {
+                console.error('Region select element not found');
+                return;
+            }
+            
+            try {
+                // Clear existing options
+                regionSelect.innerHTML = '';
+                regionSelect.disabled = false;
+                
+                // Get all regions from the data
+                const regions = Object.keys(cadastralData || {}).sort();
+                
+                if (regions.length === 0) {
+                    regionSelect.innerHTML = '<option disabled>No regions available</option>';
+                    return;
+                }
+                
+                // Add region options
+                regions.forEach(region => {
+                    const option = document.createElement('option');
+                    option.value = region;
+                    option.textContent = formatRegionName(region);
+                    regionSelect.appendChild(option);
+                });
+                
+                console.log(`Populated ${regions.length} regions in dropdown`);
+                
+            } catch (error) {
+                console.error('Error populating regions:', error);
+                regionSelect.innerHTML = '<option disabled>Error loading regions</option>';
+            }
+        }
+
+        // Function to format region names for display
+        function formatRegionName(regionKey) {
+            // Convert region keys to proper display names
+            const regionNames = {
+                'ABRUZZO': 'Abruzzo',
+                'BASILICATA': 'Basilicata',
+                'CALABRIA': 'Calabria',
+                'CAMPANIA': 'Campania',
+                'EMILIA-ROMAGNA': 'Emilia-Romagna',
+                'FRIULI-VENEZIA-GIULIA': 'Friuli-Venezia Giulia',
+                'LAZIO': 'Lazio',
+                'LIGURIA': 'Liguria',
+                'LOMBARDIA': 'Lombardia',
+                'MARCHE': 'Marche',
+                'MOLISE': 'Molise',
+                'PIEMONTE': 'Piemonte',
+                'PUGLIA': 'Puglia',
+                'SARDEGNA': 'Sardegna',
+                'SICILIA': 'Sicilia',
+                'TOSCANA': 'Toscana',
+                'TRENTINO-ALTO-ADIGE': 'Trentino-Alto Adige',
+                'UMBRIA': 'Umbria',
+                'VALLE-D-AOSTA': "Valle d'Aosta",
+                'VENETO': 'Veneto'
+            };
+            
+            return regionNames[regionKey] || regionKey;
+        }
+
+        // Function to generate and display files list
+        function generateFilesList(filesList) {
+            const filesListDiv = document.getElementById('filesList');
+            
+            if (filesList.length === 0) {
+                filesListDiv.innerHTML = '';
+                return;
+            }
+            
+            // Group files by type
+            const mapFiles = filesList.filter(f => f.type === 'MAP');
+            const pleFiles = filesList.filter(f => f.type === 'PLE');
+            
+            let htmlContent = '';
+            
+            if (mapFiles.length > 0) {
+                htmlContent += '<h5> MAP Files (' + mapFiles.length + ')</h5>';
+                mapFiles.forEach(fileInfo => {
+                    htmlContent += `<div class="file-item map-file">${fileInfo.file}</div>`;
+                });
+            }
+            
+            if (pleFiles.length > 0) {
+                htmlContent += '<h5> PLE Files (' + pleFiles.length + ')</h5>';
+                pleFiles.forEach(fileInfo => {
+                    htmlContent += `<div class="file-item ple-file">${fileInfo.file}</div>`;
+                });
+            }
+            
+            filesListDiv.innerHTML = htmlContent;
+        }
+
+        // Function to toggle file type checkboxes
+        function toggleFileType(element, fileType) {
+            const checkbox = element.querySelector('input[type="checkbox"]');
+            const isCurrentlyChecked = checkbox.checked;
+            
+            // Toggle the checkbox
+            checkbox.checked = !isCurrentlyChecked;
+            
+            // Update visual state
+            if (checkbox.checked) {
+                element.classList.add('selected');
+            } else {
+                element.classList.remove('selected');
+            }
+            
+            // Update selection
+            updateCadastralSelection();
+        }
+
+        // Function to clear existing map layers
+        function clearMapLayers() {
+            // Remove all cadastral layers
+            cadastralLayers.forEach(layerInfo => {
+                if (layerInfo.layer) {
+                    map.removeLayer(layerInfo.layer);
+                }
+            });
+            cadastralLayers = [];
+            
+            // Remove layer controls if they exist
+            if (layerControls) {
+                map.removeControl(layerControls);
+                layerControls = null;
+            }
+            
+            // Remove highlight layer
+            if (highlightLayer) {
+                map.removeLayer(highlightLayer);
+                highlightLayer = null;
+            }
+            
+            // Clear legacy layers for compatibility
+            if (currentGeojsonLayer) {
+                map.removeLayer(currentGeojsonLayer);
+                currentGeojsonLayer = null;
+            }
+        }
+
+        // Function to add a layer to the map
+        function addLayerToMap(layerData, index) {
+            // Generate unique color for each layer
+            const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#FB8072'];
+            const color = colors[index % colors.length];
+            
+            // Create layer with styling
+            const layer = L.geoJSON(layerData.geojson, {
+                style: function(feature) {
+                    return {
+                        fillColor: color,
+                        weight: 2,
+                        opacity: 1,
+                        color: 'white',
+                        fillOpacity: 0.6
+                    };
+                },
+                onEachFeature: function(feature, layer) {
+                    // Add popup with feature information
+                    let popupContent = `<strong>Layer:</strong> ${layerData.name}<br>`;
+                    popupContent += `<strong>File:</strong> ${layerData.file}<br>`;
+                    
+                    // Add feature properties
+                    if (feature.properties) {
+                        Object.keys(feature.properties).forEach(key => {
+                            if (key !== 'layer_name' && key !== 'source_file') {
+                                popupContent += `<strong>${key}:</strong> ${feature.properties[key]}<br>`;
+                            }
+                        });
+                    }
+                    layer.bindPopup(popupContent);
+
+                    // Add click event for selection
+                    layer.on('click', function(e) {
+                        onPolygonClick(e, feature, layerData.name);
+                    });
+                }
+            });
+            
+            // Add layer to map
+            layer.addTo(map);
+            
+            // Store layer information
+            const layerInfo = {
+                name: layerData.name,
+                layer: layer,
+                data: layerData,
+                color: color,
+                visible: true
+            };
+            
+            cadastralLayers.push(layerInfo);
+            
+            // Update layer controls
+            updateLayerControls();
+        }
+
+        // Function to update layer controls
+        function updateLayerControls() {
+            if (layerControls) {
+                map.removeControl(layerControls);
+            }
+            
+            if (cadastralLayers.length > 1) {
+                const overlays = {};
+                cadastralLayers.forEach(layerInfo => {
+                    overlays[`${layerInfo.name} (${layerInfo.data.feature_count} features)`] = layerInfo.layer;
+                });
+                
+                layerControls = L.control.layers(null, overlays, {
+                    position: 'bottomleft',
+                    collapsed: false
+                }).addTo(map);
+            }
+        }
+
+        // Function to fit map to all layer bounds
+        function fitMapToBounds() {
+            if (cadastralLayers.length === 0) return;
+            
+            const group = new L.featureGroup();
+            cadastralLayers.forEach(layerInfo => {
+                if (layerInfo.visible) {
+                    group.addLayer(layerInfo.layer);
+                }
+            });
+            
+            if (group.getBounds().isValid()) {
+                map.fitBounds(group.getBounds());
+            }
+        }
+
+        // Function to handle polygon clicks (for compatibility with existing selection system)
+        function onPolygonClick(e, feature, layerName) {
+            console.log('Polygon clicked:', feature, 'from layer:', layerName);
+            // This can be extended to work with the existing selection system
+        }
+
+        // Mapping Analysis Variables
+        let mappingData = [];
+        let loadedCadastralLayers = []; // This should contain loaded cadastral data
+
+        // Mapping Analysis Functions
+        function refreshMappingView() {
+            updateMappingSummary();
+            updateMappingTable();
+        }
+
+        function updateMappingSummary() {
+            const drawnCount = drawnItems.getLayers().length;
+            const cadastralCount = getCadastralZoneCount();
+            
+            document.getElementById('drawnPolygonCount').textContent = drawnCount;
+            document.getElementById('cadastralZoneCount').textContent = cadastralCount;
+            
+            if (drawnCount > 0) {
+                document.getElementById('mappingSummary').style.display = 'block';
+            } else {
+                document.getElementById('mappingSummary').style.display = 'none';
+            }
+        }
+
+        function getCadastralZoneCount() {
+            // Count features from all loaded cadastral layers
+            let totalFeatures = 0;
+            if (typeof loadedCadastralLayers !== 'undefined' && loadedCadastralLayers.length > 0) {
+                loadedCadastralLayers.forEach(layerInfo => {
+                    if (layerInfo.data && layerInfo.data.feature_count) {
+                        totalFeatures += layerInfo.data.feature_count;
+                    }
+                });
+            }
+            return totalFeatures;
+        }
+
+        function updateMappingTable() {
+            const tableBody = document.getElementById('mainMappingTableBody');
+            const drawnLayers = drawnItems.getLayers();
+            
+            if (drawnLayers.length === 0) {
+                tableBody.innerHTML = '<tr><td colspan="6" class="no-data">No drawn polygons to analyze. Use drawing tools to create polygons first.</td></tr>';
+                return;
+            }
+            
+            let tableHTML = '';
+            drawnLayers.forEach((layer, index) => {
+                const polygonId = `DPoly-${index + 1}`;
+                const area = calculatePolygonArea(layer);
+                const areaText = area ? area.toFixed(6) : 'N/A';
+                
+                // For now, show placeholder data - actual intersection analysis would be more complex
+                tableHTML += `
+                    <tr>
+                        <td>${polygonId}</td>
+                        <td>${areaText} km²</td>
+                        <td id="intersections-${index}">Analyzing...</td>
+                        <td id="type-${index}">-</td>
+                        <td id="coverage-${index}">-</td>
+                        <td>
+                            <button onclick="highlightPolygon(${index})" class="btn" style="padding: 4px 8px; font-size: 12px;">Highlight</button>
+                            <button onclick="zoomToPolygon(${index})" class="btn" style="padding: 4px 8px; font-size: 12px;">Zoom</button>
+                        </td>
+                    </tr>
+                `;
+            });
+            
+            tableBody.innerHTML = tableHTML;
+            
+            // Start intersection analysis for each polygon
+            drawnLayers.forEach((layer, index) => {
+                analyzeSinglePolygonIntersections(layer, index);
+            });
+        }
+
+        function analyzeSinglePolygonIntersections(drawnLayer, index) {
+            setTimeout(() => {
+                // This is a simplified analysis - in a real implementation, 
+                // you would use spatial intersection algorithms
+                const intersections = findIntersectingCadastralZones(drawnLayer);
+                
+                document.getElementById(`intersections-${index}`).textContent = 
+                    intersections.length > 0 ? intersections.join(', ') : 'None';
+                
+                document.getElementById(`type-${index}`).innerHTML = 
+                    intersections.length > 0 ? '<span class="intersection-overlaps">Overlaps</span>' : '<span class="intersection-none">No Intersection</span>';
+                
+                document.getElementById(`coverage-${index}`).textContent = 
+                    intersections.length > 0 ? 'Calculating...' : '0%';
+                
+                // Update total intersection count
+                updateIntersectionCount();
+            }, 100 * index); // Stagger the analysis
+        }
+
+        function findIntersectingCadastralZones(drawnLayer) {
+            // Placeholder implementation - returns mock data
+            // In a real implementation, this would perform spatial intersection analysis
+            // with loaded cadastral data
+            const intersections = [];
+            
+            if (loadedCadastralLayers.length > 0) {
+                // Mock intersection detection
+                const randomIntersections = Math.floor(Math.random() * 3) + 1;
+                for (let i = 0; i < randomIntersections; i++) {
+                    intersections.push(`Zone-${Math.floor(Math.random() * 100) + 1}`);
+                }
+            }
+            
+            return intersections;
+        }
+
+        function updateIntersectionCount() {
+            // Count total intersections from the table
+            let totalIntersections = 0;
+            document.querySelectorAll('[id^="intersections-"]').forEach(cell => {
+                if (cell.textContent !== 'None' && cell.textContent !== 'Analyzing...') {
+                    totalIntersections += cell.textContent.split(', ').length;
+                }
+            });
+            
+            document.getElementById('intersectionCount').textContent = totalIntersections;
+        }
+
+        function analyzeMappingRelationships() {
+            if (drawnItems.getLayers().length === 0) {
+                alert('No drawn polygons to analyze. Please draw some polygons first.');
+                return;
+            }
+            
+            if (getCadastralZoneCount() === 0) {
+                alert('No cadastral data loaded. Please load cadastral files first.');
+                return;
+            }
+            
+            // Refresh the analysis
+            updateMappingTable();
+            
+            // Show success message
+            document.getElementById('mainMappingInfo').innerHTML =
+                `Analysis complete! Found relationships between ${drawnItems.getLayers().length} drawn polygons and loaded cadastral zones.`;
+        }
+
+        function exportMappingData() {
+            if (drawnItems.getLayers().length === 0) {
+                alert('No mapping data to export.');
+                return;
+            }
+            
+            // Collect mapping data
+            const exportData = {
+                timestamp: new Date().toISOString(),
+                drawnPolygons: drawnItems.getLayers().length,
+                cadastralZones: getCadastralZoneCount(),
+                mappings: []
+            };
+            
+            drawnItems.getLayers().forEach((layer, index) => {
+                const polygonId = `DPoly-${index + 1}`;
+                const area = calculatePolygonArea(layer);
+                const intersections = findIntersectingCadastralZones(layer);
+                
+                exportData.mappings.push({
+                    polygonId: polygonId,
+                    area: area,
+                    areaUnit: 'km²',
+                    intersectingZones: intersections,
+                    geometry: layer.toGeoJSON()
+                });
+            });
+            
+            // Download as JSON
+            const dataStr = JSON.stringify(exportData, null, 2);
+            const dataBlob = new Blob([dataStr], { type: 'application/json' });
+            
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(dataBlob);
+            link.download = `mapping_analysis_${new Date().toISOString().split('T')[0]}.json`;
+            link.click();
+            
+            URL.revokeObjectURL(link.href);
+        }
+
+        function highlightPolygon(index) {
+            const layer = drawnItems.getLayers()[index];
+            if (layer) {
+                // Temporarily change style to highlight
+                const originalStyle = layer.options;
+                layer.setStyle({
+                    color: '#ff0000',
+                    weight: 4,
+                    fillOpacity: 0.7
+                });
+                
+                // Reset after 2 seconds
+                setTimeout(() => {
+                    layer.setStyle({
+                        color: '#e74c3c',
+                        weight: 2,
+                        fillOpacity: 0.3
+                    });
+                }, 2000);
+            }
+        }
+
+        function zoomToPolygon(index) {
+            const layer = drawnItems.getLayers()[index];
+            if (layer) {
+                // Switch to map view and zoom to polygon
+                showMapView();
+                setTimeout(() => {
+                    map.fitBounds(layer.getBounds(), { padding: [20, 20] });
+                }, 300);
+            }
+        }
+
+        // Drawing Controls Variables
+        let drawControl = null;
+        let drawnItems = new L.FeatureGroup();
+        let isDrawingMode = false;
+
+        // Add drawn items layer to map
+        map.addLayer(drawnItems);
+
+        // Function to toggle polygon selection mode
+        function togglePolygonSelectionMode() {
+            polygonSelectionMode = !polygonSelectionMode;
+            const btn = document.getElementById('polygonSelectionBtn');
+            
+            if (polygonSelectionMode) {
+                btn.style.background = '#007cba';
+                btn.style.color = 'white';
+                btn.title = 'Polygon Selection Mode: ON - Click polygons to select';
+            } else {
+                btn.style.background = 'white';
+                btn.style.color = '#007cba';
+                btn.title = 'Toggle Polygon Selection Mode';
+            }
+        }
+
+        // Function to trigger file load dialog
+        function triggerLoadDrawings() {
+            document.getElementById('loadDrawingsFile').click();
+        }
+
+        // Function to start drawing mode
+        function startDrawingMode() {
+            if (isDrawingMode) return;
+            
+            isDrawingMode = true;
+            
+            // Create draw control
+            drawControl = new L.Control.Draw({
+                draw: {
+                    polygon: {
+                        shapeOptions: {
+                            color: '#e74c3c',
+                            fillColor: '#e74c3c',
+                            fillOpacity: 0.3,
+                            weight: 2
+                        },
+                        allowIntersection: false,
+                        drawError: {
+                            color: '#e74c3c',
+                            message: 'Drawing error! Intersections are not allowed.'
+                        }
+                    },
+                    rectangle: false,
+                    circle: false,
+                    circlemarker: false,
+                    marker: false,
+                    polyline: false
+                },
+                edit: {
+                    featureGroup: drawnItems,
+                    remove: true
+                }
+            });
+            
+            map.addControl(drawControl);
+            
+            // Update button states
+            document.getElementById('startDrawing').disabled = true;
+            document.getElementById('stopDrawing').disabled = false;
+            
+            // Show status panel
+            const statusPanel = document.getElementById('drawingStatusPanel');
+            const statusDiv = document.getElementById('drawingStatus');
+            statusPanel.style.display = 'block';
+            statusDiv.innerHTML = '<div style="color: #27ae60; font-weight: bold;">Drawing mode active - Draw polygons on the map</div>';
+        }
+
+        // Function to stop drawing mode
+        function stopDrawingMode() {
+            if (!isDrawingMode) return;
+            
+            isDrawingMode = false;
+            
+            if (drawControl) {
+                map.removeControl(drawControl);
+                drawControl = null;
+            }
+            
+            // Update button states
+            document.getElementById('startDrawing').disabled = false;
+            document.getElementById('stopDrawing').disabled = true;
+            
+            // Hide status panel
+            document.getElementById('drawingStatusPanel').style.display = 'none';
+            document.getElementById('areaWarning').style.display = 'none';
+        }
+
+        // Function to clear all drawings
+        function clearAllDrawings() {
+            drawnItems.clearLayers();
+            hideAreaWarning();
+            
+            const statusPanel = document.getElementById('drawingStatusPanel');
+            const statusDiv = document.getElementById('drawingStatus');
+            if (statusPanel.style.display !== 'none') {
+                statusDiv.innerHTML = '<div style="color: #27ae60; font-weight: bold;">All drawings cleared - Draw polygons on the map</div>';
+            }
+        }
+
+        // Function to calculate polygon area in km² with multiple methods
+        function calculatePolygonArea(layer) {
+            try {
+                const geoJson = layer.toGeoJSON();
+                
+                // Method 1: Use turf.js if available (most accurate)
+                if (typeof turf !== 'undefined') {
+                    const area = turf.area(geoJson);
+                    return area / 1000000; // Convert from m² to km²
+                }
+                
+                // Method 2: Fallback - Use Leaflet's built-in area calculation
+                if (layer.getLatLngs && typeof L.GeometryUtil !== 'undefined' && L.GeometryUtil.geodesicArea) {
+                    const latLngs = layer.getLatLngs()[0]; // Get first ring for polygon
+                    const area = L.GeometryUtil.geodesicArea(latLngs);
+                    return area / 1000000; // Convert from m² to km²
+                }
+                
+                // Method 3: Simple approximation using bounding box (least accurate)
+                const bounds = layer.getBounds();
+                const sw = bounds.getSouthWest();
+                const ne = bounds.getNorthEast();
+                
+                // Rough approximation: 1 degree ≈ 111 km at equator
+                const latDiff = Math.abs(ne.lat - sw.lat);
+                const lngDiff = Math.abs(ne.lng - sw.lng);
+                const avgLat = (ne.lat + sw.lat) / 2;
+                
+                // Adjust longitude distance based on latitude
+                const adjustedLngDiff = lngDiff * Math.cos(avgLat * Math.PI / 180);
+                
+                // Calculate approximate area (this is very rough)
+                const areaKm2 = latDiff * 111 * adjustedLngDiff * 111;
+                
+                console.warn('Using approximation method for area calculation - result may be inaccurate');
+                return areaKm2;
+                
+            } catch (error) {
+                console.error('Error calculating polygon area:', error);
+                return null;
+            }
+        }
+
+        // Function to validate polygon area and show warning if needed
+        function validatePolygonArea(layer) {
+            const area = calculatePolygonArea(layer);
+            
+            if (area === null) {
+                console.warn('Could not calculate polygon area');
+                return false;
+            }
+            
+            console.log(`Polygon area: ${area.toFixed(6)} km²`);
+            
+            if (area > 0.3) {
+                showAreaWarning(area);
+                return true; // Area exceeds threshold
+            } else {
+                // Hide warning if area is acceptable
+                hideAreaWarning();
+                return false; // Area is within acceptable range
+            }
+        }
+
+        // Function to check all drawn polygons for area warnings
+        function checkAllPolygonAreas() {
+            let hasLargePolygon = false;
+            let maxArea = 0;
+            
+            drawnItems.eachLayer(function(layer) {
+                const area = calculatePolygonArea(layer);
+                if (area !== null) {
+                    maxArea = Math.max(maxArea, area);
+                    if (area > 0.3) {
+                        hasLargePolygon = true;
+                    }
+                }
+            });
+            
+            if (hasLargePolygon) {
+                showAreaWarning(maxArea);
+            } else {
+                hideAreaWarning();
+            }
+            
+            return hasLargePolygon;
+        }
+
+        // Function to save drawings to JSON
+        function saveDrawingsToJSON() {
+            if (drawnItems.getLayers().length === 0) {
+                alert('No drawings to save!');
+                return;
+            }
+            
+            const geojson = drawnItems.toGeoJSON();
+            const dataStr = JSON.stringify(geojson, null, 2);
+            const dataBlob = new Blob([dataStr], { type: 'application/json' });
+            
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(dataBlob);
+            link.download = `drawn_polygons_${new Date().toISOString().split('T')[0]}.json`;
+            link.click();
+            
+            // Clean up
+            URL.revokeObjectURL(link.href);
+        }
+
+        // Function to load drawings from JSON
+        function loadDrawingsFromJSON(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const geojson = JSON.parse(e.target.result);
+                    
+                    // Clear existing drawings
+                    drawnItems.clearLayers();
+                    
+                    // Add loaded polygons
+                    L.geoJSON(geojson, {
+                        style: {
+                            color: '#e74c3c',
+                            fillColor: '#e74c3c',
+                            fillOpacity: 0.3,
+                            weight: 2
+                        },
+                        onEachFeature: function(feature, layer) {
+                            drawnItems.addLayer(layer);
+                        }
+                    });
+                    
+                    // Fit map to loaded polygons
+                    if (drawnItems.getLayers().length > 0) {
+                        map.fitBounds(drawnItems.getBounds(), { padding: [20, 20] });
+                    }
+                    
+                    // Check areas of all loaded polygons
+                    checkAllPolygonAreas();
+                    
+                    alert(`Successfully loaded ${drawnItems.getLayers().length} polygons`);
+                    
+                } catch (error) {
+                    alert('Error loading file: ' + error.message);
+                }
+                
+                // Clear file input
+                event.target.value = '';
+            };
+            
+            reader.readAsText(file);
+        }
+
+        // Function to show area warning
+        function showAreaWarning(area = null) {
+            const statusPanel = document.getElementById('drawingStatusPanel');
+            const warningDiv = document.getElementById('areaWarning');
+            statusPanel.style.display = 'block';
+            warningDiv.style.display = 'block';
+            
+            let warningText = ' The selection of a zone greater than 0.3 Km² could lead to inconsistencies and slowdowns in your mapping.';
+            if (area !== null) {
+                warningText += `<br><small>Current polygon area: ${area.toFixed(4)} km²</small>`;
+            }
+            
+            warningDiv.innerHTML = warningText;
+        }
+
+        // Function to hide area warning
+        function hideAreaWarning() {
+            const warningDiv = document.getElementById('areaWarning');
+            warningDiv.style.display = 'none';
+            
+            // Also hide status panel if drawing mode is not active and no warning to show
+            if (!isDrawingMode) {
+                const statusPanel = document.getElementById('drawingStatusPanel');
+                statusPanel.style.display = 'none';
+            }
+        }
+
+        // Map event handlers for drawing
+        map.on('draw:created', function (event) {
+            const layer = event.layer;
+            drawnItems.addLayer(layer);
+            
+            // Validate polygon area and show warning if needed
+            validatePolygonArea(layer);
+            
+            // Update mapping view if currently visible
+            if (document.getElementById('mainMappingContainer').style.display === 'flex') {
+                refreshMappingView();
+            }
+        });
+
+        map.on('draw:edited', function (event) {
+            const layers = event.layers;
+            
+            // Check all polygons after editing to update warning status
+            setTimeout(() => {
+                checkAllPolygonAreas();
+                
+                // Update mapping view if currently visible
+                if (document.getElementById('mainMappingContainer').style.display === 'flex') {
+                    refreshMappingView();
+                }
+            }, 100); // Small delay to ensure layer updates are complete
+        });
+
+        map.on('draw:deleted', function (event) {
+            // Check remaining polygons after deletion
+            setTimeout(() => {
+                checkAllPolygonAreas();
+                
+                // Update mapping view if currently visible
+                if (document.getElementById('mainMappingContainer').style.display === 'flex') {
+                    refreshMappingView();
+                }
+            }, 100); // Small delay to ensure layer removal is complete
+        });
+
+        // Function to initialize draggable controls
+        function initializeDraggableControls() {
+            const draggableElements = document.querySelectorAll('.map-controls, .view-toggle');
+            
+            draggableElements.forEach(element => {
+                let isDragging = false;
+                let dragStartX, dragStartY;
+                let elementStartX, elementStartY;
+                
+                // Handle mouse down on the element or header
+                const dragHandle = element.querySelector('.control-group-header') || element;
+                dragHandle.addEventListener('mousedown', startDrag);
+                
+                function startDrag(e) {
+                    if (e.target.tagName === 'BUTTON') return; // Don't drag when clicking buttons
+                    
+                    isDragging = true;
+                    element.classList.add('dragging');
+                    
+                    dragStartX = e.clientX;
+                    dragStartY = e.clientY;
+                    
+                    const rect = element.getBoundingClientRect();
+                    elementStartX = rect.left;
+                    elementStartY = rect.top;
+                    
+                    document.addEventListener('mousemove', drag);
+                    document.addEventListener('mouseup', stopDrag);
+                    
+                    e.preventDefault();
+                }
+                
+                function drag(e) {
+                    if (!isDragging) return;
+                    
+                    const deltaX = e.clientX - dragStartX;
+                    const deltaY = e.clientY - dragStartY;
+                    
+                    const newX = elementStartX + deltaX;
+                    const newY = elementStartY + deltaY;
+                    
+                    // Keep within viewport bounds
+                    const maxX = window.innerWidth - element.offsetWidth;
+                    const maxY = window.innerHeight - element.offsetHeight;
+                    
+                    const boundedX = Math.max(0, Math.min(newX, maxX));
+                    const boundedY = Math.max(0, Math.min(newY, maxY));
+                    
+                    element.style.left = boundedX + 'px';
+                    element.style.top = boundedY + 'px';
+                    element.style.right = 'auto';
+                    element.style.bottom = 'auto';
+                }
+                
+                function stopDrag() {
+                    isDragging = false;
+                    element.classList.remove('dragging');
+                    
+                    document.removeEventListener('mousemove', drag);
+                    document.removeEventListener('mouseup', stopDrag);
+                }
+            });
+        }
+
+        // Function to initialize polygon selection button state
+        function initializePolygonSelectionButton() {
+            // Use setTimeout to ensure DOM is fully loaded
+            setTimeout(() => {
+                const btn = document.getElementById('polygonSelectionBtn');
+                if (btn && polygonSelectionMode) {
+                    btn.style.background = '#007cba';
+                    btn.style.color = 'white';
+                    btn.title = 'Polygon Selection Mode: ON - Click polygons to select';
+                    console.log('Polygon selection button initialized');
+                } else {
+                    console.log('Polygon selection button not found or mode is false');
+                }
+            }, 100);
+        }
+
+    </script>
+</body>
+</html>
