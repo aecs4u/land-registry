@@ -2,7 +2,7 @@ from bokeh.embed import server_document
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 import json
 import logging
@@ -336,76 +336,8 @@ async def health_check():
     return {"status": "healthy", "service": "land-registry"}
 
 
-@app.get("/map", response_class=HTMLResponse)
-async def read_root(request: Request):
-    """Serve the main map application using template with comprehensive map providers"""
-    # Get current data status
-    current_gdf = get_current_gdf()
-    has_data = current_gdf is not None and not current_gdf.empty
-
-    # Convert current data to GeoJSON if available
-    geojson_data = None
-    if current_gdf is not None and not current_gdf.empty:
-        geojson_data = json.loads(current_gdf.to_json())
-
-    # Load cadastral statistics using utility
-    stats = get_cadastral_stats()
-
-    # Render template with context
-    return templates.TemplateResponse("map.html", {
-        "request": request,
-        "geojson_data": json.dumps(geojson_data) if geojson_data else None,
-        "has_data": has_data,
-        "total_regions": stats['total_regions'],
-        "total_provinces": stats['total_provinces'],
-        "total_municipalities": stats['total_municipalities'],
-        "total_files": stats['total_files'],
-        "clerk_publishable_key": get_auth_config().clerk_publishable_key,
-    })
-
-
-@app.get("/map_table")
-def show_map_table(request: Request):
-    """
-    Display map table using Panel.
-    Uses configured Panel route from settings (currently points to main dashboard).
-    """
-    tabulator = server_document(PANEL_MAP_TABLE_URL)
-    return templates.TemplateResponse("tabulator.html", {
-        "request": request,
-        "tabulator": tabulator
-    })
-
-
-@app.get("/adjacency_table")
-def show_adjacency_table(request: Request):
-    """
-    Display adjacency analysis table using Panel.
-    Uses configured Panel route from settings (currently points to main dashboard).
-    """
-    tabulator = server_document(PANEL_ADJACENCY_TABLE_URL)
-    return templates.TemplateResponse("tabulator.html", {
-        "request": request,
-        "tabulator": tabulator
-    })
-
-
-@app.get("/mapping_table")
-def show_mapping_table(request: Request):
-    """
-    Display mapping/drawing table using Panel.
-    Uses configured Panel route from settings (currently points to main dashboard).
-    """
-    tabulator = server_document(PANEL_MAPPING_TABLE_URL)
-    return templates.TemplateResponse("tabulator.html", {
-        "request": request,
-        "tabulator": tabulator
-    })
-
-
-@app.get("/", response_class=HTMLResponse)
-async def serve_index(request: Request):
-    """Serve the server-generated map application using index.html template"""
+def _build_main_map_shell_context(request: Request) -> dict:
+    """Build shared template context for the canonical map shell."""
     # Get current data status
     current_gdf = get_current_gdf()
     has_data = current_gdf is not None and not current_gdf.empty
@@ -449,8 +381,7 @@ async def serve_index(request: Request):
     adjacency_table = server_document(PANEL_ADJACENCY_TABLE_URL)
     mapping_table = server_document(PANEL_MAPPING_TABLE_URL)
 
-    # Render template with context including server-generated Folium map and Tabulator
-    return templates.TemplateResponse("index.html", {
+    return {
         "request": request,
         "folium_map_html": folium_map_html,
         "map_table": map_table,
@@ -463,7 +394,58 @@ async def serve_index(request: Request):
         "total_municipalities": stats['total_municipalities'],
         "total_files": stats['total_files'],
         "clerk_publishable_key": get_auth_config().clerk_publishable_key,
+    }
+
+
+@app.get("/map", response_class=HTMLResponse)
+async def serve_map_shell(request: Request):
+    """Serve the canonical map shell with full workflow capabilities."""
+    return templates.TemplateResponse("index.html", _build_main_map_shell_context(request))
+
+
+@app.get("/map_table")
+def show_map_table(request: Request):
+    """
+    Display map table using Panel.
+    Uses configured Panel route from settings (currently points to main dashboard).
+    """
+    tabulator = server_document(PANEL_MAP_TABLE_URL)
+    return templates.TemplateResponse("tabulator.html", {
+        "request": request,
+        "tabulator": tabulator
     })
+
+
+@app.get("/adjacency_table")
+def show_adjacency_table(request: Request):
+    """
+    Display adjacency analysis table using Panel.
+    Uses configured Panel route from settings (currently points to main dashboard).
+    """
+    tabulator = server_document(PANEL_ADJACENCY_TABLE_URL)
+    return templates.TemplateResponse("tabulator.html", {
+        "request": request,
+        "tabulator": tabulator
+    })
+
+
+@app.get("/mapping_table")
+def show_mapping_table(request: Request):
+    """
+    Display mapping/drawing table using Panel.
+    Uses configured Panel route from settings (currently points to main dashboard).
+    """
+    tabulator = server_document(PANEL_MAPPING_TABLE_URL)
+    return templates.TemplateResponse("tabulator.html", {
+        "request": request,
+        "tabulator": tabulator
+    })
+
+
+@app.get("/", response_class=HTMLResponse)
+async def redirect_root_to_map():
+    """Redirect root to canonical map shell."""
+    return RedirectResponse(url="/map", status_code=307)
 
 
 @app.get("/landing", response_class=HTMLResponse)
