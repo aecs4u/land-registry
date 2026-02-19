@@ -4,54 +4,63 @@ Uses aecs4u-auth package for Clerk-based authentication.
 Falls back to no-op stubs when aecs4u-auth is not installed.
 """
 
+import logging
+
+from fastapi import APIRouter, HTTPException
 from land_registry.core.clerk import _AUTH_AVAILABLE
 
+logger = logging.getLogger(__name__)
+
+# Re-export Clerk components from core.clerk (real when installed, stubs otherwise).
+from land_registry.core.clerk import (
+    ClerkUser,
+    is_clerk_available,
+    get_current_clerk_user,
+    get_current_clerk_user_optional,
+    get_current_clerk_user_or_redirect,
+    require_role,
+    require_any_role,
+    RedirectToClerkLogin,
+)
+
+# Default to an empty router when auth endpoints are unavailable.
+router = APIRouter()
+
 if _AUTH_AVAILABLE:
-    # Re-export the auth router from aecs4u-auth
-    from aecs4u_auth.routers.auth import router
+    try:
+        # Re-export the auth router from aecs4u-auth when present.
+        from aecs4u_auth.routers.auth import router as _auth_router
 
-    # Re-export common dependencies for convenience
-    from aecs4u_auth import (
-        get_current_user,
-        get_current_user_optional,
-        get_current_superuser,
-        require_role,
-        require_any_role,
-    )
+        router = _auth_router
+    except ImportError:
+        logger.warning(
+            "aecs4u-auth installed, but aecs4u_auth.routers.auth is missing; "
+            "auth API endpoints at /auth are disabled."
+        )
 
-    # Re-export Clerk-specific components
-    from aecs4u_auth.core.clerk import (
-        ClerkUser,
-        is_clerk_available,
-        get_current_clerk_user,
-        get_current_clerk_user_optional,
-        get_current_clerk_user_or_redirect,
-    )
+    try:
+        # Re-export common dependencies for convenience.
+        from aecs4u_auth import (
+            get_current_user,
+            get_current_user_optional,
+            get_current_superuser,
+        )
+    except ImportError:
+        logger.warning(
+            "aecs4u-auth installed, but user dependency exports are missing; "
+            "protected endpoints will return 503."
+        )
 
-    # RedirectToLogin is available from the main package
-    from aecs4u_auth import RedirectToLogin as RedirectToClerkLogin
+        async def get_current_user():
+            raise HTTPException(status_code=503, detail="Authentication not configured")
+
+        async def get_current_user_optional():
+            return None
+
+        async def get_current_superuser():
+            raise HTTPException(status_code=503, detail="Authentication not configured")
 else:
-    import logging
-    logging.getLogger(__name__).warning(
-        "aecs4u-auth not installed - auth router disabled"
-    )
-
-    from fastapi import APIRouter, HTTPException
-
-    # Empty router (no auth endpoints)
-    router = APIRouter()
-
-    # Re-export stubs from core.clerk
-    from land_registry.core.clerk import (
-        ClerkUser,
-        is_clerk_available,
-        get_current_clerk_user,
-        get_current_clerk_user_optional,
-        get_current_clerk_user_or_redirect,
-        require_role,
-        require_any_role,
-        RedirectToClerkLogin,
-    )
+    logger.warning("aecs4u-auth not installed - auth router disabled")
 
     async def get_current_user():
         raise HTTPException(status_code=503, detail="Authentication not configured")

@@ -106,5 +106,12 @@ export PYTHONPATH="$(pwd):${PYTHONPATH:-}"
 
 clear
 
-# Start the application using uv's runner
-uv run uvicorn land_registry.main:app --host "$HOST" --port "$PORT" --reload
+# Start the application via Python for proper Ctrl+C signal handling
+# (uv run + uvicorn --reload creates nested processes that swallow SIGINT)
+exec python -c "
+import signal, sys, uvicorn
+signal.signal(signal.SIGINT, lambda *_: (print('\nShutting down...'), sys.exit(0)))
+uvicorn.run('land_registry.main:app', host='$HOST', port=int('$PORT'),
+            reload=True, reload_delay=0.25, timeout_graceful_shutdown=3,
+            timeout_keep_alive=2, log_level='info')
+"
