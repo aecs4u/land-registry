@@ -1945,7 +1945,7 @@ async def clear_drawn_polygons():
 from land_registry.models import (
     ZoneCreateRequest, ZoneUpdateRequest, ZoneResponse,
     ZoneDetailResponse, ZoneListResponse, ZoneBulkVisibilityRequest,
-    MicrozoneCreateRequest, MicrozoneUpdateRequest, MicrozoneResponse,
+    MicrozoneBulkVisibilityRequest, MicrozoneCreateRequest, MicrozoneUpdateRequest, MicrozoneResponse,
     MicrozoneDetailResponse, MicrozoneListResponse
 )
 from land_registry.sqlite_db import get_sqlite_db
@@ -2223,6 +2223,25 @@ async def bulk_toggle_zone_visibility(
         return {"success": True, "updated": updated}
     except Exception as e:
         logger.error(f"Error updating zone visibility: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error updating visibility: {str(e)}")
+
+
+@api_router.post("/microzones/visibility")
+async def bulk_toggle_microzone_visibility(
+    request: MicrozoneBulkVisibilityRequest,
+    user: ClerkUser = Depends(get_current_user)
+):
+    """Set visibility for microzones, optionally filtered by zone IDs."""
+    try:
+        db = get_sqlite_db()
+        updated = db.update_microzones_visibility(
+            user_id=user.id,
+            is_visible=request.is_visible,
+            zone_ids=request.zone_ids,
+        )
+        return {"success": True, "updated": updated}
+    except Exception as e:
+        logger.error(f"Error updating microzone visibility: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error updating visibility: {str(e)}")
 
 

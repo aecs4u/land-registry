@@ -671,6 +671,27 @@ class SQLiteDatabase:
             self.execute("DELETE FROM zones WHERE id = ?", (zone_id,))
             return True
 
+    def update_microzones_visibility(
+        self,
+        user_id: str,
+        is_visible: bool,
+        zone_ids: Optional[List[int]] = None,
+    ) -> int:
+        """Bulk update visibility for a user's microzones."""
+        params: List[Any] = [int(is_visible)]
+        query = "UPDATE microzones SET is_visible = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?"
+        params.append(user_id)
+
+        if zone_ids:
+            placeholders = ",".join("?" for _ in zone_ids)
+            query += f" AND zone_id IN ({placeholders})"
+            params.extend(zone_ids)
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, tuple(params))
+            return cursor.rowcount
+
     def get_microzones(
         self,
         zone_id: Optional[int] = None,

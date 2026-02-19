@@ -3679,6 +3679,21 @@ button:hover {
   white-space: nowrap;
 }
 
+.zone-micro-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #e8eaed;
+  color: #3c4043;
+  font-size: 10px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
 .zone-item-actions {
   display: flex;
   gap: 2px;
@@ -3724,6 +3739,139 @@ button:hover {
   padding-top: 8px;
 }
 
+.microzone-toolbar {
+  margin: 8px 0;
+}
+
+.add-micro-btn {
+  width: auto;
+  margin: 0;
+  padding: 5px 10px;
+  font-size: 11px;
+  border: 1px solid #dadce0;
+  border-radius: 4px;
+  color: #1a73e8;
+  background: #fff;
+  cursor: pointer;
+}
+
+.add-micro-btn:hover {
+  background: #f8fbff;
+  border-color: #1a73e8;
+}
+
+.microzone-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.microzone-empty {
+  margin: 0;
+  font-size: 12px;
+  color: #80868b;
+  font-style: italic;
+}
+
+.microzone-item {
+  background: #fafbfc;
+  border: 1px solid #e0e3e7;
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.microzone-item.hidden {
+  opacity: 0.55;
+}
+
+.microzone-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.microzone-vis-toggle {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.microzone-color-swatch {
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  flex-shrink: 0;
+}
+
+.microzone-name {
+  flex: 1;
+  font-size: 12px;
+  color: #3c4043;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.micro-rename-btn,
+.micro-delete-btn {
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+  margin: 0;
+  line-height: 1;
+}
+
+.micro-rename-btn {
+  color: #1a73e8;
+  font-size: 12px;
+}
+
+.micro-delete-btn {
+  color: #b3261e;
+  font-size: 16px;
+}
+
+.micro-rename-btn:hover,
+.micro-delete-btn:hover {
+  background: #e8eaed;
+}
+
+.microzone-meta {
+  margin-top: 6px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.microzone-area-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  background: #e8f0fe;
+  color: #174ea6;
+}
+
+.microzone-warning-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  background: #fef7e0;
+  color: #8f4d00;
+}
+
 .zone-empty-message {
   font-size: 12px;
   color: #80868b;
@@ -3734,6 +3882,30 @@ button:hover {
 
 .zone-bulk-actions {
   margin-top: 8px;
+}
+
+.zone-search-row {
+  margin-top: 8px;
+}
+
+.zone-search-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid #dadce0;
+  border-radius: 4px;
+  font-size: 12px;
+  box-sizing: border-box;
+}
+
+.zone-search-clear-btn {
+  flex-shrink: 0;
+}
+
+.zone-search-no-results {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #b3261e;
 }
 
 .zone-edit-form input[type="text"],
