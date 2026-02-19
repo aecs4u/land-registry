@@ -79,6 +79,12 @@ const tableConfigs = {
     }
 };
 
+const MAPPING_VIEW_QUERY_KEY = 'view';
+const MAPPING_WORKFLOW_QUERY_KEY = 'workflow';
+const MAPPING_ZONE_QUERY_KEY = 'zone_id';
+
+window.mappingViewContext = null;
+
 // Generic function to load table data
 async function loadTableData(tableType, page = 1) {
     const config = tableConfigs[tableType];
@@ -423,11 +429,66 @@ function sortMappingTable() { loadTableData('mapping', 1); }
 function changeMappingPageSize() { loadTableData('mapping', 1); }
 function goToMappingPage(page) { goToPage('mapping', page); }
 
+function normalizeMappingWorkflow(workflow) {
+    return workflow === 'rents' ? 'rents' : 'sales';
+}
+
+function normalizeMappingContext(context) {
+    if (!context || typeof context !== 'object') return null;
+    const zoneId = parseInt(context.zoneId, 10);
+    if (!Number.isFinite(zoneId)) return null;
+    return {
+        zoneId,
+        workflow: normalizeMappingWorkflow(context.workflow)
+    };
+}
+
+function getMappingContextFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get(MAPPING_VIEW_QUERY_KEY) !== 'mapping') return null;
+
+    const zoneId = parseInt(params.get(MAPPING_ZONE_QUERY_KEY) || '', 10);
+    if (!Number.isFinite(zoneId)) return null;
+
+    return {
+        zoneId,
+        workflow: normalizeMappingWorkflow(params.get(MAPPING_WORKFLOW_QUERY_KEY))
+    };
+}
+
+function updateMappingUrlContext(context) {
+    const params = new URLSearchParams(window.location.search);
+    params.set(MAPPING_VIEW_QUERY_KEY, 'mapping');
+
+    if (context && Number.isFinite(Number(context.zoneId))) {
+        params.set(MAPPING_ZONE_QUERY_KEY, String(context.zoneId));
+        params.set(MAPPING_WORKFLOW_QUERY_KEY, normalizeMappingWorkflow(context.workflow));
+    } else {
+        params.delete(MAPPING_ZONE_QUERY_KEY);
+        params.delete(MAPPING_WORKFLOW_QUERY_KEY);
+    }
+
+    const query = params.toString();
+    const nextUrl = query ? `${window.location.pathname}?${query}` : window.location.pathname;
+    window.history.replaceState({}, '', nextUrl);
+}
+
+function applyMappingZoneContextToUi(context) {
+    if (typeof window.applyMappingZoneContext === 'function') {
+        window.applyMappingZoneContext(context || null);
+    }
+}
+
 // Initialize table when data is loaded
 function initializeTables() {
     // Load table data when entering table view
     if (window.hasData) {
         loadTableData('table', 1);
+    }
+
+    const mappingContext = getMappingContextFromUrl();
+    if (mappingContext) {
+        showMappingView(mappingContext);
     }
 }
 
@@ -456,14 +517,24 @@ function showAdjacencyView() {
 }
 
 // Enhanced mapping view handler
-function showMappingView() {
+function showMappingView(options) {
     document.querySelectorAll('.view-content').forEach(el => el.classList.remove('active'));
     document.querySelectorAll('.view-toggle button').forEach(el => el.classList.remove('active'));
     document.getElementById('mappingView').classList.add('active');
     document.getElementById('mappingViewBtn').classList.add('active');
 
+    const contextFromArgs = normalizeMappingContext(options);
+    const contextFromUrl = getMappingContextFromUrl();
+    const resolvedContext = contextFromArgs || contextFromUrl;
+    window.mappingViewContext = resolvedContext;
+
+    updateMappingUrlContext(resolvedContext);
+    applyMappingZoneContextToUi(resolvedContext);
+
     // Load mapping data if available
     loadTableData('mapping', 1);
+
+    return resolvedContext;
 }
 
 // Initialize when DOM is loaded
