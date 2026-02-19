@@ -1,11 +1,20 @@
 """
 HTML Authentication pages for Land Registry application.
 Provides login/register pages that use Clerk's hosted authentication UI.
+Falls back gracefully when aecs4u-auth is not installed.
 """
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from aecs4u_auth import get_auth_config
+from land_registry.core.clerk import _AUTH_AVAILABLE
+
+if _AUTH_AVAILABLE:
+    from aecs4u_auth import get_auth_config
+else:
+    from types import SimpleNamespace
+
+    def get_auth_config():
+        return SimpleNamespace(clerk_publishable_key="")
 
 from land_registry.config import auth_settings
 

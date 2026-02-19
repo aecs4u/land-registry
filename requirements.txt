@@ -1,8 +1,9 @@
 # This file is auto-generated from pyproject.toml
 # To update, run: uv run scripts/generate_requirements.py
 
-# aecs4u-auth installed from Google Artifact Registry (see pip.conf)
-aecs4u-auth>=1.1.2
+# aecs4u-auth is optional - install from Google Artifact Registry when auth is needed:
+#   pip install aecs4u-auth --index-url https://europe-west1-python.pkg.dev/apps-aecs4u/python-packages/simple/
+# aecs4u-auth>=1.1.2
 boto3>=1.34.0
 fastapi>=0.100.0
 folium>=0.14.0

@@ -1,0 +1,61 @@
+# Cloud Build configuration for land-registry
+# This configuration handles authentication to Google Artifact Registry
+# for private Python packages during Docker build
+#
+# Usage: gcloud builds submit --config cloudbuild.yaml .
+
+steps:
+  # Step 1: Generate access token for Artifact Registry
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'generate-token'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - 'gcloud auth print-access-token > /workspace/.gar-token && echo "Token generated successfully"'
+
+  # Step 2: Build Docker image with GAR authentication using BuildKit
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build'
+    entrypoint: 'bash'
+    env:
+      - 'DOCKER_BUILDKIT=1'
+    args:
+      - '-c'
+      - 'GAR_TOKEN=$$(cat /workspace/.gar-token) && docker build --build-arg GAR_TOKEN="$$GAR_TOKEN" --progress=plain -t ${_IMAGE_NAME}:latest .'
+
+  # Step 3: Push to Container Registry/Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push'
+    args:
+      - 'push'
+      - '--all-tags'
+      - '${_IMAGE_NAME}'
+
+  # Step 4: Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'deploy'
+    entrypoint: 'gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - 'land-registry-service'
+      - '--image=europe-west1-docker.pkg.dev/apps-aecs4u/cloud-run-source-deploy/land-registry-service:latest'
+      - '--region=europe-west1'
+      - '--platform=managed'
+      - '--allow-unauthenticated'
+      - '--memory=512Mi'
+      - '--cpu=1'
+      - '--max-instances=10'
+      - '--min-instances=0'
+      - '--concurrency=80'
+      - '--port=8080'
+      - '--timeout=300'
+
+images:
+  - '${_IMAGE_NAME}'
+
+substitutions:
+  _IMAGE_NAME: 'europe-west1-docker.pkg.dev/apps-aecs4u/cloud-run-source-deploy/land-registry-service'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

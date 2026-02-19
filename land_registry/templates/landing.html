@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Land Registry Viewer</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --clr-primary: #1e3a5f;
+      --clr-accent: #3b82f6;
+      --clr-accent-light: #dbeafe;
+      --clr-bg: #f8fafc;
+      --clr-surface: #ffffff;
+      --clr-text: #1e293b;
+      --clr-text-muted: #64748b;
+      --clr-border: #e2e8f0;
+      --clr-green: #16a34a;
+      --clr-amber: #d97706;
+      --clr-red: #dc2626;
+      --radius: 12px;
+      --shadow: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+      --shadow-md: 0 4px 6px rgba(0,0,0,.05), 0 2px 4px rgba(0,0,0,.03);
+    }
+
+    body {
+      font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      background: var(--clr-bg);
+      color: var(--clr-text);
+      line-height: 1.6;
+    }
+
+    /* ── Hero ────────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, var(--clr-primary) 0%, #2563eb 100%);
+      color: #fff;
+      padding: 3rem 1.5rem 2.5rem;
+      text-align: center;
+    }
+    .hero h1 { font-size: 2.25rem; font-weight: 700; letter-spacing: -.02em; }
+    .hero p  { margin-top: .75rem; font-size: 1.125rem; opacity: .85; max-width: 600px; margin-inline: auto; }
+    .hero-actions { margin-top: 1.5rem; display: flex; gap: .75rem; justify-content: center; flex-wrap: wrap; }
+    .hero-actions a {
+      display: inline-flex; align-items: center; gap: .5rem;
+      padding: .75rem 1.5rem; border-radius: 8px;
+      font-size: .9375rem; font-weight: 600; text-decoration: none;
+      transition: transform .15s, box-shadow .15s;
+    }
+    .hero-actions a:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); }
+    .btn-primary   { background: #fff; color: var(--clr-primary); }
+    .btn-secondary { background: rgba(255,255,255,.15); color: #fff; border: 1px solid rgba(255,255,255,.3); }
+
+    /* ── Stats bar ──────────────────────────────── */
+    .stats-bar {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 1rem;
+      max-width: 960px;
+      margin: -1.5rem auto 0;
+      padding: 0 1.5rem;
+      position: relative;
+      z-index: 1;
+    }
+    .stat-card {
+      background: var(--clr-surface);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-md);
+      padding: 1.25rem;
+      text-align: center;
+    }
+    .stat-card .num   { font-size: 1.75rem; font-weight: 700; color: var(--clr-accent); }
+    .stat-card .label { font-size: .8125rem; color: var(--clr-text-muted); margin-top: .25rem; }
+
+    /* ── Section layout ─────────────────────────── */
+    .container { max-width: 960px; margin: 0 auto; padding: 0 1.5rem; }
+    section { padding: 3rem 0; }
+    section + section { border-top: 1px solid var(--clr-border); }
+    .section-title {
+      font-size: 1.375rem; font-weight: 700; margin-bottom: 1.5rem;
+      display: flex; align-items: center; gap: .5rem;
+    }
+    .section-title .icon { font-size: 1.5rem; }
+
+    /* ── Feature grid ───────────────────────────── */
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 1rem;
+    }
+    .feature-card {
+      background: var(--clr-surface);
+      border: 1px solid var(--clr-border);
+      border-radius: var(--radius);
+      padding: 1.25rem;
+      box-shadow: var(--shadow);
+      transition: box-shadow .2s;
+    }
+    .feature-card:hover { box-shadow: var(--shadow-md); }
+    .feature-card h3 { font-size: .9375rem; font-weight: 600; margin-bottom: .375rem; }
+    .feature-card p  { font-size: .8125rem; color: var(--clr-text-muted); line-height: 1.5; }
+
+    /* ── Endpoint list ──────────────────────────── */
+    .endpoint-group { margin-bottom: 1.5rem; }
+    .endpoint-group h3 { font-size: .9375rem; font-weight: 600; margin-bottom: .5rem; color: var(--clr-primary); }
+    .endpoint-list { list-style: none; }
+    .endpoint-list li {
+      display: flex; align-items: baseline; gap: .5rem;
+      padding: .375rem 0; font-size: .8125rem;
+      border-bottom: 1px solid var(--clr-border);
+    }
+    .endpoint-list li:last-child { border-bottom: none; }
+    .method {
+      display: inline-block; width: 3.25rem; text-align: center;
+      font-size: .6875rem; font-weight: 700; letter-spacing: .03em;
+      padding: 2px 0; border-radius: 4px; flex-shrink: 0;
+    }
+    .method-get    { background: #dcfce7; color: var(--clr-green); }
+    .method-post   { background: var(--clr-accent-light); color: var(--clr-accent); }
+    .method-delete { background: #fee2e2; color: var(--clr-red); }
+    .method-patch  { background: #fef3c7; color: var(--clr-amber); }
+    .path { font-family: 'SF Mono', 'Fira Code', monospace; color: var(--clr-text); }
+    .desc { color: var(--clr-text-muted); }
+
+    /* ── Data sources ───────────────────────────── */
+    .source-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: .75rem;
+      list-style: none;
+    }
+    .source-list li {
+      background: var(--clr-surface);
+      border: 1px solid var(--clr-border);
+      border-radius: 8px;
+      padding: .75rem 1rem;
+      font-size: .875rem;
+      display: flex; align-items: center; gap: .5rem;
+    }
+    .source-list .bullet {
+      width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+      background: var(--clr-accent);
+    }
+
+    /* ── Tech stack ─────────────────────────────── */
+    .tech-grid {
+      display: flex; flex-wrap: wrap; gap: .5rem;
+    }
+    .tech-tag {
+      background: var(--clr-accent-light);
+      color: var(--clr-primary);
+      font-size: .8125rem; font-weight: 500;
+      padding: .375rem .75rem;
+      border-radius: 999px;
+    }
+
+    /* ── Footer ─────────────────────────────────── */
+    footer {
+      text-align: center;
+      padding: 2rem 1.5rem;
+      font-size: .8125rem;
+      color: var(--clr-text-muted);
+      border-top: 1px solid var(--clr-border);
+    }
+    footer a { color: var(--clr-accent); text-decoration: none; }
+
+    /* ── Responsive ─────────────────────────────── */
+    @media (max-width: 640px) {
+      .hero h1 { font-size: 1.625rem; }
+      .stats-bar { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Hero -->
+  <header class="hero">
+    <h1>Land Registry Viewer</h1>
+    <p>
+      Visualize, query, and analyze Italian cadastral data on an interactive map
+      with drawing tools, spatial analysis, and multi-source data loading.
+    </p>
+    <div class="hero-actions">
+      <a href="/map" class="btn-primary">Open Map</a>
+      <a href="/" class="btn-secondary">Index &amp; Dashboard</a>
+      <a href="/cadastral-data" class="btn-secondary">Cadastral Browser</a>
+    </div>
+  </header>
+
+  <!-- Stats -->
+  <div class="stats-bar">
+    <div class="stat-card">
+      <div class="num">{{ total_regions }}</div>
+      <div class="label">Regions</div>
+    </div>
+    <div class="stat-card">
+      <div class="num">{{ total_provinces }}</div>
+      <div class="label">Provinces</div>
+    </div>
+    <div class="stat-card">
+      <div class="num">{{ total_municipalities }}</div>
+      <div class="label">Municipalities</div>
+    </div>
+    <div class="stat-card">
+      <div class="num">{{ total_files }}</div>
+      <div class="label">Cadastral Files</div>
+    </div>
+  </div>
+
+  <main class="container">
+
+    <!-- Interactive Mapping -->
+    <section>
+      <div class="section-title"><span class="icon">&#127758;</span> Interactive Mapping</div>
+      <div class="feature-grid">
+        <div class="feature-card">
+          <h3>Leaflet Map</h3>
+          <p>Full-screen interactive map with multiple basemap providers, geocoding, minimap, mouse coordinates, and marker clustering.</p>
+        </div>
+        <div class="feature-card">
+          <h3>Drawing Tools</h3>
+          <p>Create polygons, circles, rectangles, polylines, and markers directly on the map using Leaflet Draw. Save and reload your drawings.</p>
+        </div>
+        <div class="feature-card">
+          <h3>Zone Management</h3>
+          <p>Save drawn geometries as named zones with descriptions, colors, and tags. Toggle visibility and export as GeoJSON.</p>
+        </div>
+        <div class="feature-card">
+          <h3>Folium Map Generation</h3>
+          <p>Server-side map rendering via Folium, embedded in the index page with cadastral overlays and multiple layer support.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Cadastral Data -->
+    <section>
+      <div class="section-title"><span class="icon">&#128196;</span> Italian Cadastral Data</div>
+      <div class="feature-grid">
+        <div class="feature-card">
+          <h3>Hierarchical Browser</h3>
+          <p>Navigate the full Italian cadastral hierarchy: Regione &rarr; Provincia &rarr; Comune &rarr; file, with expandable tree views and municipality flags.</p>
+        </div>
+        <div class="feature-card">
+          <h3>Advanced Query Engine</h3>
+          <p>Filter by Foglio, Particella (single, list, or range), bounding box, point-in-polygon, and date ranges via the cadastral query API.</p>
+        </div>
+        <div class="feature-card">
+          <h3>File Availability Cache</h3>
+          <p>SQLite-backed cache that tracks which cadastral files exist in S3, with batch checking and configurable TTL.</p>
+        </div>
+        <div class="feature-card">
+          <h3>Statistics &amp; Coverage</h3>
+          <p>Real-time counts of regions, provinces, municipalities, and files. Cache status and availability metrics.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Data Sources -->
+    <section>
+      <div class="section-title"><span class="icon">&#128230;</span> Data Sources</div>
+      <ul class="source-list">
+        <li><span class="bullet"></span> File upload (QPKG / GPKG / SHP / GeoJSON / KML)</li>
+        <li><span class="bullet"></span> AWS S3 bucket (public &amp; private)</li>
+        <li><span class="bullet"></span> SpatiaLite databases (MAP &amp; PLE layers)</li>
+        <li><span class="bullet"></span> FlatGeobuf files (per-region)</li>
+        <li><span class="bullet"></span> Cadastral structure JSON (local or S3)</li>
+        <li><span class="bullet"></span> Example data (ACCIANO, AQ)</li>
+      </ul>
+    </section>
+
+    <!-- Spatial Analysis -->
+    <section>
+      <div class="section-title"><span class="icon">&#128269;</span> Spatial Analysis</div>
+      <div class="feature-grid">
+        <div class="feature-card">
+          <h3>Adjacency Analysis</h3>
+          <p>Select a polygon and find all adjacent parcels using spatial predicates: touches, intersects, or overlaps.</p>
+        </div>
+        <div class="feature-card">
+          <h3>Attribute Table</h3>
+          <p>View feature properties in paginated tables with server-side search, sort, and column filtering via Panel Tabulator.</p>
+        </div>
+        <div class="feature-card">
+          <h3>Session State</h3>
+          <p>Current GeoDataFrame persists across requests. Load, combine, filter, and clear layers within a session.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- API Endpoints -->
+    <section>
+      <div class="section-title"><span class="icon">&#128268;</span> API Reference</div>
+
+      <div class="endpoint-group">
+        <h3>Pages</h3>
+        <ul class="endpoint-list">
+          <li><span class="method method-get">GET</span> <span class="path">/</span> <span class="desc">&mdash; Index with Folium map &amp; Panel tables</span></li>
+          <li><span class="method method-get">GET</span> <span class="path">/map</span> <span class="desc">&mdash; Interactive Leaflet map</span></li>
+          <li><span class="method method-get">GET</span> <span class="path">/cadastral-data</span> <span class="desc">&mdash; Cadastral tree browser</span></li>
+          <li><span class="method method-get">GET</span> <span class="path">/landing</span> <span class="desc">&mdash; This page</span></li>
+        </ul>
+      </div>
+
+      <div class="endpoint-group">
+        <h3>Cadastral Structure</h3>
+        <ul class="endpoint-list">
+          <li><span class="method method-get">GET</span> <span class="path">/api/v1/get-cadastral-structure/</span> <span class="desc">&mdash; Full structure JSON</span></li>
+          <li><span class="method method-get">GET</span> <span class="path">/api/v1/get-regions/</span> <span class="desc">&mdash; List regions</span></li>
+          <li><span class="method method-get">GET</span> <span class="path">/api/v1/get-provinces/</span> <span class="desc">&mdash; Provinces (filter by region)</span></li>
+          <li><span class="method method-get">GET</span> <span class="path">/api/v1/get-municipalities/</span> <span class="desc">&mdash; Municipalities with file counts</span></li>
+          <li><span class="method method-get">GET</span> <span class="path">/api/v1/cadastral/hierarchy</span> <span class="desc">&mdash; Full hierarchy tree</span></li>
+          <li><span class="method method-get">GET</span> <span class="path">/api/v1/cadastral/statistics</span> <span class="desc">&mdash; Coverage metrics</span></li>
+          <li><span class="method method-get">GET</span> <span class="path">/api/v1/cadastral/search/{ref}</span> <span class="desc">&mdash; Search by reference code</span></li>
+        </ul>
+      </div>
+
+      <div class="endpoint-group">
+        <h3>Data Loading</h3>
+        <ul class="endpoint-list">
+          <li><span class="method method-post">POST</span> <span class="path">/api/v1/upload-qpkg/</span> <span class="desc">&mdash; Upload QPKG/GPKG &rarr; GeoJSON</span></li>
+          <li><span class="method method-post">POST</span> <span class="path">/api/v1/load-cadastral-files/</span> <span class="desc">&mdash; Load multiple files from S3</span></li>
+          <li><span class="method method-get">GET</span> <span class="path">/api/v1/load-cadastral-files/{path}</span> <span class="desc">&mdash; Load single file</span></li>
+          <li><span class="method method-post">POST</span> <span class="path">/api/v1/load-spatialite/</span> <span class="desc">&mdash; Query SpatiaLite DB</span></li>
+          <li><span class="method method-get">GET</span> <span class="path">/api/v1/fgb/load/{region}/{type}</span> <span class="desc">&mdash; Load FlatGeobuf</span></li>
+          <li><span class="method method-post">POST</span> <span class="path">/api/v1/load-public-geo-data/</span> <span class="desc">&mdash; Public S3 bucket</span></li>
+          <li><span class="method method-get">GET</span> <span class="path">/api/v1/load-example-geo-data/</span> <span class="desc">&mdash; Example dataset</span></li>
+        </ul>
+      </div>
+
+      <div class="endpoint-group">
+        <h3>Spatial Analysis</h3>
+        <ul class="endpoint-list">
+          <li><span class="method method-post">POST</span> <span class="path">/api/v1/get-adjacent-polygons/</span> <span class="desc">&mdash; Find adjacent parcels</span></li>
+          <li><span class="method method-post">POST</span> <span class="path">/api/v1/cadastral/query</span> <span class="desc">&mdash; Advanced polygon query</span></li>
+          <li><span class="method method-get">GET</span> <span class="path">/api/v1/get-attributes/</span> <span class="desc">&mdash; Feature attributes</span></li>
+        </ul>
+      </div>
+
+      <div class="endpoint-group">
+        <h3>Drawings &amp; Zones</h3>
+        <ul class="endpoint-list">
+          <li><span class="method method-post">POST</span> <span class="path">/api/v1/save-drawn-polygons/</span> <span class="desc">&mdash; Save drawings (auth)</span></li>
+          <li><span class="method method-post">POST</span> <span class="path">/api/v1/save-drawn-polygons-anonymous/</span> <span class="desc">&mdash; Save (rate-limited)</span></li>
+          <li><span class="method method-get">GET</span> <span class="path">/api/v1/load-drawn-polygons</span> <span class="desc">&mdash; Load latest drawings</span></li>
+          <li><span class="method method-get">GET</span> <span class="path">/api/v1/list-drawn-polygons</span> <span class="desc">&mdash; List drawing files</span></li>
+          <li><span class="method method-delete">DEL</span> <span class="path">/api/v1/clear-drawn-polygons</span> <span class="desc">&mdash; Delete all drawings</span></li>
+          <li><span class="method method-post">POST</span> <span class="path">/api/v1/zones/</span> <span class="desc">&mdash; Create zone</span></li>
+          <li><span class="method method-get">GET</span> <span class="path">/api/v1/zones/</span> <span class="desc">&mdash; List zones</span></li>
+          <li><span class="method method-get">GET</span> <span class="path">/api/v1/zones/geojson</span> <span class="desc">&mdash; All zones as GeoJSON</span></li>
+          <li><span class="method method-patch">PATCH</span> <span class="path">/api/v1/zones/{id}</span> <span class="desc">&mdash; Update zone</span></li>
+          <li><span class="method method-delete">DEL</span> <span class="path">/api/v1/zones/{id}</span> <span class="desc">&mdash; Delete zone</span></li>
+        </ul>
+      </div>
+
+      <div class="endpoint-group">
+        <h3>FlatGeobuf</h3>
+        <ul class="endpoint-list">
+          <li><span class="method method-get">GET</span> <span class="path">/api/v1/fgb/regions</span> <span class="desc">&mdash; Available FGB regions</span></li>
+          <li><span class="method method-get">GET</span> <span class="path">/api/v1/fgb/metadata/{region}/{type}</span> <span class="desc">&mdash; File metadata</span></li>
+        </ul>
+      </div>
+
+      <div class="endpoint-group">
+        <h3>Storage &amp; Infrastructure</h3>
+        <ul class="endpoint-list">
+          <li><span class="method method-post">POST</span> <span class="path">/api/v1/configure-s3/</span> <span class="desc">&mdash; Update S3 config</span></li>
+          <li><span class="method method-get">GET</span> <span class="path">/api/v1/s3-status/</span> <span class="desc">&mdash; S3 connection status</span></li>
+          <li><span class="method method-post">POST</span> <span class="path">/api/v1/check-file-availability/</span> <span class="desc">&mdash; Batch file check</span></li>
+          <li><span class="method method-get">GET</span> <span class="path">/api/v1/file-availability-stats/</span> <span class="desc">&mdash; Cache statistics</span></li>
+          <li><span class="method method-get">GET</span> <span class="path">/health</span> <span class="desc">&mdash; Health check (Cloud Run)</span></li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Tech Stack -->
+    <section>
+      <div class="section-title"><span class="icon">&#9881;</span> Tech Stack</div>
+      <div class="tech-grid">
+        <span class="tech-tag">FastAPI</span>
+        <span class="tech-tag">Leaflet.js</span>
+        <span class="tech-tag">Leaflet Draw</span>
+        <span class="tech-tag">Folium</span>
+        <span class="tech-tag">GeoPandas</span>
+        <span class="tech-tag">Shapely</span>
+        <span class="tech-tag">Panel / Tabulator</span>
+        <span class="tech-tag">SpatiaLite</span>
+        <span class="tech-tag">FlatGeobuf</span>
+        <span class="tech-tag">AWS S3</span>
+        <span class="tech-tag">Google Cloud Storage</span>
+        <span class="tech-tag">Clerk Auth</span>
+        <span class="tech-tag">Pydantic</span>
+        <span class="tech-tag">Jinja2</span>
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    {{ app_name }} v{{ app_version }}
+    &middot; <a href="/health">Health</a>
+    &middot; <a href="/docs">API Docs</a>
+  </footer>
+
+</body>
+</html>

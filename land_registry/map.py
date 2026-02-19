@@ -520,45 +520,45 @@ auction_properties = None
 def extract_qpkg_data(file_path):
     """Extract geospatial data from QPKG or GPKG file"""
     global current_gdf
-    
+
     # If it's a GPKG file, read directly
     if file_path.endswith('.gpkg'):
         try:
             gdf = gpd.read_file(file_path)
-            current_gdf = gdf
+            set_current_gdf(gdf)
             return gdf.to_json()
         except Exception:
             return None
-    
+
     # If it's a QPKG file, try to extract and search for geospatial files
     try:
         with tempfile.TemporaryDirectory() as temp_dir:
             # Extract QPKG (it's essentially a ZIP file)
             with zipfile.ZipFile(file_path, 'r') as zip_ref:
                 zip_ref.extractall(temp_dir)
-            
+
             # Look for common geospatial file formats
             temp_path = Path(temp_dir)
             geospatial_files = []
-            
+
             for ext in ['*.shp', '*.geojson', '*.gpkg', '*.kml']:
                 geospatial_files.extend(temp_path.rglob(ext))
-            
+
             # Read the first found geospatial file
             if geospatial_files:
                 gdf = gpd.read_file(geospatial_files[0])
-                current_gdf = gdf
+                set_current_gdf(gdf)
                 return gdf.to_json()
-    
+
     except (zipfile.BadZipFile, zipfile.LargeZipFile):
         # If QPKG is not a ZIP file, try to read it directly as a geospatial file
         try:
             gdf = gpd.read_file(file_path)
-            current_gdf = gdf
+            set_current_gdf(gdf)
             return gdf.to_json()
         except Exception:
             pass
-    
+
     return None
 
 
@@ -568,9 +568,24 @@ def get_current_gdf():
 
 
 def set_current_gdf(gdf):
-    """Set the current GeoDataFrame"""
+    """Set the current GeoDataFrame and sync to Panel Tabulator"""
     global current_gdf
     current_gdf = gdf
+    _sync_to_panel(gdf)
+
+
+def _sync_to_panel(gdf):
+    """Push GeoDataFrame (without geometry) to Panel SharedState for Tabulator display."""
+    try:
+        from land_registry.dashboard import STATE
+        if gdf is not None and not gdf.empty:
+            df = gdf.drop(columns=["geometry"], errors="ignore")
+            df = pd.DataFrame(df)
+            STATE.update_dataframe(df)
+        else:
+            STATE.update_dataframe(pd.DataFrame())
+    except Exception:
+        pass  # Panel may not be initialized yet
 
 
 def get_current_layers():

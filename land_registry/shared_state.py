@@ -2,6 +2,9 @@
 import param
 import pandas as pd
 import threading
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class SharedState(param.Parameterized):
@@ -29,6 +32,14 @@ class SharedState(param.Parameterized):
                 self.province = province
             self.version += 1  # triggers Panel recompute
 
+    def update_dataframe(self, df: pd.DataFrame):
+        """Replace the base DataFrame and trigger Panel recompute."""
+        with self._lock:
+            self.base_df = df
+            self.selection = []
+            logger.info(f"SharedState updated: {len(df)} rows, {len(df.columns)} columns")
+            self.version += 1
+
     def get_selection(self) -> list:
         with self._lock:
             return list(self.selection)
@@ -41,8 +52,8 @@ class SharedState(param.Parameterized):
     def filtered_df(self) -> pd.DataFrame:
         with self._lock:
             df = self.base_df
-            if self.region:
+            if self.region and "region" in df.columns:
                 df = df[df["region"] == self.region]
-            if self.province:
+            if self.province and "province" in df.columns:
                 df = df[df["province"] == self.province]
             return df.copy()

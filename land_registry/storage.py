@@ -26,20 +26,33 @@ from pathlib import Path
 
 import geopandas as gpd
 
-# Import from aecs4u-storage
-from aecs4u_storage import (
-    StorageConfig,
-    StorageManager,
-    setup_storage,
-    get_storage_manager,
-)
-from aecs4u_storage.models import (
-    StoredFile,
-    UploadResult,
-    PresignedUrl,
-    DeleteResult,
-    ListResult,
-)
+# Import from aecs4u-storage (optional)
+try:
+    from aecs4u_storage import (
+        StorageConfig,
+        StorageManager,
+        setup_storage,
+        get_storage_manager,
+    )
+    from aecs4u_storage.models import (
+        StoredFile,
+        UploadResult,
+        PresignedUrl,
+        DeleteResult,
+        ListResult,
+    )
+    _STORAGE_AVAILABLE = True
+except ImportError:
+    _STORAGE_AVAILABLE = False
+    StorageConfig = None
+    StorageManager = None
+    setup_storage = None
+    get_storage_manager = None
+    StoredFile = None
+    UploadResult = None
+    PresignedUrl = None
+    DeleteResult = None
+    ListResult = None
 
 logger = logging.getLogger(__name__)
 

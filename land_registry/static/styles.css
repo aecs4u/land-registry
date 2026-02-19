@@ -2024,8 +2024,24 @@ button:hover {
 
 .attribute-table {
   flex: 1;
-  overflow: auto;
-  padding: 20px;
+  overflow: hidden;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Panel Bokeh embed fills the attribute-table container */
+.attribute-table script + div,
+.attribute-table > div:not(.no-data-message) {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+}
+
+.attribute-table iframe {
+  width: 100% !important;
+  height: 100% !important;
+  border: none;
 }
 
 .data-table {
@@ -4329,9 +4345,44 @@ button:hover {
     .source-toggle {
         flex-direction: column;
     }
-    
+
     .source-btn {
         width: 100%;
     }
+}
+
+/* ── View header top-padding so toggle pill does not overlap ─── */
+.table-header,
+.adjacency-header,
+.mapping-header {
+  padding-top: 60px; /* room for the floating view-toggle pill */
+}
+
+/* Map view header does not need extra padding (toggle sits over the map) */
+#mapView .map-header {
+  padding-top: 20px;
+}
+
+/* Adjacency: differentiate "Adjacent Polygons" section from "Selected" */
+.adjacency-section-neighbors h3 {
+  background: #2e7d32;
+}
+
+/* Drawing actions in Mapping View - consistent button row */
+.drawing-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.drawing-actions .control-btn {
+  flex: 1 1 auto;
+  min-width: 120px;
+}
+
+/* System font for body */
+body {
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
 

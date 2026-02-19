@@ -6,22 +6,22 @@
     <!-- 1. Navigation -->
     <div class="navigation-links">
       <a href="/cadastral-data" target="_blank" class="nav-link"
-        >📊 Browse All Cadastral Data</a
+        >Browse All Cadastral Data</a
       >
     </div>
 
     <!-- 2. Data Input (Upload, Selection & Database) -->
     <div class="upload-section">
       <div class="upload-tabs">
-        <div class="upload-tab" onclick="showUploadTab('file')">
-          📁 File Upload
-        </div>
-        <div class="upload-tab active" onclick="showUploadTab('cadastral')">
-          🏛️ Cadastral Selection
-        </div>
-        <div class="upload-tab" onclick="showUploadTab('database')">
-          🗄️ Local Database
-        </div>
+        <button type="button" class="upload-tab" onclick="showUploadTab('file')">
+          File Upload
+        </button>
+        <button type="button" class="upload-tab active" onclick="showUploadTab('cadastral')">
+          Cadastral Selection
+        </button>
+        <button type="button" class="upload-tab" onclick="showUploadTab('database')">
+          Local Database
+        </button>
       </div>
 
       <div class="upload-content">
@@ -31,24 +31,24 @@
           <button onclick="uploadFile()">Upload & Visualize</button>
         </div>
 
-        <!-- Database Query Tab (NEW) -->
+        <!-- Database Query Tab -->
         <div id="databaseQuery" class="database-query" style="display: none">
           <!-- Data Source Selector -->
           <div class="db-source-section">
             <label>Data Source:</label>
             <div class="source-toggle">
               <button type="button" id="sourceSpatialite" class="source-btn active" onclick="selectDataSource('spatialite')">
-                🗄️ SpatiaLite
+                SpatiaLite
               </button>
               <button type="button" id="sourceFgb" class="source-btn" onclick="selectDataSource('fgb')">
-                📦 FlatGeobuf
+                FlatGeobuf
               </button>
             </div>
             <small class="help-text" id="sourceHelp">SpatiaLite: Full query support | FlatGeobuf: Faster loading, per-region files</small>
           </div>
 
           <div class="db-status" id="dbStatusIndicator">
-            <span class="db-icon">🗄️</span>
+            <span class="db-icon"></span>
             <span id="dbStatusText">Checking database...</span>
           </div>
 
@@ -131,7 +131,7 @@
           <!-- Action Buttons (SpatiaLite) -->
           <div class="db-actions" id="spatialiteActions">
             <button onclick="loadFromDatabase()" id="loadDbBtn" class="load-db-btn">
-              🔍 Query Database
+              Query Database
             </button>
           </div>
 
@@ -182,12 +182,16 @@
 
           <div class="cadastral-step">
             <label for="cadastralRegions">Select Region(s):</label>
-            <select id="cadastralRegions" multiple size="4"></select>
+            <select id="cadastralRegions" multiple size="4">
+              <option value="" disabled>Loading regions...</option>
+            </select>
           </div>
 
           <div class="cadastral-step">
             <label for="cadastralProvinces">Select Province(s):</label>
-            <select id="cadastralProvinces" multiple size="3" disabled></select>
+            <select id="cadastralProvinces" multiple size="3" disabled>
+              <option value="" disabled>Select a region first</option>
+            </select>
           </div>
 
           <div class="cadastral-step">
@@ -199,7 +203,9 @@
               multiple
               size="3"
               disabled
-            ></select>
+            >
+              <option value="" disabled>Select a province first</option>
+            </select>
           </div>
 
           <div class="cadastral-step">
@@ -227,7 +233,7 @@
             class="selection-summary"
             style="display: none"
           >
-            <h4>📊 Selection Summary</h4>
+            <h4>Selection Summary</h4>
             <div id="summaryContent"></div>
             <div id="filesList" class="files-list"></div>
           </div>
@@ -247,7 +253,7 @@
     <div class="config-section">
       <!-- TreeLayers Control Management -->
       <div class="treelayers-controls">
-        <h4>🌳 Layer Manager</h4>
+        <h4>Layer Manager</h4>
         <div class="control-row">
           <button
             onclick="toggleTreeLayers()"
@@ -280,14 +286,11 @@
             Collapse All
           </button>
         </div>
-        <div class="treelayers-info">
-          <small>🗺️ Base maps, 📊 Data layers, 🌤️ Weather overlays</small>
-        </div>
       </div>
 
       <!-- Advanced Tools -->
       <div class="advanced-controls">
-        <h4>🚀 View Tools</h4>
+        <h4>View Tools</h4>
         <div class="control-row">
           <button
             onclick="resetMapView()"
@@ -325,7 +328,7 @@
 
     <!-- 4. Analysis & Selection -->
     <div class="controls">
-      <h4>🔍 Analysis Tools</h4>
+      <h4>Analysis Tools</h4>
 
       <div class="control-group">
         <label for="selectionMode">Selection Mode:</label>
@@ -364,9 +367,9 @@
         <div id="selectedCount" class="table-info">0 polygons selected</div>
       </div>
 
-      <!-- Polygon Management (Restored) -->
+      <!-- Polygon Management -->
       <div class="polygon-management">
-        <h4>🗂️ Polygon Management</h4>
+        <h4>Polygon Management</h4>
         <div class="control-row">
           <button
             onclick="removeAllPolygons()"
@@ -374,7 +377,7 @@
             disabled
             class="remove-btn"
           >
-            🗑️ Remove All
+            Remove All
           </button>
           <button
             onclick="autoZoomToAllPolygons()"
@@ -382,7 +385,7 @@
             disabled
             class="zoom-btn"
           >
-            🔍 Zoom to Fit
+            Zoom to Fit
           </button>
         </div>
         <div id="polygonCount" class="table-info">No polygons loaded</div>
@@ -443,7 +446,7 @@
 
     <!-- 5. Filters -->
     <div class="auctionControls">
-      <h4>🏠 Property Filters</h4>
+      <h4>Property Filters</h4>
       <div class="control-row">
         <button onclick="toggleAuctionLayer()" class="control-btn">
           Toggle Auctions
@@ -462,7 +465,7 @@
         </select>
       </div>
       <div class="control-row">
-        <label>Max Price: €</label>
+        <label>Max Price: &euro;</label>
         <input
           type="number"
           id="maxPriceFilter"
@@ -474,9 +477,8 @@
 
     <!-- 6. Authentication -->
     <div class="auth-section">
-      <h4>👤 User Account</h4>
+      <h4>User Account</h4>
       <div id="sidebar-auth-container" class="auth-container">
-        <!-- Clerk authentication status will be shown here -->
         <div id="sidebar-auth-status" class="auth-status">
           <div class="loading-text">Checking authentication...</div>
         </div>
@@ -500,6 +502,7 @@
         Mapping
       </button>
     </div>
+
     <!-- Map View -->
     <div id="mapView" class="view-content active" style="display: block">
       <div class="map-header">
@@ -524,18 +527,17 @@
     <!-- Table View -->
     <div id="tableView" class="view-content" style="display: none">
       <div class="table-container">
-        <div class="table-header">
-          <h2>Polygon Attributes Table</h2>
-          <div id="tableInfo" class="table-info">No data loaded</div>
-        </div>
         <div id="attributeTable" class="attribute-table">
+          {% if map_table %}
+            {{ map_table|safe }}
+          {% else %}
           <div class="no-data-message">
             <p>
               No geospatial data loaded. Please upload a file or select
               cadastral data to view attributes.
             </p>
           </div>
-          {% if map_table %} {{ map_table|safe }} {% endif %}
+          {% endif %}
         </div>
       </div>
     </div>
@@ -544,25 +546,24 @@
     <div id="adjacencyView" class="view-content" style="display: none">
       <div class="adjacency-container">
         <div class="adjacency-header">
-          <h2>Adjacency Analysis Results</h2>
+          <h2>Adjacency Analysis</h2>
           <div id="adjacencyInfo" class="table-info">
-            Select a polygon to find adjacent features
+            Select a polygon on the map, then use Analysis Tools to find adjacent features.
           </div>
         </div>
         <div id="adjacencyResults" class="adjacency-results">
           <div class="adjacency-section">
             <h3>Selected Polygon</h3>
             <div id="selectedPolygonInfo" class="polygon-info">
-              <p>No polygon selected</p>
+              <p>No polygon selected. Switch to Map View, click a polygon, then return here.</p>
             </div>
           </div>
-          <div class="adjacency-section">
+          <div class="adjacency-section adjacency-section-neighbors">
             <h3>Adjacent Polygons</h3>
             <div id="adjacentPolygonsInfo" class="polygon-info">
-              <p>Select a polygon to find adjacent features</p>
+              <p>Adjacent polygons will appear here after running the analysis.</p>
             </div>
           </div>
-          {% if adjacency_table %} {{ adjacency_table|safe }} {% endif %}
         </div>
       </div>
     </div>
@@ -571,36 +572,37 @@
     <div id="mappingView" class="view-content" style="display: none">
       <div class="mapping-container">
         <div class="mapping-header">
-          <h2>Mapping Results</h2>
+          <h2>Drawing Management</h2>
           <div class="mapping-info">
-            Use the drawing tools to create and edit polygons
+            Use the drawing tools on the map to create polygons, polylines, and markers.
           </div>
         </div>
         <div class="drawing-controls">
           <div class="drawing-section">
             <h3>Drawn Polygons</h3>
             <div id="drawnPolygonsList" class="drawn-polygons-list">
-              <p>No polygons drawn yet</p>
+              <p>No polygons drawn yet. Switch to Map View and use the draw toolbar.</p>
             </div>
             <div class="drawing-actions">
-              <button onclick="saveDrawnPolygons()">Save Drawn Polygons</button>
-              <button onclick="clearDrawnPolygons()">Clear All Drawings</button>
+              <button onclick="saveDrawnPolygons()" class="control-btn">Save Polygons</button>
+              <button onclick="clearDrawnPolygons()" class="control-btn">Clear Polygons</button>
             </div>
           </div>
 
           <div class="drawing-section">
             <h3>Drawn Polylines</h3>
             <div id="drawnPolylinesList" class="drawn-polylines-list">
-              <p>No polylines drawn yet</p>
+              <p>No polylines drawn yet.</p>
             </div>
-            <div class="polyline-actions">
-              <button onclick="saveDrawnPolylines()" id="savePolylinesBtn">
+            <div class="drawing-actions">
+              <button onclick="saveDrawnPolylines()" id="savePolylinesBtn" class="control-btn">
                 Save Polylines
               </button>
               <button
                 onclick="deleteSelectedPolyline()"
                 id="deletePolylineBtn"
                 disabled
+                class="control-btn"
               >
                 Delete Selected
               </button>
@@ -608,6 +610,7 @@
                 onclick="undoLastPolyline()"
                 id="undoPolylineBtn"
                 disabled
+                class="control-btn"
               >
                 Undo Last
               </button>
@@ -615,8 +618,9 @@
                 onclick="clearAllPolylines()"
                 id="clearPolylinesBtn"
                 disabled
+                class="control-btn"
               >
-                Clear All Polylines
+                Clear Polylines
               </button>
             </div>
           </div>
@@ -632,14 +636,13 @@
             </div>
             <div class="stat-item">
               <span class="stat-label">Polylines:</span>
-              <span id="polylineCount" class="stat-value">0</span>
+              <span id="mappingPolylineCount" class="stat-value">0</span>
             </div>
             <div class="stat-item">
               <span class="stat-label">Selected Polyline:</span>
               <span id="selectedPolyline" class="stat-value">None</span>
             </div>
           </div>
-          {% if mapping_table %} {{ mapping_table|safe }} {% endif %}
         </div>
       </div>
     </div>
@@ -679,26 +682,18 @@
       const hasNewlyLoadedLayers = sessionStorage.getItem('newlyLoadedLayers');
       if (hasNewLayerBounds || hasNewlyLoadedLayers) {
           console.log('Newly loaded layers detected - skipping default auto-zoom (handled by folium-interface.js)');
-          // The zoomToNewlyLoadedLayers function in folium-interface.js will handle this
       } else if (window.geoJsonData && window.geoJsonData.features && window.geoJsonData.features.length > 0) {
           console.log('Scheduling auto-zoom for', window.geoJsonData.features.length, 'features');
-          // Wait for Folium map to be fully initialized
           setTimeout(function() {
               if (typeof autoZoomToAllPolygons === 'function') {
                   autoZoomToAllPolygons();
-              } else {
-                  console.error('autoZoomToAllPolygons function not found');
               }
-          }, 1000); // Wait 1 second for map to be fully loaded
+          }, 1000);
       } else {
           console.log('No GeoJSON data available for auto-zoom');
-          // Still try to update polygon management state and potentially auto-zoom
-          // if there are layers on the map from server-side rendering
           setTimeout(function() {
               if (typeof autoZoomToAllPolygons === 'function') {
                   autoZoomToAllPolygons();
-              } else {
-                  console.error('autoZoomToAllPolygons function not found');
               }
           }, 1500);
       }
@@ -708,7 +703,6 @@
           if (typeof initZoneManager === 'function') {
               initZoneManager();
           }
-          // Wait for auth to initialize before loading zones
           setTimeout(function() {
               if (window.Clerk && window.Clerk.user && typeof loadAllZones === 'function') {
                   loadAllZones();
@@ -716,16 +710,10 @@
           }, 1500);
       }, 3000);
   });
-
-  // Auto-zoom functions are defined in folium-interface.js
-  // This template only calls them after ensuring they are loaded
 </script>
 {% endblock %} {% block app_js %}
 <script src="/static/folium-interface.js"></script>
 <script>
-  // JavaScript functions have been moved to /static/folium-interface.js for better organization
-  // Only template-specific code remains here
-
   // Update sidebar authentication status
   function updateSidebarAuth() {
     const sidebarAuth = document.getElementById('sidebar-auth-status');
@@ -754,7 +742,6 @@
   async function handleSidebarLogout() {
     if (window.Clerk) {
       await window.Clerk.signOut();
-      // Clear server session
       await fetch('/auth/clerk/logout', { method: 'POST' });
       window.location.reload();
     }
@@ -779,20 +766,18 @@
     }
   });
 
+  // View switching - keep tableInfo and tableViewInfo in sync
   function handleTableViewClick() {
       document.querySelectorAll('.view-content').forEach(el => el.classList.remove('active'));
       document.querySelectorAll('.view-toggle button').forEach(el => el.classList.remove('active'));
       document.getElementById('tableView').classList.add('active');
       document.getElementById('tableViewBtn').classList.add('active');
 
-      // Load the Panel Tabulator widget if available
-      const tableContainer = document.getElementById('attributeTable');
-      if (tableContainer) {
-          {% if map_table %}
-          tableContainer.innerHTML = `{{ map_table|safe }}`;
-          {% else %}
-          tableContainer.innerHTML = '<div class="no-data-message"><p>No table data available. Please upload a file or load cadastral data.</p></div>';
-          {% endif %}
+      // Sync table status text from map view
+      const mapInfo = document.getElementById('tableInfo');
+      const tableViewInfo = document.getElementById('tableViewInfo');
+      if (mapInfo && tableViewInfo) {
+          tableViewInfo.textContent = mapInfo.textContent;
       }
   }
 </script>

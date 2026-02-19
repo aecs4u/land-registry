@@ -430,7 +430,7 @@ function updatePolylineList() {
 }
 
 function updatePolylineStats() {
-    const countElement = document.getElementById('polylineCount');
+    const countElement = document.getElementById('mappingPolylineCount') || document.getElementById('polylineCount');
     const selectedElement = document.getElementById('selectedPolyline');
 
     if (countElement) countElement.textContent = drawnPolylines.length;
@@ -907,7 +907,7 @@ function updateDrawingStats() {
 
     // Update stat displays
     const polygonCountEl = document.getElementById('polygonCount');
-    const polylineCountEl = document.getElementById('polylineCount');
+    const polylineCountEl = document.getElementById('mappingPolylineCount') || document.getElementById('polylineCount');
     const markerCountEl = document.getElementById('markerCount');
 
     if (polygonCountEl) polygonCountEl.textContent = polygonCount;
@@ -3138,12 +3138,12 @@ async function _doLoadCadastralData() {
             console.error('Failed to load cadastral data:', response.status, response.statusText);
             const errorText = await response.text();
             console.error('Error response:', errorText);
-            showCadastralError(`Failed to load data (${response.status})`);
+            showCadastralError('No regions available');
             return null;
         }
     } catch (error) {
         console.error('Error loading cadastral data:', error);
-        showCadastralError('Network error loading data');
+        showCadastralError('Could not connect — try reloading');
         return null;
     } finally {
         cadastralDataLoading = false;

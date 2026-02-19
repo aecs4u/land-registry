@@ -24,8 +24,16 @@ from land_registry.s3_storage import get_s3_storage
 from land_registry.config import app_settings, panel_settings, get_panel_url
 from land_registry.models import TableDataResponse, ServiceUnavailableResponse
 
-# Import aecs4u-auth for authentication setup
-from aecs4u_auth import setup_auth, AuthConfig, get_auth_config
+# Import aecs4u-auth for authentication setup (optional)
+from land_registry.core.clerk import _AUTH_AVAILABLE
+
+if _AUTH_AVAILABLE:
+    from aecs4u_auth import setup_auth, AuthConfig, get_auth_config
+else:
+    from types import SimpleNamespace
+
+    def get_auth_config():
+        return SimpleNamespace(clerk_publishable_key="")
 
 # Configure logging
 logging.basicConfig(
@@ -270,25 +278,28 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Setup authentication using aecs4u-auth
-# This automatically:
-# - Adds session middleware
-# - Includes auth routes at /auth prefix
-# - Sets up exception handlers for RedirectToLogin
-# - Mounts static files for frontend auth integration
-setup_auth(
-    app,
-    config=AuthConfig(
-        site_id="land-registry",
-        site_name=app_settings.app_name,
-        # Override default redirect URLs for this app
-        clerk_after_sign_in_url="/map",
-        clerk_after_sign_up_url="/map",
-    ),
-    include_routes=True,
-    mount_static=True,
-    setup_exception_handlers=True,
-)
+# Setup authentication using aecs4u-auth (if available)
+if _AUTH_AVAILABLE:
+    # This automatically:
+    # - Adds session middleware
+    # - Includes auth routes at /auth prefix
+    # - Sets up exception handlers for RedirectToLogin
+    # - Mounts static files for frontend auth integration
+    setup_auth(
+        app,
+        config=AuthConfig(
+            site_id="land-registry",
+            site_name=app_settings.app_name,
+            # Override default redirect URLs for this app
+            clerk_after_sign_in_url="/map",
+            clerk_after_sign_up_url="/map",
+        ),
+        include_routes=True,
+        mount_static=True,
+        setup_exception_handlers=True,
+    )
+else:
+    logger.warning("aecs4u-auth not installed - running without authentication")
 
 # Include HTML auth pages (login/register forms) at /auth prefix
 # These provide GET endpoints for browser-accessible pages
@@ -399,6 +410,10 @@ async def serve_index(request: Request):
     current_gdf = get_current_gdf()
     has_data = current_gdf is not None and not current_gdf.empty
 
+    # Sync existing data to Panel Tabulator (in case data was loaded before page refresh)
+    from land_registry.map import _sync_to_panel
+    _sync_to_panel(current_gdf)
+
     # Convert current data to GeoJSON if available
     geojson_data = None
     if current_gdf is not None and not current_gdf.empty:
@@ -448,6 +463,21 @@ async def serve_index(request: Request):
         "total_municipalities": stats['total_municipalities'],
         "total_files": stats['total_files'],
         "clerk_publishable_key": get_auth_config().clerk_publishable_key,
+    })
+
+
+@app.get("/landing", response_class=HTMLResponse)
+async def landing_page(request: Request):
+    """Landing page summarizing all application features"""
+    stats = get_cadastral_stats()
+    return templates.TemplateResponse("landing.html", {
+        "request": request,
+        "total_regions": stats['total_regions'],
+        "total_provinces": stats['total_provinces'],
+        "total_municipalities": stats['total_municipalities'],
+        "total_files": stats['total_files'],
+        "app_name": app_settings.app_name,
+        "app_version": app_settings.app_version,
     })
 
 
