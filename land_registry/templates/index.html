@@ -3,14 +3,14 @@
   <div class="sidebar">
     <h1>Cadastre</h1>
 
-    <!-- 1. Navigation -->
+    <div class="sidebar-group-title">Data Catalog</div>
     <div class="navigation-links">
       <a href="/cadastral-data" target="_blank" class="nav-link"
         >Browse All Cadastral Data</a
       >
     </div>
 
-    <!-- 2. Data Input (Upload, Selection & Database) -->
+    <div class="sidebar-group-title">Data</div>
     <div class="upload-section">
       <div class="upload-tabs">
         <button type="button" class="upload-tab" onclick="showUploadTab('file')">
@@ -249,7 +249,7 @@
       </div>
     </div>
 
-    <!-- 3. Map Configuration (Layers & View) -->
+    <div class="sidebar-group-title">Explore</div>
     <div class="config-section">
       <!-- TreeLayers Control Management -->
       <div class="treelayers-controls">
@@ -326,9 +326,9 @@
       </div>
     </div>
 
-    <!-- 4. Analysis & Selection -->
+    <div class="sidebar-group-title">Analyze</div>
     <div class="controls">
-      <h4>Analysis Tools</h4>
+      <h4>Spatial Analysis</h4>
 
       <div class="control-group">
         <label for="selectionMode">Selection Mode:</label>
@@ -390,63 +390,63 @@
         </div>
         <div id="polygonCount" class="table-info">No polygons loaded</div>
       </div>
+    </div>
 
-      <!-- Zone Manager -->
-      <div class="zone-manager-section">
-        <h4>Zone Manager</h4>
+    <div class="sidebar-group-title">Zones</div>
+    <div class="zone-manager-section">
+      <h4>Zone Manager</h4>
 
-        <!-- Save form (hidden by default) -->
-        <div class="zone-save-form" id="zoneSaveForm" style="display: none;">
-          <div class="zone-form-field">
-            <label for="zoneName">Zone Name</label>
-            <input type="text" id="zoneName" placeholder="Enter zone name..." maxlength="200" />
+      <!-- Save form (hidden by default) -->
+      <div class="zone-save-form" id="zoneSaveForm" style="display: none;">
+        <div class="zone-form-field">
+          <label for="zoneName">Zone Name</label>
+          <input type="text" id="zoneName" placeholder="Enter zone name..." maxlength="200" />
+        </div>
+        <div class="zone-form-field">
+          <label for="zoneDescription">Description</label>
+          <textarea id="zoneDescription" placeholder="Optional description..." rows="2" maxlength="2000"></textarea>
+        </div>
+        <div class="zone-form-row">
+          <div class="zone-form-field" style="flex:1;">
+            <label for="zoneColor">Color</label>
+            <input type="color" id="zoneColor" value="#3388ff" />
           </div>
-          <div class="zone-form-field">
-            <label for="zoneDescription">Description</label>
-            <textarea id="zoneDescription" placeholder="Optional description..." rows="2" maxlength="2000"></textarea>
-          </div>
-          <div class="zone-form-row">
-            <div class="zone-form-field" style="flex:1;">
-              <label for="zoneColor">Color</label>
-              <input type="color" id="zoneColor" value="#3388ff" />
-            </div>
-            <div class="zone-form-field" style="flex:2;">
-              <label for="zoneTags">Tags (comma-separated)</label>
-              <input type="text" id="zoneTags" placeholder="e.g., residential, priority" />
-            </div>
-          </div>
-          <div class="control-row">
-            <button onclick="saveCurrentDrawingAsZone()" class="zone-save-btn">Save Zone</button>
-            <button onclick="cancelZoneSave()" class="zone-cancel-btn">Cancel</button>
+          <div class="zone-form-field" style="flex:2;">
+            <label for="zoneTags">Tags (comma-separated)</label>
+            <input type="text" id="zoneTags" placeholder="e.g., residential, priority" />
           </div>
         </div>
-
         <div class="control-row">
-          <button onclick="showZoneSaveForm()" id="saveAsZoneBtn" class="control-btn" disabled>
-            Save Drawing as Zone
-          </button>
-          <button onclick="loadAllZones()" id="loadZonesBtn" class="control-btn">
-            Load Saved Zones
-          </button>
+          <button onclick="saveCurrentDrawingAsZone()" class="zone-save-btn">Save Zone</button>
+          <button onclick="cancelZoneSave()" class="zone-cancel-btn">Cancel</button>
         </div>
+      </div>
 
-        <!-- Zone list -->
-        <div id="zoneList" class="zone-list">
-          <p class="zone-empty-message">No zones saved yet. Draw a shape and save it as a zone.</p>
-        </div>
+      <div class="control-row">
+        <button onclick="showZoneSaveForm()" id="saveAsZoneBtn" class="control-btn" disabled>
+          Save Drawing as Zone
+        </button>
+        <button onclick="loadAllZones()" id="loadZonesBtn" class="control-btn">
+          Load Saved Zones
+        </button>
+      </div>
 
-        <div class="zone-bulk-actions" id="zoneBulkActions" style="display: none;">
-          <div class="control-row">
-            <button onclick="showAllZones()" class="control-btn">Show All</button>
-            <button onclick="hideAllZones()" class="control-btn">Hide All</button>
-          </div>
+      <!-- Zone list -->
+      <div id="zoneList" class="zone-list">
+        <p class="zone-empty-message">No zones saved yet. Draw a shape and save it as a zone.</p>
+      </div>
+
+      <div class="zone-bulk-actions" id="zoneBulkActions" style="display: none;">
+        <div class="control-row">
+          <button onclick="showAllZones()" class="control-btn">Show All</button>
+          <button onclick="hideAllZones()" class="control-btn">Hide All</button>
         </div>
       </div>
     </div>
 
-    <!-- 5. Filters -->
+    <div class="sidebar-group-title">Actions</div>
     <div class="auctionControls">
-      <h4>Property Filters</h4>
+      <h4>Market Filters</h4>
       <div class="control-row">
         <button onclick="toggleAuctionLayer()" class="control-btn">
           Toggle Auctions
@@ -475,7 +475,7 @@
       </div>
     </div>
 
-    <!-- 6. Authentication -->
+    <div class="sidebar-group-title">Account</div>
     <div class="auth-section">
       <h4>User Account</h4>
       <div id="sidebar-auth-container" class="auth-container">

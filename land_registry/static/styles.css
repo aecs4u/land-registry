@@ -184,6 +184,15 @@ body {
   border-bottom: 1px solid #ddd;
 }
 
+.sidebar-group-title {
+  margin: 18px 0 8px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #5b6770;
+}
+
 .nav-link {
   display: inline-block;
   padding: 8px 12px;
@@ -4385,4 +4394,3 @@ button:hover {
 body {
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
-
