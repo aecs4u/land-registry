@@ -436,6 +436,22 @@
         </button>
       </div>
 
+      <div class="control-row zone-search-row">
+        <input
+          type="text"
+          id="zoneSearchInput"
+          class="zone-search-input"
+          placeholder="Search zones..."
+          oninput="applyZoneSearchFilter()"
+        />
+        <button onclick="clearZoneSearch()" id="zoneSearchClearBtn" class="control-btn zone-search-clear-btn">
+          Clear
+        </button>
+      </div>
+      <p id="zoneSearchNoResults" class="zone-search-no-results" style="display: none;">
+        No zones match the current search.
+      </p>
+
       <!-- Zone list -->
       <div id="zoneList" class="zone-list">
         <p class="zone-empty-message">No zones saved yet. Draw a shape and save it as a zone.</p>
@@ -443,8 +459,8 @@
 
       <div class="zone-bulk-actions" id="zoneBulkActions" style="display: none;">
         <div class="control-row">
-          <button onclick="showAllZones()" class="control-btn">Show All</button>
-          <button onclick="hideAllZones()" class="control-btn">Hide All</button>
+          <button onclick="showAllZones()" class="control-btn">Select All</button>
+          <button onclick="hideAllZones()" class="control-btn">Deselect All</button>
         </div>
       </div>
     </div>

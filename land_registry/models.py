@@ -159,6 +159,12 @@ class ZoneBulkVisibilityRequest(BaseModel):
     is_visible: bool
 
 
+class MicrozoneBulkVisibilityRequest(BaseModel):
+    """Request to set visibility for microzones, optionally filtered by zone IDs."""
+    is_visible: bool
+    zone_ids: Optional[List[int]] = Field(default=None, max_length=100)
+
+
 class MicrozoneCreateRequest(BaseModel):
     """Request to create a microzone within a zone."""
     name: str = Field(..., min_length=1, max_length=200, description="Microzone name")
@@ -231,6 +237,9 @@ class MicrozoneResponse(BaseModel):
     microzone_type: str = "polygon"
     color: str = "#3388ff"
     area_sqm: Optional[float] = None
+    area_km2: Optional[float] = None
+    is_large_area: bool = False
+    warning_threshold_km2: float = 0.3
     centroid_lat: Optional[float] = None
     centroid_lng: Optional[float] = None
     is_visible: bool = True

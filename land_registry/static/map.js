@@ -3886,6 +3886,10 @@ function calculateGeoJsonBounds(geoJsonData) {
 
 window.savedZones = {};       // zone_id -> { data, layer }
 window.zoneLayerGroup = null; // L.LayerGroup for all zone layers
+window.zoneMicrozones = {};   // zone_id -> [microzones]
+window.zoneSearchTerm = '';
+
+var MICROZONE_WARNING_THRESHOLD_KM2 = 0.3;
 
 function initZoneManager() {
     window.zoneLayerGroup = new L.LayerGroup();
@@ -4111,6 +4115,325 @@ function updateZoneCountBadge(count) {
     }
 }
 
+function getAllZoneIdsFromList() {
+    var ids = [];
+    document.querySelectorAll('#zoneList .zone-item').forEach(function(item) {
+        var raw = item.getAttribute('data-zone-id');
+        var parsed = parseInt(raw, 10);
+        if (Number.isFinite(parsed)) {
+            ids.push(parsed);
+        }
+    });
+    return ids;
+}
+
+function applyZoneSearchFilter() {
+    var input = document.getElementById('zoneSearchInput');
+    var noResults = document.getElementById('zoneSearchNoResults');
+    var term = input ? input.value.trim().toLowerCase() : '';
+    window.zoneSearchTerm = term;
+
+    var items = Array.from(document.querySelectorAll('#zoneList .zone-item'));
+    var visibleCount = 0;
+    items.forEach(function(item) {
+        var zoneName = '';
+        var zoneNameEl = item.querySelector('.zone-name');
+        if (zoneNameEl && zoneNameEl.textContent) {
+            zoneName = zoneNameEl.textContent.toLowerCase();
+        }
+
+        var isMatch = !term || zoneName.indexOf(term) !== -1;
+        item.style.display = isMatch ? '' : 'none';
+        if (isMatch) {
+            visibleCount += 1;
+        }
+    });
+
+    if (noResults) {
+        var shouldShow = term.length > 0 && items.length > 0 && visibleCount === 0;
+        noResults.style.display = shouldShow ? 'block' : 'none';
+    }
+}
+
+function clearZoneSearch() {
+    var input = document.getElementById('zoneSearchInput');
+    if (input) {
+        input.value = '';
+    }
+    applyZoneSearchFilter();
+}
+
+function escapeHtml(value) {
+    if (value === null || value === undefined) return '';
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function getMicrozoneAreaKm2(microzone) {
+    if (!microzone) return null;
+    if (typeof microzone.area_km2 === 'number' && Number.isFinite(microzone.area_km2)) {
+        return microzone.area_km2;
+    }
+    var areaSqm = microzone.area_sqm;
+    if (typeof areaSqm !== 'number') {
+        areaSqm = parseFloat(areaSqm);
+    }
+    if (!Number.isFinite(areaSqm)) {
+        return null;
+    }
+    return areaSqm / 1000000;
+}
+
+function isLargeMicrozoneArea(microzone, areaKm2) {
+    if (microzone && typeof microzone.is_large_area === 'boolean') {
+        return microzone.is_large_area;
+    }
+    var threshold = MICROZONE_WARNING_THRESHOLD_KM2;
+    if (microzone && typeof microzone.warning_threshold_km2 === 'number' && Number.isFinite(microzone.warning_threshold_km2)) {
+        threshold = microzone.warning_threshold_km2;
+    }
+    return typeof areaKm2 === 'number' && areaKm2 > threshold;
+}
+
+function updateZoneMicroCount(zoneId, count) {
+    var value = Number.isFinite(count) ? count : 0;
+    var headerBadge = document.getElementById('zoneMicroCount_' + zoneId);
+    if (headerBadge) {
+        headerBadge.textContent = String(value);
+    }
+    var bodyBadge = document.getElementById('zoneMicroCountBody_' + zoneId);
+    if (bodyBadge) {
+        bodyBadge.textContent = String(value);
+    }
+}
+
+function microzoneItemHtml(zoneId, microzone) {
+    var name = escapeHtml(microzone.name || 'Unnamed microzone');
+    var color = microzone.color || '#3388ff';
+    var checked = microzone.is_visible ? ' checked' : '';
+    var hiddenClass = microzone.is_visible ? '' : ' hidden';
+    var areaKm2 = getMicrozoneAreaKm2(microzone);
+    var areaText = areaKm2 === null ? '-- km²' : areaKm2.toFixed(2) + ' km²';
+    var warning = isLargeMicrozoneArea(microzone, areaKm2);
+
+    return '' +
+        '<div class="microzone-item' + hiddenClass + '" data-zone-id="' + zoneId + '" data-microzone-id="' + microzone.id + '">' +
+        '  <div class="microzone-main">' +
+        '    <input class="microzone-vis-toggle" type="checkbox"' + checked + ' onchange="event.stopPropagation(); toggleMicrozoneVisibility(' + zoneId + ', ' + microzone.id + ', this.checked);" />' +
+        '    <span class="microzone-color-swatch" style="background:' + color + ';"></span>' +
+        '    <span class="microzone-name">' + name + '</span>' +
+        '    <button class="micro-rename-btn" onclick="event.stopPropagation(); renameMicrozone(' + zoneId + ', ' + microzone.id + ')" title="Rename microzone">&#x270F;</button>' +
+        '    <button class="micro-delete-btn" onclick="event.stopPropagation(); deleteMicrozone(' + zoneId + ', ' + microzone.id + ')" title="Delete microzone">&times;</button>' +
+        '  </div>' +
+        '  <div class="microzone-meta">' +
+        '    <span class="microzone-area-badge">' + areaText + '</span>' +
+        (warning ? '    <span class="microzone-warning-badge">may cause slowdowns</span>' : '') +
+        '  </div>' +
+        '</div>';
+}
+
+function renderMicrozoneList(zoneId, microzones) {
+    var container = document.getElementById('microzoneList_' + zoneId);
+    if (!container) return;
+
+    var items = Array.isArray(microzones) ? microzones : [];
+    if (items.length === 0) {
+        container.innerHTML = '<p class="microzone-empty">No microzones yet.</p>';
+        updateZoneMicroCount(zoneId, 0);
+        return;
+    }
+
+    var html = '';
+    items.forEach(function(microzone) {
+        html += microzoneItemHtml(zoneId, microzone);
+    });
+    container.innerHTML = html;
+    updateZoneMicroCount(zoneId, items.length);
+}
+
+async function loadMicrozonesForZone(zoneId, forceRefresh) {
+    var cached = window.zoneMicrozones[zoneId];
+    if (!forceRefresh && Array.isArray(cached)) {
+        renderMicrozoneList(zoneId, cached);
+        return cached;
+    }
+
+    try {
+        var response = await _authenticatedFetch('/api/v1/zones/' + zoneId + '/microzones/');
+        if (!response.ok) {
+            renderMicrozoneList(zoneId, []);
+            return [];
+        }
+        var data = await response.json();
+        var microzones = data.microzones || [];
+        window.zoneMicrozones[zoneId] = microzones;
+        renderMicrozoneList(zoneId, microzones);
+        return microzones;
+    } catch (e) {
+        console.error('Error loading microzones for zone', zoneId, e);
+        renderMicrozoneList(zoneId, []);
+        return [];
+    }
+}
+
+function getDrawnLayerType(layer) {
+    if (layer instanceof L.Circle) return 'circle';
+    if (layer instanceof L.Rectangle) return 'rectangle';
+    if (layer instanceof L.Marker) return 'marker';
+    if (layer instanceof L.Polyline && !(layer instanceof L.Polygon)) return 'polyline';
+    return 'polygon';
+}
+
+function normalizeGeoJsonFeature(layer) {
+    var geojson = layer.toGeoJSON();
+    if (geojson.type !== 'Feature') {
+        return { type: 'Feature', geometry: geojson, properties: {} };
+    }
+    return geojson;
+}
+
+async function createMicrozoneFromDrawing(zoneId) {
+    if (!window.drawnItems || window.drawnItems.getLayers().length === 0) {
+        alert('Draw a shape on the map first, then add it as a microzone.');
+        return;
+    }
+
+    var name = prompt('Microzone name:');
+    if (!name || !name.trim()) {
+        return;
+    }
+
+    var layers = window.drawnItems.getLayers();
+    var layer = layers[layers.length - 1];
+    var geojson = normalizeGeoJsonFeature(layer);
+    var microzoneType = getDrawnLayerType(layer);
+
+    try {
+        var response = await _authenticatedFetch('/api/v1/zones/' + zoneId + '/microzones/', {
+            method: 'POST',
+            body: JSON.stringify({
+                name: name.trim(),
+                description: null,
+                geojson: geojson,
+                microzone_type: microzoneType,
+                color: '#3388ff',
+                tags: []
+            })
+        });
+
+        if (!response.ok) {
+            var error = await response.json().catch(function() { return {}; });
+            alert('Failed to create microzone: ' + (error.detail || 'unknown error'));
+            return;
+        }
+
+        var data = await response.json();
+        var microzone = data.microzone;
+
+        window.drawnItems.removeLayer(layer);
+        updateSaveAsZoneButton();
+
+        if (!Array.isArray(window.zoneMicrozones[zoneId])) {
+            window.zoneMicrozones[zoneId] = [];
+        }
+        window.zoneMicrozones[zoneId].unshift(microzone);
+        renderMicrozoneList(zoneId, window.zoneMicrozones[zoneId]);
+    } catch (e) {
+        console.error('Error creating microzone:', e);
+        alert('Failed to create microzone. Please try again.');
+    }
+}
+
+function findMicrozoneIndex(zoneId, microzoneId) {
+    if (!Array.isArray(window.zoneMicrozones[zoneId])) return -1;
+    return window.zoneMicrozones[zoneId].findIndex(function(item) {
+        return Number(item.id) === Number(microzoneId);
+    });
+}
+
+async function renameMicrozone(zoneId, microzoneId) {
+    var currentName = 'Microzone';
+    var index = findMicrozoneIndex(zoneId, microzoneId);
+    if (index >= 0) {
+        currentName = window.zoneMicrozones[zoneId][index].name || currentName;
+    }
+    var newName = prompt('Rename microzone:', currentName);
+    if (!newName || !newName.trim()) return;
+
+    try {
+        var response = await _authenticatedFetch('/api/v1/zones/' + zoneId + '/microzones/' + microzoneId, {
+            method: 'PATCH',
+            body: JSON.stringify({ name: newName.trim() })
+        });
+        if (!response.ok) {
+            alert('Failed to rename microzone.');
+            return;
+        }
+        var data = await response.json();
+        if (index >= 0) {
+            window.zoneMicrozones[zoneId][index] = data.microzone;
+            renderMicrozoneList(zoneId, window.zoneMicrozones[zoneId]);
+        } else {
+            await loadMicrozonesForZone(zoneId, true);
+        }
+    } catch (e) {
+        console.error('Error renaming microzone:', e);
+    }
+}
+
+async function deleteMicrozone(zoneId, microzoneId) {
+    if (!confirm('Delete this microzone?')) return;
+
+    try {
+        var response = await _authenticatedFetch('/api/v1/zones/' + zoneId + '/microzones/' + microzoneId, {
+            method: 'DELETE'
+        });
+        if (!response.ok) {
+            alert('Failed to delete microzone.');
+            return;
+        }
+
+        if (Array.isArray(window.zoneMicrozones[zoneId])) {
+            window.zoneMicrozones[zoneId] = window.zoneMicrozones[zoneId].filter(function(item) {
+                return Number(item.id) !== Number(microzoneId);
+            });
+            renderMicrozoneList(zoneId, window.zoneMicrozones[zoneId]);
+        } else {
+            await loadMicrozonesForZone(zoneId, true);
+        }
+    } catch (e) {
+        console.error('Error deleting microzone:', e);
+    }
+}
+
+async function toggleMicrozoneVisibility(zoneId, microzoneId, forceVisible) {
+    var visible = !!forceVisible;
+    try {
+        var response = await _authenticatedFetch('/api/v1/zones/' + zoneId + '/microzones/' + microzoneId, {
+            method: 'PATCH',
+            body: JSON.stringify({ is_visible: visible })
+        });
+        if (!response.ok) {
+            alert('Failed to update microzone visibility.');
+            return;
+        }
+        var data = await response.json();
+        var index = findMicrozoneIndex(zoneId, microzoneId);
+        if (index >= 0) {
+            window.zoneMicrozones[zoneId][index] = data.microzone;
+            renderMicrozoneList(zoneId, window.zoneMicrozones[zoneId]);
+        } else {
+            await loadMicrozonesForZone(zoneId, true);
+        }
+    } catch (e) {
+        console.error('Error toggling microzone visibility:', e);
+    }
+}
+
 function toggleZoneCard(zoneId) {
     var body = document.getElementById('zoneBody_' + zoneId);
     if (!body) return;
@@ -4122,13 +4445,17 @@ function toggleZoneCard(zoneId) {
     if (indicator) {
         indicator.textContent = isOpen ? '▼' : '▲';
     }
+
+    if (!isOpen) {
+        loadMicrozonesForZone(zoneId, false);
+    }
 }
 
 function zoneCardHtml(zone) {
     var visibleClass = zone.is_visible ? '' : ' hidden';
     var dateTxt = zone.created_at ? zone.created_at.substring(0, 10) : '';
     var typeTxt = zone.polygon_type || 'polygon';
-    var safeName = zone.name || 'Unnamed';
+    var safeName = escapeHtml(zone.name || 'Unnamed');
     var color = zone.color || '#3388ff';
     var checked = zone.is_visible ? ' checked' : '';
 
@@ -4139,6 +4466,7 @@ function zoneCardHtml(zone) {
         '      <input class="zone-vis-toggle" type="checkbox"' + checked + ' onchange="event.stopPropagation(); toggleZoneVisibility(' + zone.id + ', this.checked);" />' +
         '      <span class="zone-color-swatch" style="background:' + color + ';"></span>' +
         '      <span class="zone-name">' + safeName + '</span>' +
+        '      <span class="zone-micro-count" id="zoneMicroCount_' + zone.id + '">0</span>' +
         '      <span class="zone-expand-indicator">▼</span>' +
         '    </div>' +
         '    <div class="zone-item-actions">' +
@@ -4147,7 +4475,13 @@ function zoneCardHtml(zone) {
         '    </div>' +
         '  </div>' +
         '  <div class="zone-item-body" id="zoneBody_' + zone.id + '" style="display:none;">' +
-        '    <div class="zone-item-meta"><small>' + typeTxt + ' | ' + dateTxt + '</small></div>' +
+        '    <div class="zone-item-meta"><small>' + typeTxt + ' | ' + dateTxt + ' | micros: <span id="zoneMicroCountBody_' + zone.id + '">0</span></small></div>' +
+        '    <div class="microzone-toolbar">' +
+        '      <button class="add-micro-btn" onclick="event.stopPropagation(); createMicrozoneFromDrawing(' + zone.id + ')">Add Microzone</button>' +
+        '    </div>' +
+        '    <div class="microzone-list" id="microzoneList_' + zone.id + '">' +
+        '      <p class="microzone-empty">No microzones yet.</p>' +
+        '    </div>' +
         '  </div>' +
         '</div>';
 }
@@ -4155,17 +4489,20 @@ function zoneCardHtml(zone) {
 function renderZoneList(zones) {
     var container = document.getElementById('zoneList');
     var bulkActions = document.getElementById('zoneBulkActions');
+    var noResults = document.getElementById('zoneSearchNoResults');
     if (!container) return;
 
     if (!zones || zones.length === 0) {
         container.innerHTML = '<p class="zone-empty-message">No zones saved yet. Draw a shape and save it as a zone.</p>';
         if (bulkActions) bulkActions.style.display = 'none';
+        if (noResults) noResults.style.display = 'none';
         updateZoneCountBadge(0);
         return;
     }
 
     if (bulkActions) bulkActions.style.display = 'block';
     updateZoneCountBadge(zones.length);
+    window.zoneMicrozones = {};
 
     var html = '';
     zones.forEach(function(zone) {
@@ -4173,6 +4510,10 @@ function renderZoneList(zones) {
     });
 
     container.innerHTML = html;
+    zones.forEach(function(zone) {
+        loadMicrozonesForZone(zone.id, true);
+    });
+    applyZoneSearchFilter();
 }
 
 function addZoneToList(zone) {
@@ -4185,14 +4526,11 @@ function addZoneToList(zone) {
 
     var bulkActions = document.getElementById('zoneBulkActions');
     if (bulkActions) bulkActions.style.display = 'block';
-    updateZoneCountBadge(container.querySelectorAll('.zone-item').length + 1);
-
-    var div = document.createElement('div');
-    div.className = 'zone-item';
-    div.dataset.zoneId = zone.id;
-    div.innerHTML = zoneCardHtml(zone);
-
-    container.prepend(div);
+    container.insertAdjacentHTML('afterbegin', zoneCardHtml(zone));
+    updateZoneCountBadge(container.querySelectorAll('.zone-item').length);
+    window.zoneMicrozones[zone.id] = [];
+    loadMicrozonesForZone(zone.id, true);
+    applyZoneSearchFilter();
 }
 
 function renderZoneOnMap(zone) {
@@ -4382,6 +4720,7 @@ async function deleteZone(zoneId) {
             window.zoneLayerGroup.removeLayer(entry.layer);
         }
         delete window.savedZones[zoneId];
+        delete window.zoneMicrozones[zoneId];
 
         // Remove from list
         var item = document.querySelector('.zone-item[data-zone-id="' + zoneId + '"]');
@@ -4399,6 +4738,7 @@ async function deleteZone(zoneId) {
         }
 
         console.log('Zone deleted:', zoneId);
+        applyZoneSearchFilter();
 
     } catch (e) {
         console.error('Error deleting zone:', e);
@@ -4406,45 +4746,44 @@ async function deleteZone(zoneId) {
 }
 
 async function showAllZones() {
-    var ids = Object.keys(window.savedZones).map(Number).filter(Boolean);
+    var ids = getAllZoneIdsFromList();
     if (ids.length === 0) return;
 
     try {
-        await _authenticatedFetch('/api/v1/zones/visibility', {
-            method: 'POST',
-            body: JSON.stringify({ zone_ids: ids, is_visible: true })
-        });
-        loadAllZones();
+        await Promise.all([
+            _authenticatedFetch('/api/v1/zones/visibility', {
+                method: 'POST',
+                body: JSON.stringify({ zone_ids: ids, is_visible: true })
+            }),
+            _authenticatedFetch('/api/v1/microzones/visibility', {
+                method: 'POST',
+                body: JSON.stringify({ zone_ids: ids, is_visible: true })
+            })
+        ]);
+        await loadAllZones();
+        applyZoneSearchFilter();
     } catch (e) {
         console.error('Error showing all zones:', e);
     }
 }
 
 async function hideAllZones() {
-    var ids = Object.keys(window.savedZones).map(Number).filter(Boolean);
+    var ids = getAllZoneIdsFromList();
     if (ids.length === 0) return;
 
     try {
-        await _authenticatedFetch('/api/v1/zones/visibility', {
-            method: 'POST',
-            body: JSON.stringify({ zone_ids: ids, is_visible: false })
-        });
-
-        // Remove all layers from map
-        Object.values(window.savedZones).forEach(function(entry) {
-            if (entry.layer && window.zoneLayerGroup) {
-                window.zoneLayerGroup.removeLayer(entry.layer);
-            }
-            entry.visible = false;
-        });
-
-        // Update list styling
-        document.querySelectorAll('.zone-item').forEach(function(item) {
-            item.classList.add('hidden');
-        });
-        document.querySelectorAll('.zone-vis-toggle').forEach(function(toggle) {
-            toggle.checked = false;
-        });
+        await Promise.all([
+            _authenticatedFetch('/api/v1/zones/visibility', {
+                method: 'POST',
+                body: JSON.stringify({ zone_ids: ids, is_visible: false })
+            }),
+            _authenticatedFetch('/api/v1/microzones/visibility', {
+                method: 'POST',
+                body: JSON.stringify({ zone_ids: ids, is_visible: false })
+            })
+        ]);
+        await loadAllZones();
+        applyZoneSearchFilter();
 
     } catch (e) {
         console.error('Error hiding all zones:', e);
