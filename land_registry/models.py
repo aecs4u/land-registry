@@ -157,3 +157,95 @@ class ZoneBulkVisibilityRequest(BaseModel):
     """Request to set visibility for multiple zones."""
     zone_ids: List[int] = Field(..., min_length=1, max_length=100)
     is_visible: bool
+
+
+class MicrozoneCreateRequest(BaseModel):
+    """Request to create a microzone within a zone."""
+    name: str = Field(..., min_length=1, max_length=200, description="Microzone name")
+    description: Optional[str] = Field(None, max_length=2000, description="Microzone description")
+    geojson: Dict[str, Any] = Field(..., description="GeoJSON Feature object")
+    microzone_type: str = Field(
+        default="polygon",
+        pattern=r"^(polygon|circle|rectangle|marker|polyline)$"
+    )
+    color: str = Field(default="#3388ff", pattern=r"^#[0-9a-fA-F]{6}$", description="Hex color")
+    tags: List[str] = Field(default_factory=list, description="Microzone tags/categories")
+
+    @field_validator('geojson')
+    @classmethod
+    def validate_geojson_feature(cls, v):
+        if v.get('type') != 'Feature':
+            raise ValueError('geojson must be a GeoJSON Feature')
+        if 'geometry' not in v or v['geometry'] is None:
+            raise ValueError('GeoJSON Feature must have a geometry')
+        geom_type = v['geometry'].get('type', '')
+        valid_types = {'Point', 'MultiPoint', 'LineString', 'MultiLineString',
+                       'Polygon', 'MultiPolygon', 'GeometryCollection'}
+        if geom_type not in valid_types:
+            raise ValueError(f'Invalid geometry type: {geom_type}')
+        return v
+
+    @field_validator('tags')
+    @classmethod
+    def validate_tags(cls, v):
+        if len(v) > 20:
+            raise ValueError('Maximum 20 tags allowed')
+        return [t.strip()[:50] for t in v if t.strip()]
+
+
+class MicrozoneUpdateRequest(BaseModel):
+    """Request to update an existing microzone."""
+    name: Optional[str] = Field(None, min_length=1, max_length=200)
+    description: Optional[str] = Field(None, max_length=2000)
+    color: Optional[str] = Field(None, pattern=r"^#[0-9a-fA-F]{6}$")
+    geojson: Optional[Dict[str, Any]] = None
+    is_visible: Optional[bool] = None
+    tags: Optional[List[str]] = None
+
+    @field_validator('geojson')
+    @classmethod
+    def validate_geojson_if_provided(cls, v):
+        if v is not None:
+            if v.get('type') != 'Feature':
+                raise ValueError('geojson must be a GeoJSON Feature')
+            if 'geometry' not in v or v['geometry'] is None:
+                raise ValueError('GeoJSON Feature must have a geometry')
+        return v
+
+    @field_validator('tags')
+    @classmethod
+    def validate_tags(cls, v):
+        if v is not None:
+            if len(v) > 20:
+                raise ValueError('Maximum 20 tags allowed')
+            return [t.strip()[:50] for t in v if t.strip()]
+        return v
+
+
+class MicrozoneResponse(BaseModel):
+    """Response model for a single microzone."""
+    id: int
+    zone_id: int
+    name: Optional[str] = None
+    description: Optional[str] = None
+    microzone_type: str = "polygon"
+    color: str = "#3388ff"
+    area_sqm: Optional[float] = None
+    centroid_lat: Optional[float] = None
+    centroid_lng: Optional[float] = None
+    is_visible: bool = True
+    tags: List[str] = Field(default_factory=list)
+    created_at: str
+    updated_at: str
+
+
+class MicrozoneDetailResponse(MicrozoneResponse):
+    """Full microzone response including geometry."""
+    geojson: Dict[str, Any]
+
+
+class MicrozoneListResponse(BaseModel):
+    """Response for listing microzones."""
+    success: bool = True
+    microzones: List[MicrozoneResponse]
+    total: int

@@ -1944,7 +1944,9 @@ async def clear_drawn_polygons():
 
 from land_registry.models import (
     ZoneCreateRequest, ZoneUpdateRequest, ZoneResponse,
-    ZoneDetailResponse, ZoneListResponse, ZoneBulkVisibilityRequest
+    ZoneDetailResponse, ZoneListResponse, ZoneBulkVisibilityRequest,
+    MicrozoneCreateRequest, MicrozoneUpdateRequest, MicrozoneResponse,
+    MicrozoneDetailResponse, MicrozoneListResponse
 )
 from land_registry.sqlite_db import get_sqlite_db
 
@@ -1963,6 +1965,40 @@ def _zone_row_to_response(row: dict, include_geojson: bool = False) -> dict:
         'name': row.get('name'),
         'description': row.get('description'),
         'polygon_type': row.get('zone_type', row.get('polygon_type', 'polygon')),
+        'color': row.get('color', '#3388ff'),
+        'area_sqm': row.get('area_sqm'),
+        'centroid_lat': row.get('centroid_lat'),
+        'centroid_lng': row.get('centroid_lng'),
+        'is_visible': bool(row.get('is_visible', 1)),
+        'tags': tags,
+        'created_at': row.get('created_at', ''),
+        'updated_at': row.get('updated_at', ''),
+    }
+
+    if include_geojson:
+        try:
+            result['geojson'] = json.loads(row['geojson']) if isinstance(row['geojson'], str) else row['geojson']
+        except (json.JSONDecodeError, TypeError):
+            result['geojson'] = {}
+
+    return result
+
+
+def _microzone_row_to_response(row: dict, include_geojson: bool = False) -> dict:
+    """Convert a database row to a microzone response dict."""
+    tags = []
+    if row.get('tags'):
+        try:
+            tags = json.loads(row['tags'])
+        except (json.JSONDecodeError, TypeError):
+            tags = []
+
+    result = {
+        'id': row['id'],
+        'zone_id': row['zone_id'],
+        'name': row.get('name'),
+        'description': row.get('description'),
+        'microzone_type': row.get('microzone_type', 'polygon'),
         'color': row.get('color', '#3388ff'),
         'area_sqm': row.get('area_sqm'),
         'centroid_lat': row.get('centroid_lat'),
@@ -2193,6 +2229,179 @@ async def bulk_toggle_zone_visibility(
     except Exception as e:
         logger.error(f"Error updating zone visibility: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error updating visibility: {str(e)}")
+
+
+@api_router.post("/zones/{zone_id}/microzones/", status_code=201)
+async def create_microzone(
+    zone_id: int,
+    request: MicrozoneCreateRequest,
+    user: ClerkUser = Depends(get_current_user)
+):
+    """Create a microzone inside a zone."""
+    try:
+        from shapely.geometry import shape as shapely_shape
+
+        db = get_sqlite_db()
+        zone = db.get_zone(zone_id, user_id=user.id)
+        if not zone:
+            raise HTTPException(status_code=404, detail="Zone not found")
+
+        area_sqm = None
+        centroid_lat = None
+        centroid_lng = None
+        try:
+            geom = shapely_shape(request.geojson.get('geometry', {}))
+            if geom.is_valid and not geom.is_empty:
+                centroid = geom.centroid
+                centroid_lat = centroid.y
+                centroid_lng = centroid.x
+                area_sqm = geom.area
+        except Exception as e:
+            logger.warning(f"Could not compute microzone geometry metrics: {e}")
+
+        microzone_id = db.create_microzone(
+            zone_id=zone_id,
+            geojson=request.geojson,
+            user_id=user.id,
+            name=request.name,
+            description=request.description,
+            microzone_type=request.microzone_type,
+            area_sqm=area_sqm,
+            centroid_lat=centroid_lat,
+            centroid_lng=centroid_lng,
+            color=request.color,
+            tags=request.tags,
+        )
+        microzone = db.get_microzone(microzone_id, user_id=user.id)
+        return {"success": True, "microzone": _microzone_row_to_response(microzone, include_geojson=True)}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating microzone: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error creating microzone: {str(e)}")
+
+
+@api_router.get("/zones/{zone_id}/microzones/")
+async def list_microzones(
+    zone_id: int,
+    user: ClerkUser = Depends(get_current_user)
+):
+    """List all microzones for a zone."""
+    try:
+        db = get_sqlite_db()
+        zone = db.get_zone(zone_id, user_id=user.id)
+        if not zone:
+            raise HTTPException(status_code=404, detail="Zone not found")
+
+        rows = db.get_microzones(zone_id=zone_id, user_id=user.id)
+        microzones = [_microzone_row_to_response(dict(row)) for row in rows]
+        return {"success": True, "microzones": microzones, "total": len(microzones)}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error listing microzones: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error listing microzones: {str(e)}")
+
+
+@api_router.get("/zones/{zone_id}/microzones/{microzone_id}")
+async def get_microzone(
+    zone_id: int,
+    microzone_id: int,
+    user: ClerkUser = Depends(get_current_user)
+):
+    """Get a single microzone with full geometry."""
+    db = get_sqlite_db()
+    zone = db.get_zone(zone_id, user_id=user.id)
+    if not zone:
+        raise HTTPException(status_code=404, detail="Zone not found")
+
+    microzone = db.get_microzone(microzone_id, user_id=user.id)
+    if not microzone or microzone.get("zone_id") != zone_id:
+        raise HTTPException(status_code=404, detail="Microzone not found")
+    return {"success": True, "microzone": _microzone_row_to_response(microzone, include_geojson=True)}
+
+
+@api_router.patch("/zones/{zone_id}/microzones/{microzone_id}")
+async def update_microzone(
+    zone_id: int,
+    microzone_id: int,
+    request: MicrozoneUpdateRequest,
+    user: ClerkUser = Depends(get_current_user)
+):
+    """Update a microzone's metadata or geometry."""
+    try:
+        db = get_sqlite_db()
+        zone = db.get_zone(zone_id, user_id=user.id)
+        if not zone:
+            raise HTTPException(status_code=404, detail="Zone not found")
+
+        existing = db.get_microzone(microzone_id, user_id=user.id)
+        if not existing or existing.get("zone_id") != zone_id:
+            raise HTTPException(status_code=404, detail="Microzone not found")
+
+        kwargs: Dict[str, Any] = {}
+        if request.name is not None:
+            kwargs['name'] = request.name
+        if request.description is not None:
+            kwargs['description'] = request.description
+        if request.color is not None:
+            kwargs['color'] = request.color
+        if request.is_visible is not None:
+            kwargs['is_visible'] = request.is_visible
+        if request.tags is not None:
+            kwargs['tags'] = request.tags
+
+        if request.geojson is not None:
+            kwargs['geojson'] = request.geojson
+            try:
+                from shapely.geometry import shape as shapely_shape
+                geom = shapely_shape(request.geojson.get('geometry', {}))
+                if geom.is_valid and not geom.is_empty:
+                    kwargs['area_sqm'] = geom.area
+                    kwargs['centroid_lat'] = geom.centroid.y
+                    kwargs['centroid_lng'] = geom.centroid.x
+            except Exception:
+                pass
+
+        if not kwargs:
+            raise HTTPException(status_code=400, detail="No fields to update")
+
+        updated = db.update_microzone(microzone_id, user.id, **kwargs)
+        if not updated:
+            raise HTTPException(status_code=404, detail="Microzone not found")
+
+        microzone = db.get_microzone(microzone_id, user_id=user.id)
+        return {"success": True, "microzone": _microzone_row_to_response(microzone, include_geojson=True)}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating microzone: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error updating microzone: {str(e)}")
+
+
+@api_router.delete("/zones/{zone_id}/microzones/{microzone_id}")
+async def delete_microzone(
+    zone_id: int,
+    microzone_id: int,
+    user: ClerkUser = Depends(get_current_user)
+):
+    """Delete a microzone."""
+    db = get_sqlite_db()
+    zone = db.get_zone(zone_id, user_id=user.id)
+    if not zone:
+        raise HTTPException(status_code=404, detail="Zone not found")
+
+    microzone = db.get_microzone(microzone_id, user_id=user.id)
+    if not microzone or microzone.get("zone_id") != zone_id:
+        raise HTTPException(status_code=404, detail="Microzone not found")
+
+    deleted = db.delete_microzone(microzone_id, user_id=user.id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Microzone not found")
+    return {"success": True, "message": "Microzone deleted"}
 
 
 # User Profile and Dashboard Endpoints
