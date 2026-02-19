@@ -125,6 +125,8 @@ class SQLiteDatabase:
                 )
             """)
 
+            self._ensure_zone_tables(cursor)
+
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS cadastral_cache (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -159,6 +161,95 @@ class SQLiteDatabase:
             conn.commit()
             logger.info(f"SQLite database initialized at {self.db_path}")
 
+    def _ensure_zone_tables(self, cursor: sqlite3.Cursor) -> None:
+        """Ensure normalized zone and microzone tables exist."""
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS zones (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT,
+                name TEXT,
+                description TEXT,
+                geojson TEXT NOT NULL,
+                zone_type TEXT DEFAULT 'polygon',
+                area_sqm REAL,
+                centroid_lat REAL,
+                centroid_lng REAL,
+                color TEXT DEFAULT '#3388ff',
+                is_visible INTEGER DEFAULT 1,
+                tags TEXT DEFAULT '[]',
+                legacy_polygon_id INTEGER UNIQUE,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS microzones (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                zone_id INTEGER NOT NULL,
+                user_id TEXT,
+                name TEXT,
+                description TEXT,
+                geojson TEXT NOT NULL,
+                microzone_type TEXT DEFAULT 'polygon',
+                area_sqm REAL,
+                centroid_lat REAL,
+                centroid_lng REAL,
+                color TEXT DEFAULT '#3388ff',
+                is_visible INTEGER DEFAULT 1,
+                tags TEXT DEFAULT '[]',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(zone_id) REFERENCES zones(id) ON DELETE CASCADE
+            )
+        """)
+
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_zones_user_id ON zones(user_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_zones_visibility ON zones(is_visible)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_microzones_zone_id ON microzones(zone_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_microzones_user_id ON microzones(user_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_microzones_visibility ON microzones(is_visible)")
+
+    def _migrate_drawn_polygons_to_zones(self, cursor: sqlite3.Cursor) -> None:
+        """Backfill zones from legacy drawn_polygons table when needed."""
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='drawn_polygons'")
+        if cursor.fetchone() is None:
+            return
+
+        cursor.execute("SELECT COUNT(*) AS count FROM zones")
+        zones_count = cursor.fetchone()["count"]
+        if zones_count > 0:
+            return
+
+        cursor.execute("""
+            INSERT INTO zones (
+                user_id, name, description, geojson, zone_type, area_sqm,
+                centroid_lat, centroid_lng, color, is_visible, tags,
+                legacy_polygon_id, created_at, updated_at
+            )
+            SELECT
+                user_id,
+                name,
+                description,
+                geojson,
+                polygon_type,
+                area_sqm,
+                centroid_lat,
+                centroid_lng,
+                color,
+                is_visible,
+                tags,
+                id,
+                created_at,
+                updated_at
+            FROM drawn_polygons
+        """)
+
+        cursor.execute("SELECT COUNT(*) AS count FROM zones")
+        migrated = cursor.fetchone()["count"]
+        if migrated > 0:
+            logger.info(f"Migrated {migrated} legacy drawn_polygons records into zones")
+
     def _upgrade_database(self):
         """Run schema upgrades for existing databases."""
         try:
@@ -176,6 +267,11 @@ class SQLiteDatabase:
                 if 'tags' not in existing_columns:
                     cursor.execute("ALTER TABLE drawn_polygons ADD COLUMN tags TEXT DEFAULT '[]'")
                     logger.info("Added 'tags' column to drawn_polygons")
+
+                self._ensure_zone_tables(cursor)
+                self._migrate_drawn_polygons_to_zones(cursor)
+
+                conn.commit()
         except Exception as e:
             logger.warning(f"Database upgrade check failed (non-fatal): {e}")
 
@@ -184,6 +280,7 @@ class SQLiteDatabase:
         """Get a database connection with automatic commit/rollback."""
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row  # Return rows as dict-like objects
+        conn.execute("PRAGMA foreign_keys = ON")
         try:
             yield conn
             conn.commit()
@@ -442,6 +539,275 @@ class SQLiteDatabase:
                 return cursor.rowcount > 0
         else:
             self.execute("DELETE FROM drawn_polygons WHERE id = ?", (polygon_id,))
+            return True
+
+    # -------------------------------------------------------------------------
+    # Zones & Microzones (normalized schema)
+    # -------------------------------------------------------------------------
+
+    def get_zones(self, user_id: str = None) -> List[Dict[str, Any]]:
+        """Get zones, optionally filtered by user."""
+        if user_id:
+            rows = self.execute(
+                "SELECT * FROM zones WHERE user_id = ? ORDER BY created_at DESC",
+                (user_id,)
+            )
+        else:
+            rows = self.execute("SELECT * FROM zones ORDER BY created_at DESC")
+        return [dict(row) for row in rows]
+
+    def get_zone(self, zone_id: int, user_id: str = None) -> Optional[Dict[str, Any]]:
+        """Get a single zone by ID."""
+        if user_id:
+            row = self.execute_one(
+                "SELECT * FROM zones WHERE id = ? AND user_id = ?",
+                (zone_id, user_id)
+            )
+        else:
+            row = self.execute_one("SELECT * FROM zones WHERE id = ?", (zone_id,))
+        return dict(row) if row else None
+
+    def create_zone(
+        self,
+        geojson: Dict[str, Any],
+        user_id: str = None,
+        name: str = None,
+        description: str = None,
+        zone_type: str = "polygon",
+        area_sqm: float = None,
+        centroid_lat: float = None,
+        centroid_lng: float = None,
+        color: str = "#3388ff",
+        tags: List[str] = None
+    ) -> int:
+        """Create a zone record."""
+        return self.execute_insert("""
+            INSERT INTO zones
+            (user_id, name, description, geojson, zone_type, area_sqm,
+             centroid_lat, centroid_lng, color, tags)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            user_id,
+            name,
+            description,
+            json.dumps(geojson),
+            zone_type,
+            area_sqm,
+            centroid_lat,
+            centroid_lng,
+            color,
+            json.dumps(tags or [])
+        ))
+
+    def update_zone(
+        self,
+        zone_id: int,
+        user_id: str,
+        name: str = None,
+        description: str = None,
+        color: str = None,
+        geojson: Dict[str, Any] = None,
+        is_visible: bool = None,
+        tags: List[str] = None,
+        area_sqm: float = None,
+        centroid_lat: float = None,
+        centroid_lng: float = None
+    ) -> bool:
+        """Update a zone. Returns True if updated, False if not found."""
+        updates = []
+        params = []
+
+        if name is not None:
+            updates.append("name = ?")
+            params.append(name)
+        if description is not None:
+            updates.append("description = ?")
+            params.append(description)
+        if color is not None:
+            updates.append("color = ?")
+            params.append(color)
+        if geojson is not None:
+            updates.append("geojson = ?")
+            params.append(json.dumps(geojson))
+        if is_visible is not None:
+            updates.append("is_visible = ?")
+            params.append(int(is_visible))
+        if tags is not None:
+            updates.append("tags = ?")
+            params.append(json.dumps(tags))
+        if area_sqm is not None:
+            updates.append("area_sqm = ?")
+            params.append(area_sqm)
+        if centroid_lat is not None:
+            updates.append("centroid_lat = ?")
+            params.append(centroid_lat)
+        if centroid_lng is not None:
+            updates.append("centroid_lng = ?")
+            params.append(centroid_lng)
+
+        if not updates:
+            return False
+
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+        params.extend([zone_id, user_id])
+        query = f"UPDATE zones SET {', '.join(updates)} WHERE id = ? AND user_id = ?"
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, tuple(params))
+            return cursor.rowcount > 0
+
+    def delete_zone(self, zone_id: int, user_id: str = None) -> bool:
+        """Delete a zone (and all its microzones via FK cascade)."""
+        if user_id:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "DELETE FROM zones WHERE id = ? AND user_id = ?",
+                    (zone_id, user_id)
+                )
+                return cursor.rowcount > 0
+        else:
+            self.execute("DELETE FROM zones WHERE id = ?", (zone_id,))
+            return True
+
+    def get_microzones(
+        self,
+        zone_id: Optional[int] = None,
+        user_id: str = None
+    ) -> List[Dict[str, Any]]:
+        """Get microzones, optionally filtered by zone and user."""
+        conditions = []
+        params = []
+        if zone_id is not None:
+            conditions.append("zone_id = ?")
+            params.append(zone_id)
+        if user_id is not None:
+            conditions.append("user_id = ?")
+            params.append(user_id)
+
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        rows = self.execute(
+            f"SELECT * FROM microzones {where_clause} ORDER BY created_at DESC",
+            tuple(params)
+        )
+        return [dict(row) for row in rows]
+
+    def get_microzone(self, microzone_id: int, user_id: str = None) -> Optional[Dict[str, Any]]:
+        """Get a single microzone by ID."""
+        if user_id:
+            row = self.execute_one(
+                "SELECT * FROM microzones WHERE id = ? AND user_id = ?",
+                (microzone_id, user_id)
+            )
+        else:
+            row = self.execute_one("SELECT * FROM microzones WHERE id = ?", (microzone_id,))
+        return dict(row) if row else None
+
+    def create_microzone(
+        self,
+        zone_id: int,
+        geojson: Dict[str, Any],
+        user_id: str = None,
+        name: str = None,
+        description: str = None,
+        microzone_type: str = "polygon",
+        area_sqm: float = None,
+        centroid_lat: float = None,
+        centroid_lng: float = None,
+        color: str = "#3388ff",
+        tags: List[str] = None
+    ) -> int:
+        """Create a microzone inside a parent zone."""
+        return self.execute_insert("""
+            INSERT INTO microzones
+            (zone_id, user_id, name, description, geojson, microzone_type,
+             area_sqm, centroid_lat, centroid_lng, color, tags)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            zone_id,
+            user_id,
+            name,
+            description,
+            json.dumps(geojson),
+            microzone_type,
+            area_sqm,
+            centroid_lat,
+            centroid_lng,
+            color,
+            json.dumps(tags or [])
+        ))
+
+    def update_microzone(
+        self,
+        microzone_id: int,
+        user_id: str,
+        name: str = None,
+        description: str = None,
+        color: str = None,
+        geojson: Dict[str, Any] = None,
+        is_visible: bool = None,
+        tags: List[str] = None,
+        area_sqm: float = None,
+        centroid_lat: float = None,
+        centroid_lng: float = None
+    ) -> bool:
+        """Update a microzone. Returns True if updated, False if not found."""
+        updates = []
+        params = []
+
+        if name is not None:
+            updates.append("name = ?")
+            params.append(name)
+        if description is not None:
+            updates.append("description = ?")
+            params.append(description)
+        if color is not None:
+            updates.append("color = ?")
+            params.append(color)
+        if geojson is not None:
+            updates.append("geojson = ?")
+            params.append(json.dumps(geojson))
+        if is_visible is not None:
+            updates.append("is_visible = ?")
+            params.append(int(is_visible))
+        if tags is not None:
+            updates.append("tags = ?")
+            params.append(json.dumps(tags))
+        if area_sqm is not None:
+            updates.append("area_sqm = ?")
+            params.append(area_sqm)
+        if centroid_lat is not None:
+            updates.append("centroid_lat = ?")
+            params.append(centroid_lat)
+        if centroid_lng is not None:
+            updates.append("centroid_lng = ?")
+            params.append(centroid_lng)
+
+        if not updates:
+            return False
+
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+        params.extend([microzone_id, user_id])
+        query = f"UPDATE microzones SET {', '.join(updates)} WHERE id = ? AND user_id = ?"
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, tuple(params))
+            return cursor.rowcount > 0
+
+    def delete_microzone(self, microzone_id: int, user_id: str = None) -> bool:
+        """Delete a microzone."""
+        if user_id:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "DELETE FROM microzones WHERE id = ? AND user_id = ?",
+                    (microzone_id, user_id)
+                )
+                return cursor.rowcount > 0
+        else:
+            self.execute("DELETE FROM microzones WHERE id = ?", (microzone_id,))
             return True
 
     # -------------------------------------------------------------------------
