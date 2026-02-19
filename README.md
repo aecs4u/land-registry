@@ -123,6 +123,12 @@ uv run flake8
 
 ## Technical Details
 
+### Zone Workflow Architecture and Plan
+- See `docs/ZONE_WORKFLOW_ARCHITECTURE_AND_PLAN.md` for:
+  - Target zone/microzone architecture
+  - User workflows and API contracts
+  - Issue-by-issue development plan and current status
+
 ### Backend Architecture
 - **Web Framework**: FastAPI with async/await support
 - **Geospatial Processing**: GeoPandas, Shapely for spatial operations
