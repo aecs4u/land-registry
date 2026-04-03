@@ -716,8 +716,9 @@
 {% endblock %} {% block data_scripts %}
 <script>
   // Inject GeoJSON data into window for external JS to use
+  // Note: geojson_data is already JSON-stringified from Python
   {% if geojson_data %}
-  window.geoJsonData = JSON.parse('{{ geojson_data|tojson|safe }}');
+  window.geoJsonData = JSON.parse({{ geojson_data|safe }});
   {% else %}
   window.geoJsonData = null;
   {% endif %}

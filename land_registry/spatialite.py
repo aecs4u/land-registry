@@ -3,6 +3,7 @@ Helper utilities for loading geodata from a SpatiaLite database.
 """
 
 import logging
+import os
 import re
 import sqlite3
 from contextlib import contextmanager
@@ -59,6 +60,15 @@ def _spatialite_connection(db_path: Optional[str] = None):
         conn.close()
 
 
+def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    """Check if a table exists in the database."""
+    cursor = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        (table_name,)
+    )
+    return cursor.fetchone() is not None
+
+
 def load_layer(
     table: Optional[str] = None,
     conditions: Optional[Dict[str, Any]] = None,
@@ -76,6 +86,9 @@ def load_layer(
                     be valid SQL identifiers (letters/digits/underscores only).
         limit: Optional row limit (defaults to settings.default_limit).
         layer_type: Layer type ('map' or 'ple') to determine database path.
+
+    Returns:
+        GeoDataFrame with the queried data, or None if table doesn't exist.
     """
     table_name = table or spatialite_settings.table
     row_limit = limit or spatialite_settings.default_limit
@@ -92,6 +105,11 @@ def load_layer(
         db_path = spatialite_settings.db_ple_path
     else:
         db_path = spatialite_settings.db_map_path
+
+    # --- Check if database file exists ----------------------------------------
+    if not db_path or not os.path.exists(db_path):
+        logger.warning(f"SpatiaLite database not found at: {db_path}")
+        return None
 
     # --- Build parameterised query -------------------------------------------
     geom_col = spatialite_settings.geometry_column
@@ -114,6 +132,11 @@ def load_layer(
         params.append(row_limit)
 
     with _spatialite_connection(db_path) as conn:
+        # Check if table exists before querying
+        if not _table_exists(conn, table_name):
+            logger.warning(f"Table '{table_name}' does not exist in database: {db_path}")
+            return None
+
         gdf = gpd.GeoDataFrame.from_postgis(
             sql,
             conn,

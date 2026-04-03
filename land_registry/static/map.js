@@ -1597,7 +1597,8 @@ function initializeMap() {
     debugLog('Map element dimensions:', mapElement ? `${mapElement.offsetWidth}x${mapElement.offsetHeight}` : 'N/A');
 
     if (!mapElement) {
-        console.error('[MapJS] Cannot initialize map - #map element not found');
+        // This is expected when using server-rendered Folium maps
+        console.info('[MapJS] Skipping client-side map init - using server-rendered Folium map');
         return;
     }
 
