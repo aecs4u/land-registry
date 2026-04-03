@@ -245,12 +245,55 @@
           >
             Load Selected Files
           </button>
+
+          <!-- Loading Progress Indicator -->
+          <div id="loadingProgress" class="loading-progress" style="display: none">
+            <div class="progress-header">
+              <span id="progressStatus">Loading...</span>
+              <span id="progressPercent">0%</span>
+            </div>
+            <div class="progress-bar-container">
+              <div id="progressBar" class="progress-bar"></div>
+            </div>
+            <div id="progressDetails" class="progress-details">
+              <span id="currentFile">Preparing...</span>
+            </div>
+            <div id="progressStats" class="progress-stats">
+              <span id="loadedCount">0 files</span> · <span id="featureCount">0 features</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
 
     <div class="sidebar-group-title">Explore</div>
     <div class="config-section">
+      <!-- Parcel Search -->
+      <div class="parcel-search">
+        <h4>🔍 Search Parcels</h4>
+        <div class="search-inputs">
+          <div class="search-row">
+            <label for="searchFoglio">Foglio</label>
+            <input type="text" id="searchFoglio" placeholder="e.g., 12" />
+          </div>
+          <div class="search-row">
+            <label for="searchParticella">Particella</label>
+            <input type="text" id="searchParticella" placeholder="e.g., 456" />
+          </div>
+        </div>
+        <div class="search-actions">
+          <button onclick="searchParcels()" class="search-btn" title="Search for matching parcels">
+            Search
+          </button>
+          <button onclick="clearParcelSearch()" class="clear-search-btn" title="Clear search results">
+            Clear
+          </button>
+        </div>
+        <div id="searchResults" class="search-results" style="display: none">
+          <span id="searchResultCount">0 parcels found</span>
+        </div>
+      </div>
+
       <!-- TreeLayers Control Management -->
       <div class="treelayers-controls">
         <h4>Layer Manager</h4>

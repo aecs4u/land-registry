@@ -19,7 +19,6 @@ from pathlib import Path
 from pydantic import BaseModel
 import tempfile
 from typing import Dict, Any, List, Literal, Optional
-import base64
 import hashlib
 
 from land_registry.dashboard import STATE
@@ -74,10 +73,10 @@ class PolygonSelection(BaseModel):
 
 
 class CadastralFileRequest(BaseModel):
-    files: List[str] = Field(..., min_length=1, max_length=500, description="List of file paths to load")
+    file_paths: List[str] = Field(..., min_length=1, max_length=500, description="List of file paths to load")
     clear_existing: bool = Field(default=True, description="Clear existing layers before loading")
 
-    @field_validator('files')
+    @field_validator('file_paths')
     @classmethod
     def validate_files(cls, v):
         # Validate file paths don't contain path traversal attempts
@@ -155,10 +154,10 @@ class SpatialiteQueryRequest(BaseModel):
     """Request model for loading SpatiaLite data."""
 
     table: Optional[str] = Field(default=None, max_length=128)
-    where: Optional[str] = Field(
+    conditions: Optional[Dict[str, Any]] = Field(
         default=None,
-        description="SQL WHERE clause without the 'WHERE' keyword (e.g., region = 'ABRUZZO')",
-        max_length=500,
+        description="Column=value pairs for filtering, e.g. {\"CODSEZ\": \"ABRUZZO\"}. "
+                    "Column names must be plain identifiers (letters/digits/underscores).",
     )
     limit: Optional[int] = Field(default=None, ge=1, le=10000)
     layer_type: Optional[str] = Field(default="map", pattern="^(map|ple)$", description="map=fogli, ple=particelle")
@@ -316,31 +315,6 @@ api_router = APIRouter()
 
 # Authentication utilities
 security = HTTPBearer()
-
-# DEPRECATED: Use get_current_user_optional from aecs4u-auth instead
-# This function is kept for backward compatibility but should not be used for new code
-async def get_user_from_token(authorization: str = Header(None)) -> Optional[str]:
-    """
-    DEPRECATED: Extract user ID from Clerk JWT token.
-
-    WARNING: This function does NOT verify JWT signatures.
-    Use get_current_user_optional dependency from aecs4u-auth for secure authentication.
-    """
-    logger.warning("get_user_from_token is deprecated - use get_current_user_optional instead")
-    if not authorization or not authorization.startswith("Bearer "):
-        return None
-
-    try:
-        token = authorization.replace("Bearer ", "")
-        # WARNING: This does NOT verify the signature - for backward compat only
-        payload_part = token.split('.')[1]
-        payload_part += '=' * (4 - len(payload_part) % 4)
-        payload = base64.b64decode(payload_part)
-        user_data = json.loads(payload)
-        return user_data.get('sub')
-    except Exception as e:
-        logger.error(f"Error decoding token: {e}")
-        return None
 
 
 def get_user_id_from_clerk_user(user: Optional[ClerkUser]) -> Optional[str]:
@@ -807,7 +781,7 @@ async def load_spatialite_data(request: SpatialiteQueryRequest):
     try:
         gdf = load_spatialite_layer(
             table=request.table,
-            where=request.where,
+            conditions=request.conditions,
             limit=request.limit,
             layer_type=request.layer_type,
         )
@@ -993,6 +967,9 @@ def _load_single_file(file_path: str, use_local: bool, local_root: str, s3_clien
     Returns a dict with either 'gdf' and 'layer_data' on success, or 'error' on failure.
     """
     try:
+        source_path = None
+        file_like = None
+
         if use_local and local_root:
             # Load from local filesystem
             local_file_path = os.path.join(local_root, file_path)
@@ -1000,8 +977,7 @@ def _load_single_file(file_path: str, use_local: bool, local_root: str, s3_clien
             if not os.path.exists(local_file_path):
                 return {"error": f"File not found: {local_file_path}", "file_path": file_path}
 
-            # Read directly from local file
-            gdf = gpd.read_file(local_file_path, layer=0)
+            source_path = local_file_path
         else:
             # Load from S3
             s3_key = file_path if file_path.startswith('ITALIA/') else f"ITALIA/{file_path}"
@@ -1013,9 +989,126 @@ def _load_single_file(file_path: str, use_local: bool, local_root: str, s3_clien
             # Save to an in-memory file-like object
             file_like = BytesIO(body.read())
             file_like.seek(0)
+            source_path = file_like
 
-            # Read with geopandas
-            gdf = gpd.read_file(file_like, layer=0)
+        # Try normal loading first with GDAL configured to accept invalid geometries
+        import os as _os
+        # Set GDAL options to be more lenient with geometry errors
+        old_ogr_skip = _os.environ.get('OGR_GEOMETRY_ACCEPT_UNCLOSED_RING')
+        _os.environ['OGR_GEOMETRY_ACCEPT_UNCLOSED_RING'] = 'YES'
+
+        try:
+            gdf = gpd.read_file(source_path, layer=0)
+        except Exception as geom_error:
+            # Check if it's a geometry error (unclosed rings, etc.)
+            error_str = str(geom_error).lower()
+            is_geometry_error = any(x in error_str for x in [
+                'linearring', 'closed', 'geometry', 'illegal', 'invalid',
+                'ring', 'polygon', 'coordinate', 'ogr'
+            ])
+            if is_geometry_error:
+                logger.warning(f"Geometry error in {file_path}, attempting repair load: {geom_error}")
+
+                # For GeoPackage files, try reading with SQL and make_valid
+                if file_path.endswith('.gpkg'):
+                    import sqlite3
+                    from shapely import wkb
+                    from shapely.validation import make_valid
+
+                    if isinstance(source_path, BytesIO):
+                        # Write BytesIO to temp file for sqlite access
+                        import tempfile
+                        with tempfile.NamedTemporaryFile(suffix='.gpkg', delete=False) as tmp:
+                            tmp.write(source_path.getvalue())
+                            tmp_path = tmp.name
+                    else:
+                        tmp_path = source_path
+
+                    try:
+                        conn = sqlite3.connect(tmp_path)
+
+                        # Find the geometry table
+                        cursor = conn.execute(
+                            "SELECT table_name FROM gpkg_geometry_columns LIMIT 1"
+                        )
+                        table_name = cursor.fetchone()[0]
+
+                        # Read all data including raw geometry bytes
+                        df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
+                        conn.close()
+
+                        # Find geometry column
+                        geom_col = None
+                        for col in df.columns:
+                            if col.lower() in ('geom', 'geometry', 'shape'):
+                                geom_col = col
+                                break
+
+                        if geom_col and geom_col in df.columns:
+                            # Parse WKB geometries with repair
+                            geometries = []
+                            for raw_geom in df[geom_col]:
+                                if raw_geom is None:
+                                    geometries.append(None)
+                                    continue
+                                try:
+                                    # GeoPackage uses standard WKB with a header
+                                    # Skip first 8 bytes (GP header) if present
+                                    if isinstance(raw_geom, bytes) and len(raw_geom) > 8:
+                                        # Check for "GP" magic bytes
+                                        if raw_geom[:2] == b'GP':
+                                            # Parse GeoPackage header to find WKB offset
+                                            flags = raw_geom[3]
+                                            envelope_type = (flags >> 1) & 0x07
+                                            envelope_sizes = {0: 0, 1: 32, 2: 48, 3: 48, 4: 64}
+                                            header_size = 8 + envelope_sizes.get(envelope_type, 0)
+                                            wkb_data = raw_geom[header_size:]
+                                        else:
+                                            wkb_data = raw_geom
+
+                                        geom = wkb.loads(wkb_data)
+                                        if not geom.is_valid:
+                                            geom = make_valid(geom)
+                                        geometries.append(geom)
+                                    else:
+                                        geometries.append(None)
+                                except Exception as parse_err:
+                                    logger.debug(f"Failed to parse geometry: {parse_err}")
+                                    geometries.append(None)
+
+                            # Drop the raw geometry column and create GeoDataFrame
+                            df = df.drop(columns=[geom_col])
+                            gdf = gpd.GeoDataFrame(df, geometry=geometries, crs="EPSG:4326")
+
+                            # Remove null geometries
+                            gdf = gdf[gdf.geometry.notna() & ~gdf.geometry.is_empty]
+                            logger.info(f"Repair-loaded {len(gdf)} features from {file_path}")
+                        else:
+                            raise ValueError(f"No geometry column found in {file_path}")
+
+                    finally:
+                        # Clean up temp file if we created one
+                        if isinstance(source_path, BytesIO):
+                            import os as _os
+                            try:
+                                _os.unlink(tmp_path)
+                            except:
+                                pass
+                else:
+                    # For non-GPKG files, re-raise
+                    raise
+            else:
+                raise
+
+        # Repair invalid geometries (e.g., unclosed rings, self-intersections)
+        # This fixes common issues like "Points of LinearRing do not form a closed linestring"
+        from shapely.validation import make_valid
+        invalid_count = (~gdf.geometry.is_valid).sum()
+        if invalid_count > 0:
+            logger.warning(f"Repairing {invalid_count} invalid geometries in {file_path}")
+            gdf['geometry'] = gdf.geometry.apply(lambda g: make_valid(g) if g is not None and not g.is_valid else g)
+            # Remove any null geometries that couldn't be repaired
+            gdf = gdf[~gdf.geometry.is_empty & gdf.geometry.notna()]
 
         # Add layer identifier and feature IDs
         layer_name = os.path.basename(file_path)
@@ -1025,6 +1118,23 @@ def _load_single_file(file_path: str, use_local: bool, local_root: str, s3_clien
         if 'feature_id' not in gdf.columns:
             gdf['feature_id'] = range(len(gdf))
 
+        # Calculate area in hectares (assuming EPSG:4326, convert to metric)
+        try:
+            # Project to equal-area CRS for accurate area calculation
+            gdf_projected = gdf.to_crs('EPSG:3857')  # Web Mercator for quick calculation
+            gdf['area_m2'] = gdf_projected.geometry.area
+            gdf['area_ha'] = (gdf['area_m2'] / 10000).round(2)  # Hectares with 2 decimal places
+            gdf['area_display'] = gdf['area_ha'].apply(lambda x: f"{x:.2f} ha" if x >= 0.01 else f"{int(x * 10000)} m²")
+        except Exception as area_err:
+            logger.debug(f"Could not calculate area: {area_err}")
+            gdf['area_display'] = 'N/A'
+
+        # Restore GDAL environment variable
+        if old_ogr_skip is None:
+            _os.environ.pop('OGR_GEOMETRY_ACCEPT_UNCLOSED_RING', None)
+        else:
+            _os.environ['OGR_GEOMETRY_ACCEPT_UNCLOSED_RING'] = old_ogr_skip
+
         return {
             "gdf": gdf,
             "layer_name": layer_name,
@@ -1033,25 +1143,25 @@ def _load_single_file(file_path: str, use_local: bool, local_root: str, s3_clien
         }
 
     except Exception as e:
+        # Restore GDAL environment variable on error too
+        if 'old_ogr_skip' in locals():
+            if old_ogr_skip is None:
+                _os.environ.pop('OGR_GEOMETRY_ACCEPT_UNCLOSED_RING', None)
+            else:
+                _os.environ['OGR_GEOMETRY_ACCEPT_UNCLOSED_RING'] = old_ogr_skip
         return {"error": str(e), "file_path": file_path}
 
 
 @api_router.post("/load-cadastral-files/")
-async def load_multiple_cadastral_files(request: dict):
+async def load_multiple_cadastral_files(request: CadastralFileRequest):
     """
     Load multiple cadastral files from local filesystem (development) or S3 (production).
 
     Optimized for performance with parallel file loading using ThreadPoolExecutor.
-
-    Request body:
-        file_paths: List of file paths to load
-        file_types: List of file types (optional)
-        clear_existing: If True, clears existing layers before loading new ones (default: True)
     """
     try:
-        file_paths = request.get('file_paths', [])
-        request.get('file_types', [])
-        clear_existing = request.get('clear_existing', True)  # Default to clearing existing data
+        file_paths = request.file_paths
+        clear_existing = request.clear_existing
 
         if not file_paths:
             raise HTTPException(status_code=400, detail="No file paths provided")
@@ -1868,11 +1978,12 @@ class DrawingData(BaseModel):
 @api_router.post("/save-drawn-polygons")
 async def save_drawn_polygons(
     drawing_data: DrawingData,
-    user_id: str = Depends(get_user_from_token)
+    user: Optional[ClerkUser] = Depends(get_current_user_optional)
 ):
     """Save drawn polygons to a user-specific JSON file"""
-    if not user_id:
+    if not user:
         raise HTTPException(status_code=401, detail="Authentication required")
+    user_id = user.id
 
     try:
         # Create user-specific directory
@@ -1913,10 +2024,11 @@ async def save_drawn_polygons(
         raise HTTPException(status_code=500, detail=f"Failed to save drawings: {str(e)}")
 
 @api_router.get("/load-drawn-polygons")
-async def load_drawn_polygons(user_id: str = Depends(get_user_from_token)):
+async def load_drawn_polygons(user: Optional[ClerkUser] = Depends(get_current_user_optional)):
     """Load the most recently saved drawn polygons for authenticated user"""
-    if not user_id:
+    if not user:
         raise HTTPException(status_code=401, detail="Authentication required")
+    user_id = user.id
 
     try:
         # Try to load from user-specific directory
@@ -2468,10 +2580,11 @@ async def delete_microzone(
 # User Profile and Dashboard Endpoints
 
 @api_router.get("/user/profile")
-async def get_user_profile(user_id: str = Depends(get_user_from_token)):
+async def get_user_profile(user: Optional[ClerkUser] = Depends(get_current_user_optional)):
     """Get user profile information and drawing statistics"""
-    if not user_id:
+    if not user:
         raise HTTPException(status_code=401, detail="Authentication required")
+    user_id = user.id
 
     try:
         user_dir = get_user_directory(user_id)
@@ -2508,10 +2621,11 @@ async def get_user_profile(user_id: str = Depends(get_user_from_token)):
         raise HTTPException(status_code=500, detail=f"Failed to get user profile: {str(e)}")
 
 @api_router.get("/user/drawings")
-async def list_user_drawings(user_id: str = Depends(get_user_from_token)):
+async def list_user_drawings(user: Optional[ClerkUser] = Depends(get_current_user_optional)):
     """List all drawing sessions for authenticated user"""
-    if not user_id:
+    if not user:
         raise HTTPException(status_code=401, detail="Authentication required")
+    user_id = user.id
 
     try:
         user_dir = get_user_directory(user_id)
@@ -3169,6 +3283,169 @@ def _rows_to_features(rows) -> list:
         features.append(feature)
 
     return features
+
+# ============================================================================
+# Datashader Tile Generation Endpoints
+# ============================================================================
+
+from fastapi.responses import Response
+from land_registry.datashader_service import DatashaderTileService
+import asyncio
+
+# Initialize datashader service with cadastral database
+_datashader_service = None
+
+def get_datashader_service():
+    """Lazy initialization of datashader service."""
+    global _datashader_service
+    if _datashader_service is None:
+        try:
+            from land_registry.config import get_cadastral_db_path
+            db = CadastralDatabase(get_cadastral_db_path())
+            _datashader_service = DatashaderTileService(db)
+            logger.info("DatashaderTileService initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize DatashaderTileService: {e}")
+            _datashader_service = DatashaderTileService(None)  # No database
+    return _datashader_service
+
+
+@api_router.get("/tiles/datashader/{z}/{x}/{y}.png")
+async def get_datashader_tile(
+    z: int,
+    x: int,
+    y: int,
+    region: Optional[str] = None,
+    colormap: str = "fire",
+    agg: str = "count",
+):
+    """
+    Generate datashader-based map tiles for high-performance visualization.
+
+    Compatible with Leaflet TileLayer for seamless integration.
+
+    Args:
+        z: Zoom level (0-18)
+        x: Tile X coordinate
+        y: Tile Y coordinate
+        region: Optional region filter
+        colormap: Color palette (fire, viridis, blues, etc.)
+        agg: Aggregation type (count, mean, sum)
+
+    Returns:
+        PNG tile image
+    """
+    try:
+        service = get_datashader_service()
+
+        # Run datashader tile generation in thread pool (CPU-intensive)
+        tile_bytes = await asyncio.to_thread(
+            service.generate_tile,
+            x, y, z,
+            region=region,
+            agg_type=agg,
+            colormap=colormap
+        )
+
+        return Response(
+            content=tile_bytes,
+            media_type="image/png",
+            headers={
+                "Cache-Control": "public, max-age=3600",  # Cache tiles for 1 hour
+                "Access-Control-Allow-Origin": "*",
+            },
+        )
+    except Exception as e:
+        logger.error(f"Datashader tile error {z}/{x}/{y}: {e}", exc_info=True)
+        # Return empty tile on error
+        service = get_datashader_service()
+        empty = service._empty_tile()
+        return Response(content=empty, media_type="image/png")
+
+
+@api_router.get("/datashader/heatmap/{region}")
+async def get_datashader_heatmap(
+    region: str,
+    width: int = 800,
+    height: int = 600,
+    colormap: str = "fire",
+):
+    """
+    Generate full-region density heatmap using datashader.
+
+    Useful for overview visualizations and statistical analysis.
+
+    Args:
+        region: Region name (e.g., "LOMBARDIA")
+        width: Image width in pixels (default 800)
+        height: Image height in pixels (default 600)
+        colormap: Color palette name (fire, viridis, blues, etc.)
+
+    Returns:
+        PNG heatmap image
+    """
+    try:
+        service = get_datashader_service()
+
+        # Run in thread pool (CPU-intensive)
+        img_bytes = await asyncio.to_thread(
+            service.generate_density_heatmap,
+            region, width, height, colormap
+        )
+
+        return Response(
+            content=img_bytes,
+            media_type="image/png",
+            headers={
+                "Cache-Control": "public, max-age=7200",  # Cache for 2 hours
+                "Content-Disposition": f'inline; filename="{region}_heatmap.png"',
+            },
+        )
+    except Exception as e:
+        logger.error(f"Datashader heatmap error for {region}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to generate heatmap: {str(e)}")
+
+
+@api_router.get("/datashader/categorical/{region}")
+async def get_datashader_categorical(
+    region: str,
+    field: str = "foglio",
+    width: int = 800,
+    height: int = 600,
+):
+    """
+    Generate categorical map colored by field value (e.g., foglio, property type).
+
+    Args:
+        region: Region name
+        field: Field name for categorization (foglio, particella, etc.)
+        width: Image width in pixels
+        height: Image height in pixels
+
+    Returns:
+        PNG categorical map image
+    """
+    try:
+        service = get_datashader_service()
+
+        # Run in thread pool
+        img_bytes = await asyncio.to_thread(
+            service.generate_categorical_map,
+            region, field, width, height
+        )
+
+        return Response(
+            content=img_bytes,
+            media_type="image/png",
+            headers={
+                "Cache-Control": "public, max-age=7200",
+                "Content-Disposition": f'inline; filename="{region}_{field}_map.png"',
+            },
+        )
+    except Exception as e:
+        logger.error(f"Datashader categorical map error for {region}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to generate map: {str(e)}")
+
 
 # ============================================================================
 # FlatGeobuf (FGB) API Endpoints

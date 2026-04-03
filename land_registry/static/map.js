@@ -1519,41 +1519,29 @@ function loadGeoJsonData() {
         try {
             const geoJsonData = window.geoJsonData;
             if (geoJsonData && geoJsonData.features && geoJsonData.features.length > 0) {
-                currentGeoJsonLayer = L.geoJSON(geoJsonData, {
-                    style: function(feature) {
-                        return {
-                            color: '#3388ff',
-                            weight: 2,
-                            fillOpacity: 0.4
-                        };
-                    },
-                    onEachFeature: function(feature, layer) {
-                        // Apply stripe pattern to each polygon
-                        layer.on('add', function() {
-                            const pathElement = layer.getElement();
-                            if (pathElement) {
-                                const angle = getRandomStripeAngle();
-                                const patternId = createStripePattern(angle, '#3388ff');
-                                pathElement.style.fill = `url(#${patternId})`;
-                            }
-                        });
+                // Use WebGL renderer for high performance
+                const featureCount = geoJsonData.features.length;
+                console.log(`[loadGeoJsonData] Loading ${featureCount} features`);
 
-                        // Add click handler for selection
-                        layer.on('click', function(e) {
-                            debugLog('Polygon clicked!');
-                            L.DomEvent.stopPropagation(e);
-                            togglePolygonSelection(layer);
-                        });
-
-                        if (feature.properties) {
-                            let popupContent = '<strong>Feature Properties:</strong><br>';
-                            for (let key in feature.properties) {
-                                popupContent += `<strong>${key}:</strong> ${feature.properties[key]}<br>`;
-                            }
-                            layer.bindPopup(popupContent);
-                        }
+                currentGeoJsonLayer = WebGLRenderer.renderGeoJSON(geoJsonData, {
+                    color: '#3388ff',
+                    weight: 2,
+                    fillOpacity: 0.4,
+                    useStripes: true,  // Enable SVG stripe patterns (SVG mode only)
+                    enablePopups: true,
+                    onClick: function(feature, layer, e) {
+                        debugLog('Polygon clicked!');
+                        L.DomEvent.stopPropagation(e);
+                        togglePolygonSelection(layer);
                     }
-                }).addTo(map);
+                });
+
+                if (currentGeoJsonLayer) {
+                    currentGeoJsonLayer.addTo(map);
+                } else {
+                    console.warn('[loadGeoJsonData] WebGLRenderer returned null layer');
+                    return;
+                }
 
                 // Fit map to data bounds
                 map.fitBounds(currentGeoJsonLayer.getBounds());
@@ -1805,6 +1793,97 @@ function initializeMap() {
 
     // Initialize drawing controls state
     updateDrawingControls();
+
+    // Datashader Tile Layer Management
+    // Global variable for datashader layer
+    window.datashaderLayer = null;
+    window.currentDatashaderRegion = null;
+
+    /**
+     * Add datashader tile layer for high-performance visualization of massive datasets
+     * @param {string} region - Region name (optional, for filtering)
+     * @param {string} colormap - Color palette (fire, viridis, blues, etc.)
+     * @param {number} opacity - Layer opacity (0-1)
+     */
+    window.addDatashaderLayer = function(region = null, colormap = 'fire', opacity = 0.7) {
+        if (window.datashaderLayer) {
+            map.removeLayer(window.datashaderLayer);
+        }
+
+        const regionParam = region ? `&region=${encodeURIComponent(region)}` : '';
+
+        window.datashaderLayer = L.tileLayer(
+            `/api/v1/tiles/datashader/{z}/{x}/{y}.png?colormap=${colormap}${regionParam}`,
+            {
+                attribution: 'Datashader Density Visualization',
+                opacity: opacity,
+                maxZoom: 18,
+                tileSize: 256,
+                zIndex: 10,
+                errorTileUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+            }
+        );
+
+        window.datashaderLayer.addTo(map);
+        window.currentDatashaderRegion = region;
+
+        console.log(`[Datashader] Added tile layer${region ? ' for region: ' + region : ''} with colormap: ${colormap}`);
+
+        return window.datashaderLayer;
+    };
+
+    /**
+     * Remove datashader tile layer from map
+     */
+    window.removeDatashaderLayer = function() {
+        if (window.datashaderLayer) {
+            map.removeLayer(window.datashaderLayer);
+            window.datashaderLayer = null;
+            window.currentDatashaderRegion = null;
+            console.log('[Datashader] Removed tile layer');
+        }
+    };
+
+    /**
+     * Toggle datashader layer visibility
+     */
+    window.toggleDatashaderLayer = function() {
+        if (window.datashaderLayer) {
+            if (map.hasLayer(window.datashaderLayer)) {
+                map.removeLayer(window.datashaderLayer);
+                console.log('[Datashader] Layer hidden');
+            } else {
+                window.datashaderLayer.addTo(map);
+                console.log('[Datashader] Layer shown');
+            }
+        } else {
+            console.warn('[Datashader] No layer to toggle - add layer first with addDatashaderLayer()');
+        }
+    };
+
+    /**
+     * Update datashader layer colormap
+     * @param {string} colormap - New color palette
+     */
+    window.updateDatashaderColormap = function(colormap = 'fire') {
+        if (window.datashaderLayer) {
+            const region = window.currentDatashaderRegion;
+            const opacity = window.datashaderLayer.options.opacity;
+            window.addDatashaderLayer(region, colormap, opacity);
+            console.log(`[Datashader] Updated colormap to: ${colormap}`);
+        }
+    };
+
+    /**
+     * Set datashader layer opacity
+     * @param {number} opacity - Opacity value (0-1)
+     */
+    window.setDatashaderOpacity = function(opacity) {
+        if (window.datashaderLayer) {
+            window.datashaderLayer.setOpacity(opacity);
+            console.log(`[Datashader] Set opacity to: ${opacity}`);
+        }
+    };
 
     // Fullscreen control
     L.control.fullscreen({
@@ -2363,6 +2442,37 @@ window.loadCadastralSelection = async function() {
     loadBtn.disabled = true;
     loadBtn.textContent = 'Loading...';
 
+    // Get progress elements
+    const progressContainer = document.getElementById('loadingProgress');
+    const progressBar = document.getElementById('progressBar');
+    const progressPercent = document.getElementById('progressPercent');
+    const progressStatus = document.getElementById('progressStatus');
+    const currentFileEl = document.getElementById('currentFile');
+    const loadedCountEl = document.getElementById('loadedCount');
+    const featureCountEl = document.getElementById('featureCount');
+
+    // Show progress indicator
+    if (progressContainer) {
+        progressContainer.style.display = 'block';
+        progressBar.style.width = '0%';
+        progressPercent.textContent = '0%';
+        progressStatus.textContent = 'Initializing...';
+        currentFileEl.textContent = 'Preparing to load files...';
+        loadedCountEl.textContent = '0 files';
+        featureCountEl.textContent = '0 features';
+    }
+
+    // Helper function to update progress
+    const updateProgress = (current, total, filename, loadedFiles, totalFeatures) => {
+        const percent = Math.round((current / total) * 100);
+        if (progressBar) progressBar.style.width = `${percent}%`;
+        if (progressPercent) progressPercent.textContent = `${percent}%`;
+        if (progressStatus) progressStatus.textContent = `Loading file ${current} of ${total}`;
+        if (currentFileEl) currentFileEl.textContent = filename || '';
+        if (loadedCountEl) loadedCountEl.textContent = `${loadedFiles} files loaded`;
+        if (featureCountEl) featureCountEl.textContent = `${totalFeatures.toLocaleString()} features`;
+    };
+
     try {
         debugLog(`Loading ${filePaths.length} cadastral files directly from S3:`, filePaths);
 
@@ -2372,10 +2482,13 @@ window.loadCadastralSelection = async function() {
         // Load files sequentially from S3
         const loadedLayers = [];
         let successfulLoads = 0;
+        let totalFeaturesLoaded = 0;
 
         for (let i = 0; i < filePaths.length; i++) {
             const filePath = filePaths[i];
+            const filename = filePath.split('/').pop();
             loadBtn.textContent = `Loading... (${i + 1}/${filePaths.length})`;
+            updateProgress(i + 1, filePaths.length, filename, successfulLoads, totalFeaturesLoaded);
 
             try {
                 debugLog(`Loading file ${i + 1}/${filePaths.length} via backend API: ${filePath}`);
@@ -2410,6 +2523,10 @@ window.loadCadastralSelection = async function() {
                     // Add the layer to our collection
                     loadedLayers.push(layerData);
                     successfulLoads++;
+                    totalFeaturesLoaded += layerData.feature_count;
+
+                    // Update progress with new totals
+                    updateProgress(i + 1, filePaths.length, filename, successfulLoads, totalFeaturesLoaded);
 
                     // Add to map immediately
                     addGeoJsonToMap(geojsonData, {
@@ -2430,16 +2547,7 @@ window.loadCadastralSelection = async function() {
 
         // Final processing after all files
         if (successfulLoads > 0) {
-            // Fit map to combined bounds of ONLY the newly loaded layers
-            if (window.map && loadedLayers.length > 0) {
-                debugLog(`Zooming to ${loadedLayers.length} newly loaded layers only`);
-                fitMapToNewLayers(loadedLayers);
-            }
-
-
-            // Show success message
             const totalFeatures = loadedLayers.reduce((sum, layer) => sum + layer.feature_count, 0);
-            alert(`Successfully loaded ${successfulLoads}/${filePaths.length} cadastral files with ${totalFeatures} features.`);
 
             // Update table info if table view is active
             const tableInfo = document.getElementById('tableInfo');
@@ -2447,8 +2555,23 @@ window.loadCadastralSelection = async function() {
                 tableInfo.textContent = `${totalFeatures} features loaded`;
             }
 
-            // Switch to map view
+            // Switch to map view first so the map is visible
             showMapView();
+
+            // Fit map to combined bounds of ONLY the newly loaded layers
+            // Use setTimeout to ensure the map view is fully rendered before zooming
+            setTimeout(() => {
+                if (window.map && loadedLayers.length > 0) {
+                    debugLog(`Zooming to ${loadedLayers.length} newly loaded layers only`);
+                    fitMapToNewLayers(loadedLayers);
+
+                    // Invalidate size to ensure proper rendering after view change
+                    map.invalidateSize();
+                }
+            }, 100);
+
+            // Show success message after zoom animation starts (non-blocking notification)
+            showLoadNotification(successfulLoads, filePaths.length, totalFeatures);
         } else {
             alert(`No geospatial data could be loaded. Files checked:\n${filePaths.map(p => `/api/v1/load-cadastral-files/${p}`).join('\n')}`);
         }
@@ -2460,10 +2583,196 @@ window.loadCadastralSelection = async function() {
         // Re-enable button
         loadBtn.disabled = false;
         loadBtn.textContent = 'Load Selected Files';
+
+        // Hide progress indicator after a brief delay to show completion
+        if (progressContainer) {
+            if (progressBar) progressBar.style.width = '100%';
+            if (progressStatus) progressStatus.textContent = 'Complete!';
+            setTimeout(() => {
+                progressContainer.style.display = 'none';
+            }, 1500);
+        }
     }
 };
 
+// ==========================================
+// Parcel Search Functionality
+// ==========================================
+
+// Store for search highlights
+let searchHighlightLayer = null;
+
+/**
+ * Search for parcels by foglio and/or particella
+ */
+window.searchParcels = function() {
+    const foglioInput = document.getElementById('searchFoglio');
+    const particellaInput = document.getElementById('searchParticella');
+    const resultsDiv = document.getElementById('searchResults');
+    const resultCountSpan = document.getElementById('searchResultCount');
+
+    const foglioSearch = (foglioInput?.value || '').trim().toLowerCase();
+    const particellaSearch = (particellaInput?.value || '').trim().toLowerCase();
+
+    if (!foglioSearch && !particellaSearch) {
+        alert('Please enter a foglio number, particella number, or both.');
+        return;
+    }
+
+    // Clear previous search highlights
+    clearParcelSearch();
+
+    // Collect all matching features from all layers
+    const matchingFeatures = [];
+
+    map.eachLayer(function(layer) {
+        // Check if this is a GeoJSON layer group
+        if (layer instanceof L.LayerGroup || layer instanceof L.GeoJSON) {
+            layer.eachLayer(function(sublayer) {
+                if (sublayer.feature) {
+                    const feature = sublayer.feature;
+                    const props = feature.properties || {};
+
+                    // Extract foglio and particella from LABEL or specific fields
+                    // LABEL format is typically "foglio/particella" e.g., "12/456"
+                    const label = (props.LABEL || '').toLowerCase();
+                    const foglio = (props.foglio || props.FOGLIO || '').toString().toLowerCase();
+                    const particella = (props.particella || props.PARTICELLA || '').toString().toLowerCase();
+
+                    let matches = true;
+
+                    // Check foglio match
+                    if (foglioSearch) {
+                        const foglioFromLabel = label.split('/')[0] || '';
+                        if (foglio !== foglioSearch && foglioFromLabel !== foglioSearch) {
+                            matches = false;
+                        }
+                    }
+
+                    // Check particella match
+                    if (particellaSearch && matches) {
+                        const particellaFromLabel = label.split('/')[1] || '';
+                        if (particella !== particellaSearch && particellaFromLabel !== particellaSearch) {
+                            matches = false;
+                        }
+                    }
+
+                    if (matches) {
+                        matchingFeatures.push({
+                            feature: feature,
+                            layer: sublayer
+                        });
+                    }
+                }
+            });
+        }
+    });
+
+    // Show results
+    if (resultsDiv && resultCountSpan) {
+        resultsDiv.style.display = 'block';
+        resultCountSpan.textContent = `${matchingFeatures.length} parcel${matchingFeatures.length !== 1 ? 's' : ''} found`;
+
+        if (matchingFeatures.length === 0) {
+            resultsDiv.classList.add('no-results');
+        } else {
+            resultsDiv.classList.remove('no-results');
+        }
+    }
+
+    if (matchingFeatures.length === 0) {
+        return;
+    }
+
+    // Create highlight layer for matching features
+    const highlightFeatures = matchingFeatures.map(m => m.feature);
+    const highlightGeoJSON = {
+        type: 'FeatureCollection',
+        features: highlightFeatures
+    };
+
+    searchHighlightLayer = L.geoJSON(highlightGeoJSON, {
+        style: {
+            color: '#ff6600',
+            weight: 4,
+            fillColor: '#ff6600',
+            fillOpacity: 0.3,
+            opacity: 1
+        },
+        onEachFeature: function(feature, layer) {
+            const props = feature.properties || {};
+            const label = props.LABEL || 'Unknown';
+            const comune = props.ADMINISTRATIVEUNIT || '';
+            const area = props.area_display || '';
+
+            layer.bindPopup(`
+                <div class="search-result-popup">
+                    <strong>📍 ${label}</strong><br>
+                    ${comune ? `<span style="color:#666">Comune: ${comune}</span><br>` : ''}
+                    ${area ? `<span style="color:#666">Area: ${area}</span>` : ''}
+                </div>
+            `);
+        }
+    }).addTo(map);
+
+    // Fit map to show all results
+    const bounds = searchHighlightLayer.getBounds();
+    if (bounds.isValid()) {
+        map.fitBounds(bounds, { padding: [50, 50], maxZoom: 17 });
+    }
+
+    // If only one result, open its popup
+    if (matchingFeatures.length === 1) {
+        searchHighlightLayer.eachLayer(function(layer) {
+            layer.openPopup();
+        });
+    }
+
+    debugLog(`Search found ${matchingFeatures.length} parcels matching foglio="${foglioSearch}" particella="${particellaSearch}"`);
+};
+
+/**
+ * Clear search results and highlights
+ */
+window.clearParcelSearch = function() {
+    // Remove highlight layer
+    if (searchHighlightLayer) {
+        map.removeLayer(searchHighlightLayer);
+        searchHighlightLayer = null;
+    }
+
+    // Clear inputs
+    const foglioInput = document.getElementById('searchFoglio');
+    const particellaInput = document.getElementById('searchParticella');
+    if (foglioInput) foglioInput.value = '';
+    if (particellaInput) particellaInput.value = '';
+
+    // Hide results
+    const resultsDiv = document.getElementById('searchResults');
+    if (resultsDiv) {
+        resultsDiv.style.display = 'none';
+        resultsDiv.classList.remove('no-results');
+    }
+};
+
+// Add keyboard shortcut for search (Enter key in inputs)
+document.addEventListener('DOMContentLoaded', function() {
+    const foglioInput = document.getElementById('searchFoglio');
+    const particellaInput = document.getElementById('searchParticella');
+
+    const handleEnter = function(e) {
+        if (e.key === 'Enter') {
+            window.searchParcels();
+        }
+    };
+
+    if (foglioInput) foglioInput.addEventListener('keypress', handleEnter);
+    if (particellaInput) particellaInput.addEventListener('keypress', handleEnter);
+});
+
+// ==========================================
 // Helper functions for loading cadastral data
+// ==========================================
 function clearMap() {
     if (currentGeoJsonLayer) {
         map.removeLayer(currentGeoJsonLayer);
@@ -2481,41 +2790,25 @@ function clearMap() {
 function addGeoJsonToMap(geojson, options = {}) {
     if (!map || !geojson) return;
 
-    const layer = L.geoJSON(geojson, {
-        style: function(feature) {
-            return {
-                color: options.color || '#3388ff',
-                weight: 2,
-                opacity: 1,
-                fillOpacity: 0.4
-            };
-        },
-        onEachFeature: function(feature, layer) {
-            // Apply stripe pattern to each polygon
-            layer.on('add', function() {
-                const pathElement = layer.getElement();
-                if (pathElement) {
-                    const angle = getRandomStripeAngle();
-                    const patternId = createStripePattern(angle, options.color || '#3388ff');
-                    pathElement.style.fill = `url(#${patternId})`;
-                }
-            });
-
-            // Add click handler for selection
-            layer.on('click', function(e) {
-                debugLog('Polygon clicked (addGeoJsonToMap)!');
-                L.DomEvent.stopPropagation(e);
-                togglePolygonSelection(layer);
-            });
-
-            // Add popup with feature properties - prioritizing cadastral data
-            if (feature.properties) {
-                const popupContent = formatCadastralPopup(feature.properties);
-                layer.bindPopup(popupContent, { maxWidth: 350 });
-            }
-        },
-        cadastralLayer: true // Mark as cadastral layer for identification
+    // Use WebGL renderer for high performance
+    const layer = WebGLRenderer.renderGeoJSON(geojson, {
+        color: options.color || '#3388ff',
+        weight: 2,
+        fillOpacity: 0.4,
+        useStripes: true,
+        enablePopups: true,
+        forceRenderer: options.forceRenderer,  // Allow override from options
+        onClick: function(feature, layer, e) {
+            debugLog('Polygon clicked (addGeoJsonToMap)!');
+            L.DomEvent.stopPropagation(e);
+            togglePolygonSelection(layer);
+        }
     });
+
+    if (!layer) {
+        console.warn('[addGeoJsonToMap] WebGLRenderer returned null layer');
+        return null;
+    }
 
     layer.addTo(map);
 
@@ -2687,6 +2980,49 @@ function fitMapToGeoJson(geojson) {
 }
 
 /**
+ * Show a non-blocking notification for successful file loading
+ * @param {number} successCount - Number of successfully loaded files
+ * @param {number} totalCount - Total number of files attempted
+ * @param {number} featureCount - Total number of features loaded
+ */
+function showLoadNotification(successCount, totalCount, featureCount) {
+    // Create notification element if it doesn't exist
+    let notification = document.getElementById('loadNotification');
+    if (!notification) {
+        notification = document.createElement('div');
+        notification.id = 'loadNotification';
+        notification.style.cssText = `
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #28a745;
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            z-index: 10000;
+            font-size: 14px;
+            font-weight: 500;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        `;
+        document.body.appendChild(notification);
+    }
+
+    // Set message
+    notification.innerHTML = `✓ Loaded ${successCount}/${totalCount} files · ${featureCount.toLocaleString()} features`;
+
+    // Show notification
+    notification.style.opacity = '1';
+
+    // Auto-hide after 4 seconds
+    setTimeout(() => {
+        notification.style.opacity = '0';
+    }, 4000);
+}
+
+/**
  * Fit map to the combined bounds of newly loaded layers only
  * This zooms the map to show exactly the new data that was just imported
  * @param {Array} newLayers - Array of layer objects with geojson property (newly loaded only)
@@ -2714,10 +3050,12 @@ function fitMapToNewLayers(newLayers) {
             }
         });
 
-        // Fit to combined bounds with padding
+        // Fit to combined bounds with padding and smooth animation
         if (combinedBounds && combinedBounds.isValid()) {
             map.fitBounds(combinedBounds, {
-                padding: [20, 20],
+                padding: [50, 50],
+                animate: true,
+                duration: 0.5,
                 maxZoom: 18  // Prevent zooming in too close on small areas
             });
             debugLog(`Fitted map to combined bounds of ${newLayers.length} newly loaded layers`);

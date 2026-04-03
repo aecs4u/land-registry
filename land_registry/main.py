@@ -336,15 +336,18 @@ async def health_check():
     return {"status": "healthy", "service": "land-registry"}
 
 
-def _build_main_map_shell_context(request: Request) -> dict:
-    """Build shared template context for the canonical map shell."""
+async def _build_main_map_shell_context(request: Request) -> dict:
+    """Build shared template context for the canonical map shell.
+
+    This is async to prevent blocking the event loop when calling server_document().
+    """
     # Get current data status
     current_gdf = get_current_gdf()
     has_data = current_gdf is not None and not current_gdf.empty
 
-    # Sync existing data to Panel Tabulator (in case data was loaded before page refresh)
-    from land_registry.map import _sync_to_panel
-    _sync_to_panel(current_gdf)
+    # NOTE: _sync_to_panel is disabled as it can cause deadlock due to param watchers
+    # blocking the async event loop when self.version += 1 triggers Panel recompute.
+    # Data sync happens via API endpoints instead.
 
     # Convert current data to GeoJSON if available
     geojson_data = None
@@ -377,9 +380,13 @@ def _build_main_map_shell_context(request: Request) -> dict:
     # Get Panel table documents (use configured routes from settings)
     # NOTE: Currently all routes point to the same Panel dashboard
     # Future work: Create separate Panel apps for unique table content
-    map_table = server_document(PANEL_MAP_TABLE_URL)
-    adjacency_table = server_document(PANEL_ADJACENCY_TABLE_URL)
-    mapping_table = server_document(PANEL_MAPPING_TABLE_URL)
+    # IMPORTANT: server_document() is a blocking HTTP call, so run it in a thread pool
+    # to avoid blocking the async event loop
+    map_table, adjacency_table, mapping_table = await asyncio.gather(
+        asyncio.to_thread(server_document, PANEL_MAP_TABLE_URL),
+        asyncio.to_thread(server_document, PANEL_ADJACENCY_TABLE_URL),
+        asyncio.to_thread(server_document, PANEL_MAPPING_TABLE_URL),
+    )
 
     return {
         "request": request,
@@ -400,7 +407,8 @@ def _build_main_map_shell_context(request: Request) -> dict:
 @app.get("/map", response_class=HTMLResponse)
 async def serve_map_shell(request: Request):
     """Serve the canonical map shell with full workflow capabilities."""
-    return templates.TemplateResponse("index.html", _build_main_map_shell_context(request))
+    context = await _build_main_map_shell_context(request)
+    return templates.TemplateResponse("index.html", context)
 
 
 @app.get("/map_table")

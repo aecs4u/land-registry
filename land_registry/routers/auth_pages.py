@@ -3,6 +3,8 @@ HTML Authentication pages for Land Registry application.
 Provides login/register pages that use Clerk's hosted authentication UI.
 Falls back gracefully when aecs4u-auth is not installed.
 """
+import json as _json
+
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
@@ -35,14 +37,20 @@ async def login_page(request: Request, next: str = None):
             return RedirectResponse(url=redirect_url, status_code=302)
 
     publishable_key = config.clerk_publishable_key or ""
-    after_sign_in = next or auth_settings.after_sign_in_url
-    after_sign_up = auth_settings.after_sign_up_url
+    # Validate that `next` is a relative internal path to prevent open-redirect
+    # and XSS.  json.dumps() encodes the values as safe JS string literals.
+    _raw_next = next or auth_settings.after_sign_in_url
+    if not (_raw_next.startswith("/") and not _raw_next.startswith("//")):
+        _raw_next = auth_settings.after_sign_in_url
+    after_sign_in_js = _json.dumps(_raw_next)
+    after_sign_up_js = _json.dumps(auth_settings.after_sign_up_url)
+    publishable_key_js = _json.dumps(publishable_key)
 
     return HTMLResponse(f"""<!DOCTYPE html>
 <html>
 <head>
     <title>Login - Land Registry</title>
-    <script async crossorigin="anonymous" data-clerk-publishable-key="{publishable_key}" src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@latest/dist/clerk.browser.js" type="text/javascript"></script>
+    <script async crossorigin="anonymous" data-clerk-publishable-key={publishable_key_js} src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@latest/dist/clerk.browser.js" type="text/javascript"></script>
     <style>
         body {{ font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #f5f5f5; }}
         .container {{ text-align: center; background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
@@ -59,11 +67,11 @@ async def login_page(request: Request, next: str = None):
         window.addEventListener('load', async () => {{
             await window.Clerk.load();
             if (window.Clerk.user) {{
-                window.location.href = "{after_sign_in}";
+                window.location.href = {after_sign_in_js};
             }} else {{
                 window.Clerk.mountSignIn(document.getElementById('clerk-mount'), {{
-                    afterSignInUrl: "{after_sign_in}",
-                    afterSignUpUrl: "{after_sign_up}"
+                    afterSignInUrl: {after_sign_in_js},
+                    afterSignUpUrl: {after_sign_up_js}
                 }});
             }}
         }});

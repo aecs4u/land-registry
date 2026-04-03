@@ -3,15 +3,35 @@ Helper utilities for loading geodata from a SpatiaLite database.
 """
 
 import logging
+import re
 import sqlite3
 from contextlib import contextmanager
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import geopandas as gpd
 
 from land_registry.config import spatialite_settings
 
 logger = logging.getLogger(__name__)
+
+# Identifier pattern: letters, digits, underscores only (no SQL metacharacters).
+_IDENTIFIER_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+
+
+def _validate_identifier(name: str, label: str) -> None:
+    """Raise ValueError if *name* is not a safe SQL identifier."""
+    if not _IDENTIFIER_RE.match(name):
+        raise ValueError(f"Invalid {label} '{name}': only letters, digits and underscores are allowed")
+
+
+def _allowed_tables() -> frozenset:
+    """Return the set of table names that callers are permitted to query."""
+    return frozenset({
+        spatialite_settings.table,
+        "fogli",
+        "particelle",
+        "cadastral_parcels",
+    })
 
 
 @contextmanager
@@ -41,7 +61,7 @@ def _spatialite_connection(db_path: Optional[str] = None):
 
 def load_layer(
     table: Optional[str] = None,
-    where: Optional[str] = None,
+    conditions: Optional[Dict[str, Any]] = None,
     limit: Optional[int] = None,
     layer_type: Optional[str] = None,
 ):
@@ -49,30 +69,49 @@ def load_layer(
     Load a layer from SpatiaLite into a GeoDataFrame.
 
     Args:
-        table: Table/view name to query (defaults to settings.table)
-        where: Optional SQL WHERE clause (without the 'WHERE' keyword)
-        limit: Optional row limit (defaults to settings.default_limit)
-        layer_type: Layer type ('map' or 'ple') to determine database path
+        table: Table/view name to query (defaults to settings.table).
+               Must be in the allowlist of known table names.
+        conditions: Optional mapping of ``{column_name: value}`` pairs used
+                    to build a parameterised WHERE clause.  Column names must
+                    be valid SQL identifiers (letters/digits/underscores only).
+        limit: Optional row limit (defaults to settings.default_limit).
+        layer_type: Layer type ('map' or 'ple') to determine database path.
     """
     table_name = table or spatialite_settings.table
     row_limit = limit or spatialite_settings.default_limit
 
-    # Determine which database to use based on layer_type
+    # --- Table-name allowlist check -------------------------------------------
+    allowed = _allowed_tables()
+    if table_name not in allowed:
+        raise ValueError(
+            f"Table '{table_name}' is not in the list of allowed tables: {sorted(allowed)}"
+        )
+
+    # --- Determine which database to use --------------------------------------
     if layer_type == 'ple':
         db_path = spatialite_settings.db_ple_path
     else:
-        # Default to MAP database
         db_path = spatialite_settings.db_map_path
 
-    # Build query with optional filter/limit
+    # --- Build parameterised query -------------------------------------------
+    geom_col = spatialite_settings.geometry_column
     sql = (
-        f"SELECT *, ST_AsBinary({spatialite_settings.geometry_column}) AS geom "
+        f"SELECT *, ST_AsBinary({geom_col}) AS geom "
         f"FROM {table_name}"
     )
-    if where:
-        sql += f" WHERE {where}"
+    params: list = []
+
+    if conditions:
+        clauses = []
+        for col, val in conditions.items():
+            _validate_identifier(col, "column name")
+            clauses.append(f"{col} = ?")
+            params.append(val)
+        sql += " WHERE " + " AND ".join(clauses)
+
     if row_limit:
-        sql += f" LIMIT {row_limit}"
+        sql += " LIMIT ?"
+        params.append(row_limit)
 
     with _spatialite_connection(db_path) as conn:
         gdf = gpd.GeoDataFrame.from_postgis(
@@ -80,6 +119,7 @@ def load_layer(
             conn,
             geom_col="geom",
             crs=f"EPSG:{spatialite_settings.srid}",
+            params=params if params else None,
         )
 
     return gdf

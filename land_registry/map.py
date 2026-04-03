@@ -173,6 +173,87 @@ class ExportControl(MacroElement):
         self._name = 'ExportControl'
 
 
+class CadastralPopupStyle(MacroElement):
+    """Custom CSS styling for cadastral popups and tooltips"""
+
+    _template = Template("""
+        {% macro header(this, kwargs) %}
+            <style>
+                /* Cadastral popup card styling */
+                .leaflet-popup-content-wrapper {
+                    border-radius: 8px;
+                    box-shadow: 0 3px 14px rgba(0,0,0,0.2);
+                }
+
+                .leaflet-popup-content {
+                    margin: 12px 16px;
+                    min-width: 200px;
+                }
+
+                .cadastral-popup table {
+                    border-collapse: collapse;
+                    width: 100%;
+                    font-size: 13px;
+                }
+
+                .cadastral-popup table tr {
+                    border-bottom: 1px solid #eee;
+                }
+
+                .cadastral-popup table tr:last-child {
+                    border-bottom: none;
+                }
+
+                .cadastral-popup table th {
+                    text-align: left;
+                    padding: 8px 12px 8px 0;
+                    color: #666;
+                    font-weight: 600;
+                    font-size: 11px;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                    white-space: nowrap;
+                    vertical-align: top;
+                }
+
+                .cadastral-popup table td {
+                    padding: 8px 0;
+                    color: #333;
+                    font-weight: 500;
+                    word-break: break-word;
+                }
+
+                /* Highlight particella row */
+                .cadastral-popup table tr:first-child td {
+                    font-size: 16px;
+                    font-weight: 700;
+                    color: #1a5490;
+                }
+
+                /* Style the close button */
+                .leaflet-popup-close-button {
+                    color: #666 !important;
+                    font-size: 20px !important;
+                    padding: 8px !important;
+                }
+
+                .leaflet-popup-close-button:hover {
+                    color: #333 !important;
+                }
+
+                /* Popup tip */
+                .leaflet-popup-tip {
+                    box-shadow: 0 3px 14px rgba(0,0,0,0.1);
+                }
+            </style>
+        {% endmacro %}
+    """)
+
+    def __init__(self):
+        super(CadastralPopupStyle, self).__init__()
+        self._name = 'CadastralPopupStyle'
+
+
 class CustomZoomControl(MacroElement):
     """Custom Folium control for advanced zoom operations (Fit All, Fit Selected, Box Zoom, Reset)"""
 
@@ -568,10 +649,14 @@ def get_current_gdf():
 
 
 def set_current_gdf(gdf):
-    """Set the current GeoDataFrame and sync to Panel Tabulator"""
+    """Set the current GeoDataFrame.
+
+    NOTE: _sync_to_panel is disabled as it causes deadlock when param watchers
+    try to recompute while blocking the async event loop.
+    """
     global current_gdf
     current_gdf = gdf
-    _sync_to_panel(gdf)
+    # _sync_to_panel(gdf)  # Disabled - causes deadlock
 
 
 def _sync_to_panel(gdf):
@@ -870,6 +955,10 @@ class MapControlsManager:
         # Add custom zoom controls (Fit All, Fit Selected, Box Zoom, Reset, Fullscreen)
         custom_zoom_control = CustomZoomControl()
         map_instance.add_child(custom_zoom_control)
+
+        # Add cadastral popup styling
+        popup_style = CadastralPopupStyle()
+        map_instance.add_child(popup_style)
 
         # Add basic LayerControl for map providers (at the end after all layers are added)
         # This will automatically detect all TileLayer objects on the map
@@ -1239,13 +1328,25 @@ class IntegratedMapGenerator:
                             'opacity': 0.8,
                         },
                         popup=folium.GeoJsonPopup(
-                            fields=['layer_name', 'source_file', 'feature_id'],
-                            labels=True
+                            fields=['LABEL', 'ADMINISTRATIVEUNIT', 'area_display', 'layer_name', 'feature_id'],
+                            aliases=['Particella', 'Comune', 'Superficie', 'File Sorgente', 'ID'],
+                            labels=True,
+                            class_name='cadastral-popup'
                         ),
                         tooltip=folium.GeoJsonTooltip(
-                            fields=['layer_name'],
+                            fields=['LABEL', 'ADMINISTRATIVEUNIT', 'area_display'],
+                            aliases=['Particella:', 'Comune:', 'Area:'],
                             labels=True,
-                            sticky=True
+                            sticky=True,
+                            style='''
+                                background-color: rgba(255, 255, 255, 0.95);
+                                border: 1px solid #ccc;
+                                border-radius: 4px;
+                                box-shadow: 2px 2px 6px rgba(0,0,0,0.15);
+                                padding: 6px 10px;
+                                font-size: 13px;
+                                line-height: 1.4;
+                            '''
                         )
                     ).add_to(m)
         elif cadastral_geojson:
@@ -1259,7 +1360,26 @@ class IntegratedMapGenerator:
                     'weight': 2,
                     'fillOpacity': 0.3,
                 },
-                popup=folium.GeoJsonPopup(fields=['comune_name', 'foglio', 'particella', 'layer_type'] if 'properties' in str(cadastral_geojson) else [])
+                popup=folium.GeoJsonPopup(
+                    fields=['LABEL', 'ADMINISTRATIVEUNIT', 'area_display', 'layer_name', 'feature_id'],
+                    aliases=['Particella', 'Comune', 'Superficie', 'File Sorgente', 'ID'],
+                    labels=True,
+                    class_name='cadastral-popup'
+                ),
+                tooltip=folium.GeoJsonTooltip(
+                    fields=['LABEL', 'ADMINISTRATIVEUNIT', 'area_display'],
+                    aliases=['Particella:', 'Comune:', 'Area:'],
+                    labels=True,
+                    sticky=True,
+                    style='''
+                        background-color: rgba(255, 255, 255, 0.95);
+                        border: 1px solid #ccc;
+                        border-radius: 4px;
+                        box-shadow: 2px 2px 6px rgba(0,0,0,0.15);
+                        padding: 6px 10px;
+                        font-size: 13px;
+                    '''
+                )
             ).add_to(m)
 
         # Add auction properties if provided

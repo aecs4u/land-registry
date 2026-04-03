@@ -16,6 +16,11 @@ dependencies = [
     "geopandas>=0.13.0",
     "pandas>=2.0.0",
     "shapely>=2.0.0",
+    # Datashader for high-performance visualization
+    "datashader>=0.16.0",
+    "colorcet>=3.0.1",
+    "xarray>=2024.1.0",
+    "pillow>=10.0.0",
     # Basic utilities
     "requests>=2.25.0",
     "httpx>=0.25.0",
@@ -39,7 +44,6 @@ dependencies = [
     # AECS4U Storage (optional - app uses direct boto3/gcs fallback without it)
     # Install from Google Artifact Registry when needed:
     #   uv pip install aecs4u-storage --index-url https://europe-west1-python.pkg.dev/apps-aecs4u/python-packages/simple/
-    "moto>=5.1.13",
 ]
 
 [tool.black]

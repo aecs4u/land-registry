@@ -235,7 +235,8 @@ class CadastralSettings(BaseSettings):
     ]
 
     # Local cadastral data directory (used in development mode)
-    local_cadastral_data_path: Optional[str] = "data/catasto/ITALIA"
+    # Use absolute path for local development
+    local_cadastral_data_path: Optional[str] = "/data/catasto/ITALIA"
 
     # Use local files instead of S3 (set automatically based on environment)
     use_local_files: bool = False
