@@ -4,41 +4,60 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Land Registry Viewer application that allows users to visualize Italian cadastral (land registry) data. The application supports both file uploads (QPKG/GPKG) and direct loading of cadastral files from a structured Italian cadastral database. Built with FastAPI backend and Leaflet frontend with drawing capabilities.
+Land Registry Viewer for Italian cadastral (land registry) data. Supports file uploads (QPKG/GPKG), direct loading from a structured Italian cadastral database (local or S3), and high-performance visualization of large datasets. Built with FastAPI backend, Folium server-rendered maps, and Leaflet frontend with WebGL acceleration.
 
 ## Architecture
 
-The project structure follows a FastAPI web application pattern:
+### Backend (FastAPI)
 
-- **app/land_registry_app.py** - Main FastAPI application with REST endpoints
-- **app/map.py** - Core geospatial data processing (QPKG extraction, polygon adjacency analysis)
-- **app/templates/map.html** - Interactive web interface with Leaflet maps and drawing tools
-- **app/static/styles.css** - Application styling
-- **land_registry/generate_cadastral_form.py** - Utility to analyze and generate HTML forms for Italian cadastral data structure
-- **data/** - Contains JSON files with cadastral structure and drawn polygon data
+- **land_registry/main.py** - Application entry point, route definitions, Folium map generation, Panel/Bokeh integration
+- **land_registry/routers/api.py** - All REST API endpoints (file loading, spatial analysis, datashader tiles, FGB, streaming)
+- **land_registry/routers/auth.py** - Clerk JWT authentication
+- **land_registry/map.py** - Core geospatial processing (QPKG extraction, polygon adjacency, global GeoDataFrame state)
+- **land_registry/datashader_service.py** - Server-side tile generation using datashader for massive datasets
+- **land_registry/cadastral_db.py** - CadastralDatabase class for querying parcel data
+- **land_registry/config.py** - Application settings (S3, local paths, environment detection)
+- **land_registry/dashboard.py** - Panel/Bokeh dashboard integration
+
+### Frontend
+
+- **land_registry/templates/base.html** - Base template with all JS/CSS dependencies
+- **land_registry/templates/index.html** - Main map page (extends base.html)
+- **land_registry/static/map.js** - Client-side map logic, WebGL integration, zone management
+- **land_registry/static/folium-interface.js** - Folium iframe map interaction, cadastral selection, progressive loading
+- **land_registry/static/webgl-renderer.js** - GPU-accelerated rendering via Leaflet.glify with SVG fallback
+- **land_registry/static/progressive-loader.js** - NDJSON stream consumer for incremental layer rendering
+- **land_registry/static/table-manager.js** - Tabulator table management
+- **land_registry/static/styles.css** - All application styles including dark mode
+- **land_registry/static/vendor/glify-browser.js** - Bundled Leaflet.glify (local, not CDN)
+
+### Map Architecture (Important)
+
+The map uses a **Folium iframe** pattern, not a direct Leaflet instance:
+1. Server generates Folium HTML → embedded as `<iframe srcdoc="...">`
+2. The Leaflet map instance is accessed via `window[mapId]` where `mapId` comes from `.leaflet-container` elements
+3. **`window.map` is often null** — use the Folium map pattern (`getFoliumMapInstance()`) when adding layers dynamically
+4. `map.js` functions like `addGeoJsonToMap()` only work when a client-side map div exists (not in Folium mode)
 
 ## Key Dependencies
 
-- **FastAPI** (>=0.100.0) - Web framework and API endpoints
-- **geopandas** - Geospatial data processing and format conversion
-- **folium** - Alternative map generation (used in generate-map endpoint)
-- **SQLModel** (>=0.0.8) - Database modeling (appears unused in current implementation)
-- **Leaflet.js** - Frontend interactive mapping with drawing support
-- **Leaflet Draw** - Drawing tools for creating polygons and circles
+- **FastAPI** (>=0.100.0) - Web framework
+- **geopandas** - Geospatial data processing
+- **folium** - Server-side map generation (rendered as iframe)
+- **datashader** (>=0.16.0) - GPU/CPU-accelerated tile generation for large datasets
+- **colorcet** (>=3.0.1) - Professional color palettes for datashader
+- **panel** / **bokeh** - Dashboard tables
+- **Leaflet.js** - Frontend mapping (loaded in Folium iframe)
+- **Leaflet.glify** - WebGL polygon rendering (bundled locally)
 
 ## Development Commands
-
-The project uses pyproject.toml with uv as the package manager:
 
 ```bash
 # Install dependencies
 uv sync
 
-# Run the development server (fast shutdown)
+# Run the development server (recommended - fast shutdown)
 python run_dev.py
-
-# Run the development server (alternative)
-uvicorn land_registry.app:app --reload --host 127.0.0.1 --port 8000
 
 # Run tests
 uv run pytest
@@ -51,55 +70,57 @@ uv run black .
 
 # Sort imports
 uv run isort .
-
-# Lint code
-uv run flake8
 ```
+
+The dev server runs on **port 8000**. Panel/Bokeh dashboard runs on **port 5006** (embedded).
 
 ## API Endpoints
 
 ### File Upload & Processing
-- `GET /` - Serve main map application interface
-- `POST /upload-qpkg/` - Upload and process QPKG/GPKG files, extract geospatial data as GeoJSON
-- `POST /generate-map/` - Generate static folium map HTML from QPKG/GPKG files
+- `GET /` - Landing page
+- `GET /map` - Main map application
+- `POST /api/v1/upload-qpkg/` - Upload and process QPKG/GPKG files
+- `POST /api/v1/generate-map/` - Generate static Folium map from uploads
+
+### Cadastral Data Loading
+- `GET /api/v1/get-cadastral-structure/` - Load Italian cadastral hierarchy (cached)
+- `POST /api/v1/load-cadastral-files/` - Load multiple cadastral files (parallel, returns all at once)
+- `POST /api/v1/load-cadastral-files-stream/` - **Streaming** loader (NDJSON, progressive rendering)
 
 ### Spatial Analysis
-- `POST /get-adjacent-polygons/` - Find polygons adjacent to a selected polygon using spatial relationships (touches/intersects/overlaps)
-- `GET /get-attributes/` - Retrieve all feature attributes from loaded geospatial data
+- `POST /api/v1/get-adjacent-polygons/` - Find adjacent polygons using spatial predicates
+- `GET /api/v1/get-attributes/` - Retrieve feature attributes
 
-### Cadastral Data Management
-- `GET /get-cadastral-structure/` - Load Italian cadastral data structure from JSON
-- `POST /load-cadastral-files/` - Load multiple cadastral files from structured Italian cadastral database
-- `POST /save-drawn-polygons/` - Save user-drawn polygons as GeoJSON files
+### High-Performance Visualization
+- `GET /api/v1/tiles/datashader/{z}/{x}/{y}.png` - Datashader rasterized map tiles (Leaflet TileLayer compatible)
+- `GET /api/v1/datashader/heatmap/{region}` - Full-region density heatmap
+- `GET /api/v1/datashader/categorical/{region}` - Categorical map by field
 
-## Data Flow & Core Features
+### FlatGeobuf
+- `GET /api/v1/fgb/regions` - List available FGB regions
 
-### File Processing
-1. User uploads QPKG (QGIS project packages) or GPKG files via web interface
-2. Backend extracts ZIP contents and searches for geospatial files (.shp, .geojson, .gpkg, .kml)
-3. Uses geopandas to read geospatial data and convert to GeoJSON
-4. Frontend receives GeoJSON and renders on interactive Leaflet map
+## Data Flow
 
-### Spatial Analysis
-1. User selects a polygon on the map
-2. Backend analyzes spatial relationships using shapely geometry operations
-3. Finds adjacent polygons based on touch/intersect/overlap methods
-4. Returns selected polygon and adjacent polygons as separate GeoJSON layers
+### Classic Loading (page reload)
+1. User selects files in sidebar → `loadCadastralSelection()` → POST `/api/v1/load-cadastral-files`
+2. Backend loads files in parallel (ThreadPoolExecutor, max 8 workers) → stores in global state
+3. Page reloads → server embeds GeoJSON in template → `loadGeoJsonData()` renders via WebGLRenderer
 
-### Drawing & Data Creation
-1. Users can draw new polygons/circles using Leaflet Draw tools
-2. Drawn features are saved as GeoJSON files with timestamps
-3. Features can be imported back as new layers for analysis
+### Progressive Loading (no reload)
+1. User selects files → `_loadCadastralProgressive()` → POST `/api/v1/load-cadastral-files-stream/`
+2. Backend streams NDJSON events: `start` → `progress` → `layer` (with GeoJSON) → `complete`
+3. Frontend renders each layer on the Folium map as it arrives, shows progress overlay
 
-### Cadastral Database Integration
-1. Application reads structured Italian cadastral data (Regione > Provincia > Comune hierarchy)
-2. Users can select specific geographic areas and file types (MAP/PLE)
-3. Multiple cadastral files are loaded and combined for analysis
+### Rendering Pipeline
+- **<1000 features**: SVG rendering (L.geoJSON with stripe patterns)
+- **1000-50K features**: WebGL rendering (Leaflet.glify GPU acceleration)
+- **100K+ features**: Datashader server-side tiles (rasterized density/categorical maps)
 
 ## Important Technical Notes
 
-- **Global State**: Uses global `current_gdf` variable to store active GeoDataFrame across requests
-- **Temporary Files**: QPKG/GPKG uploads create temporary files that are automatically cleaned up
-- **Spatial Indexing**: Adjacency analysis relies on shapely spatial predicates (touches, intersects, overlaps)
-- **Italian Cadastral Structure**: Hardcoded path to cadastral database at `/media/emanuele/ddbb5477-3ef2-4097-b731-3784cb7767c1/catasto/ITALIA`
-- **Drawing Storage**: User-drawn polygons saved to `drawn_polygons/` directory with timestamps
+- **Global State**: Uses global `current_gdf` and `current_layers` to store active data across requests
+- **Dual Map Architecture**: Folium iframe vs client-side Leaflet — see Map Architecture section above
+- **Local Cadastral Data**: `/data/catasto/ITALIA/` (auto-detected in development)
+- **S3 Support**: Production mode uses unsigned S3 client for cadastral data
+- **WebGL Bundling**: Leaflet.glify is bundled locally (`static/vendor/`) — CDN was blocked by ORB
+- **Panel Integration**: Bokeh dashboard embedded via `server_document()` (run in thread pool to avoid blocking)
