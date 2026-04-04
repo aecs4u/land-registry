@@ -1760,13 +1760,149 @@ async function loadCadastralSelection() {
         return;
     }
 
+    const filePaths = window.currentFileSelection.map(file => file.path);
     const originalText = loadButton.textContent;
     loadButton.disabled = true;
     loadButton.textContent = 'Loading...';
 
+    // Use progressive streaming loader if available
+    if (typeof ProgressiveLoader !== 'undefined') {
+        await _loadCadastralProgressive(filePaths, loadButton, originalText);
+    } else {
+        await _loadCadastralClassic(filePaths, loadButton, originalText);
+    }
+}
+
+/**
+ * Progressive streaming loader - renders layers as they arrive, no page reload
+ */
+async function _loadCadastralProgressive(filePaths, loadButton, originalText) {
+    // Get the Folium map instance for adding layers
+    function getFoliumMapInstance() {
+        const mapElements = document.querySelectorAll('.leaflet-container');
+        if (mapElements.length > 0) {
+            const mapId = mapElements[0].id;
+            return window[mapId];
+        }
+        return null;
+    }
+
+    const totalFiles = filePaths.length;
+    let totalFeatures = 0;
+    const layerGroup = L.layerGroup();  // Group all new layers together
+
+    // Show progress UI
+    ProgressUI.show(totalFiles);
+
+    try {
+        const summary = await ProgressiveLoader.load(filePaths, {
+            onProgress(fileIndex, total, fileName, status) {
+                ProgressUI.updateProgress(fileIndex, total || totalFiles, fileName, status);
+            },
+
+            onLayer(layerName, geojson, featureCount, fileIndex) {
+                totalFeatures += featureCount;
+                ProgressUI.updateFeatureCount(totalFeatures);
+                ProgressUI.addLog(`${layerName}: ${featureCount} features`, 'success');
+
+                // Add to Folium map immediately
+                const foliumMap = getFoliumMapInstance();
+                if (foliumMap && geojson && geojson.features && geojson.features.length > 0) {
+                    const geoJsonLayer = L.geoJSON(geojson, {
+                        style: function(feature) {
+                            const layerType = feature.properties?.layer_type;
+                            return {
+                                color: layerType === 'ple' ? '#e74c3c' : '#3498db',
+                                weight: 2,
+                                opacity: 0.8,
+                                fillOpacity: 0.3,
+                                fillColor: layerType === 'ple' ? '#e74c3c' : '#3498db'
+                            };
+                        },
+                        onEachFeature: function(feature, layer) {
+                            // Build popup content from properties
+                            if (feature.properties) {
+                                let content = '<div class="popup-content">';
+                                Object.keys(feature.properties).forEach(key => {
+                                    if (key !== 'geometry' && key !== 'id') {
+                                        content += `<strong>${key}:</strong> ${feature.properties[key]}<br>`;
+                                    }
+                                });
+                                content += '</div>';
+                                layer.bindPopup(content, { maxWidth: 350 });
+                            }
+
+                            // Click handler for selection
+                            layer.on('click', function(e) {
+                                L.DomEvent.stopPropagation(e);
+                                if (layer._selected) {
+                                    layer._selected = false;
+                                    layer.setStyle({
+                                        fillColor: feature.properties?.layer_type === 'ple' ? '#e74c3c' : '#3498db',
+                                        fillOpacity: 0.3
+                                    });
+                                    const idx = (window.selectedPolygons || []).indexOf(layer);
+                                    if (idx > -1) window.selectedPolygons.splice(idx, 1);
+                                } else {
+                                    layer._selected = true;
+                                    layer.setStyle({ fillColor: '#ff0000', fillOpacity: 0.7 });
+                                    if (!window.selectedPolygons) window.selectedPolygons = [];
+                                    window.selectedPolygons.push(layer);
+                                }
+                            });
+                        }
+                    });
+
+                    geoJsonLayer.addTo(foliumMap);
+                    layerGroup.addLayer(geoJsonLayer);
+
+                    // Store reference for cleanup
+                    if (!window.dbLayers) window.dbLayers = [];
+                    window.dbLayers.push(geoJsonLayer);
+
+                    console.log(`[Progressive] Added ${featureCount} features to map as "${layerName}"`);
+                }
+            },
+
+            onError(fileIndex, fileName, error) {
+                ProgressUI.addLog(`${fileName}: ${error}`, 'error');
+            },
+
+            onComplete(completeSummary) {
+                ProgressUI.showComplete(completeSummary);
+
+                // Zoom to new data bounds
+                const foliumMap = getFoliumMapInstance();
+                if (foliumMap && completeSummary.bounds) {
+                    const b = completeSummary.bounds;
+                    foliumMap.fitBounds([
+                        [b.south, b.west],
+                        [b.north, b.east]
+                    ], { padding: [20, 20], maxZoom: 18 });
+                }
+
+                console.log(`[Progressive] Complete: ${completeSummary.total_layers} layers, ` +
+                    `${completeSummary.total_features} features in ${completeSummary.load_time_seconds}s`);
+            }
+        });
+
+    } catch (error) {
+        ProgressUI.hide();
+        console.error('[Progressive] Error:', error);
+        alert(`Error loading files: ${error.message}`);
+    } finally {
+        loadButton.disabled = false;
+        loadButton.textContent = originalText;
+    }
+}
+
+/**
+ * Classic loader - loads all files at once, then reloads page (fallback)
+ */
+async function _loadCadastralClassic(filePaths, loadButton, originalText) {
     try {
         const requestData = {
-            file_paths: window.currentFileSelection.map(file => file.path),
+            file_paths: filePaths,
             file_types: getSelectedFileTypes()
         };
 

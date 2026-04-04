@@ -3288,7 +3288,7 @@ def _rows_to_features(rows) -> list:
 # Datashader Tile Generation Endpoints
 # ============================================================================
 
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from land_registry.datashader_service import DatashaderTileService
 import asyncio
 
@@ -3590,3 +3590,161 @@ async def load_fgb_file(region_slug: str, layer_type: str):
     except Exception as e:
         logger.error(f"Error loading FGB file: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to load FGB file: {str(e)}")
+
+
+# ============================================================================
+# Progressive / Streaming Cadastral File Loading
+# ============================================================================
+
+@api_router.post("/load-cadastral-files-stream/")
+async def load_cadastral_files_stream(request: CadastralFileRequest):
+    """
+    Stream cadastral file loading results as NDJSON (newline-delimited JSON).
+
+    Each line is a JSON object with one of these event types:
+    - {"event": "start", "total_files": N}
+    - {"event": "progress", "file_index": i, "file_path": "...", "status": "loading"}
+    - {"event": "layer", "file_index": i, "layer_name": "...", "geojson": {...}, "feature_count": N}
+    - {"event": "error", "file_index": i, "file_path": "...", "error": "..."}
+    - {"event": "complete", "total_layers": N, "total_features": N, "load_time_seconds": T, "bounds": {...}}
+
+    This allows the frontend to render parcels progressively as each file loads,
+    instead of waiting for all files to complete and reloading the page.
+    """
+    file_paths = request.file_paths
+    clear_existing = request.clear_existing
+
+    if not file_paths:
+        raise HTTPException(status_code=400, detail="No file paths provided")
+
+    async def stream_files():
+        import time
+
+        use_local = cadastral_settings.use_local_files
+        local_root = get_cadastral_data_root()
+
+        # Clear existing data if requested
+        if clear_existing:
+            from land_registry.map import clear_current_layers
+            clear_current_layers()
+            set_current_gdf(None)
+
+        # Create S3 client only if needed
+        s3_client = None
+        bucket = None
+        if not use_local:
+            s3_client = boto3.client("s3", config=Config(signature_version=UNSIGNED))
+            bucket = s3_settings.s3_bucket_name
+
+        # Send start event
+        yield json.dumps({"event": "start", "total_files": len(file_paths)}) + "\n"
+
+        start_time = time.time()
+        all_gdfs = []
+        total_features = 0
+        layers_data = {}
+
+        for i, file_path in enumerate(file_paths):
+            # Send progress event
+            yield json.dumps({
+                "event": "progress",
+                "file_index": i,
+                "file_path": os.path.basename(file_path),
+                "status": "loading"
+            }) + "\n"
+
+            # Load file in thread pool to avoid blocking
+            try:
+                result = await asyncio.to_thread(
+                    _load_single_file,
+                    file_path, use_local, local_root, s3_client, bucket
+                )
+
+                if "error" in result:
+                    layer_name = os.path.basename(result["file_path"])
+                    layers_data[layer_name] = {"error": result["error"]}
+                    yield json.dumps({
+                        "event": "error",
+                        "file_index": i,
+                        "file_path": os.path.basename(file_path),
+                        "error": result["error"]
+                    }) + "\n"
+                else:
+                    gdf = result["gdf"]
+                    layer_name = result["layer_name"]
+                    feature_count = result["feature_count"]
+                    layer_geojson = json.loads(gdf.to_json())
+
+                    layers_data[layer_name] = {
+                        "geojson": layer_geojson,
+                        "feature_count": feature_count,
+                        "source_file": file_path,
+                        "layer_name": layer_name,
+                    }
+                    all_gdfs.append(gdf)
+                    total_features += feature_count
+
+                    # Stream the layer data so frontend can render immediately
+                    yield json.dumps({
+                        "event": "layer",
+                        "file_index": i,
+                        "layer_name": layer_name,
+                        "geojson": layer_geojson,
+                        "feature_count": feature_count,
+                    }) + "\n"
+
+            except Exception as e:
+                logger.error(f"Error streaming file {file_path}: {e}")
+                yield json.dumps({
+                    "event": "error",
+                    "file_index": i,
+                    "file_path": os.path.basename(file_path),
+                    "error": str(e)
+                }) + "\n"
+
+        # Update global state with all loaded data
+        existing_layers = get_current_layers() or {}
+        combined_layers = existing_layers.copy()
+        combined_layers.update(layers_data)
+        set_current_layers(combined_layers)
+
+        new_bounds = None
+        if all_gdfs:
+            new_combined_gdf = gpd.pd.concat(all_gdfs, ignore_index=True)
+            existing_gdf = get_current_gdf()
+
+            try:
+                bounds = new_combined_gdf.total_bounds
+                if bounds is not None and len(bounds) == 4:
+                    new_bounds = {
+                        "south": float(bounds[1]),
+                        "west": float(bounds[0]),
+                        "north": float(bounds[3]),
+                        "east": float(bounds[2]),
+                    }
+            except Exception as e:
+                logger.warning(f"Could not calculate bounds: {e}")
+
+            if existing_gdf is not None and not existing_gdf.empty:
+                combined_gdf = gpd.pd.concat([existing_gdf, new_combined_gdf], ignore_index=True)
+                set_current_gdf(combined_gdf)
+            else:
+                set_current_gdf(new_combined_gdf)
+
+        load_time = time.time() - start_time
+        successful = len([l for l in layers_data.values() if "error" not in l])
+
+        # Send completion event
+        yield json.dumps({
+            "event": "complete",
+            "total_layers": successful,
+            "total_features": total_features,
+            "load_time_seconds": round(load_time, 2),
+            "bounds": new_bounds,
+        }) + "\n"
+
+    return StreamingResponse(
+        stream_files(),
+        media_type="application/x-ndjson",
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
