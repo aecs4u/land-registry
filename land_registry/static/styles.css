@@ -3157,22 +3157,69 @@ button:hover {
   border: none;
 }
 
-/* No map message styling */
+/* No map message styling - Quick Start Guide */
 .no-map-message {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   height: 400px;
   background-color: #f8f9fa;
   border: 2px dashed #dee2e6;
   border-radius: 8px;
-  color: #6c757d;
-  font-style: italic;
+  color: #495057;
+  padding: 40px;
+  text-align: center;
+}
+
+.no-map-message h3 {
+  margin: 0 0 16px 0;
+  color: #1a5490;
+  font-size: 22px;
+  font-weight: 600;
 }
 
 .no-map-message p {
-  margin: 0;
-  font-size: 16px;
+  margin: 0 0 12px 0;
+  font-size: 15px;
+  color: #6c757d;
+}
+
+.no-map-message .quick-start-steps {
+  text-align: left;
+  margin: 16px 0;
+  padding-left: 24px;
+  color: #495057;
+}
+
+.no-map-message .quick-start-steps li {
+  margin: 8px 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.no-map-message .quick-start-steps strong {
+  color: #1a5490;
+}
+
+.no-map-message .quick-start-tip {
+  margin-top: 20px;
+  padding: 12px 16px;
+  background: #e8f4fd;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #1a5490;
+}
+
+.no-map-message kbd {
+  display: inline-block;
+  padding: 2px 6px;
+  font-size: 12px;
+  font-family: monospace;
+  background: #fff;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  box-shadow: 0 1px 1px rgba(0,0,0,0.1);
 }
 
 /* Override Folium default styles for better integration */

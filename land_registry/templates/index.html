@@ -578,9 +578,16 @@
         <div id="folium-map-container">
           {% if folium_map_html %} {{ folium_map_html|safe }} {% else %}
           <div class="no-map-message">
-            <p>
-              No map data available. Please upload a file or select cadastral
-              data.
+            <h3>Welcome to the Land Registry Viewer</h3>
+            <p>Get started by loading cadastral data:</p>
+            <ol class="quick-start-steps">
+              <li><strong>Select a Region</strong> from the sidebar (e.g., LAZIO)</li>
+              <li><strong>Choose a Province</strong> (e.g., RM for Roma)</li>
+              <li><strong>Pick Municipality(ies)</strong> to view</li>
+              <li><strong>Click "Load Selected Files"</strong> to display parcels</li>
+            </ol>
+            <p class="quick-start-tip">
+              <strong>Tip:</strong> Press <kbd>F</kbd> to fit map to data, <kbd>R</kbd> to reset view, <kbd>Esc</kbd> to clear selection
             </p>
           </div>
           {% endif %}

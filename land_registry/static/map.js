@@ -23,6 +23,145 @@ let drawnPolylines = [];
 let selectedPolyline = null;
 let polylineHistory = [];
 
+// ==========================================
+// URL State Management
+// ==========================================
+
+/**
+ * Save current cadastral selection to URL params
+ * This allows bookmarking and sharing specific selections
+ */
+function saveSelectionToUrl() {
+    const params = new URLSearchParams(window.location.search);
+
+    const regionsSelect = document.getElementById('cadastralRegions');
+    const provincesSelect = document.getElementById('cadastralProvinces');
+    const municipalitiesSelect = document.getElementById('cadastralMunicipalities');
+    const fileTypesContainer = document.getElementById('cadastralFileTypes');
+
+    // Get selected values
+    const regions = regionsSelect ? Array.from(regionsSelect.selectedOptions).map(o => o.value) : [];
+    const provinces = provincesSelect ? Array.from(provincesSelect.selectedOptions).map(o => o.value) : [];
+    const municipalities = municipalitiesSelect ? Array.from(municipalitiesSelect.selectedOptions).map(o => o.value) : [];
+
+    const fileTypes = [];
+    if (fileTypesContainer) {
+        fileTypesContainer.querySelectorAll('input[type="checkbox"]:checked').forEach(cb => {
+            fileTypes.push(cb.value);
+        });
+    }
+
+    // Update URL params
+    if (regions.length > 0) {
+        params.set('regions', regions.join(','));
+    } else {
+        params.delete('regions');
+    }
+
+    if (provinces.length > 0) {
+        params.set('provinces', provinces.join(','));
+    } else {
+        params.delete('provinces');
+    }
+
+    if (municipalities.length > 0) {
+        // Encode municipality keys (they contain | characters)
+        params.set('municipalities', municipalities.map(m => encodeURIComponent(m)).join(','));
+    } else {
+        params.delete('municipalities');
+    }
+
+    if (fileTypes.length > 0) {
+        params.set('fileTypes', fileTypes.join(','));
+    } else {
+        params.delete('fileTypes');
+    }
+
+    // Update URL without reload
+    const newUrl = `${window.location.pathname}?${params.toString()}`;
+    window.history.replaceState({}, '', newUrl);
+}
+
+/**
+ * Restore cadastral selection from URL params
+ * Called after cadastral data is loaded
+ */
+function restoreSelectionFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+
+    const regionsParam = params.get('regions');
+    const provincesParam = params.get('provinces');
+    const municipalitiesParam = params.get('municipalities');
+    const fileTypesParam = params.get('fileTypes');
+
+    if (!regionsParam) return false; // No selection in URL
+
+    const regionsSelect = document.getElementById('cadastralRegions');
+    const provincesSelect = document.getElementById('cadastralProvinces');
+    const municipalitiesSelect = document.getElementById('cadastralMunicipalities');
+    const fileTypesContainer = document.getElementById('cadastralFileTypes');
+
+    if (!regionsSelect || !cadastralData) return false;
+
+    // Restore regions
+    const regions = regionsParam.split(',');
+    regions.forEach(region => {
+        const option = regionsSelect.querySelector(`option[value="${region}"]`);
+        if (option) option.selected = true;
+    });
+
+    // Trigger province loading
+    if (regions.length > 0 && typeof loadCadastralProvinces === 'function') {
+        loadCadastralProvinces();
+
+        // Wait for provinces to load, then restore
+        setTimeout(() => {
+            if (provincesParam && provincesSelect) {
+                const provinces = provincesParam.split(',');
+                provinces.forEach(province => {
+                    const option = provincesSelect.querySelector(`option[value="${province}"]`);
+                    if (option) option.selected = true;
+                });
+
+                // Trigger municipality loading
+                if (typeof loadCadastralMunicipalities === 'function') {
+                    loadCadastralMunicipalities();
+
+                    // Wait for municipalities to load, then restore
+                    setTimeout(() => {
+                        if (municipalitiesParam && municipalitiesSelect) {
+                            const municipalities = municipalitiesParam.split(',').map(m => decodeURIComponent(m));
+                            municipalities.forEach(municipality => {
+                                const option = municipalitiesSelect.querySelector(`option[value="${municipality}"]`);
+                                if (option) option.selected = true;
+                            });
+                        }
+
+                        // Restore file types
+                        if (fileTypesParam && fileTypesContainer) {
+                            const fileTypes = fileTypesParam.split(',');
+                            fileTypesContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                                cb.checked = fileTypes.includes(cb.value);
+                            });
+                        }
+
+                        // Update summary
+                        updateSelectionSummary();
+
+                        debugLog('Selection restored from URL');
+                    }, 100);
+                }
+            }
+        }, 100);
+    }
+
+    return true;
+}
+
+// ==========================================
+// End URL State Management
+// ==========================================
+
 // Function to create SVG stripe patterns
 function createStripePattern(angle, color = '#3388ff') {
     const patternId = `stripe-pattern-${angle}-${Math.random().toString(36).substring(2, 11)}`;
@@ -3179,6 +3318,9 @@ function updateSelectionSummary() {
         // Clear file selection when no valid selection
         window.currentFileSelection = [];
     }
+
+    // Save selection to URL for bookmarking/sharing
+    saveSelectionToUrl();
 }
 
 // Get selected file types from checkboxes
@@ -3467,6 +3609,12 @@ async function _doLoadCadastralData() {
                 cadastralDataLoaded = true;
                 populateRegionsSelect();
                 setupCadastralEventListeners();
+
+                // Restore selection from URL params if present
+                setTimeout(() => {
+                    restoreSelectionFromUrl();
+                }, 200);
+
                 return cadastralData;
             } else {
                 console.error('Cadastral data is empty');
@@ -3741,6 +3889,75 @@ document.addEventListener('DOMContentLoaded', function() {
         debugLog('✅ Direct Leaflet map with all providers initialized');
         debugLog('✅ Native Leaflet controls integrated');
     }, 100);
+
+    // ==========================================
+    // Keyboard Shortcuts
+    // ==========================================
+    document.addEventListener('keydown', function(e) {
+        // Don't trigger shortcuts when typing in inputs
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) {
+            return;
+        }
+
+        switch (e.key) {
+            case 'Escape':
+                // Clear selection
+                if (typeof clearParcelSearch === 'function') {
+                    clearParcelSearch();
+                }
+                if (selectedPolygons && selectedPolygons.size > 0) {
+                    selectedPolygons.clear();
+                    if (typeof updateSelectionInfo === 'function') {
+                        updateSelectionInfo();
+                    }
+                    debugLog('Selection cleared via Escape key');
+                }
+                break;
+
+            case 'f':
+            case 'F':
+                // Fit map to all data
+                if (map && currentGeoJsonLayer) {
+                    try {
+                        const bounds = currentGeoJsonLayer.getBounds();
+                        if (bounds.isValid()) {
+                            map.fitBounds(bounds, { padding: [50, 50] });
+                            debugLog('Fit to bounds via F key');
+                        }
+                    } catch (err) {
+                        debugLog('Could not fit bounds:', err);
+                    }
+                }
+                break;
+
+            case 'r':
+            case 'R':
+                // Reset view to Italy
+                if (map) {
+                    map.setView([41.8719, 12.5674], 6);
+                    debugLog('Reset view via R key');
+                }
+                break;
+
+            case '+':
+            case '=':
+                // Zoom in
+                if (map && !e.ctrlKey && !e.metaKey) {
+                    map.zoomIn();
+                }
+                break;
+
+            case '-':
+            case '_':
+                // Zoom out
+                if (map && !e.ctrlKey && !e.metaKey) {
+                    map.zoomOut();
+                }
+                break;
+        }
+    });
+
+    debugLog('Keyboard shortcuts registered: Esc=clear, F=fit, R=reset, +/-=zoom');
 });
 
 // GPKG Processing Function for Direct S3 Loading
