@@ -368,19 +368,27 @@ const WebGLRenderer = {
 if (typeof window !== 'undefined') {
     window.WebGLRenderer = WebGLRenderer;
 
-    // Auto-initialize when map is ready
-    window.addEventListener('DOMContentLoaded', () => {
-        // Wait for map to be initialized
-        const checkMapReady = setInterval(() => {
-            if (window.map) {
-                WebGLRenderer.init();
-                clearInterval(checkMapReady);
-            }
-        }, 100);
+    // Initialize: detect WebGL support once L.glify and DOM are ready
+    const doInit = () => {
+        if (typeof L !== 'undefined' && typeof L.glify !== 'undefined') {
+            WebGLRenderer.init();
+        } else {
+            // L.glify may load after DOM ready (e.g. deferred scripts), retry briefly
+            let retries = 0;
+            const check = setInterval(() => {
+                if ((typeof L !== 'undefined' && typeof L.glify !== 'undefined') || ++retries > 30) {
+                    clearInterval(check);
+                    WebGLRenderer.init();
+                }
+            }, 100);
+        }
+    };
 
-        // Timeout after 10 seconds
-        setTimeout(() => clearInterval(checkMapReady), 10000);
-    });
+    if (document.readyState === 'loading') {
+        window.addEventListener('DOMContentLoaded', doInit);
+    } else {
+        doInit();
+    }
 }
 
 console.log('[WebGL] webgl-renderer.js loaded successfully');

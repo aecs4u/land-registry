@@ -1,7 +1,12 @@
 {% extends "base.html" %} {% block content %}
 <div class="container">
   <div class="sidebar">
-    <h1>Cadastre</h1>
+    <div class="sidebar-header">
+      <h1>Cadastre</h1>
+      <button onclick="toggleDarkMode()" class="theme-toggle-btn" title="Toggle dark mode" id="themeToggleBtn">
+        <span class="theme-icon">🌙</span>
+      </button>
+    </div>
 
     <div class="sidebar-group-title">Data Catalog</div>
     <div class="navigation-links">
@@ -266,6 +271,17 @@
       </div>
     </div>
 
+    <!-- Recent Files History -->
+    <div class="sidebar-group-title" id="recentFilesTitle" style="display: none;">
+      Recent
+      <button onclick="clearRecentFiles()" class="clear-recent-btn" title="Clear history">Clear</button>
+    </div>
+    <div class="recent-files-section" id="recentFilesSection" style="display: none;">
+      <div id="recentFilesList" class="recent-files-list">
+        <!-- Recent files will be populated here -->
+      </div>
+    </div>
+
     <div class="sidebar-group-title">Explore</div>
     <div class="config-section">
       <!-- Parcel Search -->
@@ -429,6 +445,26 @@
             class="zoom-btn"
           >
             Zoom to Fit
+          </button>
+        </div>
+        <div class="control-row">
+          <button
+            onclick="exportSelectedParcels()"
+            id="exportSelectedBtn"
+            disabled
+            class="export-btn"
+            title="Export selected parcels to GeoJSON file"
+          >
+            Export Selected
+          </button>
+          <button
+            onclick="exportAllParcels()"
+            id="exportAllBtn"
+            disabled
+            class="export-btn"
+            title="Export all loaded parcels to GeoJSON file"
+          >
+            Export All
           </button>
         </div>
         <div id="polygonCount" class="table-info">No polygons loaded</div>
@@ -717,6 +753,17 @@
           </div>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Parcel Info Panel (slides in from right) -->
+  <div id="parcelInfoPanel" class="parcel-info-panel">
+    <div class="parcel-info-header-bar">
+      <span>Parcel Details</span>
+      <button onclick="hideParcelInfo()" class="close-panel-btn" title="Close panel">&times;</button>
+    </div>
+    <div id="parcelInfoContent" class="parcel-info-body">
+      <!-- Content populated by JavaScript -->
     </div>
   </div>
 </div>

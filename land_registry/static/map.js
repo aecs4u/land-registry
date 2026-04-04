@@ -162,6 +162,346 @@ function restoreSelectionFromUrl() {
 // End URL State Management
 // ==========================================
 
+// ==========================================
+// Recent Files History
+// ==========================================
+
+const RECENT_FILES_KEY = 'cadastre_recent_files';
+const MAX_RECENT_FILES = 10;
+
+/**
+ * Get recent files from localStorage
+ */
+function getRecentFiles() {
+    try {
+        const stored = localStorage.getItem(RECENT_FILES_KEY);
+        return stored ? JSON.parse(stored) : [];
+    } catch (e) {
+        console.warn('Error reading recent files:', e);
+        return [];
+    }
+}
+
+/**
+ * Save recent files to localStorage
+ */
+function saveRecentFiles(files) {
+    try {
+        localStorage.setItem(RECENT_FILES_KEY, JSON.stringify(files));
+    } catch (e) {
+        console.warn('Error saving recent files:', e);
+    }
+}
+
+/**
+ * Add a file selection to recent history
+ * @param {Object} selection - Object containing selection details
+ */
+function addToRecentFiles(selection) {
+    const recentFiles = getRecentFiles();
+
+    // Create unique identifier for this selection
+    const selectionId = JSON.stringify({
+        regions: selection.regions || [],
+        provinces: selection.provinces || [],
+        municipalities: selection.municipalities || [],
+        fileTypes: selection.fileTypes || []
+    });
+
+    // Remove duplicate if exists
+    const filtered = recentFiles.filter(f =>
+        JSON.stringify({
+            regions: f.regions || [],
+            provinces: f.provinces || [],
+            municipalities: f.municipalities || [],
+            fileTypes: f.fileTypes || []
+        }) !== selectionId
+    );
+
+    // Create display name
+    let displayName = '';
+    if (selection.municipalities && selection.municipalities.length > 0) {
+        displayName = selection.municipalities.map(m => m.split('|').pop()).join(', ');
+    } else if (selection.provinces && selection.provinces.length > 0) {
+        displayName = selection.provinces.join(', ');
+    } else if (selection.regions && selection.regions.length > 0) {
+        displayName = selection.regions.join(', ');
+    }
+
+    // Add new entry at the beginning
+    filtered.unshift({
+        ...selection,
+        displayName: displayName || 'Unknown Selection',
+        timestamp: new Date().toISOString(),
+        fileCount: selection.fileCount || 0,
+        featureCount: selection.featureCount || 0
+    });
+
+    // Keep only the most recent entries
+    const trimmed = filtered.slice(0, MAX_RECENT_FILES);
+    saveRecentFiles(trimmed);
+    renderRecentFiles();
+}
+
+/**
+ * Remove a file from recent history
+ */
+function removeFromRecentFiles(index) {
+    const recentFiles = getRecentFiles();
+    recentFiles.splice(index, 1);
+    saveRecentFiles(recentFiles);
+    renderRecentFiles();
+}
+
+/**
+ * Clear all recent files
+ */
+function clearRecentFiles() {
+    saveRecentFiles([]);
+    renderRecentFiles();
+}
+
+/**
+ * Render the recent files list in the sidebar
+ */
+function renderRecentFiles() {
+    const listEl = document.getElementById('recentFilesList');
+    const sectionEl = document.getElementById('recentFilesSection');
+    const titleEl = document.getElementById('recentFilesTitle');
+
+    if (!listEl || !sectionEl || !titleEl) return;
+
+    const recentFiles = getRecentFiles();
+
+    if (recentFiles.length === 0) {
+        sectionEl.style.display = 'none';
+        titleEl.style.display = 'none';
+        return;
+    }
+
+    sectionEl.style.display = 'block';
+    titleEl.style.display = 'flex';
+
+    listEl.innerHTML = recentFiles.map((file, index) => {
+        const date = new Date(file.timestamp);
+        const timeAgo = getTimeAgo(date);
+        const fileTypes = (file.fileTypes || []).join(', ') || 'All';
+
+        return `
+            <div class="recent-file-item" onclick="loadRecentFile(${index})" title="Click to load this selection">
+                <div class="recent-file-info">
+                    <span class="recent-file-name">${escapeHtml(file.displayName)}</span>
+                    <span class="recent-file-meta">${fileTypes} · ${file.featureCount || 0} features · ${timeAgo}</span>
+                </div>
+                <button class="recent-file-remove" onclick="event.stopPropagation(); removeFromRecentFiles(${index})" title="Remove from history">×</button>
+            </div>
+        `;
+    }).join('');
+}
+
+/**
+ * Load a selection from recent files
+ */
+function loadRecentFile(index) {
+    const recentFiles = getRecentFiles();
+    const file = recentFiles[index];
+
+    if (!file) return;
+
+    // Set the selection UI
+    const regionsSelect = document.getElementById('cadastralRegions');
+    const provincesSelect = document.getElementById('cadastralProvinces');
+    const municipalitiesSelect = document.getElementById('cadastralMunicipalities');
+
+    // First, select regions
+    if (regionsSelect && file.regions) {
+        Array.from(regionsSelect.options).forEach(opt => {
+            opt.selected = file.regions.includes(opt.value);
+        });
+        // Trigger province loading
+        if (typeof loadCadastralProvinces === 'function') {
+            loadCadastralProvinces();
+        }
+    }
+
+    // Wait for provinces to load, then set them
+    setTimeout(() => {
+        if (provincesSelect && file.provinces) {
+            Array.from(provincesSelect.options).forEach(opt => {
+                opt.selected = file.provinces.includes(opt.value);
+            });
+            // Trigger municipality loading
+            if (typeof loadCadastralMunicipalities === 'function') {
+                loadCadastralMunicipalities();
+            }
+        }
+
+        // Wait for municipalities to load, then set them
+        setTimeout(() => {
+            if (municipalitiesSelect && file.municipalities) {
+                Array.from(municipalitiesSelect.options).forEach(opt => {
+                    opt.selected = file.municipalities.includes(opt.value);
+                });
+            }
+
+            // Set file types
+            if (file.fileTypes) {
+                const fileTypesContainer = document.getElementById('cadastralFileTypes');
+                if (fileTypesContainer) {
+                    fileTypesContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                        cb.checked = file.fileTypes.includes(cb.value);
+                        const parentDiv = cb.closest('.file-type-checkbox');
+                        if (parentDiv) {
+                            parentDiv.classList.toggle('selected', cb.checked);
+                        }
+                    });
+                }
+            }
+
+            // Update summary
+            if (typeof updateSelectionSummary === 'function') {
+                updateSelectionSummary();
+            }
+
+            // Auto-load the selection
+            setTimeout(() => {
+                if (typeof loadCadastralSelection === 'function') {
+                    loadCadastralSelection();
+                }
+            }, 200);
+        }, 300);
+    }, 300);
+
+    showToastNotification(`Loading: ${file.displayName}`, 'success');
+}
+
+/**
+ * Get human-readable time ago string
+ */
+function getTimeAgo(date) {
+    const seconds = Math.floor((new Date() - date) / 1000);
+
+    if (seconds < 60) return 'just now';
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+    if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`;
+    return date.toLocaleDateString();
+}
+
+/**
+ * Escape HTML to prevent XSS
+ */
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+/**
+ * Initialize recent files on page load
+ */
+function initRecentFiles() {
+    renderRecentFiles();
+}
+
+// Initialize recent files when DOM is ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initRecentFiles);
+} else {
+    initRecentFiles();
+}
+
+// ==========================================
+// End Recent Files History
+// ==========================================
+
+// ==========================================
+// Dark Mode Toggle
+// ==========================================
+
+const DARK_MODE_KEY = 'cadastre_dark_mode';
+
+/**
+ * Initialize dark mode based on stored preference or system preference
+ */
+function initDarkMode() {
+    const stored = localStorage.getItem(DARK_MODE_KEY);
+
+    if (stored === 'true') {
+        enableDarkMode();
+    } else if (stored === 'false') {
+        disableDarkMode();
+    } else {
+        // Check system preference
+        if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+            enableDarkMode();
+        }
+    }
+
+    // Listen for system preference changes
+    if (window.matchMedia) {
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
+            if (localStorage.getItem(DARK_MODE_KEY) === null) {
+                if (e.matches) {
+                    enableDarkMode();
+                } else {
+                    disableDarkMode();
+                }
+            }
+        });
+    }
+}
+
+/**
+ * Toggle dark mode
+ */
+function toggleDarkMode() {
+    if (document.body.classList.contains('dark-mode')) {
+        disableDarkMode();
+        localStorage.setItem(DARK_MODE_KEY, 'false');
+    } else {
+        enableDarkMode();
+        localStorage.setItem(DARK_MODE_KEY, 'true');
+    }
+}
+
+/**
+ * Enable dark mode
+ */
+function enableDarkMode() {
+    document.body.classList.add('dark-mode');
+    updateThemeIcon(true);
+}
+
+/**
+ * Disable dark mode
+ */
+function disableDarkMode() {
+    document.body.classList.remove('dark-mode');
+    updateThemeIcon(false);
+}
+
+/**
+ * Update the theme toggle icon
+ */
+function updateThemeIcon(isDark) {
+    const icon = document.querySelector('.theme-icon');
+    if (icon) {
+        icon.textContent = isDark ? '☀️' : '🌙';
+    }
+}
+
+// Initialize dark mode on page load
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initDarkMode);
+} else {
+    initDarkMode();
+}
+
+// ==========================================
+// End Dark Mode Toggle
+// ==========================================
+
 // Function to create SVG stripe patterns
 function createStripePattern(angle, color = '#3388ff') {
     const patternId = `stripe-pattern-${angle}-${Math.random().toString(36).substring(2, 11)}`;
@@ -227,7 +567,149 @@ function getRandomStripeAngle() {
     return angles[Math.floor(Math.random() * angles.length)];
 }
 
+// ==========================================
+// Parcel Info Panel
+// ==========================================
+
+/**
+ * Show detailed parcel information in side panel
+ */
+function showParcelInfo(feature, layer) {
+    const props = feature.properties || {};
+    const panel = document.getElementById('parcelInfoPanel');
+    const content = document.getElementById('parcelInfoContent');
+
+    if (!panel || !content) {
+        debugLog('Parcel info panel not found');
+        return;
+    }
+
+    // Build info HTML
+    const label = props.LABEL || props.label || 'N/A';
+    const comune = props.ADMINISTRATIVEUNIT || props.comune || '';
+    const area = props.area_display || props.area_ha ? `${props.area_ha} ha` : '';
+    const foglio = label.split('/')[0] || '';
+    const particella = label.split('/')[1] || '';
+
+    let html = `
+        <div class="parcel-info-header">
+            <h3>${label}</h3>
+            ${comune ? `<span class="parcel-comune">${comune}</span>` : ''}
+        </div>
+        <div class="parcel-info-details">
+            <div class="info-row">
+                <span class="info-label">Foglio</span>
+                <span class="info-value">${foglio || 'N/A'}</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Particella</span>
+                <span class="info-value">${particella || 'N/A'}</span>
+            </div>
+            ${area ? `
+            <div class="info-row">
+                <span class="info-label">Superficie</span>
+                <span class="info-value">${area}</span>
+            </div>
+            ` : ''}
+            <div class="info-row">
+                <span class="info-label">File</span>
+                <span class="info-value">${props.layer_name || props.source_file || 'N/A'}</span>
+            </div>
+        </div>
+    `;
+
+    // Add all other properties in expandable section
+    const excludeKeys = ['LABEL', 'label', 'ADMINISTRATIVEUNIT', 'comune', 'area_display',
+                         'area_ha', 'area_m2', 'layer_name', 'source_file', 'feature_id', 'geometry'];
+    const otherProps = Object.entries(props).filter(([key]) => !excludeKeys.includes(key));
+
+    if (otherProps.length > 0) {
+        html += `
+            <details class="parcel-extra-info">
+                <summary>All Properties (${otherProps.length})</summary>
+                <div class="extra-props">
+                    ${otherProps.map(([key, value]) => `
+                        <div class="info-row">
+                            <span class="info-label">${key}</span>
+                            <span class="info-value">${value ?? 'null'}</span>
+                        </div>
+                    `).join('')}
+                </div>
+            </details>
+        `;
+    }
+
+    // Add action buttons
+    html += `
+        <div class="parcel-actions">
+            <button onclick="zoomToParcel()" class="parcel-action-btn" title="Zoom to this parcel">
+                Zoom To
+            </button>
+            <button onclick="copyParcelInfo()" class="parcel-action-btn" title="Copy info to clipboard">
+                Copy Info
+            </button>
+        </div>
+    `;
+
+    content.innerHTML = html;
+    panel.classList.add('open');
+
+    // Store current parcel for actions
+    window.currentParcelFeature = feature;
+    window.currentParcelLayer = layer;
+}
+
+/**
+ * Hide the parcel info panel
+ */
+function hideParcelInfo() {
+    const panel = document.getElementById('parcelInfoPanel');
+    if (panel) {
+        panel.classList.remove('open');
+    }
+    window.currentParcelFeature = null;
+    window.currentParcelLayer = null;
+}
+
+/**
+ * Zoom to the currently selected parcel
+ */
+window.zoomToParcel = function() {
+    if (window.currentParcelLayer && map) {
+        const bounds = window.currentParcelLayer.getBounds();
+        if (bounds.isValid()) {
+            map.fitBounds(bounds, { padding: [100, 100], maxZoom: 18 });
+        }
+    }
+};
+
+/**
+ * Copy parcel info to clipboard
+ */
+window.copyParcelInfo = function() {
+    if (!window.currentParcelFeature) return;
+
+    const props = window.currentParcelFeature.properties || {};
+    const text = Object.entries(props)
+        .filter(([key]) => key !== 'geometry')
+        .map(([key, value]) => `${key}: ${value}`)
+        .join('\n');
+
+    navigator.clipboard.writeText(text).then(() => {
+        // Show brief feedback
+        const btn = document.querySelector('.parcel-actions button:last-child');
+        if (btn) {
+            const original = btn.textContent;
+            btn.textContent = 'Copied!';
+            setTimeout(() => { btn.textContent = original; }, 1500);
+        }
+    });
+};
+
+// ==========================================
 // Selection functions
+// ==========================================
+
 function togglePolygonSelection(layer) {
     debugLog('togglePolygonSelection called. Selection enabled:', selectionEnabled);
 
@@ -296,6 +778,11 @@ function updateSelectionButtons() {
     if (deselectAllBtn) {
         deselectAllBtn.disabled = !hasSelections || !selectionEnabled;
     }
+
+    // Also update export buttons
+    if (typeof updateExportButtons === 'function') {
+        updateExportButtons();
+    }
 }
 
 function updateDataDependentButtons() {
@@ -306,6 +793,11 @@ function updateDataDependentButtons() {
 
     // Update adjacency buttons
     updateAdjacencyButtons();
+
+    // Update export buttons
+    if (typeof updateExportButtons === 'function') {
+        updateExportButtons();
+    }
 
     // Update display control buttons
     const selectionInfoBtn = document.querySelector('[onclick="toggleSelectionInfo()"]');
@@ -1672,6 +2164,7 @@ function loadGeoJsonData() {
                         debugLog('Polygon clicked!');
                         L.DomEvent.stopPropagation(e);
                         togglePolygonSelection(layer);
+                        showParcelInfo(feature, layer);
                     }
                 });
 
@@ -2712,6 +3205,18 @@ window.loadCadastralSelection = async function() {
 
             // Show success message after zoom animation starts (non-blocking notification)
             showLoadNotification(successfulLoads, filePaths.length, totalFeatures);
+
+            // Add to recent files history
+            const selectedRegions = Array.from(regionsSelect.selectedOptions).map(o => o.value);
+            const selectedProvinces = Array.from(provincesSelect.selectedOptions).map(o => o.value);
+            addToRecentFiles({
+                regions: selectedRegions,
+                provinces: selectedProvinces,
+                municipalities: selectedMunicipalities,
+                fileTypes: selectedFileTypes,
+                fileCount: successfulLoads,
+                featureCount: totalFeatures
+            });
         } else {
             alert(`No geospatial data could be loaded. Files checked:\n${filePaths.map(p => `/api/v1/load-cadastral-files/${p}`).join('\n')}`);
         }
@@ -2942,6 +3447,7 @@ function addGeoJsonToMap(geojson, options = {}) {
             debugLog('Polygon clicked (addGeoJsonToMap)!');
             L.DomEvent.stopPropagation(e);
             togglePolygonSelection(layer);
+            showParcelInfo(feature, layer);
         }
     });
 
@@ -4433,6 +4939,198 @@ function calculateGeoJsonBounds(geoJsonData) {
         console.error('Error calculating GeoJSON bounds:', error);
         return null;
     }
+}
+
+
+// ============================================================================
+// Export Functions
+// ============================================================================
+
+/**
+ * Show a toast notification message
+ * @param {string} message - The message to display
+ * @param {string} type - 'success', 'warning', or 'error'
+ */
+function showToastNotification(message, type = 'success') {
+    let notification = document.getElementById('toastNotification');
+    if (!notification) {
+        notification = document.createElement('div');
+        notification.id = 'toastNotification';
+        notification.style.cssText = `
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 12px 24px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            z-index: 10000;
+            font-size: 14px;
+            font-weight: 500;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            color: white;
+        `;
+        document.body.appendChild(notification);
+    }
+
+    // Set color based on type
+    const colors = {
+        success: '#28a745',
+        warning: '#ffc107',
+        error: '#dc3545'
+    };
+    notification.style.background = colors[type] || colors.success;
+    notification.style.color = type === 'warning' ? '#212529' : 'white';
+
+    // Set message
+    const icons = { success: '✓', warning: '⚠', error: '✗' };
+    notification.innerHTML = `${icons[type] || ''} ${message}`;
+
+    // Show notification
+    notification.style.opacity = '1';
+
+    // Auto-hide after 3 seconds
+    setTimeout(() => {
+        notification.style.opacity = '0';
+    }, 3000);
+}
+
+/**
+ * Update export button states based on current data and selection
+ */
+function updateExportButtons() {
+    const exportSelectedBtn = document.getElementById('exportSelectedBtn');
+    const exportAllBtn = document.getElementById('exportAllBtn');
+
+    const hasData = currentGeoJsonLayer && currentGeoJsonLayer.getLayers().length > 0;
+    const hasSelection = selectedPolygons.size > 0;
+
+    if (exportSelectedBtn) {
+        exportSelectedBtn.disabled = !hasSelection;
+    }
+    if (exportAllBtn) {
+        exportAllBtn.disabled = !hasData;
+    }
+}
+
+/**
+ * Export selected parcels to GeoJSON file
+ */
+function exportSelectedParcels() {
+    if (selectedPolygons.size === 0) {
+        showToastNotification('No parcels selected', 'warning');
+        return;
+    }
+
+    try {
+        const features = [];
+
+        // Collect features from selected layers
+        if (currentGeoJsonLayer) {
+            currentGeoJsonLayer.eachLayer(layer => {
+                const layerId = L.Util.stamp(layer);
+                if (selectedPolygons.has(layerId)) {
+                    // Get the original feature data
+                    if (layer.feature) {
+                        features.push(layer.feature);
+                    } else if (layer.toGeoJSON) {
+                        features.push(layer.toGeoJSON());
+                    }
+                }
+            });
+        }
+
+        if (features.length === 0) {
+            showToastNotification('No feature data available for selected parcels', 'warning');
+            return;
+        }
+
+        const geoJson = {
+            type: 'FeatureCollection',
+            features: features,
+            metadata: {
+                exported_at: new Date().toISOString(),
+                source: 'Cadastre Land Registry Viewer',
+                parcel_count: features.length
+            }
+        };
+
+        downloadGeoJson(geoJson, `selected_parcels_${features.length}`);
+        showToastNotification(`Exported ${features.length} selected parcel${features.length !== 1 ? 's' : ''}`, 'success');
+
+    } catch (error) {
+        console.error('Error exporting selected parcels:', error);
+        showToastNotification('Error exporting parcels', 'error');
+    }
+}
+
+/**
+ * Export all loaded parcels to GeoJSON file
+ */
+function exportAllParcels() {
+    if (!currentGeoJsonLayer || currentGeoJsonLayer.getLayers().length === 0) {
+        showToastNotification('No parcels loaded', 'warning');
+        return;
+    }
+
+    try {
+        const features = [];
+
+        currentGeoJsonLayer.eachLayer(layer => {
+            if (layer.feature) {
+                features.push(layer.feature);
+            } else if (layer.toGeoJSON) {
+                features.push(layer.toGeoJSON());
+            }
+        });
+
+        if (features.length === 0) {
+            showToastNotification('No feature data available', 'warning');
+            return;
+        }
+
+        const geoJson = {
+            type: 'FeatureCollection',
+            features: features,
+            metadata: {
+                exported_at: new Date().toISOString(),
+                source: 'Cadastre Land Registry Viewer',
+                parcel_count: features.length
+            }
+        };
+
+        downloadGeoJson(geoJson, `all_parcels_${features.length}`);
+        showToastNotification(`Exported ${features.length} parcel${features.length !== 1 ? 's' : ''}`, 'success');
+
+    } catch (error) {
+        console.error('Error exporting all parcels:', error);
+        showToastNotification('Error exporting parcels', 'error');
+    }
+}
+
+/**
+ * Download GeoJSON data as a file
+ */
+function downloadGeoJson(geoJson, filename) {
+    const dataStr = JSON.stringify(geoJson, null, 2);
+    const blob = new Blob([dataStr], { type: 'application/geo+json' });
+    const url = URL.createObjectURL(blob);
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const fullFilename = `${filename}_${timestamp}.geojson`;
+
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fullFilename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    // Clean up the URL object
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+    debugLog('Downloaded GeoJSON:', fullFilename);
 }
 
 
