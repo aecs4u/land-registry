@@ -541,6 +541,102 @@ async def get_attributes():
         raise HTTPException(status_code=500, detail=f"Error getting attributes: {str(e)}")
 
 
+@api_router.get("/search/comuni")
+async def search_comuni():
+    """Return the sorted list of unique ADMINISTRATIVEUNIT values in the current dataset."""
+    current_gdf = get_current_gdf()
+    if current_gdf is None or current_gdf.empty:
+        return {"comuni": []}
+
+    col = "ADMINISTRATIVEUNIT"
+    if col not in current_gdf.columns:
+        return {"comuni": []}
+
+    comuni = sorted(
+        str(v).strip().upper()
+        for v in current_gdf[col].dropna().unique()
+        if str(v).strip()
+    )
+    return {"comuni": comuni}
+
+
+@api_router.get("/search/parcels")
+async def search_parcels(
+    comune: str,
+    foglio: Optional[str] = None,
+    particella: Optional[str] = None,
+    subalterno: Optional[str] = None,
+):
+    """
+    Search parcels in the loaded dataset by comune (required) plus optional
+    foglio, particella, and subalterno filters.
+
+    Returns a GeoJSON FeatureCollection of matching parcels.
+    """
+    current_gdf = get_current_gdf()
+    if current_gdf is None or current_gdf.empty:
+        raise HTTPException(status_code=400, detail="No data loaded. Please load cadastral files first.")
+
+    comune = comune.strip().upper()
+    foglio = (foglio or "").strip()
+    particella = (particella or "").strip()
+    subalterno = (subalterno or "").strip()
+
+    import re
+
+    def _parse_ref(ref: str):
+        """Parse NATIONALCADASTRALREFERENCE: {COMUNE}_{FOGLIO_PADDED}.{PARTICELLA}[/{SUB}]"""
+        if not ref:
+            return "", "", ""
+        without_comune = re.sub(r"^[^_]+_", "", ref)
+        dot_idx = without_comune.find(".")
+        if dot_idx == -1:
+            return re.sub(r"^0+", "", without_comune) or without_comune, "", ""
+        f = re.sub(r"^0+", "", without_comune[:dot_idx]) or without_comune[:dot_idx]
+        rest = without_comune[dot_idx + 1:]
+        slash_idx = rest.find("/")
+        p = rest if slash_idx == -1 else rest[:slash_idx]
+        s = "" if slash_idx == -1 else rest[slash_idx + 1:]
+        return f, p, s
+
+    mask = pd.Series([True] * len(current_gdf), index=current_gdf.index)
+
+    # Filter by comune
+    if "ADMINISTRATIVEUNIT" in current_gdf.columns:
+        mask &= current_gdf["ADMINISTRATIVEUNIT"].fillna("").str.strip().str.upper() == comune
+
+    matches = current_gdf[mask].copy()
+
+    if foglio or particella or subalterno:
+        def _row_matches(row) -> bool:
+            props = row.to_dict()
+            ref = str(props.get("NATIONALCADASTRALREFERENCE", "") or
+                      props.get("NATIONALCADASTRALZONINGREFERENCE", ""))
+            pf, pp, ps = _parse_ref(ref)
+
+            f_val = str(props.get("foglio") or props.get("FOGLIO") or pf or "").strip()
+            p_val = str(props.get("LABEL") or props.get("particella") or props.get("PARTICELLA") or pp or "").strip()
+            s_val = str(props.get("subalterno") or props.get("SUBALTERNO") or props.get("sub") or ps or "").strip()
+
+            if foglio and f_val != foglio:
+                return False
+            if particella and p_val != particella:
+                return False
+            if subalterno and s_val != subalterno:
+                return False
+            return True
+
+        matches = matches[matches.apply(_row_matches, axis=1)]
+
+    count = len(matches)
+    if count == 0:
+        return {"type": "FeatureCollection", "features": [], "count": 0}
+
+    geojson = json.loads(matches.to_json())
+    geojson["count"] = count
+    return geojson
+
+
 # ============================================================================
 # Cadastral Data Endpoints
 # ============================================================================

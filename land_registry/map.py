@@ -1227,17 +1227,19 @@ class IntegratedMapGenerator:
             ).add_to(m)
 
         # Add Italy regional borders for visual reference
+        # Color chosen to contrast with sea (blue basemap): amber/orange border + light warm fill
         try:
             italy_regions_url = "https://raw.githubusercontent.com/openpolis/geojson-italy/master/geojson/limits_IT_regions.geojson"
             folium.GeoJson(
                 italy_regions_url,
                 name="Italy Regions",
                 style_function=lambda feature: {
-                    'fillColor': 'transparent',
-                    'color': '#0066cc',
+                    'fillColor': '#f59e0b',
+                    'color': '#b45309',
                     'weight': 2,
-                    'fillOpacity': 0,
-                    'opacity': 0.7,
+                    'fillOpacity': 0.08,
+                    'opacity': 0.85,
+                    'className': 'italy-region-layer',
                 },
                 tooltip=folium.GeoJsonTooltip(
                     fields=['reg_name'],

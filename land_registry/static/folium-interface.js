@@ -2361,6 +2361,8 @@ async function _loadCadastralProgressive(filePaths, loadButton, originalText) {
                     window.hasData = true;
                     // Populate attribute field suggestions for Select by Attribute
                     setTimeout(_populateSelectAttrFields, 300);
+                    // Refresh comune dropdown in parcel search
+                    setTimeout(() => { if (window.refreshSearchComuneList) window.refreshSearchComuneList(); }, 400);
                 }
 
                 // Zoom to new data bounds
@@ -3069,6 +3071,8 @@ async function loadFgbRegion() {
                 document.getElementById('zoomToPolygonsBtn').disabled = false;
 
                 console.log('[FGB] Loaded ' + count + ' features from ' + regionName);
+                // Refresh comune dropdown in parcel search
+                setTimeout(() => { if (window.refreshSearchComuneList) window.refreshSearchComuneList(); }, 300);
             } else {
                 alert('No features found in this region/layer');
             }
@@ -3109,3 +3113,70 @@ window.loadFgbRegion = loadFgbRegion;
 window.clearFgbSelection = clearFgbSelection;
 
 console.log('[FGB] Functions loaded successfully');
+
+// ============================================================
+// Region Layer Controls
+// ============================================================
+
+const REGION_LAYER_DEFAULTS = { border: '#b45309', fill: '#f59e0b', fillOpacity: 0.08, opacity: 0.85, weight: 2 };
+
+/** Find the Italy Regions GeoJSON layer inside the Folium iframe. */
+function _getRegionLayer() {
+    const mapEls = document.querySelectorAll('.leaflet-container');
+    for (const mapEl of mapEls) {
+        const mapId = Object.keys(window).find(k => window[k] && window[k]._container === mapEl);
+        if (!mapId) continue;
+        const map = window[mapId];
+        let found = null;
+        map.eachLayer(layer => {
+            if (found) return;
+            // Folium names layers via options.name or the layer control
+            if (layer.options && layer.options.name === 'Italy Regions') {
+                found = layer;
+            }
+            // Also try matching on GeoJSON sub-layers that carry className
+            if (!found && layer.eachLayer) {
+                layer.eachLayer(sub => {
+                    if (!found && sub.options && sub.options.className === 'italy-region-layer') {
+                        found = layer; // parent GeoJSON layer
+                    }
+                });
+            }
+        });
+        if (found) return { map, layer: found };
+    }
+    return null;
+}
+
+function toggleRegionLayer(visible) {
+    const result = _getRegionLayer();
+    if (!result) return;
+    const { map, layer } = result;
+    if (visible) {
+        if (!map.hasLayer(layer)) layer.addTo(map);
+    } else {
+        if (map.hasLayer(layer)) map.removeLayer(layer);
+    }
+}
+
+function applyRegionLayerColor() {
+    const borderColor = document.getElementById('regionBorderColor')?.value || REGION_LAYER_DEFAULTS.border;
+    const fillColor   = document.getElementById('regionFillColor')?.value  || REGION_LAYER_DEFAULTS.fill;
+    const result = _getRegionLayer();
+    if (!result) return;
+    result.layer.setStyle({
+        color: borderColor,
+        fillColor: fillColor,
+        weight: REGION_LAYER_DEFAULTS.weight,
+        opacity: REGION_LAYER_DEFAULTS.opacity,
+        fillOpacity: REGION_LAYER_DEFAULTS.fillOpacity,
+    });
+}
+
+function resetRegionLayerColor() {
+    const borderEl = document.getElementById('regionBorderColor');
+    const fillEl   = document.getElementById('regionFillColor');
+    if (borderEl) borderEl.value = REGION_LAYER_DEFAULTS.border;
+    if (fillEl)   fillEl.value   = REGION_LAYER_DEFAULTS.fill;
+    applyRegionLayerColor();
+}

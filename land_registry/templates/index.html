@@ -407,20 +407,30 @@
           <div class="tool-panel-body">
             <div class="tool-panel-section">
               <h5>{{ _('Search Parcels') }}</h5>
-              <div class="search-row">
-                <label>{{ _('Foglio') }}</label>
-                <input type="text" id="searchFoglio" placeholder="{{ _('e.g., 12') }}" class="tool-input" />
+              <div class="tool-field">
+                <label>{{ _('Comune (required)') }}</label>
+                <select id="searchComune" class="tool-select">
+                  <option value="">{{ _('Select comune…') }}</option>
+                </select>
               </div>
-              <div class="search-row">
+              <div class="tool-field">
+                <label>{{ _('Foglio') }}</label>
+                <input type="text" id="searchFoglio" placeholder="{{ _('e.g., 35') }}" class="tool-input" />
+              </div>
+              <div class="tool-field">
                 <label>{{ _('Particella') }}</label>
-                <input type="text" id="searchParticella" placeholder="{{ _('e.g., 456') }}" class="tool-input" />
+                <input type="text" id="searchParticella" placeholder="{{ _('e.g., 257') }}" class="tool-input" />
+              </div>
+              <div class="tool-field">
+                <label>{{ _('Subalterno (optional)') }}</label>
+                <input type="text" id="searchSubalterno" placeholder="{{ _('e.g., 1') }}" class="tool-input" />
               </div>
               <div class="tool-row">
                 <button onclick="searchParcels()" class="tool-btn">{{ _('Search') }}</button>
                 <button onclick="clearParcelSearch()" class="tool-btn-ghost">{{ _('Clear') }}</button>
               </div>
               <div id="searchResults" class="search-results" style="display:none">
-                <span id="searchResultCount">0 parcels found</span>
+                <span id="searchResultCount"></span>
               </div>
             </div>
             <div class="tool-panel-section">
@@ -487,6 +497,28 @@
                 <button onclick="exportAllParcels()" id="exportAllBtn" disabled class="tool-btn-ghost">{{ _('Export All') }}</button>
               </div>
               <div id="polygonCount" class="tool-info-text">{{ _('No polygons loaded') }}</div>
+            </div>
+
+            <div class="tool-panel-section">
+              <h5>{{ _('Region Layer') }}</h5>
+              <div class="tool-row" style="align-items:center;gap:8px;">
+                <label class="tool-toggle-label" style="flex:1;font-size:13px;">{{ _('Show regions') }}</label>
+                <label class="tool-toggle-switch">
+                  <input type="checkbox" id="regionLayerToggle" checked onchange="toggleRegionLayer(this.checked)">
+                  <span class="tool-toggle-slider"></span>
+                </label>
+              </div>
+              <div class="tool-field" style="margin-top:8px;">
+                <label>{{ _('Border color') }}</label>
+                <div class="tool-row" style="gap:6px;align-items:center;">
+                  <input type="color" id="regionBorderColor" value="#b45309"
+                         oninput="applyRegionLayerColor()" style="width:36px;height:28px;padding:2px;border:1px solid #ced4da;border-radius:4px;cursor:pointer;">
+                  <input type="color" id="regionFillColor" value="#f59e0b"
+                         oninput="applyRegionLayerColor()" style="width:36px;height:28px;padding:2px;border:1px solid #ced4da;border-radius:4px;cursor:pointer;">
+                  <span style="font-size:11px;color:#868e96;">{{ _('border / fill') }}</span>
+                  <button onclick="resetRegionLayerColor()" class="tool-btn-ghost" style="margin-left:auto;font-size:11px;padding:3px 7px;">{{ _('Reset') }}</button>
+                </div>
+              </div>
             </div>
           </div>
         </div>

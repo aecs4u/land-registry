@@ -3292,171 +3292,170 @@ window.loadCadastralSelection = async function() {
 let searchHighlightLayer = null;
 
 /**
- * Search for parcels by foglio and/or particella
+ * Parse NATIONALCADASTRALREFERENCE to extract foglio and particella.
+ * Format: {COMUNE_CODE}_{FOGLIO_PADDED}.{PARTICELLA}[/{SUBALTERNO}]
+ * e.g.  "A018_003500.257"  →  foglio="3500", particella="257", sub=""
+ *        "A018_003500.257/1" → foglio="3500", particella="257", sub="1"
  */
-window.searchParcels = function() {
-    const foglioInput = document.getElementById('searchFoglio');
-    const particellaInput = document.getElementById('searchParticella');
-    const resultsDiv = document.getElementById('searchResults');
-    const resultCountSpan = document.getElementById('searchResultCount');
+function _parseCadastralRef(ref) {
+    if (!ref) return { foglio: '', particella: '', sub: '' };
+    // Strip comune prefix: everything up to and including first underscore
+    const withoutComune = ref.replace(/^[^_]+_/, '');   // "003500.257" or "003500.257/1"
+    const dotIdx = withoutComune.indexOf('.');
+    if (dotIdx === -1) return { foglio: withoutComune.replace(/^0+/, '') || withoutComune, particella: '', sub: '' };
+    const foglio = withoutComune.slice(0, dotIdx).replace(/^0+/, '') || withoutComune.slice(0, dotIdx);
+    const rest = withoutComune.slice(dotIdx + 1);        // "257" or "257/1"
+    const slashIdx = rest.indexOf('/');
+    const particella = slashIdx === -1 ? rest : rest.slice(0, slashIdx);
+    const sub = slashIdx === -1 ? '' : rest.slice(slashIdx + 1);
+    return { foglio, particella, sub };
+}
 
-    const foglioSearch = (foglioInput?.value || '').trim().toLowerCase();
-    const particellaSearch = (particellaInput?.value || '').trim().toLowerCase();
-
-    if (!foglioSearch && !particellaSearch) {
-        alert('Please enter a foglio number, particella number, or both.');
-        return;
-    }
-
-    // Clear previous search highlights
-    clearParcelSearch();
-
-    // Collect all matching features from all layers
-    const matchingFeatures = [];
-
-    map.eachLayer(function(layer) {
-        // Check if this is a GeoJSON layer group
-        if (layer instanceof L.LayerGroup || layer instanceof L.GeoJSON) {
-            layer.eachLayer(function(sublayer) {
-                if (sublayer.feature) {
-                    const feature = sublayer.feature;
-                    const props = feature.properties || {};
-
-                    // Extract foglio and particella from LABEL or specific fields
-                    // LABEL format is typically "foglio/particella" e.g., "12/456"
-                    const label = (props.LABEL || '').toLowerCase();
-                    const foglio = (props.foglio || props.FOGLIO || '').toString().toLowerCase();
-                    const particella = (props.particella || props.PARTICELLA || '').toString().toLowerCase();
-
-                    let matches = true;
-
-                    // Check foglio match
-                    if (foglioSearch) {
-                        const foglioFromLabel = label.split('/')[0] || '';
-                        if (foglio !== foglioSearch && foglioFromLabel !== foglioSearch) {
-                            matches = false;
-                        }
-                    }
-
-                    // Check particella match
-                    if (particellaSearch && matches) {
-                        const particellaFromLabel = label.split('/')[1] || '';
-                        if (particella !== particellaSearch && particellaFromLabel !== particellaSearch) {
-                            matches = false;
-                        }
-                    }
-
-                    if (matches) {
-                        matchingFeatures.push({
-                            feature: feature,
-                            layer: sublayer
-                        });
-                    }
-                }
-            });
-        }
-    });
-
-    // Show results
-    if (resultsDiv && resultCountSpan) {
-        resultsDiv.style.display = 'block';
-        resultCountSpan.textContent = `${matchingFeatures.length} parcel${matchingFeatures.length !== 1 ? 's' : ''} found`;
-
-        if (matchingFeatures.length === 0) {
-            resultsDiv.classList.add('no-results');
-        } else {
-            resultsDiv.classList.remove('no-results');
-        }
-    }
-
-    if (matchingFeatures.length === 0) {
-        return;
-    }
-
-    // Create highlight layer for matching features
-    const highlightFeatures = matchingFeatures.map(m => m.feature);
-    const highlightGeoJSON = {
-        type: 'FeatureCollection',
-        features: highlightFeatures
-    };
-
-    searchHighlightLayer = L.geoJSON(highlightGeoJSON, {
-        style: {
-            color: '#ff6600',
-            weight: 4,
-            fillColor: '#ff6600',
-            fillOpacity: 0.3,
-            opacity: 1
-        },
-        onEachFeature: function(feature, layer) {
-            const props = feature.properties || {};
-            const label = props.LABEL || 'Unknown';
-            const comune = props.ADMINISTRATIVEUNIT || '';
-            const area = props.area_display || '';
-
-            layer.bindPopup(`
-                <div class="search-result-popup">
-                    <strong>📍 ${label}</strong><br>
-                    ${comune ? `<span style="color:#666">Comune: ${comune}</span><br>` : ''}
-                    ${area ? `<span style="color:#666">Area: ${area}</span>` : ''}
-                </div>
-            `);
-        }
-    }).addTo(map);
-
-    // Fit map to show all results
-    const bounds = searchHighlightLayer.getBounds();
-    if (bounds.isValid()) {
-        map.fitBounds(bounds, { padding: [50, 50], maxZoom: 17 });
-    }
-
-    // If only one result, open its popup
-    if (matchingFeatures.length === 1) {
-        searchHighlightLayer.eachLayer(function(layer) {
-            layer.openPopup();
+/**
+ * Populate the Comune dropdown by querying the server.
+ * Called after data loads so the list is always in sync.
+ */
+window.refreshSearchComuneList = async function() {
+    const select = document.getElementById('searchComune');
+    if (!select) return;
+    try {
+        const resp = await fetch('/api/v1/search/comuni');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const comuni = data.comuni || [];
+        const prev = select.value;
+        const placeholder = window.t ? window.t('Select comune…') : 'Select comune…';
+        select.innerHTML = `<option value="">${placeholder}</option>`;
+        comuni.forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = c;
+            opt.textContent = c;
+            select.appendChild(opt);
         });
+        if (prev && comuni.includes(prev)) select.value = prev;
+    } catch (e) {
+        console.warn('[Search] Could not refresh comune list:', e);
     }
-
-    debugLog(`Search found ${matchingFeatures.length} parcels matching foglio="${foglioSearch}" particella="${particellaSearch}"`);
 };
 
 /**
- * Clear search results and highlights
+ * Search parcels via server-side API.
+ * Comune (ADMINISTRATIVEUNIT) is required; foglio, particella, subalterno are optional.
  */
-window.clearParcelSearch = function() {
-    // Remove highlight layer
-    if (searchHighlightLayer) {
-        map.removeLayer(searchHighlightLayer);
-        searchHighlightLayer = null;
-    }
-
-    // Clear inputs
-    const foglioInput = document.getElementById('searchFoglio');
+window.searchParcels = async function() {
+    const comuneSelect    = document.getElementById('searchComune');
+    const foglioInput     = document.getElementById('searchFoglio');
     const particellaInput = document.getElementById('searchParticella');
-    if (foglioInput) foglioInput.value = '';
-    if (particellaInput) particellaInput.value = '';
+    const subInput        = document.getElementById('searchSubalterno');
+    const resultsDiv      = document.getElementById('searchResults');
+    const resultCountSpan = document.getElementById('searchResultCount');
 
-    // Hide results
-    const resultsDiv = document.getElementById('searchResults');
-    if (resultsDiv) {
-        resultsDiv.style.display = 'none';
-        resultsDiv.classList.remove('no-results');
+    const comuneSearch    = (comuneSelect?.value    || '').trim();
+    const foglioSearch    = (foglioInput?.value     || '').trim();
+    const particellaSearch= (particellaInput?.value || '').trim();
+    const subSearch       = (subInput?.value        || '').trim();
+
+    if (!comuneSearch) {
+        alert(window.t ? window.t('Select a comune before searching.') : 'Select a comune before searching.');
+        comuneSelect?.focus();
+        return;
     }
+
+    // Show loading state
+    if (resultCountSpan) resultCountSpan.textContent = '…';
+    if (resultsDiv) { resultsDiv.style.display = 'block'; resultsDiv.classList.remove('no-results'); }
+
+    // Build query string
+    const params = new URLSearchParams({ comune: comuneSearch });
+    if (foglioSearch)     params.set('foglio',     foglioSearch);
+    if (particellaSearch) params.set('particella', particellaSearch);
+    if (subSearch)        params.set('subalterno', subSearch);
+
+    let geojson;
+    try {
+        const resp = await fetch('/api/v1/search/parcels?' + params.toString());
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            alert('Search error: ' + (err.detail || resp.statusText));
+            return;
+        }
+        geojson = await resp.json();
+    } catch (e) {
+        alert('Search error: ' + e.message);
+        return;
+    }
+
+    const n = geojson.count ?? (geojson.features?.length ?? 0);
+
+    if (resultCountSpan) {
+        resultCountSpan.textContent = n === 0
+            ? (window.t ? window.t('No results') : 'No results')
+            : `${n} ${n !== 1 ? 'parcels' : 'parcel'} found`;
+    }
+    if (resultsDiv) resultsDiv.classList.toggle('no-results', n === 0);
+
+    if (n === 0) return;
+
+    // Remove previous highlight
+    const mapObj = getFoliumMapInstance ? getFoliumMapInstance() : (window.map || null);
+    if (!mapObj) return;
+    if (searchHighlightLayer) { mapObj.removeLayer(searchHighlightLayer); searchHighlightLayer = null; }
+
+    searchHighlightLayer = L.geoJSON(geojson, {
+        style: { color: '#ff6600', weight: 3, fillColor: '#ff9933', fillOpacity: 0.35 },
+        onEachFeature: function(feature, layer) {
+            const p = feature.properties || {};
+            const ref = p.NATIONALCADASTRALREFERENCE || p.NATIONALCADASTRALZONINGREFERENCE || '';
+            const parsed = _parseCadastralRef(ref);
+            const comune = p.ADMINISTRATIVEUNIT || '';
+            const foglio = p.foglio || p.FOGLIO || parsed.foglio || '—';
+            const particella = p.LABEL || p.particella || parsed.particella || '—';
+            const sub = p.subalterno || p.SUBALTERNO || parsed.sub || '';
+            const area = p.area_display || '';
+            layer.bindPopup(
+                `<div class="search-result-popup">` +
+                `<strong>📍 ${comune} · F.${foglio} p.${particella}${sub ? '/' + sub : ''}</strong><br>` +
+                `${area ? `<span style="color:#666">Area: ${area}</span>` : ''}` +
+                `</div>`
+            );
+        }
+    }).addTo(mapObj);
+
+    const bounds = searchHighlightLayer.getBounds();
+    if (bounds.isValid()) mapObj.fitBounds(bounds, { padding: [50, 50], maxZoom: 17 });
+    if (n === 1) searchHighlightLayer.eachLayer(l => l.openPopup());
 };
 
-// Add keyboard shortcut for search (Enter key in inputs)
+/**
+ * Clear search results and highlights.
+ */
+window.clearParcelSearch = function() {
+    const mapObj = getFoliumMapInstance ? getFoliumMapInstance() : (window.map || null);
+    if (searchHighlightLayer && mapObj) {
+        mapObj.removeLayer(searchHighlightLayer);
+        searchHighlightLayer = null;
+    }
+    ['searchFoglio', 'searchParticella', 'searchSubalterno'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+    const resultsDiv = document.getElementById('searchResults');
+    if (resultsDiv) { resultsDiv.style.display = 'none'; resultsDiv.classList.remove('no-results'); }
+};
+
+// Keyboard: Enter triggers search from any of the four inputs
 document.addEventListener('DOMContentLoaded', function() {
-    const foglioInput = document.getElementById('searchFoglio');
-    const particellaInput = document.getElementById('searchParticella');
+    const foglioInput    = document.getElementById('searchFoglio');
+    const particellaInput= document.getElementById('searchParticella');
+    const subInput       = document.getElementById('searchSubalterno');
 
     const handleEnter = function(e) {
-        if (e.key === 'Enter') {
-            window.searchParcels();
-        }
+        if (e.key === 'Enter') window.searchParcels();
     };
 
-    if (foglioInput) foglioInput.addEventListener('keypress', handleEnter);
+    if (foglioInput)     foglioInput.addEventListener('keypress', handleEnter);
     if (particellaInput) particellaInput.addEventListener('keypress', handleEnter);
+    if (subInput)        subInput.addEventListener('keypress', handleEnter);
 });
 
 // ==========================================
