@@ -588,22 +588,15 @@ class CustomZoomControl(MacroElement):
         self._name = 'CustomZoomControl'
 
 
-# Global variable to store current geodataframe
-current_gdf = None
-
-# Global variable to store layer data for multi-layer support
-current_layers = {}
-
-# Global variable to store auction properties
-auction_properties = None
+from land_registry.dependencies import _map_state
 
 
 def extract_qpkg_data(file_path):
-    """Extract geospatial data from QPKG or GPKG file"""
-    global current_gdf
+    """Extract geospatial data from QPKG, GPKG, or FlatGeobuf file"""
+    # Files that geopandas/GDAL can read directly without unpacking
+    _DIRECT_FORMATS = ('.gpkg', '.fgb', '.geojson', '.json', '.shp', '.kml')
 
-    # If it's a GPKG file, read directly
-    if file_path.endswith('.gpkg'):
+    if file_path.endswith(_DIRECT_FORMATS):
         try:
             gdf = gpd.read_file(file_path)
             set_current_gdf(gdf)
@@ -611,28 +604,25 @@ def extract_qpkg_data(file_path):
         except Exception:
             return None
 
-    # If it's a QPKG file, try to extract and search for geospatial files
+    # QPKG is a ZIP archive — extract and search for geospatial files inside
     try:
         with tempfile.TemporaryDirectory() as temp_dir:
-            # Extract QPKG (it's essentially a ZIP file)
             with zipfile.ZipFile(file_path, 'r') as zip_ref:
                 zip_ref.extractall(temp_dir)
 
-            # Look for common geospatial file formats
             temp_path = Path(temp_dir)
             geospatial_files = []
 
-            for ext in ['*.shp', '*.geojson', '*.gpkg', '*.kml']:
+            for ext in ['*.shp', '*.geojson', '*.gpkg', '*.fgb', '*.kml']:
                 geospatial_files.extend(temp_path.rglob(ext))
 
-            # Read the first found geospatial file
             if geospatial_files:
                 gdf = gpd.read_file(geospatial_files[0])
                 set_current_gdf(gdf)
                 return gdf.to_json()
 
     except (zipfile.BadZipFile, zipfile.LargeZipFile):
-        # If QPKG is not a ZIP file, try to read it directly as a geospatial file
+        # Not a ZIP — try reading directly as a geospatial file
         try:
             gdf = gpd.read_file(file_path)
             set_current_gdf(gdf)
@@ -645,7 +635,7 @@ def extract_qpkg_data(file_path):
 
 def get_current_gdf():
     """Get the current GeoDataFrame"""
-    return current_gdf
+    return _map_state.get_gdf()
 
 
 def set_current_gdf(gdf):
@@ -654,8 +644,7 @@ def set_current_gdf(gdf):
     NOTE: _sync_to_panel is disabled as it causes deadlock when param watchers
     try to recompute while blocking the async event loop.
     """
-    global current_gdf
-    current_gdf = gdf
+    _map_state.set_gdf(gdf)
     # _sync_to_panel(gdf)  # Disabled - causes deadlock
 
 
@@ -675,19 +664,17 @@ def _sync_to_panel(gdf):
 
 def get_current_layers():
     """Get the current layers data"""
-    return current_layers
+    return _map_state.get_layers()
 
 
 def set_current_layers(layers_data):
     """Set the current layers data"""
-    global current_layers
-    current_layers = layers_data
+    _map_state.set_layers(layers_data)
 
 
 def clear_current_layers():
     """Clear all current layers"""
-    global current_layers
-    current_layers = {}
+    _map_state.clear_layers()
 
 
 def find_adjacent_polygons(gdf: gpd.GeoDataFrame, selected_idx: int, touch_method: str = "touches") -> List[int]:
@@ -758,8 +745,6 @@ def create_auction_properties_layer(auction_data: List[dict] = None):
             }
         ]
     """
-    global auction_properties
-
     # Sample auction data if none provided
     if auction_data is None:
         auction_data = [
@@ -820,7 +805,7 @@ def create_auction_properties_layer(auction_data: List[dict] = None):
         'industrial': 10
     })
 
-    auction_properties = auction_gdf
+    _map_state.set_auction_properties(auction_gdf)
     logger.info(f"Created auction properties layer with {len(auction_gdf)} properties")
 
     return auction_gdf
@@ -828,11 +813,10 @@ def create_auction_properties_layer(auction_data: List[dict] = None):
 
 def get_auction_properties_geojson():
     """Get auction properties as GeoJSON for frontend display"""
-    global auction_properties
-
+    auction_properties = _map_state.get_auction_properties()
     if auction_properties is None:
-        # Create default auction layer
         create_auction_properties_layer()
+        auction_properties = _map_state.get_auction_properties()
 
     if auction_properties is not None and not auction_properties.empty:
         return auction_properties.to_json()
@@ -850,10 +834,10 @@ def filter_auction_properties(status: str = None, property_type: str = None,
         property_type: Filter by property type ('residential', 'commercial', etc.)
         max_price: Filter by maximum starting price
     """
-    global auction_properties
-
+    auction_properties = _map_state.get_auction_properties()
     if auction_properties is None:
         create_auction_properties_layer()
+        auction_properties = _map_state.get_auction_properties()
 
     filtered = auction_properties.copy()
 
@@ -872,8 +856,7 @@ def filter_auction_properties(status: str = None, property_type: str = None,
 
 def get_auction_properties():
     """Get the current auction properties GeoDataFrame"""
-    global auction_properties
-    return auction_properties
+    return _map_state.get_auction_properties()
 
 
 def highlight_auction_properties_near_cadastral(distance_km: float = 1.0):
@@ -883,7 +866,8 @@ def highlight_auction_properties_near_cadastral(distance_km: float = 1.0):
     Args:
         distance_km: Search radius in kilometers
     """
-    global current_gdf, auction_properties
+    current_gdf = _map_state.get_gdf()
+    auction_properties = _map_state.get_auction_properties()
 
     if current_gdf is None or auction_properties is None:
         logger.warning("No cadastral data or auction properties loaded")

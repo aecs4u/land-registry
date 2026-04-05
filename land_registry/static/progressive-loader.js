@@ -54,7 +54,19 @@ const ProgressiveLoader = {
 
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({}));
-                throw new Error(errorData.detail || `HTTP ${response.status}`);
+                const detail = errorData.detail;
+                let message;
+                if (!detail) {
+                    message = `HTTP ${response.status}`;
+                } else if (typeof detail === 'string') {
+                    message = detail;
+                } else if (Array.isArray(detail)) {
+                    // Pydantic 422 validation errors: [{loc, msg, type}, ...]
+                    message = detail.map(e => e.msg || JSON.stringify(e)).join('; ');
+                } else {
+                    message = JSON.stringify(detail);
+                }
+                throw new Error(message);
             }
 
             const reader = response.body.getReader();
@@ -128,7 +140,7 @@ const ProgressiveLoader = {
             case 'layer':
                 console.log(`[ProgressiveLoader] Loaded ${event.layer_name} (${event.feature_count} features)`);
                 this.loadedLayers.push(event.layer_name);
-                callbacks.onLayer(event.layer_name, event.geojson, event.feature_count, event.file_index);
+                callbacks.onLayer(event.layer_name, event.geojson, event.feature_count, event.file_index, event.layer_type || 'map');
                 break;
 
             case 'error':

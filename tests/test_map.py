@@ -7,6 +7,7 @@ import geopandas as gpd
 from shapely.geometry import Polygon, Point
 
 from land_registry.map import extract_qpkg_data, get_current_gdf, find_adjacent_polygons
+from land_registry.dependencies import _map_state
 
 
 class TestExtractQpkgData:
@@ -129,18 +130,21 @@ class TestExtractQpkgData:
 
 class TestGetCurrentGdf:
     """Tests for getting current GeoDataFrame."""
-    
-    @patch('land_registry.map.current_gdf', None)
+
     def test_get_current_gdf_none(self):
         """Test getting current GDF when it's None."""
+        _map_state.set_gdf(None)
         result = get_current_gdf()
         assert result is None
-    
+
     def test_get_current_gdf_exists(self, sample_gdf):
         """Test getting current GDF when it exists."""
-        with patch('land_registry.map.current_gdf', sample_gdf):
+        _map_state.set_gdf(sample_gdf)
+        try:
             result = get_current_gdf()
             assert result is sample_gdf
+        finally:
+            _map_state.set_gdf(None)
 
 
 class TestFindAdjacentPolygons:
@@ -289,13 +293,16 @@ class TestMapIntegration:
     def test_extract_and_find_adjacent_workflow(self, sample_gdf):
         """Test complete workflow of extracting data and finding adjacent polygons."""
         # First, extract data (simulate by setting current_gdf)
-        with patch('land_registry.map.current_gdf', sample_gdf):
+        _map_state.set_gdf(sample_gdf)
+        try:
             current = get_current_gdf()
             assert current is not None
-            
+
             # Then find adjacent polygons
             adjacent = find_adjacent_polygons(current, 0, "touches")
             assert isinstance(adjacent, list)
+        finally:
+            _map_state.set_gdf(None)
     
     def test_global_state_management(self, sample_gdf):
         """Test that global state is managed correctly."""

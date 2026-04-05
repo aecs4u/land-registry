@@ -37,10 +37,10 @@ cp .env.example .env
 ```
 
 Key configuration options:
-- **ENVIRONMENT**: Set to `development` or `production`
+- **ENVIRONMENT**: Set to `development` or `production` (auto-detects if unset)
 - **CADASTRAL_USE_LOCAL_FILES**: Use local files (true) or S3 (false)
 - **PANEL_PANEL_PORT**: Panel server port (default: 5006)
-- **S3_BUCKET_NAME**: S3 bucket for cadastral data (production)
+- **STORAGE_S3_BUCKET**: S3 bucket for cadastral data (production)
 
 See [.env.example](.env.example) for all available options.
 
@@ -84,23 +84,37 @@ The data were extracted from [servizio cartografico dell'Agenzia delle Entrate](
 
 ## API Endpoints
 
-### Main Application
-- `GET /` - Main application interface with interactive Leaflet map
-- `GET /map_table` - Tabulator-based table view (embedded Panel dashboard)
-- `GET /adjacency_table` - Adjacency analysis table view (planned)
-- `GET /mapping_table` - Mapping table view (planned)
+### Pages
+- `GET /` - Redirects to `/map`
+- `GET /map` - Main map application (Folium iframe + sidebar + Panel dashboards)
+- `GET /landing` - Feature summary landing page
+- `GET /cadastral-data` - Browse Italian cadastral data hierarchy
+- `GET /map_table` - Standalone tabulator table view (Panel-embedded)
+- `GET /adjacency_table` - Adjacency analysis table (Panel-embedded)
+- `GET /mapping_table` - Mapping/drawing table (Panel-embedded)
 
-### Data Processing
-- `POST /upload-qpkg/` - Process uploaded geospatial files
-- `POST /get-adjacent-polygons/` - Spatial adjacency analysis
-- `POST /load-cadastral-files/` - Load Italian cadastral data
-- `POST /save-drawn-polygons/` - Save user-drawn features
+### File Upload & Processing
+- `POST /api/v1/upload-qpkg/` - Upload and process QPKG/GPKG files
+- `POST /api/v1/generate-map/` - Generate static Folium map from uploads
 
-### API v1 Endpoints
-- `GET /api/v1/table-data` - Paginated table data with filtering and sorting
+### Cadastral Data
+- `GET /api/v1/get-cadastral-structure/` - Load Italian cadastral hierarchy (cached)
+- `POST /api/v1/load-cadastral-files/` - Load multiple cadastral files (returns all at once)
+- `POST /api/v1/load-cadastral-files-stream/` - Streaming loader (NDJSON, progressive rendering)
 - `GET /api/v1/cadastral-cache-info` - Cache metadata, statistics, and file availability
-- `GET /api/v1/adjacency-data` - Adjacency analysis data (503 - not implemented)
-- `GET /api/v1/mapping-data` - Mapping data (503 - not implemented)
+
+### Spatial Analysis
+- `POST /api/v1/get-adjacent-polygons/` - Find adjacent polygons
+- `GET /api/v1/get-attributes/` - Retrieve feature attributes
+
+### Table Data
+- `GET /api/v1/table-data` - Paginated table data with filtering and sorting
+- `GET /api/v1/adjacency-data` - Adjacency analysis data (503 — not yet implemented)
+- `GET /api/v1/mapping-data` - Mapping/drawing data (503 — not yet implemented)
+
+### High-Performance Visualization
+- `GET /api/v1/tiles/datashader/{z}/{x}/{y}.png` - Datashader rasterized tiles
+- `GET /api/v1/datashader/heatmap/{region}` - Full-region density heatmap
 
 ### Health & Monitoring
 - `GET /health` - Application health check
@@ -178,45 +192,103 @@ uv run flake8
 
 ```
 land_registry/
-├── main.py                        # Main FastAPI application with Panel integration
-├── settings.py                    # Pydantic settings for configuration management
+├── main.py                        # FastAPI app, Panel lifecycle, main page endpoints
+├── config.py                      # Pydantic settings for all configuration
 ├── models.py                      # Pydantic models for API responses
-├── cadastral_utils.py             # Cadastral data loading and caching
-├── s3_storage.py                  # S3 integration for cadastral files
-├── dashboard.py                   # Panel dashboard application
-├── shared_state.py                # Shared state between FastAPI and Panel
+├── cadastral_utils.py             # Cadastral data loading and TTL caching
+├── cadastral_db.py                # CadastralDatabase class (query parcels)
+├── map.py                         # Geospatial processing, global GDF state
+├── map_controls.py                # Python-defined map control buttons/selects
+├── datashader_service.py          # Server-side tile generation (large datasets)
+├── dashboard.py                   # Panel/Bokeh dashboard (Tabulator table)
+├── shared_state.py                # SharedState: FastAPI ↔ Panel data bridge
+├── file_availability_db.py        # SQLite cache for S3 file availability
+├── s3_storage.py                  # S3 client for cadastral files (production)
+├── gcs_storage.py                 # GCS client (aecs4u-storage integration)
+├── sqlite_db.py                   # SQLite database for zones and microzones
+├── core/
+│   └── clerk.py                   # Clerk JWT auth (optional)
 ├── routers/
-│   └── api.py                     # API v1 endpoints
+│   ├── api.py                     # All /api/v1/* endpoints
+│   ├── auth.py                    # Clerk JWT authentication endpoints
+│   └── auth_pages.py              # HTML auth pages (login/register)
 ├── templates/
-│   ├── base.html                  # Base template with Leaflet libraries
-│   ├── index.html                 # Landing page with map
-│   └── tabulator.html             # Table view template
+│   ├── base.html                  # Base template with JS/CSS dependencies
+│   ├── index.html                 # Main map shell (extends base.html)
+│   ├── landing.html               # Feature landing page
+│   ├── cadastral_data.html        # Cadastral data browser
+│   └── tabulator.html             # Standalone Panel table view
 └── static/
-    ├── map.js                     # Leaflet map initialization
+    ├── map.js                     # Client-side map logic, WebGL, zone management
+    ├── folium-interface.js        # Folium iframe interaction, progressive loading
+    ├── webgl-renderer.js          # GPU rendering via Leaflet.glify with SVG fallback
+    ├── progressive-loader.js      # NDJSON stream consumer
     ├── table-manager.js           # Tabulator table management
-    ├── folium-interface.js        # Folium bridge utilities
-    └── styles.css                 # Application styles
+    ├── styles.css                 # All styles including dark mode
+    └── vendor/
+        └── glify-browser.js       # Bundled Leaflet.glify (local, not CDN)
 
 data/
-├── cadastral_structure.json       # Italian administrative boundaries
-└── drawn_polygons/                # User-created features
+├── cadastral_structure.json       # Italian administrative boundaries (optional)
+└── catasto/ITALIA/                # Local cadastral GPKG files (development)
 
-scripts/
-├── run_tests.py                   # Test runner utilities
-└── validate_tests.py              # Test validation
+tests/
+├── conftest.py                    # Shared fixtures (TestClient, sample data)
+├── test_cadastral_utils.py        # CadastralData, caching, source loading
+├── test_main_endpoints.py         # Main page endpoints, table-data API
+├── test_api_endpoints.py          # API v1 endpoint tests
+├── test_config.py                 # Configuration settings tests
+└── archive/                       # Older test files (kept for reference)
 ```
+
+## Panel Server Configuration
+
+The Panel/Bokeh dashboard provides interactive Tabulator tables. It runs as a separate HTTP server (default port 5006) alongside the main FastAPI app.
+
+### How it works
+
+1. FastAPI starts a daemon thread running `pn.serve()` during app startup
+2. The lifespan context retries a health check (up to 10 seconds by default) to confirm Panel is ready
+3. The main app embeds Panel documents via `bokeh.embed.server_document()` calls
+4. On hot-reload, if Panel's port is already in use, the existing server is reused
+
+### Key settings (`PANEL_*` prefix)
+
+| Variable | Default | Description |
+|---|---|---|
+| `PANEL_PANEL_HOST` | `127.0.0.1` | Panel server bind address |
+| `PANEL_PANEL_PORT` | `5006` | Panel server port |
+| `PANEL_PANEL_STARTUP_TIMEOUT` | `10` | Seconds to wait for Panel to start |
+| `PANEL_PANEL_STARTUP_RETRY_DELAY` | `0.5` | Seconds between health check retries |
+| `PANEL_PANEL_HEALTH_CHECK_TIMEOUT` | `5.0` | HTTP timeout for each health check |
+| `PANEL_PANEL_SHOW` | `false` | Open Panel in browser automatically |
+
+### Troubleshooting Panel
+
+**Panel tables show blank / connection refused**
+- Check that port 5006 is not blocked by a firewall or already used by another process
+- Look for `Panel server health check passed` in the startup logs
+- Increase `PANEL_PANEL_STARTUP_TIMEOUT` if Panel is slow to start on your machine
+
+**`Address already in use` on startup**
+- Normal during hot-reload — the existing Panel server is reused automatically
+- If the app is stuck, kill the process holding port 5006: `fuser -k 5006/tcp`
+
+**Panel works but tables are empty**
+- The Panel server and FastAPI share state via `SharedState` in `shared_state.py`
+- Data is pushed to Panel after each cadastral file load via the API endpoints
 
 ## Environment Variables
 
 All environment variables are documented in [.env.example](.env.example). Key categories:
 
 - **Application Settings**: `LAND_REGISTRY_*`
-- **S3 Storage**: `S3_*`
+- **Storage**: `STORAGE_*` (unified), `S3_*` (legacy)
 - **Database**: `DB_*`
 - **Panel Server**: `PANEL_*`
 - **Cadastral Data**: `CADASTRAL_*`
 - **Map Controls**: `MAP_CONTROLS_*`
-- **Authentication**: `CLERK_*`
+- **Authentication**: `CLERK_*`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
 
 ## Monitoring & Operations
 

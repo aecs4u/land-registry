@@ -230,10 +230,11 @@ class TestCadastralSettings:
         assert ".geojson" in settings.supported_extensions
 
     def test_local_cadastral_path(self):
-        """Test local cadastral data path."""
+        """Test local cadastral data path default."""
         settings = CadastralSettings()
 
-        assert settings.local_cadastral_data_path == "data/catasto/ITALIA"
+        # Default is an absolute path (/data/catasto/ITALIA) — see config.py line 239
+        assert settings.local_cadastral_data_path == "/data/catasto/ITALIA"
 
     def test_env_prefix(self, monkeypatch):
         """Test CADASTRAL_ environment prefix."""

@@ -9,6 +9,9 @@ let totalAdjacencyPages = 1;
 let currentMappingPage = 1;
 let totalMappingPages = 1;
 
+// Table row selection state
+let tableSelectedRowIdx = null;
+
 // Table configuration
 const tableConfigs = {
     table: {
@@ -217,6 +220,15 @@ function renderTable(tableType, data) {
         tableBody.innerHTML = '';
         data.data.forEach(row => {
             const tr = document.createElement('tr');
+            const gdfIdx = row.__idx__ !== undefined ? row.__idx__ : null;
+            if (gdfIdx !== null) tr.dataset.idx = gdfIdx;
+            if (tableType === 'table') {
+                tr.style.cursor = 'pointer';
+                tr.onclick = () => selectTableRow(tr, gdfIdx);
+                if (gdfIdx !== null && gdfIdx === tableSelectedRowIdx) {
+                    tr.classList.add('row-selected');
+                }
+            }
             data.columns.forEach(column => {
                 const td = document.createElement('td');
                 const value = row[column];
@@ -225,6 +237,79 @@ function renderTable(tableType, data) {
             });
             tableBody.appendChild(tr);
         });
+    }
+}
+
+function selectTableRow(tr, gdfIdx) {
+    document.querySelectorAll('#tableBody tr.row-selected').forEach(r => r.classList.remove('row-selected'));
+    const bar = document.getElementById('tableSelectionBar');
+    if (tableSelectedRowIdx === gdfIdx) {
+        tableSelectedRowIdx = null;
+        if (bar) bar.style.display = 'none';
+    } else {
+        tableSelectedRowIdx = gdfIdx;
+        tr.classList.add('row-selected');
+        if (bar) bar.style.display = 'flex';
+        const info = document.getElementById('tableSelectedInfo');
+        if (info) info.textContent = '1 row selected';
+    }
+}
+
+function clearTableRowSelection() {
+    tableSelectedRowIdx = null;
+    document.querySelectorAll('#tableBody tr.row-selected').forEach(r => r.classList.remove('row-selected'));
+    const bar = document.getElementById('tableSelectionBar');
+    if (bar) bar.style.display = 'none';
+}
+
+async function findAdjacentFromTable() {
+    if (tableSelectedRowIdx === null) return;
+    if (!window.currentGeoJsonLayer) { alert('No map data loaded'); return; }
+
+    let targetLayer = null;
+    let i = 0;
+    window.currentGeoJsonLayer.eachLayer(function(layer) {
+        if (i === tableSelectedRowIdx) targetLayer = layer;
+        i++;
+    });
+
+    if (!targetLayer || !targetLayer.feature) {
+        alert('Could not find polygon on map for selected row');
+        return;
+    }
+
+    const feature = targetLayer.feature;
+    const featureId = feature.properties?.feature_id ?? feature.properties?.id ?? tableSelectedRowIdx;
+    const method = document.getElementById('adjacencyMethod')?.value || 'touches';
+
+    try {
+        const response = await fetch('/api/v1/get-adjacent-polygons/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ feature_id: featureId, geometry: feature.geometry, touch_method: method })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        if (data.adjacent_ids && data.adjacent_ids.length > 0) {
+            window.adjacentPolygonsFound = true;
+            window.adjacentPolygonIndices = data.adjacent_ids;
+            if (typeof window.updateAdjacencyButtons === 'function') window.updateAdjacencyButtons();
+            alert(`Found ${data.adjacent_ids.length} adjacent polygons`);
+        } else {
+            window.adjacentPolygonsFound = false;
+            window.adjacentPolygonIndices = [];
+            if (typeof window.updateAdjacencyButtons === 'function') window.updateAdjacencyButtons();
+            alert('No adjacent polygons found');
+        }
+    } catch (error) {
+        console.error('Error finding adjacent polygons:', error);
+        alert('Error finding adjacent polygons: ' + error.message);
     }
 }
 
@@ -481,11 +566,6 @@ function applyMappingZoneContextToUi(context) {
 
 // Initialize table when data is loaded
 function initializeTables() {
-    // Load table data when entering table view
-    if (window.hasData) {
-        loadTableData('table', 1);
-    }
-
     const mappingContext = getMappingContextFromUrl();
     if (mappingContext) {
         showMappingView(mappingContext);
@@ -499,10 +579,7 @@ function handleTableViewClick() {
     document.getElementById('tableView').classList.add('active');
     document.getElementById('tableViewBtn').classList.add('active');
 
-    // Load table data
-    if (window.hasData) {
-        loadTableData('table', 1);
-    }
+    loadTableData('table', 1);
 }
 
 // Enhanced adjacency view handler
@@ -512,8 +589,10 @@ function showAdjacencyView() {
     document.getElementById('adjacencyView').classList.add('active');
     document.getElementById('adjacencyViewBtn').classList.add('active');
 
-    // Load adjacency data if available
-    loadTableData('adjacency', 1);
+    // Only load adjacency data if results are available (endpoint returns 503 otherwise)
+    if (window.adjacentPolygonsFound) {
+        loadTableData('adjacency', 1);
+    }
 }
 
 // Enhanced mapping view handler
@@ -531,8 +610,8 @@ function showMappingView(options) {
     updateMappingUrlContext(resolvedContext);
     applyMappingZoneContextToUi(resolvedContext);
 
-    // Load mapping data if available
-    loadTableData('mapping', 1);
+    // Only load mapping data if the endpoint is available (currently not implemented)
+    // loadTableData('mapping', 1);
 
     return resolvedContext;
 }

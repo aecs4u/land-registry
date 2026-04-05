@@ -453,6 +453,40 @@ function initDarkMode() {
 }
 
 /**
+ * Toggle sidebar collapsed/expanded state
+ */
+function toggleSidebar() {
+    const sidebar = document.getElementById('app-sidebar');
+    const collapseBtn = document.getElementById('sidebarCollapseBtn');
+    const expandBtn = document.getElementById('sidebarExpandBtn');
+    if (!sidebar) return;
+
+    const collapsed = sidebar.classList.toggle('collapsed');
+    if (expandBtn) expandBtn.style.display = collapsed ? 'flex' : 'none';
+    if (collapseBtn) collapseBtn.style.display = collapsed ? 'none' : 'flex';
+    localStorage.setItem('sidebarCollapsed', collapsed ? '1' : '0');
+
+    // Let Leaflet recalculate its container size after the CSS transition
+    setTimeout(() => {
+        if (typeof invalidateLeafletMap === 'function') invalidateLeafletMap();
+    }, 300);
+}
+
+/** Restore sidebar state from localStorage on page load */
+(function restoreSidebarState() {
+    if (localStorage.getItem('sidebarCollapsed') === '1') {
+        document.addEventListener('DOMContentLoaded', () => {
+            const sidebar = document.getElementById('app-sidebar');
+            const expandBtn = document.getElementById('sidebarExpandBtn');
+            const collapseBtn = document.getElementById('sidebarCollapseBtn');
+            if (sidebar) sidebar.classList.add('collapsed');
+            if (expandBtn) expandBtn.style.display = 'flex';
+            if (collapseBtn) collapseBtn.style.display = 'none';
+        });
+    }
+})();
+
+/**
  * Toggle dark mode
  */
 function toggleDarkMode() {
@@ -768,6 +802,8 @@ function updateSelectionCounter() {
 function updateSelectionButtons() {
     const selectAllBtn = document.getElementById('selectAllBtn');
     const deselectAllBtn = document.getElementById('deselectAllBtn');
+    const findAdjacencyBtn = document.getElementById('findAdjacencyBtn');
+    const clearSelectionBtn = document.getElementById('clearSelectionBtn');
 
     const hasData = currentGeoJsonLayer && currentGeoJsonLayer.getLayers().length > 0;
     const hasSelections = selectedPolygons.size > 0;
@@ -777,6 +813,12 @@ function updateSelectionButtons() {
     }
     if (deselectAllBtn) {
         deselectAllBtn.disabled = !hasSelections || !selectionEnabled;
+    }
+    if (findAdjacencyBtn) {
+        findAdjacencyBtn.disabled = !hasSelections;
+    }
+    if (clearSelectionBtn) {
+        clearSelectionBtn.disabled = !hasSelections;
     }
 
     // Also update export buttons
@@ -815,19 +857,16 @@ function updateDataDependentButtons() {
 
 function updateAdjacencyButtons() {
     const selectAdjacentBtn = document.getElementById('selectAdjacentBtn');
-    const clearSelectionBtn = document.getElementById('clearSelectionBtn');
     const showAllPolygonsBtn = document.getElementById('showAllPolygonsBtn');
 
-    // These buttons are only enabled when adjacent polygons have been found
+    // These buttons require adjacent polygons to have been found
     if (selectAdjacentBtn) {
         selectAdjacentBtn.disabled = !adjacentPolygonsFound;
-    }
-    if (clearSelectionBtn) {
-        clearSelectionBtn.disabled = !adjacentPolygonsFound;
     }
     if (showAllPolygonsBtn) {
         showAllPolygonsBtn.disabled = !adjacentPolygonsFound;
     }
+    // findAdjacencyBtn and clearSelectionBtn are managed by updateSelectionButtons()
 }
 
 function selectAllPolygons() {

@@ -1,12 +1,13 @@
 """
 HTML Authentication pages for Land Registry application.
-Provides login/register pages that use Clerk's hosted authentication UI.
-Falls back gracefully when aecs4u-auth is not installed.
+Uses aecs4u-theme templates when available, otherwise falls back to inline HTML.
 """
 import json as _json
+from pathlib import Path
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
 
 from land_registry.core.clerk import _AUTH_AVAILABLE
 
@@ -22,118 +23,107 @@ from land_registry.config import auth_settings
 
 router = APIRouter()
 
+# Use aecs4u-theme templates when the package is installed
+try:
+    import aecs4u_theme
+    _THEME_TEMPLATES_DIR = Path(aecs4u_theme.__file__).parent / "templates"
+    _theme_templates = Jinja2Templates(directory=str(_THEME_TEMPLATES_DIR))
+    _USE_THEME_TEMPLATES = True
+except ImportError:
+    _theme_templates = None
+    _USE_THEME_TEMPLATES = False
+
+
+def _theme_context(request: Request, **extra) -> dict:
+    """Build template context compatible with aecs4u-theme templates."""
+    config = get_auth_config()
+    ctx = {
+        "request": request,
+        "clerk_publishable_key": getattr(config, "clerk_publishable_key", ""),
+        "site_name": "Land Registry",
+        "site_logo": "",
+        "auth_login_url": "/auth/login",
+        "auth_register_url": "/auth/register",
+        "auth_callback_url": "/auth/callback",
+        "next_url": auth_settings.after_sign_in_url,
+    }
+    ctx.update(extra)
+    return ctx
+
 
 @router.get("/login", response_class=HTMLResponse, name="auth.login")
 async def login_page(request: Request, next: str = None):
-    """Show login page with Clerk hosted login."""
+    """Show login page."""
     config = get_auth_config()
 
-    # Check if user is already logged in via session
-    # Use scope check to avoid triggering Starlette's assertion
     if "session" in request.scope:
-        clerk_user_id = request.session.get("clerk_user_id")
-        if clerk_user_id:
-            redirect_url = next or auth_settings.after_sign_in_url
-            return RedirectResponse(url=redirect_url, status_code=302)
+        if request.session.get("clerk_user_id"):
+            return RedirectResponse(url=next or auth_settings.after_sign_in_url, status_code=302)
 
-    publishable_key = config.clerk_publishable_key or ""
-    # Validate that `next` is a relative internal path to prevent open-redirect
-    # and XSS.  json.dumps() encodes the values as safe JS string literals.
     _raw_next = next or auth_settings.after_sign_in_url
     if not (_raw_next.startswith("/") and not _raw_next.startswith("//")):
         _raw_next = auth_settings.after_sign_in_url
-    after_sign_in_js = _json.dumps(_raw_next)
-    after_sign_up_js = _json.dumps(auth_settings.after_sign_up_url)
-    publishable_key_js = _json.dumps(publishable_key)
 
+    if _USE_THEME_TEMPLATES:
+        ctx = _theme_context(request, next_url=_raw_next)
+        return _theme_templates.TemplateResponse(request, "auth/login.html", ctx)
+
+    # Fallback: inline HTML
+    pk_js = _json.dumps(getattr(config, "clerk_publishable_key", ""))
+    next_js = _json.dumps(_raw_next)
+    after_up_js = _json.dumps(auth_settings.after_sign_up_url)
     return HTMLResponse(f"""<!DOCTYPE html>
-<html>
-<head>
-    <title>Login - Land Registry</title>
-    <script async crossorigin="anonymous" data-clerk-publishable-key={publishable_key_js} src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@latest/dist/clerk.browser.js" type="text/javascript"></script>
-    <style>
-        body {{ font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #f5f5f5; }}
-        .container {{ text-align: center; background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
-        h1 {{ color: #333; }}
-        #clerk-mount {{ margin-top: 1rem; }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>Land Registry Login</h1>
-        <div id="clerk-mount"></div>
-    </div>
-    <script>
-        window.addEventListener('load', async () => {{
-            await window.Clerk.load();
-            if (window.Clerk.user) {{
-                window.location.href = {after_sign_in_js};
-            }} else {{
-                window.Clerk.mountSignIn(document.getElementById('clerk-mount'), {{
-                    afterSignInUrl: {after_sign_in_js},
-                    afterSignUpUrl: {after_sign_up_js}
-                }});
-            }}
-        }});
-    </script>
-</body>
-</html>""")
+<html><head><title>Login - Land Registry</title>
+<script async crossorigin="anonymous" data-clerk-publishable-key={pk_js}
+  src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@latest/dist/clerk.browser.js"></script>
+<style>body{{font-family:system-ui,sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#f5f5f5}}
+.box{{text-align:center;background:#fff;padding:2rem;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.1)}}</style>
+</head><body><div class="box"><h1>Land Registry Login</h1><div id="m"></div></div>
+<script>window.addEventListener('load',async()=>{{await window.Clerk.load();
+if(window.Clerk.user){{window.location.href={next_js};}}
+else{{window.Clerk.mountSignIn(document.getElementById('m'),{{afterSignInUrl:{next_js},afterSignUpUrl:{after_up_js}}});}}}});</script>
+</body></html>""")
 
 
 @router.get("/register", response_class=HTMLResponse, name="auth.register")
 async def register_page(request: Request):
-    """Display the registration form - Clerk hosted."""
+    """Show registration page."""
     config = get_auth_config()
 
-    # Check if user is already logged in
-    # Use scope check to avoid triggering Starlette's assertion
     if "session" in request.scope:
-        clerk_user_id = request.session.get("clerk_user_id")
-        if clerk_user_id:
+        if request.session.get("clerk_user_id"):
             return RedirectResponse(url=auth_settings.after_sign_up_url, status_code=302)
 
-    publishable_key = config.clerk_publishable_key or ""
-    after_sign_in = auth_settings.after_sign_in_url
-    after_sign_up = auth_settings.after_sign_up_url
+    if _USE_THEME_TEMPLATES:
+        ctx = _theme_context(request)
+        return _theme_templates.TemplateResponse(request, "auth/register.html", ctx)
 
+    pk = getattr(config, "clerk_publishable_key", "")
     return HTMLResponse(f"""<!DOCTYPE html>
-<html>
-<head>
-    <title>Register - Land Registry</title>
-    <script async crossorigin="anonymous" data-clerk-publishable-key="{publishable_key}" src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@latest/dist/clerk.browser.js" type="text/javascript"></script>
-    <style>
-        body {{ font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #f5f5f5; }}
-        .container {{ text-align: center; background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
-        h1 {{ color: #333; }}
-        #clerk-mount {{ margin-top: 1rem; }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>Land Registry Registration</h1>
-        <div id="clerk-mount"></div>
-    </div>
-    <script>
-        window.addEventListener('load', async () => {{
-            await window.Clerk.load();
-            if (window.Clerk.user) {{
-                window.location.href = "{after_sign_up}";
-            }} else {{
-                window.Clerk.mountSignUp(document.getElementById('clerk-mount'), {{
-                    afterSignInUrl: "{after_sign_in}",
-                    afterSignUpUrl: "{after_sign_up}"
-                }});
-            }}
-        }});
-    </script>
-</body>
-</html>""")
+<html><head><title>Register - Land Registry</title>
+<script async crossorigin="anonymous" data-clerk-publishable-key="{pk}"
+  src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@latest/dist/clerk.browser.js"></script>
+<style>body{{font-family:system-ui,sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#f5f5f5}}
+.box{{text-align:center;background:#fff;padding:2rem;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.1)}}</style>
+</head><body><div class="box"><h1>Land Registry Registration</h1><div id="m"></div></div>
+<script>window.addEventListener('load',async()=>{{await window.Clerk.load();
+if(window.Clerk.user){{window.location.href="{auth_settings.after_sign_up_url}";}}
+else{{window.Clerk.mountSignUp(document.getElementById('m'),{{afterSignInUrl:"{auth_settings.after_sign_in_url}",afterSignUpUrl:"{auth_settings.after_sign_up_url}"}});}}}});</script>
+</body></html>""")
+
+
+@router.get("/callback", response_class=HTMLResponse, name="auth.callback")
+async def callback_page(request: Request):
+    """Clerk SSO callback page."""
+    if _USE_THEME_TEMPLATES:
+        ctx = _theme_context(request)
+        return _theme_templates.TemplateResponse(request, "auth/callback.html", ctx)
+    return RedirectResponse(url=auth_settings.after_sign_in_url, status_code=302)
 
 
 @router.get("/logout")
-async def logout_get(request: Request):
-    """Handle logout via GET (for convenience)."""
-    # Use scope check to avoid triggering Starlette's assertion
+async def logout(request: Request):
+    """Clear session and redirect to login."""
     if "session" in request.scope:
         request.session.clear()
     return RedirectResponse(url="/auth/login", status_code=302)

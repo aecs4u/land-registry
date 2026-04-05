@@ -1,11 +1,57 @@
 {% extends "base.html" %} {% block content %}
-<div class="container">
-  <div class="sidebar">
+
+<!-- ── aecs4u-theme Navbar ──────────────────────────────────────────── -->
+<nav class="navbar-main">
+  <div class="container-fluid">
+    <div class="d-flex align-items-center justify-content-between w-100">
+
+      <!-- Left: sidebar toggle + brand -->
+      <div class="d-flex align-items-center gap-2">
+        <button class="btn btn-link sidebar-toggle p-1" id="sidebarToggle" type="button"
+                onclick="toggleSidebar()"
+                title="Toggle sidebar" aria-label="Toggle sidebar" aria-controls="app-sidebar" aria-expanded="true">
+          <i class="fas fa-bars"></i>
+        </button>
+        <a class="navbar-brand" href="/">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" height="28" style="margin-right:6px">
+            <rect fill="#1a5490" width="32" height="32" rx="4"/>
+            <path fill="#fff" d="M6 8h8v6H6zM16 8h10v6H16zM6 16h10v8H6zM18 16h8v8h-8z"/>
+            <path fill="#28a745" d="M7 9h6v4H7zM17 9h8v4h-8zM7 17h8v6H7zM19 17h6v6h-6z"/>
+          </svg>
+          <h1 class="logo-text">Land Registry</h1>
+        </a>
+      </div>
+
+      <!-- Right: dark-mode toggle + user menu -->
+      <div class="d-flex align-items-center gap-3">
+        <button onclick="toggleDarkMode()" class="btn btn-link theme-toggle p-1" id="themeToggleBtn"
+                title="Toggle dark mode" aria-label="Toggle dark mode">
+          <i class="fas fa-moon" id="themeIcon"></i>
+        </button>
+
+        {% if clerk_publishable_key %}
+        <!-- Clerk user button rendered by clerk-auth.js into #auth-widget -->
+        <a href="/auth/login?next=/map" class="btn btn-primary btn-sm" id="navSignInBtn"
+           style="display:none">Sign In</a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</nav>
+<!-- ──────────────────────────────────────────────────────────────────── -->
+
+<div class="container" style="margin-top: var(--header-height, 64px);">
+  <div class="sidebar" id="app-sidebar">
     <div class="sidebar-header">
       <h1>Cadastre</h1>
-      <button onclick="toggleDarkMode()" class="theme-toggle-btn" title="Toggle dark mode" id="themeToggleBtn">
-        <span class="theme-icon">🌙</span>
-      </button>
+      <div class="sidebar-header-actions">
+        <button onclick="toggleDarkMode()" class="theme-toggle-btn" title="Toggle dark mode" id="themeToggleBtn">
+          <span class="theme-icon">🌙</span>
+        </button>
+        <button class="sidebar-collapse-btn" id="sidebarCollapseBtn" onclick="toggleSidebar()" title="Collapse sidebar" aria-label="Toggle sidebar">
+          &#8249;
+        </button>
+      </div>
     </div>
 
     <div class="sidebar-group-title">Data Catalog</div>
@@ -586,6 +632,11 @@
     </div>
   </div>
 
+  <!-- Expand handle shown when sidebar is collapsed -->
+  <button class="sidebar-expand-btn" id="sidebarExpandBtn" onclick="toggleSidebar()" title="Expand sidebar" aria-label="Expand sidebar" style="display:none">
+    &#8250;
+  </button>
+
   <div class="main-content">
     <!-- View Toggle Buttons -->
     <div class="view-toggle">
@@ -634,17 +685,77 @@
     <!-- Table View -->
     <div id="tableView" class="view-content" style="display: none">
       <div class="table-container">
-        <div id="attributeTable" class="attribute-table">
-          {% if map_table %}
-            {{ map_table|safe }}
-          {% else %}
-          <div class="no-data-message">
-            <p>
-              No geospatial data loaded. Please upload a file or select
-              cadastral data to view attributes.
-            </p>
+        <div class="table-header">
+          <h2>Polygon Attributes</h2>
+          <div id="tableViewInfo" class="table-info">No data loaded</div>
+        </div>
+
+        <!-- Table Controls -->
+        <div class="table-controls">
+          <div class="control-row">
+            <div class="search-container">
+              <input type="text" id="tableSearch" placeholder="Search all columns…" class="search-input">
+              <button onclick="searchTable()" class="search-btn">🔍</button>
+            </div>
+            <div class="filter-container">
+              <select id="tableFilterField" class="filter-select">
+                <option value="">Filter by column…</option>
+              </select>
+              <input type="text" id="tableFilterValue" placeholder="Filter value…" class="filter-input">
+              <button onclick="filterTable()" class="filter-btn">Filter</button>
+              <button onclick="clearTableFilters()" class="clear-btn">Clear</button>
+            </div>
           </div>
-          {% endif %}
+          <div class="control-row">
+            <div class="sort-container">
+              <select id="tableSortField" class="sort-select">
+                <option value="">Sort by column…</option>
+              </select>
+              <select id="tableSortDirection" class="sort-direction">
+                <option value="asc">Ascending</option>
+                <option value="desc">Descending</option>
+              </select>
+              <button onclick="sortTable()" class="sort-btn">Sort</button>
+            </div>
+            <div class="page-size-container">
+              <label>Rows per page:</label>
+              <select id="tablePageSize" class="page-size-select" onchange="changeTablePageSize()">
+                <option value="25">25</option>
+                <option value="50">50</option>
+                <option value="100" selected>100</option>
+                <option value="200">200</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div id="attributeTable" class="attribute-table">
+          <div class="loading-message" style="display: none;">
+            <p>Loading data…</p>
+          </div>
+          <div class="no-data-message">
+            <p>No geospatial data loaded. Please upload a file or select cadastral data to view attributes.</p>
+          </div>
+          <div class="table-wrapper" style="display: none;">
+            <table id="dataTable" class="data-table">
+              <thead id="tableHead"></thead>
+              <tbody id="tableBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Pagination -->
+        <div class="pagination-container" style="display: none;">
+          <div class="pagination-info">
+            <span id="tableRecordInfo">Showing 0 to 0 of 0 entries</span>
+          </div>
+          <div class="pagination-controls">
+            <button onclick="goToTablePage(1)" id="tableFirstBtn" class="page-btn">First</button>
+            <button onclick="goToTablePage(currentTablePage - 1)" id="tablePrevBtn" class="page-btn">Prev</button>
+            <span class="page-numbers" id="tablePageNumbers"></span>
+            <button onclick="goToTablePage(currentTablePage + 1)" id="tableNextBtn" class="page-btn">Next</button>
+            <button onclick="goToTablePage(totalTablePages)" id="tableLastBtn" class="page-btn">Last</button>
+          </div>
         </div>
       </div>
     </div>
@@ -767,6 +878,50 @@
     </div>
   </div>
 </div>
+
+<!-- ── aecs4u-theme Footer ──────────────────────────────────────────── -->
+<footer class="site-footer">
+  <div class="footer-container">
+    <div class="footer-content">
+      <!-- Brand -->
+      <div class="footer-section footer-brand">
+        <div class="footer-logo">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" height="24">
+            <rect fill="#1a5490" width="32" height="32" rx="4"/>
+            <path fill="#fff" d="M6 8h8v6H6zM16 8h10v6H16zM6 16h10v8H6zM18 16h8v8h-8z"/>
+            <path fill="#28a745" d="M7 9h6v4H7zM17 9h8v4h-8zM7 17h8v6H7zM19 17h6v6h-6z"/>
+          </svg>
+          <span>Land Registry</span>
+        </div>
+        <p class="footer-tagline">Italian cadastral data viewer</p>
+      </div>
+
+      <!-- Data -->
+      <div class="footer-section">
+        <h6 class="footer-title">Data</h6>
+        <ul class="footer-links">
+          <li><a href="/map"><i class="fas fa-map"></i> Map</a></li>
+          <li><a href="/cadastral-data" target="_blank"><i class="fas fa-database"></i> Browse Cadastral</a></li>
+        </ul>
+      </div>
+
+      <!-- Legal -->
+      <div class="footer-section">
+        <h6 class="footer-title">Legal</h6>
+        <ul class="footer-links">
+          <li><a href="/terms"><i class="fas fa-file-contract"></i> Terms</a></li>
+          <li><a href="/privacy"><i class="fas fa-user-shield"></i> Privacy</a></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="footer-bottom">
+      <p class="copyright">&copy; {{ now().year if now is defined else "2025" }} AECS4U Srl — Land Registry Viewer</p>
+    </div>
+  </div>
+</footer>
+<!-- ──────────────────────────────────────────────────────────────────── -->
+
 {% endblock %} {% block data_scripts %}
 <script>
   // Inject GeoJSON data into window for external JS to use
@@ -898,6 +1053,11 @@
       const tableViewInfo = document.getElementById('tableViewInfo');
       if (mapInfo && tableViewInfo) {
           tableViewInfo.textContent = mapInfo.textContent;
+      }
+
+      // Load table data from backend
+      if (typeof loadTableData === 'function') {
+          loadTableData('table', 1);
       }
   }
 </script>

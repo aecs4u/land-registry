@@ -6,6 +6,7 @@ enabling visualization of millions of cadastral parcels without client-side perf
 """
 
 import logging
+from collections import OrderedDict
 from io import BytesIO
 from typing import Literal, Optional
 
@@ -38,8 +39,9 @@ class DatashaderTileService:
         self.db = cadastral_db
         self.tile_size = 256  # Standard map tile size (256x256 pixels)
 
-        # Cache for performance
-        self._region_cache = {}
+        # LRU tile cache: keys are (x, y, z, region, agg_type, colormap)
+        self._tile_cache: OrderedDict = OrderedDict()
+        self._tile_cache_max = 100  # max cached tiles (~25 MB at ~256 KB/tile)
 
         log.info("DatashaderTileService initialized with tile_size=%d", self.tile_size)
 
@@ -66,6 +68,14 @@ class DatashaderTileService:
         Returns:
             PNG tile image as bytes
         """
+        cache_key = (x, y, z, region, agg_type, colormap)
+
+        # Check LRU cache first
+        if cache_key in self._tile_cache:
+            self._tile_cache.move_to_end(cache_key)
+            log.debug("Tile cache hit: %d/%d/%d", z, x, y)
+            return self._tile_cache[cache_key]
+
         try:
             # Convert tile coordinates to lat/lon bounding box
             bounds = self._tile_to_bbox(x, y, z)
@@ -132,7 +142,14 @@ class DatashaderTileService:
             img = tf.set_background(img, None)
 
             # Convert to PNG bytes
-            return self._image_to_bytes(img)
+            result = self._image_to_bytes(img)
+
+            # Store in LRU cache, evicting oldest entry if at capacity
+            self._tile_cache[cache_key] = result
+            if len(self._tile_cache) > self._tile_cache_max:
+                self._tile_cache.popitem(last=False)
+
+            return result
 
         except Exception as e:
             log.error(f"Error generating datashader tile {z}/{x}/{y}: {e}", exc_info=True)

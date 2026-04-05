@@ -7,6 +7,7 @@ from fastapi.templating import Jinja2Templates
 import json
 import logging
 import os
+import duckdb
 import pandas as pd
 import panel as pn
 from typing import Optional
@@ -18,6 +19,7 @@ from land_registry.cadastral_utils import load_cadastral_structure, get_cadastra
 from land_registry.dashboard import TEMPLATE
 from land_registry.file_availability_db import file_availability_db
 from land_registry.map import get_current_gdf, get_current_layers, map_generator
+from land_registry.dependencies import _map_state
 from land_registry.routers.api import api_router
 from land_registry.routers.auth_pages import router as auth_pages_router
 from land_registry.s3_storage import get_s3_storage
@@ -34,6 +36,13 @@ else:
 
     def get_auth_config():
         return SimpleNamespace(clerk_publishable_key="")
+
+# Import aecs4u-theme (optional)
+try:
+    from aecs4u_theme import setup_theme, ThemeConfig
+    _THEME_AVAILABLE = True
+except ImportError:
+    _THEME_AVAILABLE = False
 
 # Configure logging
 logging.basicConfig(
@@ -301,6 +310,25 @@ if _AUTH_AVAILABLE:
 else:
     logger.warning("aecs4u-auth not installed - running without authentication")
 
+# Setup theme using aecs4u-theme (if available)
+if _THEME_AVAILABLE:
+    setup_theme(
+        app,
+        config=ThemeConfig(
+            site_id="land-registry",
+            site_name=app_settings.app_name,
+            favicon="/static/favicon.svg",
+            primary_color="#1a5490",
+            default_mode="light",
+            allow_mode_switch=True,
+            sidebar_enabled=True,
+        ),
+        static_url_path="/static/aecs4u-theme",
+        mount_static=True,
+    )
+else:
+    logger.warning("aecs4u-theme not installed - running without theme package")
+
 # Include HTML auth pages (login/register forms) at /auth prefix
 # These provide GET endpoints for browser-accessible pages
 # (aecs4u-auth only provides POST API endpoints)
@@ -366,13 +394,14 @@ async def _build_main_map_shell_context(request: Request) -> dict:
         zoom=6
     )
 
-    # Convert Folium map to HTML
-    # Use manual iframe construction to avoid "Make this Notebook Trusted" warning
-    # which comes from folium's _repr_html_ method
-    import html
-    html_content = folium_map.get_root().render()
-    escaped_html = html.escape(html_content)
-    folium_map_html = f'<iframe srcdoc="{escaped_html}" style="width:100%; height:100%; border:none;"></iframe>'
+    # Inject Folium HTML directly into the page (not as srcdoc iframe).
+    # An srcdoc iframe creates a separate browsing context, which prevents
+    # folium-interface.js from finding `.leaflet-container` or `window[mapId]`
+    # — breaking both polygon rendering and map controls.
+    # Browsers handle nested <html>/<body> tags from Folium's output gracefully
+    # (treat them as parse errors and absorb content into the parent document),
+    # so Leaflet initialises in the parent window where all JS expects it.
+    folium_map_html = folium_map.get_root().render()
 
     # Load cadastral statistics using utility
     stats = get_cadastral_stats()
@@ -584,76 +613,78 @@ async def get_table_data(
     filter_field: Optional[str] = None,
     filter_value: Optional[str] = None
 ):
-    """Get paginated table data for the current GeoDataFrame with server-side filtering and sorting"""
-    try:
-        # Run heavy I/O in thread pool to avoid blocking event loop
-        current_gdf = await asyncio.to_thread(get_current_gdf)
+    """Get paginated table data for the current GeoDataFrame with server-side filtering and sorting."""
+    def _query(df: pd.DataFrame) -> dict:
+        if df is None or len(df) == 0:
+            return {"data": [], "total": 0, "page": page, "size": size,
+                    "total_pages": 0, "columns": []}
 
-        if current_gdf is None or current_gdf.empty:
-            return {
-                "data": [],
-                "total": 0,
-                "page": page,
-                "size": size,
-                "total_pages": 0,
-                "columns": []
-            }
+        # Preserve original GeoDataFrame row index so the frontend can look up geometry
+        df = df.reset_index(drop=True).copy()
+        df["__idx__"] = df.index
 
-        # Convert GeoDataFrame to regular DataFrame for table display
-        df = current_gdf.copy()
+        con = duckdb.connect()
+        con.register("parcels", df)
 
-        # Drop geometry column once and convert to pandas DataFrame
-        if 'geometry' in df.columns:
-            df = pd.DataFrame(df.drop(columns=['geometry']))
-        else:
-            df = pd.DataFrame(df)
+        # --- build WHERE clause -------------------------------------------------
+        conditions: list[str] = []
+        params: list = []
 
-        # Apply field-specific filter if provided
-        if filter_field and filter_value and filter_field in df.columns:
-            # Convert to string only for the specific column
-            df = df[df[filter_field].astype(str).str.contains(
-                filter_value, case=False, na=False, regex=False
-            )]
+        if filter_field and filter_value:
+            # Quote identifier; reject names that contain double-quotes to avoid injection
+            if '"' not in filter_field and filter_field in df.columns:
+                conditions.append(f'LOWER(CAST("{filter_field}" AS VARCHAR)) LIKE ?')
+                params.append(f"%{filter_value.lower()}%")
 
-        # Apply global search filter if provided
         if search:
-            # Build search mask efficiently by checking each column
-            search_lower = search.lower()
-            mask = df.apply(
-                lambda col: col.astype(str).str.lower().str.contains(
-                    search_lower, na=False, regex=False
-                ),
-                axis=0
-            ).any(axis=1)
-            df = df[mask]
+            col_conditions = [
+                f'LOWER(CAST("{c}" AS VARCHAR)) LIKE ?'
+                for c in df.columns
+                if '"' not in c
+            ]
+            if col_conditions:
+                conditions.append(f"({' OR '.join(col_conditions)})")
+                params.extend([f"%{search.lower()}%"] * len(col_conditions))
 
-        # Apply sorting if provided
-        if sort_field and sort_field in df.columns:
-            ascending = sort_dir.lower() == "asc"
-            df = df.sort_values(by=sort_field, ascending=ascending)
+        where_sql = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
-        # Calculate pagination
-        total = len(df)
-        total_pages = (total + size - 1) // size  # Ceiling division
-        start_idx = (page - 1) * size
-        end_idx = start_idx + size
+        # --- count total matching rows -----------------------------------------
+        total = con.execute(
+            f"SELECT COUNT(*) FROM parcels {where_sql}", params
+        ).fetchone()[0]
 
-        # Get page data
-        page_data = df.iloc[start_idx:end_idx]
+        if total == 0:
+            return {"data": [], "total": 0, "page": page, "size": size,
+                    "total_pages": 0, "columns": list(df.columns)}
 
-        # Convert to records format for JSON serialization
-        data = page_data.to_dict('records')
+        # --- ORDER BY -----------------------------------------------------------
+        order_sql = ""
+        if sort_field and '"' not in sort_field and sort_field in df.columns:
+            direction = "DESC" if (sort_dir or "asc").lower() == "desc" else "ASC"
+            order_sql = f'ORDER BY "{sort_field}" {direction}'
 
+        # --- paginated fetch ----------------------------------------------------
+        offset = (page - 1) * size
+        result = con.execute(
+            f"SELECT * FROM parcels {where_sql} {order_sql} LIMIT ? OFFSET ?",
+            params + [size, offset],
+        ).fetchdf()
+
+        total_pages = (total + size - 1) // size
+        records = result.to_dict("records")
         return {
-            "data": data,
+            "data": records,
             "total": total,
             "page": page,
             "size": size,
             "total_pages": total_pages,
-            "columns": list(df.columns) if not df.empty else [],
-            "filtered_total": total  # Total after filtering
+            "columns": [c for c in df.columns if c != "__idx__"],
+            "filtered_total": total,
         }
 
+    try:
+        df = await asyncio.to_thread(_map_state.get_display_df)
+        return await asyncio.to_thread(_query, df)
     except Exception as e:
         logger.error(f"Error fetching table data: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error fetching table data: {str(e)}")

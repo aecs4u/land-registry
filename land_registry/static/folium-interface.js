@@ -11,6 +11,119 @@ window.hasData = false;
 window.cadastralDataCache = null;
 window.currentFileSelection = [];
 
+// ============================================================
+// Layer Panel — per-file layer visibility controls
+// ============================================================
+const LayerPanel = (function() {
+    // { name, layer, layerType, featureCount, map, visible }
+    const layers = [];
+
+    function _getOrCreatePanel() {
+        let panel = document.getElementById('layerPanel');
+        if (panel) return panel;
+
+        // Create the container anchored below the progressive-load UI
+        panel = document.createElement('div');
+        panel.id = 'layerPanel';
+        panel.className = 'layer-panel';
+        panel.innerHTML = `
+            <div class="layer-panel-header">
+                <span class="layer-panel-title">Layers</span>
+                <button class="layer-panel-clear" onclick="LayerPanel.clearAll()" title="Remove all layers">✕ Clear all</button>
+            </div>
+            <div id="layerPanelList" class="layer-panel-list"></div>
+        `;
+
+        // Insert after the progressive-load progress block (or before the map container)
+        const anchor = document.getElementById('loadingProgress') || document.querySelector('.map-container');
+        if (anchor && anchor.parentNode) {
+            anchor.parentNode.insertBefore(panel, anchor.nextSibling);
+        } else {
+            document.body.appendChild(panel);
+        }
+        return panel;
+    }
+
+    function _renderRow(entry) {
+        const list = document.getElementById('layerPanelList');
+        if (!list) return;
+
+        const isPle = entry.layerType === 'ple';
+        const color = isPle ? '#e67e22' : '#2980b9';
+        const typeLabel = isPle ? 'PLE' : 'MAP';
+
+        const row = document.createElement('div');
+        row.className = 'layer-panel-row';
+        row.dataset.layerName = entry.name;
+
+        const label = document.createElement('label');
+        label.className = 'layer-panel-toggle';
+        label.title = entry.name;
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = true;
+        checkbox.addEventListener('change', function() {
+            LayerPanel.toggle(entry.name, this.checked);
+        });
+
+        const swatch = document.createElement('span');
+        swatch.className = 'layer-panel-swatch';
+        swatch.style.background = color;
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'layer-panel-name';
+        nameSpan.textContent = entry.name;
+
+        const badge = document.createElement('span');
+        badge.className = `layer-panel-badge layer-panel-badge-${entry.layerType}`;
+        badge.textContent = typeLabel;
+
+        const count = document.createElement('span');
+        count.className = 'layer-panel-count';
+        count.textContent = entry.featureCount.toLocaleString();
+
+        label.append(checkbox, swatch, nameSpan, badge, count);
+        row.appendChild(label);
+        list.appendChild(row);
+    }
+
+    return {
+        add(name, layer, layerType, featureCount, map) {
+            _getOrCreatePanel();
+            const entry = { name, layer, layerType, featureCount, map, visible: true };
+            layers.push(entry);
+            _renderRow(entry);
+        },
+
+        toggle(name, visible) {
+            const entry = layers.find(l => l.name === name);
+            if (!entry) return;
+            entry.visible = visible;
+            if (visible) {
+                entry.layer.addTo(entry.map);
+            } else {
+                entry.map.removeLayer(entry.layer);
+            }
+        },
+
+        clearAll() {
+            layers.forEach(e => { try { e.map.removeLayer(e.layer); } catch(_) {} });
+            layers.length = 0;
+            const list = document.getElementById('layerPanelList');
+            if (list) list.innerHTML = '';
+            const panel = document.getElementById('layerPanel');
+            if (panel) panel.remove();
+            // Also clear selection state
+            window.selectedPolygons = [];
+            updateAdjacencyButtonState();
+        },
+
+        getLayers() { return layers; }
+    };
+})();
+window.LayerPanel = LayerPanel;
+
 // Export function (migrated from map.js)
 window.exportDrawingsAsGeoJSON = function() {
     if (!window.drawnItems || window.drawnItems.getLayers().length === 0) {
@@ -616,14 +729,7 @@ function showMapView() {
     document.getElementById('mapViewBtn').classList.add('active');
 }
 
-function handleTableViewClick() {
-    document.querySelectorAll('.view-content').forEach(el => el.classList.remove('active'));
-    document.querySelectorAll('.view-toggle button').forEach(el => el.classList.remove('active'));
-    document.getElementById('tableView').classList.add('active');
-    document.getElementById('tableViewBtn').classList.add('active');
-}
-
-// NOTE: showAdjacencyView() and showMappingView() are defined in table-manager.js
+// NOTE: handleTableViewClick(), showAdjacencyView() and showMappingView() are defined in table-manager.js
 // which loads before this file. Do not redefine them here to avoid conflicts.
 
 // Upload tab switching
@@ -1442,7 +1548,7 @@ window.initDatabaseFilters = function() {
 }
 
 // Polygon selection and adjacency functions
-function findAdjacencyForSelected() {
+async function findAdjacencyForSelected() {
     console.log('Find Adjacent Polygons clicked');
 
     if (!window.selectedPolygons || window.selectedPolygons.length === 0) {
@@ -1450,28 +1556,123 @@ function findAdjacencyForSelected() {
         return;
     }
 
-    console.log(`Finding adjacent polygons for ${window.selectedPolygons.length} selected polygon(s)`);
+    const count = window.selectedPolygons.length;
+    console.log(`Finding adjacent polygons for ${count} selected polygon(s)`);
 
     showAdjacencyView();
 
     const selectedPolygonInfo = document.getElementById('selectedPolygonInfo');
     const adjacentPolygonsInfo = document.getElementById('adjacentPolygonsInfo');
+    const method = document.getElementById('adjacencyMethod')?.value || 'touches';
 
     if (selectedPolygonInfo) {
-        const count = window.selectedPolygons.length;
         selectedPolygonInfo.innerHTML = `
             <h4>Selected Polygons (${count})</h4>
             <p>Processing ${count} polygon${count > 1 ? 's' : ''} for adjacency analysis...</p>
         `;
     }
-
     if (adjacentPolygonsInfo) {
-        adjacentPolygonsInfo.innerHTML = `
-            <p>Analyzing spatial relationships...</p>
-            <div style="color: orange;">Note: Adjacency analysis requires server-side processing.
-            This is a demonstration of the selection functionality.</div>
+        adjacentPolygonsInfo.innerHTML = `<p>Analyzing spatial relationships...</p>`;
+    }
+
+    // Collect {feature_id, geometry} from selected polygons
+    const featureInfos = window.selectedPolygons.map(layer => {
+        const props = layer.feature && layer.feature.properties;
+        const geom = layer.feature && layer.feature.geometry;
+        if (props && props.feature_id !== undefined && props.feature_id !== null && geom) {
+            return { feature_id: parseInt(props.feature_id), geometry: geom };
+        }
+        return null;
+    }).filter(Boolean);
+
+    if (featureInfos.length === 0) {
+        if (adjacentPolygonsInfo) {
+            adjacentPolygonsInfo.innerHTML = `<p style="color:orange;">Selected polygons do not have feature_id properties. Reload data to enable adjacency analysis.</p>`;
+        }
+        return;
+    }
+
+    // Call adjacency API for each selected feature and combine results
+    const allAdjacentIds = new Set();
+    const errors = [];
+
+    for (const { feature_id: featureId, geometry } of featureInfos) {
+        try {
+            const response = await fetch('/api/v1/get-adjacent-polygons/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ feature_id: featureId, geometry, touch_method: method })
+            });
+
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({}));
+                const msg = errData.detail || `HTTP ${response.status}`;
+                errors.push(`Feature ${featureId}: ${msg}`);
+                continue;
+            }
+
+            const data = await response.json();
+            (data.adjacent_ids || []).forEach(id => allAdjacentIds.add(id));
+
+            // Highlight adjacent polygons on map
+            if (data.adjacent_ids && data.adjacent_ids.length > 0) {
+                _highlightAdjacentPolygons(data.adjacent_ids);
+            }
+        } catch (err) {
+            errors.push(`Feature ${featureId}: ${err.message}`);
+        }
+    }
+
+    // Display results
+    if (selectedPolygonInfo) {
+        const propRows = featureInfos.map(({ feature_id }) => `<li>Feature ID: ${feature_id}</li>`).join('');
+        selectedPolygonInfo.innerHTML = `
+            <h4>Selected Polygons (${count})</h4>
+            <ul style="margin:4px 0;padding-left:18px;">${propRows}</ul>
+            <small>Method: ${method}</small>
         `;
     }
+
+    if (adjacentPolygonsInfo) {
+        if (errors.length > 0 && allAdjacentIds.size === 0) {
+            adjacentPolygonsInfo.innerHTML = `<p style="color:red;">Error: ${errors.join('; ')}</p>`;
+        } else {
+            const errNote = errors.length > 0 ? `<p style="color:orange;font-size:0.85em;">${errors.join('; ')}</p>` : '';
+            adjacentPolygonsInfo.innerHTML = `
+                <p><strong>${allAdjacentIds.size}</strong> adjacent polygon(s) found.</p>
+                ${allAdjacentIds.size > 0 ? `<p style="font-size:0.85em;color:#555;">IDs: ${[...allAdjacentIds].join(', ')}</p>` : ''}
+                ${errNote}
+            `;
+        }
+    }
+}
+
+/**
+ * Highlight polygons on the Folium map by feature_id.
+ * Iterates all loaded Leaflet layers to find matching features.
+ */
+function _highlightAdjacentPolygons(adjacentIds) {
+    const idSet = new Set(adjacentIds.map(String));
+    const mapEls = document.querySelectorAll('.leaflet-container');
+    mapEls.forEach(mapEl => {
+        const mapId = Object.keys(window).find(k =>
+            window[k] && window[k]._container === mapEl
+        );
+        if (!mapId) return;
+        const map = window[mapId];
+        map.eachLayer(layer => {
+            if (layer.eachLayer) {
+                layer.eachLayer(subLayer => {
+                    const props = subLayer.feature && subLayer.feature.properties;
+                    if (props && idSet.has(String(props.feature_id))) {
+                        if (subLayer.setStyle) {
+                            subLayer.setStyle({ fillColor: '#ff8800', fillOpacity: 0.6, color: '#cc5500', weight: 2 });
+                        }
+                    }
+                });
+            }
+        });
+    });
 }
 
 function clearPolygonSelection() {
@@ -1490,6 +1691,158 @@ function clearPolygonSelection() {
         updateAdjacencyButtonState();
         console.log('Polygon selection cleared');
     }
+}
+
+/**
+ * Collect all selectable polygon layers from loaded GeoJSON layers.
+ * Returns a flat array of Leaflet layers with polygon/multipolygon geometries.
+ */
+function _getAllPolygonLayers() {
+    const layers = [];
+    const mapElements = document.querySelectorAll('.leaflet-container');
+    if (!mapElements.length) return layers;
+    const leafletMap = window[mapElements[0].id];
+    if (!leafletMap) return layers;
+
+    leafletMap.eachLayer(layer => {
+        if (layer instanceof L.GeoJSON) {
+            layer.eachLayer(sub => {
+                if (sub.feature && sub.feature.geometry &&
+                    (sub.feature.geometry.type === 'Polygon' ||
+                     sub.feature.geometry.type === 'MultiPolygon')) {
+                    layers.push(sub);
+                }
+            });
+        }
+    });
+
+    // Also include dbLayers added via progressive loader
+    if (window.dbLayers) {
+        window.dbLayers.forEach(geoJsonLayer => {
+            if (geoJsonLayer instanceof L.GeoJSON) {
+                geoJsonLayer.eachLayer(sub => {
+                    if (!layers.includes(sub) && sub.feature && sub.feature.geometry &&
+                        (sub.feature.geometry.type === 'Polygon' ||
+                         sub.feature.geometry.type === 'MultiPolygon')) {
+                        layers.push(sub);
+                    }
+                });
+            }
+        });
+    }
+
+    return layers;
+}
+
+function _applySelection(layer, select) {
+    if (select) {
+        if (!layer.options.originalFillColor) {
+            layer.options.originalFillColor = layer.options.fillColor;
+            layer.options.originalFillOpacity = layer.options.fillOpacity;
+        }
+        layer._selected = true;
+        layer.setStyle({ fillColor: '#ff0000', fillOpacity: 0.7 });
+        if (!window.selectedPolygons.includes(layer)) {
+            window.selectedPolygons.push(layer);
+        }
+    } else {
+        layer._selected = false;
+        layer.setStyle({
+            fillColor: layer.options.originalFillColor || layer.options.fillColor,
+            fillOpacity: layer.options.originalFillOpacity || 0.3,
+        });
+        const idx = window.selectedPolygons.indexOf(layer);
+        if (idx > -1) window.selectedPolygons.splice(idx, 1);
+    }
+}
+
+function selectAllPolygons() {
+    if (!window.selectedPolygons) window.selectedPolygons = [];
+    const all = _getAllPolygonLayers();
+    if (all.length === 0) { alert('No polygons loaded on the map.'); return; }
+    all.forEach(l => _applySelection(l, true));
+    updateAdjacencyButtonState();
+    console.log(`Selected all ${all.length} polygons`);
+}
+
+function invertPolygonSelection() {
+    if (!window.selectedPolygons) window.selectedPolygons = [];
+    const all = _getAllPolygonLayers();
+    if (all.length === 0) { alert('No polygons loaded on the map.'); return; }
+    all.forEach(l => _applySelection(l, !l._selected));
+    updateAdjacencyButtonState();
+    console.log(`Inverted selection, ${window.selectedPolygons.length} polygons now selected`);
+}
+
+function selectByAttribute() {
+    const field = document.getElementById('selectAttrField').value.trim();
+    const value = document.getElementById('selectAttrValue').value.trim();
+    const op    = document.getElementById('selectAttrOp').value;
+
+    if (!field) { alert('Enter a field name to filter by.'); return; }
+
+    if (!window.selectedPolygons) window.selectedPolygons = [];
+
+    const all = _getAllPolygonLayers();
+    if (all.length === 0) { alert('No polygons loaded on the map.'); return; }
+
+    let matched = 0;
+    all.forEach(layer => {
+        const props = layer.feature && layer.feature.properties;
+        if (!props || !(field in props)) {
+            _applySelection(layer, false);
+            return;
+        }
+        const raw = props[field];
+        const cellStr = String(raw ?? '').toLowerCase();
+        const valStr  = value.toLowerCase();
+        let hit = false;
+
+        switch (op) {
+            case 'contains':  hit = cellStr.includes(valStr); break;
+            case 'equals':    hit = cellStr === valStr; break;
+            case 'starts':    hit = cellStr.startsWith(valStr); break;
+            case 'gt':        hit = parseFloat(raw) > parseFloat(value); break;
+            case 'lt':        hit = parseFloat(raw) < parseFloat(value); break;
+            default:          hit = cellStr.includes(valStr);
+        }
+
+        _applySelection(layer, hit);
+        if (hit) matched++;
+    });
+
+    updateAdjacencyButtonState();
+
+    // Populate field dropdown from loaded features
+    _populateSelectAttrFields();
+
+    console.log(`Select by attribute: ${matched} of ${all.length} polygons matched`);
+}
+
+function _populateSelectAttrFields() {
+    const select = document.getElementById('selectAttrField');
+    if (!select) return;
+    const all = _getAllPolygonLayers();
+    if (!all.length) return;
+
+    // Collect all property keys across loaded layers
+    const keys = new Set();
+    all.forEach(l => {
+        if (l.feature && l.feature.properties) {
+            Object.keys(l.feature.properties).forEach(k => {
+                if (k !== 'geometry') keys.add(k);
+            });
+        }
+    });
+
+    const datalist = document.getElementById('selectAttrFieldList');
+    if (!datalist) return;
+    datalist.innerHTML = '';
+    [...keys].sort().forEach(k => {
+        const opt = document.createElement('option');
+        opt.value = k;
+        datalist.appendChild(opt);
+    });
 }
 
 // Placeholder functions for server-generated map compatibility
@@ -1800,23 +2153,26 @@ async function _loadCadastralProgressive(filePaths, loadButton, originalText) {
                 ProgressUI.updateProgress(fileIndex, total || totalFiles, fileName, status);
             },
 
-            onLayer(layerName, geojson, featureCount, fileIndex) {
+            onLayer(layerName, geojson, featureCount, fileIndex, layerType) {
                 totalFeatures += featureCount;
                 ProgressUI.updateFeatureCount(totalFeatures);
                 ProgressUI.addLog(`${layerName}: ${featureCount} features`, 'success');
+
+                // Colour scheme: PLE (particelle) = orange, MAP (mappa) = blue
+                const isPle = (layerType === 'ple');
+                const baseColor = isPle ? '#e67e22' : '#2980b9';
 
                 // Add to Folium map immediately
                 const foliumMap = getFoliumMapInstance();
                 if (foliumMap && geojson && geojson.features && geojson.features.length > 0) {
                     const geoJsonLayer = L.geoJSON(geojson, {
-                        style: function(feature) {
-                            const layerType = feature.properties?.layer_type;
+                        style: function() {
                             return {
-                                color: layerType === 'ple' ? '#e74c3c' : '#3498db',
-                                weight: 2,
-                                opacity: 0.8,
+                                color: baseColor,
+                                weight: 1.5,
+                                opacity: 0.9,
                                 fillOpacity: 0.3,
-                                fillColor: layerType === 'ple' ? '#e74c3c' : '#3498db'
+                                fillColor: baseColor
                             };
                         },
                         onEachFeature: function(feature, layer) {
@@ -1837,18 +2193,16 @@ async function _loadCadastralProgressive(filePaths, loadButton, originalText) {
                                 L.DomEvent.stopPropagation(e);
                                 if (layer._selected) {
                                     layer._selected = false;
-                                    layer.setStyle({
-                                        fillColor: feature.properties?.layer_type === 'ple' ? '#e74c3c' : '#3498db',
-                                        fillOpacity: 0.3
-                                    });
+                                    layer.setStyle({ fillColor: baseColor, fillOpacity: 0.3 });
                                     const idx = (window.selectedPolygons || []).indexOf(layer);
                                     if (idx > -1) window.selectedPolygons.splice(idx, 1);
                                 } else {
                                     layer._selected = true;
-                                    layer.setStyle({ fillColor: '#ff0000', fillOpacity: 0.7 });
+                                    layer.setStyle({ fillColor: '#e74c3c', fillOpacity: 0.7 });
                                     if (!window.selectedPolygons) window.selectedPolygons = [];
                                     window.selectedPolygons.push(layer);
                                 }
+                                updateAdjacencyButtonState();
                             });
                         }
                     });
@@ -1856,11 +2210,14 @@ async function _loadCadastralProgressive(filePaths, loadButton, originalText) {
                     geoJsonLayer.addTo(foliumMap);
                     layerGroup.addLayer(geoJsonLayer);
 
+                    // Register in the layer panel
+                    LayerPanel.add(layerName, geoJsonLayer, layerType, featureCount, foliumMap);
+
                     // Store reference for cleanup
                     if (!window.dbLayers) window.dbLayers = [];
                     window.dbLayers.push(geoJsonLayer);
 
-                    console.log(`[Progressive] Added ${featureCount} features to map as "${layerName}"`);
+                    console.log(`[Progressive] Added ${featureCount} features to map as "${layerName}" (${layerType})`);
                 }
             },
 
@@ -1870,6 +2227,13 @@ async function _loadCadastralProgressive(filePaths, loadButton, originalText) {
 
             onComplete(completeSummary) {
                 ProgressUI.showComplete(completeSummary);
+
+                // Mark data as available for table view
+                if (completeSummary.total_layers > 0) {
+                    window.hasData = true;
+                    // Populate attribute field suggestions for Select by Attribute
+                    setTimeout(_populateSelectAttrFields, 300);
+                }
 
                 // Zoom to new data bounds
                 const foliumMap = getFoliumMapInstance();

@@ -169,10 +169,13 @@ def _scan_local_cadastral_directory(root_path: str) -> Dict[str, Any]:
                     code = municipality_key
                     name = municipality_key
 
-                # List all .gpkg files in the municipality directory
-                files = [f.name for f in sorted(municipality_dir.glob('*.gpkg'))]
+                # List all supported geospatial files in the municipality directory
+                files = [
+                    f.name for f in sorted(municipality_dir.iterdir())
+                    if f.suffix.lower() in ('.gpkg', '.fgb', '.geojson', '.shp')
+                ]
 
-                if files:  # Only add if there are files
+                if files:  # Only add municipalities that have loadable files
                     cadastral_data[region_name][province_code][municipality_key] = {
                         'code': code,
                         'name': name.replace('_', ' '),

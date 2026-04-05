@@ -36,6 +36,7 @@ from land_registry.models import (
     CadastralCacheInfoResponse
 )
 from land_registry.cadastral_db import CadastralDatabase, CadastralFilter
+from land_registry.dependencies import _cadastral_registry, _datashader_registry
 # Import proper JWT verification from aecs4u-auth
 from land_registry.routers.auth import (
     get_current_user,
@@ -84,7 +85,7 @@ class CadastralFileRequest(BaseModel):
             if '..' in path or path.startswith('/'):
                 raise ValueError(f'Invalid file path: {path}')
             # Validate extension
-            if not any(path.lower().endswith(ext) for ext in ['.gpkg', '.geojson', '.shp', '.kml', '.qpkg']):
+            if not any(path.lower().endswith(ext) for ext in ['.gpkg', '.fgb', '.geojson', '.shp', '.kml', '.qpkg']):
                 raise ValueError(f'Unsupported file format: {path}')
         return v
 
@@ -135,7 +136,7 @@ class PublicGeoDataRequest(BaseModel):
         if '..' in v:
             raise ValueError('S3 key cannot contain path traversal')
         # Validate extension
-        if not any(v.lower().endswith(ext) for ext in ['.gpkg', '.geojson', '.shp', '.kml']):
+        if not any(v.lower().endswith(ext) for ext in ['.gpkg', '.fgb', '.geojson', '.shp', '.kml']):
             raise ValueError(f'Unsupported file format in S3 key: {v}')
         return v
 
@@ -337,14 +338,18 @@ root_folder = os.path.dirname(__file__)
 # File Upload & Processing Endpoints
 # ============================================================================
 
+_UPLOAD_EXTENSIONS = ('.qpkg', '.gpkg', '.fgb')
+
+
 @api_router.post("/upload-qpkg/")
 async def upload_qpkg(file: UploadFile = File(...)):
-    """Upload and process QPKG file"""
-    if not (file.filename.endswith('.qpkg') or file.filename.endswith('.gpkg')):
-        raise HTTPException(status_code=400, detail="File must be a QPKG or GPKG file")
+    """Upload and process QPKG, GPKG, or FlatGeobuf file"""
+    if not any(file.filename.endswith(ext) for ext in _UPLOAD_EXTENSIONS):
+        raise HTTPException(status_code=400, detail="File must be a QPKG, GPKG, or FGB file")
 
-    # Extract and process QPKG (same as before)
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.qpkg') as temp_file:
+    # Extract and process the uploaded file
+    suffix = Path(file.filename).suffix or '.qpkg'
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
         content = await file.read()
         temp_file.write(content)
         temp_file_path = temp_file.name
@@ -367,12 +372,12 @@ async def upload_qpkg(file: UploadFile = File(...)):
 
 @api_router.post("/generate-map/")
 async def generate_map(file: UploadFile = File(...)):
-    """Generate map HTML from QPKG file"""
-    if not (file.filename.endswith('.qpkg') or file.filename.endswith('.gpkg')):
-        raise HTTPException(status_code=400, detail="File must be a QPKG or GPKG file")
+    """Generate map HTML from QPKG, GPKG, or FlatGeobuf file"""
+    if not any(file.filename.endswith(ext) for ext in _UPLOAD_EXTENSIONS):
+        raise HTTPException(status_code=400, detail="File must be a QPKG, GPKG, or FGB file")
 
     # Save uploaded file temporarily
-    file_suffix = '.gpkg' if file.filename.endswith('.gpkg') else '.qpkg'
+    file_suffix = Path(file.filename).suffix or '.qpkg'
     with tempfile.NamedTemporaryFile(delete=False, suffix=file_suffix) as temp_file:
         content = await file.read()
         temp_file.write(content)
@@ -1281,9 +1286,11 @@ async def load_multiple_cadastral_files(request: CadastralFileRequest):
             if existing_gdf is not None and not existing_gdf.empty:
                 # Append to existing data
                 combined_gdf = gpd.pd.concat([existing_gdf, new_combined_gdf], ignore_index=True)
+                combined_gdf['feature_id'] = range(len(combined_gdf))
                 set_current_gdf(combined_gdf)
             else:
                 # No existing data, use new data
+                new_combined_gdf['feature_id'] = range(len(new_combined_gdf))
                 set_current_gdf(new_combined_gdf)
 
         # Calculate totals for response
@@ -2661,48 +2668,11 @@ async def list_user_drawings(user: Optional[ClerkUser] = Depends(get_current_use
 # Cadastral Database Query Endpoints
 # ============================================================================
 
-# Initialize cadastral databases (lazy loading) - separate for MAP and per-region PLE
-_cadastral_db_map: Optional[CadastralDatabase] = None
-_cadastral_db_ple_by_region: dict[str, CadastralDatabase] = {}
-
+# Cadastral database accessors — delegate to CadastralRegistry in dependencies.py
 
 def get_cadastral_db_map() -> CadastralDatabase:
     """Get or create the MAP database instance (fogli)."""
-    global _cadastral_db_map
-    if _cadastral_db_map is None:
-        db_path = Path("data/cadastral_map.sqlite")
-        if db_path.exists():
-            _cadastral_db_map = CadastralDatabase(db_path)
-        else:
-            logger.warning(f"MAP database not found: {db_path}")
-            db_path.parent.mkdir(parents=True, exist_ok=True)
-            _cadastral_db_map = CadastralDatabase(db_path)
-    return _cadastral_db_map
-
-
-def _discover_ple_databases() -> dict[str, Path]:
-    """
-    Discover all per-region PLE databases in the data directory.
-
-    Looks for files matching pattern: cadastral_ple.<region>.sqlite
-
-    Returns:
-        Dict mapping region name to database path
-    """
-    data_dir = Path("data")
-    if not data_dir.exists():
-        return {}
-
-    ple_dbs = {}
-    # Pattern: cadastral_ple.<region>.sqlite
-    for db_file in data_dir.glob("cadastral_ple.*.sqlite"):
-        # Extract region from filename: cadastral_ple.lombardia.sqlite -> lombardia
-        parts = db_file.stem.split(".")
-        if len(parts) >= 2:
-            region_slug = parts[1]  # e.g., "lombardia", "emilia_romagna"
-            ple_dbs[region_slug] = db_file
-
-    return ple_dbs
+    return _cadastral_registry.get_db_map()
 
 
 def get_cadastral_db_ple(region: Optional[str] = None) -> Optional[CadastralDatabase]:
@@ -2716,35 +2686,7 @@ def get_cadastral_db_ple(region: Optional[str] = None) -> Optional[CadastralData
     Returns:
         CadastralDatabase instance or None if no PLE databases exist
     """
-    global _cadastral_db_ple_by_region
-
-    # Discover available PLE databases
-    available_dbs = _discover_ple_databases()
-
-    if not available_dbs:
-        logger.warning("No PLE databases found in data directory")
-        return None
-
-    if region:
-        # Normalize region name to match file naming convention
-        region_slug = region.lower().replace(' ', '_').replace('-', '_')
-
-        if region_slug in _cadastral_db_ple_by_region:
-            return _cadastral_db_ple_by_region[region_slug]
-
-        if region_slug in available_dbs:
-            db_path = available_dbs[region_slug]
-            _cadastral_db_ple_by_region[region_slug] = CadastralDatabase(db_path)
-            return _cadastral_db_ple_by_region[region_slug]
-
-        logger.warning(f"PLE database for region '{region}' not found. Available: {list(available_dbs.keys())}")
-        return None
-    else:
-        # Return the first available database (for backward compatibility)
-        first_region = sorted(available_dbs.keys())[0]
-        if first_region not in _cadastral_db_ple_by_region:
-            _cadastral_db_ple_by_region[first_region] = CadastralDatabase(available_dbs[first_region])
-        return _cadastral_db_ple_by_region[first_region]
+    return _cadastral_registry.get_db_ple(region)
 
 
 def get_all_ple_databases() -> dict[str, CadastralDatabase]:
@@ -2754,15 +2696,7 @@ def get_all_ple_databases() -> dict[str, CadastralDatabase]:
     Returns:
         Dict mapping region slug to CadastralDatabase instance
     """
-    global _cadastral_db_ple_by_region
-
-    available_dbs = _discover_ple_databases()
-
-    for region_slug, db_path in available_dbs.items():
-        if region_slug not in _cadastral_db_ple_by_region:
-            _cadastral_db_ple_by_region[region_slug] = CadastralDatabase(db_path)
-
-    return _cadastral_db_ple_by_region
+    return _cadastral_registry.get_all_ple()
 
 
 def get_cadastral_db(layer_type: Optional[str] = None, region: Optional[str] = None) -> Optional[CadastralDatabase]:
@@ -2776,9 +2710,7 @@ def get_cadastral_db(layer_type: Optional[str] = None, region: Optional[str] = N
     Returns:
         The appropriate CadastralDatabase instance, or None if not found
     """
-    if layer_type == 'map':
-        return get_cadastral_db_map()
-    return get_cadastral_db_ple(region)
+    return _cadastral_registry.get_db(layer_type, region)
 
 
 def _feature_to_lookup_item(
@@ -3292,22 +3224,11 @@ from fastapi.responses import Response, StreamingResponse
 from land_registry.datashader_service import DatashaderTileService
 import asyncio
 
-# Initialize datashader service with cadastral database
-_datashader_service = None
+# Datashader service accessor — delegates to DatashaderRegistry in dependencies.py
 
 def get_datashader_service():
     """Lazy initialization of datashader service."""
-    global _datashader_service
-    if _datashader_service is None:
-        try:
-            from land_registry.config import get_cadastral_db_path
-            db = CadastralDatabase(get_cadastral_db_path())
-            _datashader_service = DatashaderTileService(db)
-            logger.info("DatashaderTileService initialized")
-        except Exception as e:
-            logger.error(f"Failed to initialize DatashaderTileService: {e}")
-            _datashader_service = DatashaderTileService(None)  # No database
-    return _datashader_service
+    return _datashader_registry.get_service()
 
 
 @api_router.get("/tiles/datashader/{z}/{x}/{y}.png")
@@ -3673,6 +3594,18 @@ async def load_cadastral_files_stream(request: CadastralFileRequest):
                     gdf = result["gdf"]
                     layer_name = result["layer_name"]
                     feature_count = result["feature_count"]
+
+                    # Infer layer type from filename (_PLE = particelle, _MAP = mappa)
+                    name_upper = layer_name.upper()
+                    if "_PLE" in name_upper:
+                        layer_type = "ple"
+                    elif "_FLE" in name_upper:
+                        layer_type = "ple"
+                    else:
+                        layer_type = "map"
+
+                    # Tag each feature with the layer_type so the frontend can colour by type
+                    gdf["layer_type"] = layer_type
                     layer_geojson = json.loads(gdf.to_json())
 
                     layers_data[layer_name] = {
@@ -3689,6 +3622,7 @@ async def load_cadastral_files_stream(request: CadastralFileRequest):
                         "event": "layer",
                         "file_index": i,
                         "layer_name": layer_name,
+                        "layer_type": layer_type,
                         "geojson": layer_geojson,
                         "feature_count": feature_count,
                     }) + "\n"
@@ -3727,8 +3661,10 @@ async def load_cadastral_files_stream(request: CadastralFileRequest):
 
             if existing_gdf is not None and not existing_gdf.empty:
                 combined_gdf = gpd.pd.concat([existing_gdf, new_combined_gdf], ignore_index=True)
+                combined_gdf['feature_id'] = range(len(combined_gdf))
                 set_current_gdf(combined_gdf)
             else:
+                new_combined_gdf['feature_id'] = range(len(new_combined_gdf))
                 set_current_gdf(new_combined_gdf)
 
         load_time = time.time() - start_time
