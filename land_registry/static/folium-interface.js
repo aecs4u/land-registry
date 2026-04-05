@@ -1575,12 +1575,12 @@ async function findAdjacencyForSelected() {
         adjacentPolygonsInfo.innerHTML = `<p>Analyzing spatial relationships...</p>`;
     }
 
-    // Collect {feature_id, geometry} from selected polygons
+    // Collect {feature_id, geometry, properties} from selected polygons
     const featureInfos = window.selectedPolygons.map(layer => {
         const props = layer.feature && layer.feature.properties;
         const geom = layer.feature && layer.feature.geometry;
         if (props && props.feature_id !== undefined && props.feature_id !== null && geom) {
-            return { feature_id: parseInt(props.feature_id), geometry: geom };
+            return { feature_id: parseInt(props.feature_id), geometry: geom, properties: props };
         }
         return null;
     }).filter(Boolean);
@@ -1623,27 +1623,149 @@ async function findAdjacencyForSelected() {
         }
     }
 
-    // Display results
+    // Collect adjacent polygon properties from loaded layers
+    const adjacentPropsMap = _getFeaturePropertiesById([...allAdjacentIds]);
+    const adjacentRows = [...allAdjacentIds].map(id => adjacentPropsMap[String(id)] || { feature_id: id });
+    const selectedRows = featureInfos.map(f => f.properties);
+
+    // Display selected polygons table
     if (selectedPolygonInfo) {
-        const propRows = featureInfos.map(({ feature_id }) => `<li>Feature ID: ${feature_id}</li>`).join('');
         selectedPolygonInfo.innerHTML = `
-            <h4>Selected Polygons (${count})</h4>
-            <ul style="margin:4px 0;padding-left:18px;">${propRows}</ul>
-            <small>Method: ${method}</small>
+            <div class="adj-panel-toolbar">
+                <span class="adj-count-badge">${selectedRows.length}</span>
+                <span class="adj-method-label">Method: <em>${method}</em></span>
+                <div class="adj-export-btns">
+                    <button onclick="_exportAdjRows('selected','csv')" class="adj-export-btn">CSV</button>
+                    <button onclick="_exportAdjRows('selected','xlsx')" class="adj-export-btn">Excel</button>
+                    <button onclick="_exportAdjRows('selected','parquet')" class="adj-export-btn">Parquet</button>
+                </div>
+            </div>
+            ${_buildAdjTable(selectedRows, 'adj-selected-rows')}
         `;
     }
 
+    // Display adjacent polygons table
     if (adjacentPolygonsInfo) {
         if (errors.length > 0 && allAdjacentIds.size === 0) {
             adjacentPolygonsInfo.innerHTML = `<p style="color:red;">Error: ${errors.join('; ')}</p>`;
         } else {
             const errNote = errors.length > 0 ? `<p style="color:orange;font-size:0.85em;">${errors.join('; ')}</p>` : '';
             adjacentPolygonsInfo.innerHTML = `
-                <p><strong>${allAdjacentIds.size}</strong> adjacent polygon(s) found.</p>
-                ${allAdjacentIds.size > 0 ? `<p style="font-size:0.85em;color:#555;">IDs: ${[...allAdjacentIds].join(', ')}</p>` : ''}
+                <div class="adj-panel-toolbar">
+                    <span class="adj-count-badge">${adjacentRows.length}</span>
+                    <span class="adj-method-label">${adjacentRows.length} polygon(s) found</span>
+                    <div class="adj-export-btns">
+                        <button onclick="_exportAdjRows('adjacent','csv')" class="adj-export-btn">CSV</button>
+                        <button onclick="_exportAdjRows('adjacent','xlsx')" class="adj-export-btn">Excel</button>
+                        <button onclick="_exportAdjRows('adjacent','parquet')" class="adj-export-btn">Parquet</button>
+                    </div>
+                </div>
                 ${errNote}
+                ${adjacentRows.length > 0 ? _buildAdjTable(adjacentRows, 'adj-adjacent-rows') : '<p class="adj-empty">No adjacent polygons found.</p>'}
             `;
         }
+    }
+}
+
+/** Build an HTML detail table from an array of row objects and cache for export. */
+function _buildAdjTable(rows, cacheKey) {
+    if (!rows || rows.length === 0) return '<p class="adj-empty">No data.</p>';
+
+    if (!window._adjRowsCache) window._adjRowsCache = {};
+    window._adjRowsCache[cacheKey] = rows;
+
+    const excludeKeys = new Set(['geometry', 'style', '__folium_color']);
+    const allKeys = [...new Set(rows.flatMap(r => Object.keys(r)))].filter(k => !excludeKeys.has(k));
+    if (allKeys.length === 0) return '<p class="adj-empty">No properties available.</p>';
+
+    const thead = `<tr>${allKeys.map(k => `<th>${k}</th>`).join('')}</tr>`;
+    const tbody = rows.map(row =>
+        `<tr>${allKeys.map(k => {
+            const v = row[k];
+            return `<td>${v !== undefined && v !== null ? String(v) : ''}</td>`;
+        }).join('')}</tr>`
+    ).join('');
+
+    return `<div class="adj-table-scroll"><table class="adj-detail-table"><thead>${thead}</thead><tbody>${tbody}</tbody></table></div>`;
+}
+
+/** Collect feature properties from loaded Leaflet layers by feature_id. */
+function _getFeaturePropertiesById(ids) {
+    const idSet = new Set(ids.map(String));
+    const results = {};
+    document.querySelectorAll('.leaflet-container').forEach(mapEl => {
+        const mapId = Object.keys(window).find(k => window[k] && window[k]._container === mapEl);
+        if (!mapId) return;
+        window[mapId].eachLayer(layer => {
+            if (layer.eachLayer) {
+                layer.eachLayer(subLayer => {
+                    const props = subLayer.feature && subLayer.feature.properties;
+                    if (props && idSet.has(String(props.feature_id))) {
+                        results[String(props.feature_id)] = props;
+                    }
+                });
+            }
+        });
+    });
+    return results;
+}
+
+/** Export adjacency rows (cached by _buildAdjTable) to csv/xlsx/parquet. */
+async function _exportAdjRows(which, format) {
+    if (!window._adjRowsCache) { alert('No data to export.'); return; }
+    const cacheKey = which === 'selected' ? 'adj-selected-rows' : 'adj-adjacent-rows';
+    const rows = window._adjRowsCache[cacheKey];
+    if (!rows || rows.length === 0) { alert('No data to export.'); return; }
+
+    const excludeKeys = new Set(['geometry', 'style', '__folium_color']);
+    const cleanRows = rows.map(row => {
+        const r = {};
+        for (const [k, v] of Object.entries(row)) {
+            if (!excludeKeys.has(k)) r[k] = v;
+        }
+        return r;
+    });
+
+    if (format === 'csv') {
+        const allKeys = [...new Set(cleanRows.flatMap(r => Object.keys(r)))];
+        const csvLines = [
+            allKeys.join(','),
+            ...cleanRows.map(row => allKeys.map(k => {
+                const v = row[k] !== undefined && row[k] !== null ? String(row[k]) : '';
+                return v.includes(',') || v.includes('"') || v.includes('\n')
+                    ? `"${v.replace(/"/g, '""')}"` : v;
+            }).join(','))
+        ];
+        const blob = new Blob([csvLines.join('\n')], { type: 'text/csv' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `${which}-polygons.csv`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        return;
+    }
+
+    // Server-side export (xlsx / parquet)
+    try {
+        const ext = format === 'xlsx' ? 'xlsx' : 'parquet';
+        const response = await fetch(`/api/v1/export-adjacency/${format}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(cleanRows)
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            alert(`Export failed: ${err.detail || response.status}`);
+            return;
+        }
+        const blob = await response.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `${which}-polygons.${ext}`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+    } catch (err) {
+        alert(`Export error: ${err.message}`);
     }
 }
 
@@ -2767,11 +2889,12 @@ function selectDataSource(source) {
     document.getElementById('spatialiteFilters').style.display = source === 'spatialite' ? 'block' : 'none';
     document.getElementById('fgbFilters').style.display = source === 'fgb' ? 'block' : 'none';
 
-    // Show/hide appropriate action buttons
-    document.getElementById('spatialiteActions').style.display = source === 'spatialite' ? 'flex' : 'none';
-    document.getElementById('spatialiteClear').style.display = source === 'spatialite' ? 'flex' : 'none';
-    document.getElementById('fgbActions').style.display = source === 'fgb' ? 'flex' : 'none';
-    document.getElementById('fgbClear').style.display = source === 'fgb' ? 'flex' : 'none';
+    // Show/hide appropriate action buttons (guard against missing elements)
+    const _show = (id, visible) => { const el = document.getElementById(id); if (el) el.style.display = visible ? 'flex' : 'none'; };
+    _show('spatialiteActions', source === 'spatialite');
+    _show('spatialiteClear', source === 'spatialite');
+    _show('fgbActions', source === 'fgb');
+    _show('fgbClear', source === 'fgb');
 
     // Load FGB regions if switching to FGB
     if (source === 'fgb' && window.fgbRegions.length === 0) {

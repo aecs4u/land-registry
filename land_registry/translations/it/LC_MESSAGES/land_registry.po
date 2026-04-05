@@ -1,0 +1,685 @@
+# Italian translations for Land Registry
+# Copyright (C) 2025 AECS4U Srl
+msgid ""
+msgstr ""
+"Project-Id-Version: land_registry 0.1.4\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2025-04-05 00:00+0000\n"
+"PO-Revision-Date: 2025-04-05 00:00+0000\n"
+"Last-Translator: \n"
+"Language-Team: Italian\n"
+"Language: it\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "Land Registry"
+msgstr "Catasto"
+
+msgid "Land Registry Viewer"
+msgstr "Visualizzatore del Catasto"
+
+msgid "Toggle dark mode"
+msgstr "Attiva/disattiva tema scuro"
+
+msgid "Toggle sidebar"
+msgstr "Mostra/nascondi pannello laterale"
+
+msgid "Expand sidebar"
+msgstr "Espandi pannello laterale"
+
+msgid "Sign In"
+msgstr "Accedi"
+
+msgid "Sign Out"
+msgstr "Esci"
+
+msgid "Cadastre"
+msgstr "Catasto"
+
+msgid "Data Catalog"
+msgstr "Catalogo Dati"
+
+msgid "Data"
+msgstr "Dati"
+
+msgid "Browse All Cadastral Data"
+msgstr "Sfoglia Tutti i Dati Catastali"
+
+msgid "File Upload"
+msgstr "Carica File"
+
+msgid "Cadastral Selection"
+msgstr "Selezione Catastale"
+
+msgid "Local Database"
+msgstr "Database Locale"
+
+msgid "Upload QPKG or GPKG File:"
+msgstr "Carica file QPKG o GPKG:"
+
+msgid "Upload & Visualize"
+msgstr "Carica e Visualizza"
+
+msgid "Data Source:"
+msgstr "Sorgente Dati:"
+
+msgid "SpatiaLite"
+msgstr "SpatiaLite"
+
+msgid "FlatGeobuf"
+msgstr "FlatGeobuf"
+
+msgid "Query Database"
+msgstr "Interroga Database"
+
+msgid "Select Region(s):"
+msgstr "Seleziona Regione/i:"
+
+msgid "Select Province(s):"
+msgstr "Seleziona Provincia/e:"
+
+msgid "Select Municipality(ies):"
+msgstr "Seleziona Comune/i:"
+
+msgid "Select File Type(s):"
+msgstr "Seleziona Tipo/i di File:"
+
+msgid "Mappa (MAP)"
+msgstr "Mappa (MAP)"
+
+msgid "Particelle (PLE)"
+msgstr "Particelle (PLE)"
+
+msgid "Selection Summary"
+msgstr "Riepilogo Selezione"
+
+msgid "Load Selected Files"
+msgstr "Carica File Selezionati"
+
+msgid "Loading..."
+msgstr "Caricamento..."
+
+msgid "Preparing..."
+msgstr "Preparazione..."
+
+msgid "0 files"
+msgstr "0 file"
+
+msgid "0 features"
+msgstr "0 elementi"
+
+msgid "Search Parcels"
+msgstr "Cerca Particelle"
+
+msgid "Foglio"
+msgstr "Foglio"
+
+msgid "Particella"
+msgstr "Particella"
+
+msgid "Search"
+msgstr "Cerca"
+
+msgid "Clear"
+msgstr "Cancella"
+
+msgid "Clear history"
+msgstr "Cancella cronologia"
+
+msgid "Layer Manager"
+msgstr "Gestione Livelli"
+
+msgid "Toggle Layers"
+msgstr "Mostra/Nascondi Livelli"
+
+msgid "Refresh"
+msgstr "Aggiorna"
+
+msgid "Expand All"
+msgstr "Espandi Tutto"
+
+msgid "Collapse All"
+msgstr "Comprimi Tutto"
+
+msgid "View Tools"
+msgstr "Strumenti Vista"
+
+msgid "Reset View"
+msgstr "Ripristina Vista"
+
+msgid "Coordinates"
+msgstr "Coordinate"
+
+msgid "MiniMap"
+msgstr "Minimappa"
+
+msgid "Plugin Info"
+msgstr "Info Plugin"
+
+msgid "Spatial Analysis"
+msgstr "Analisi Spaziale"
+
+msgid "Selection Mode:"
+msgstr "Modalità Selezione:"
+
+msgid "Find Adjacency"
+msgstr "Trova Adiacenza"
+
+msgid "Adjacency Method:"
+msgstr "Metodo Adiacenza:"
+
+msgid "Intersects (any overlap)"
+msgstr "Interseca (qualsiasi sovrapposizione)"
+
+msgid "Touches (shared boundary)"
+msgstr "Tocca (confine condiviso)"
+
+msgid "Overlaps (area overlap)"
+msgstr "Si sovrappone (area)"
+
+msgid "Find Adjacent"
+msgstr "Trova Adiacenti"
+
+msgid "0 polygons selected"
+msgstr "0 poligoni selezionati"
+
+msgid "Polygon Management"
+msgstr "Gestione Poligoni"
+
+msgid "Remove All"
+msgstr "Rimuovi Tutto"
+
+msgid "Zoom to Fit"
+msgstr "Adatta Vista"
+
+msgid "Export Selected"
+msgstr "Esporta Selezionati"
+
+msgid "Export All"
+msgstr "Esporta Tutti"
+
+msgid "No polygons loaded"
+msgstr "Nessun poligono caricato"
+
+msgid "Zone Manager"
+msgstr "Gestione Zone"
+
+msgid "New Zone"
+msgstr "Nuova Zona"
+
+msgid "Zone Name"
+msgstr "Nome Zona"
+
+msgid "Enter zone name..."
+msgstr "Inserisci nome zona..."
+
+msgid "Description"
+msgstr "Descrizione"
+
+msgid "Optional description..."
+msgstr "Descrizione opzionale..."
+
+msgid "Color"
+msgstr "Colore"
+
+msgid "Tags"
+msgstr "Tag"
+
+msgid "e.g., residential, priority"
+msgstr "es. residenziale, priorità"
+
+msgid "Save Zone"
+msgstr "Salva Zona"
+
+msgid "Cancel"
+msgstr "Annulla"
+
+msgid "Refresh Zones"
+msgstr "Aggiorna Zone"
+
+msgid "Search zones..."
+msgstr "Cerca zone..."
+
+msgid "No zones match the search."
+msgstr "Nessuna zona corrisponde alla ricerca."
+
+msgid "No zones saved yet."
+msgstr "Nessuna zona salvata."
+
+msgid "Market Filters"
+msgstr "Filtri Mercato"
+
+msgid "Toggle Auctions"
+msgstr "Mostra/Nascondi Aste"
+
+msgid "Active Only"
+msgstr "Solo Attive"
+
+msgid "Type"
+msgstr "Tipo"
+
+msgid "All Types"
+msgstr "Tutti i Tipi"
+
+msgid "Residential"
+msgstr "Residenziale"
+
+msgid "Commercial"
+msgstr "Commerciale"
+
+msgid "Agricultural"
+msgstr "Agricolo"
+
+msgid "Industrial"
+msgstr "Industriale"
+
+msgid "Max Price (€)"
+msgstr "Prezzo Massimo (€)"
+
+msgid "Explore"
+msgstr "Esplora"
+
+msgid "Analyse"
+msgstr "Analizza"
+
+msgid "Zones"
+msgstr "Zone"
+
+msgid "Actions"
+msgstr "Azioni"
+
+msgid "Map View"
+msgstr "Vista Mappa"
+
+msgid "Table View"
+msgstr "Vista Tabella"
+
+msgid "Adjacency"
+msgstr "Adiacenza"
+
+msgid "Mapping"
+msgstr "Disegno"
+
+msgid "Map"
+msgstr "Mappa"
+
+msgid "No data loaded"
+msgstr "Nessun dato caricato"
+
+msgid "Welcome to the Land Registry Viewer"
+msgstr "Benvenuto nel Visualizzatore del Catasto"
+
+msgid "Get started by loading cadastral data:"
+msgstr "Inizia caricando i dati catastali:"
+
+msgid "Select a Region"
+msgstr "Seleziona una Regione"
+
+msgid "Choose a Province"
+msgstr "Scegli una Provincia"
+
+msgid "Pick Municipality(ies) to view"
+msgstr "Seleziona il/i Comune/i da visualizzare"
+
+msgid "Click \"Load Selected Files\" to display parcels"
+msgstr "Clicca su \"Carica File Selezionati\" per visualizzare le particelle"
+
+msgid "Polygon Attributes"
+msgstr "Attributi Poligono"
+
+msgid "Search all columns…"
+msgstr "Cerca in tutte le colonne…"
+
+msgid "Filter by column…"
+msgstr "Filtra per colonna…"
+
+msgid "Filter value…"
+msgstr "Valore filtro…"
+
+msgid "Filter"
+msgstr "Filtra"
+
+msgid "Sort by column…"
+msgstr "Ordina per colonna…"
+
+msgid "Ascending"
+msgstr "Crescente"
+
+msgid "Descending"
+msgstr "Decrescente"
+
+msgid "Sort"
+msgstr "Ordina"
+
+msgid "Rows per page:"
+msgstr "Righe per pagina:"
+
+msgid "1 row selected"
+msgstr "1 riga selezionata"
+
+msgid "✕ Clear"
+msgstr "✕ Annulla"
+
+msgid "🔲 Find Adjacent Polygons"
+msgstr "🔲 Trova Poligoni Adiacenti"
+
+msgid "No geospatial data loaded. Please upload a file or select cadastral data to view attributes."
+msgstr "Nessun dato geografico caricato. Carica un file o seleziona dati catastali per visualizzare gli attributi."
+
+msgid "Showing 0 to 0 of 0 entries"
+msgstr "Nessun risultato"
+
+msgid "First"
+msgstr "Prima"
+
+msgid "Prev"
+msgstr "Precedente"
+
+msgid "Next"
+msgstr "Successiva"
+
+msgid "Last"
+msgstr "Ultima"
+
+msgid "Adjacency Analysis"
+msgstr "Analisi Adiacenza"
+
+msgid "Select a polygon on the map, then use Analysis Tools to find adjacent features."
+msgstr "Seleziona un poligono sulla mappa, poi usa gli Strumenti di Analisi per trovare le geometrie adiacenti."
+
+msgid "Selected Polygon"
+msgstr "Poligono Selezionato"
+
+msgid "No polygon selected. Switch to Map View, click a polygon, then return here."
+msgstr "Nessun poligono selezionato. Passa alla Vista Mappa, clicca un poligono, poi torna qui."
+
+msgid "Adjacent Polygons"
+msgstr "Poligoni Adiacenti"
+
+msgid "Adjacent polygons will appear here after running the analysis."
+msgstr "I poligoni adiacenti appariranno qui dopo aver eseguito l'analisi."
+
+msgid "Drawing Management"
+msgstr "Gestione Disegni"
+
+msgid "Use the drawing tools on the map to create polygons, polylines, and markers."
+msgstr "Usa gli strumenti di disegno sulla mappa per creare poligoni, polilinee e marcatori."
+
+msgid "Drawn Polygons"
+msgstr "Poligoni Disegnati"
+
+msgid "No polygons drawn yet. Switch to Map View and use the draw toolbar."
+msgstr "Nessun poligono disegnato. Passa alla Vista Mappa e usa la barra degli strumenti di disegno."
+
+msgid "Save Polygons"
+msgstr "Salva Poligoni"
+
+msgid "Clear Polygons"
+msgstr "Cancella Poligoni"
+
+msgid "Drawn Polylines"
+msgstr "Polilinee Disegnate"
+
+msgid "No polylines drawn yet."
+msgstr "Nessuna polilinea disegnata."
+
+msgid "Save Polylines"
+msgstr "Salva Polilinee"
+
+msgid "Delete Selected"
+msgstr "Elimina Selezionata"
+
+msgid "Undo Last"
+msgstr "Annulla Ultima"
+
+msgid "Clear Polylines"
+msgstr "Cancella Polilinee"
+
+msgid "Total Drawn:"
+msgstr "Totale Disegnati:"
+
+msgid "Selected:"
+msgstr "Selezionati:"
+
+msgid "Polylines:"
+msgstr "Polilinee:"
+
+msgid "Selected Polyline:"
+msgstr "Polilinea Selezionata:"
+
+msgid "None"
+msgstr "Nessuna"
+
+msgid "Parcel Details"
+msgstr "Dettagli Particella"
+
+msgid "Italian cadastral data viewer"
+msgstr "Visualizzatore di dati catastali italiani"
+
+msgid "Browse Cadastral"
+msgstr "Sfoglia Catasto"
+
+msgid "Legal"
+msgstr "Legale"
+
+msgid "Terms"
+msgstr "Termini"
+
+msgid "Privacy"
+msgstr "Privacy"
+
+msgid "Regions"
+msgstr "Regioni"
+
+msgid "Provinces"
+msgstr "Province"
+
+msgid "Municipalities"
+msgstr "Comuni"
+
+msgid "GPKG Files"
+msgstr "File GPKG"
+
+msgid "Cadastral Files"
+msgstr "File Catastali"
+
+msgid "Language"
+msgstr "Lingua"
+
+msgid "e.g., 12"
+msgstr "es. 12"
+
+msgid "e.g., 456"
+msgstr "es. 456"
+
+msgid "All Regions"
+msgstr "Tutte le Regioni"
+
+msgid "All Provinces"
+msgstr "Tutte le Province"
+
+msgid "All Comuni"
+msgstr "Tutti i Comuni"
+
+msgid "Max Records:"
+msgstr "Massimo Record:"
+
+msgid "Loading regions..."
+msgstr "Caricamento regioni..."
+
+msgid "Select a region first"
+msgstr "Seleziona prima una regione"
+
+msgid "Select a province first"
+msgstr "Seleziona prima una provincia"
+
+msgid "Recent"
+msgstr "Recenti"
+
+msgid "Layers"
+msgstr "Livelli"
+
+msgid "✕ Clear all"
+msgstr "✕ Rimuovi tutto"
+
+msgid "Parcel count"
+msgstr "Conteggio particelle"
+
+# landing.html strings
+msgid "Visualize, query, and analyze Italian cadastral data on an interactive map with drawing tools, spatial analysis, and multi-source data loading."
+msgstr "Visualizza, interroga e analizza i dati catastali italiani su una mappa interattiva con strumenti di disegno, analisi spaziale e caricamento multi-sorgente."
+
+msgid "Open Map"
+msgstr "Apri Mappa"
+
+msgid "Index & Dashboard"
+msgstr "Indice & Dashboard"
+
+msgid "Cadastral Browser"
+msgstr "Browser Catastale"
+
+msgid "Interactive Mapping"
+msgstr "Cartografia Interattiva"
+
+msgid "Leaflet Map"
+msgstr "Mappa Leaflet"
+
+msgid "Full-screen interactive map with multiple basemap providers, geocoding, minimap, mouse coordinates, and marker clustering."
+msgstr "Mappa interattiva a schermo intero con più provider di basemap, geocodifica, minimappa, coordinate del mouse e raggruppamento dei marcatori."
+
+msgid "Drawing Tools"
+msgstr "Strumenti di Disegno"
+
+msgid "Create polygons, circles, rectangles, polylines, and markers directly on the map using Leaflet Draw. Save and reload your drawings."
+msgstr "Crea poligoni, cerchi, rettangoli, polilinee e marcatori direttamente sulla mappa con Leaflet Draw. Salva e ricarica i tuoi disegni."
+
+msgid "Zone Management"
+msgstr "Gestione Zone"
+
+msgid "Save drawn geometries as named zones with descriptions, colors, and tags. Toggle visibility and export as GeoJSON."
+msgstr "Salva le geometrie disegnate come zone con nome, descrizioni, colori e tag. Attiva/disattiva la visibilità ed esporta come GeoJSON."
+
+msgid "Folium Map Generation"
+msgstr "Generazione Mappa Folium"
+
+msgid "Server-side map rendering via Folium, embedded in the index page with cadastral overlays and multiple layer support."
+msgstr "Rendering della mappa lato server tramite Folium, incorporato nella pagina indice con overlay catastali e supporto multi-layer."
+
+msgid "Italian Cadastral Data"
+msgstr "Dati Catastali Italiani"
+
+msgid "Hierarchical Browser"
+msgstr "Browser Gerarchico"
+
+msgid "Navigate the full Italian cadastral hierarchy: Regione → Provincia → Comune → file, with expandable tree views and municipality flags."
+msgstr "Naviga la gerarchia catastale italiana completa: Regione → Provincia → Comune → file, con viste ad albero espandibili e bandiere dei comuni."
+
+msgid "Advanced Query Engine"
+msgstr "Motore di Query Avanzato"
+
+msgid "Filter by Foglio, Particella (single, list, or range), bounding box, point-in-polygon, and date ranges via the cadastral query API."
+msgstr "Filtra per Foglio, Particella (singola, lista o intervallo), bounding box, punto nel poligono e intervalli di date tramite l'API di query catastale."
+
+msgid "File Availability Cache"
+msgstr "Cache Disponibilità File"
+
+msgid "SQLite-backed cache that tracks which cadastral files exist in S3, with batch checking and configurable TTL."
+msgstr "Cache basata su SQLite che traccia quali file catastali esistono in S3, con controllo batch e TTL configurabile."
+
+msgid "Statistics & Coverage"
+msgstr "Statistiche e Copertura"
+
+msgid "Real-time counts of regions, provinces, municipalities, and files. Cache status and availability metrics."
+msgstr "Conteggi in tempo reale di regioni, province, comuni e file. Stato della cache e metriche di disponibilità."
+
+msgid "Data Sources"
+msgstr "Fonti Dati"
+
+msgid "Adjacency Analysis"
+msgstr "Analisi Adiacenza"
+
+msgid "Select a polygon and find all adjacent parcels using spatial predicates: touches, intersects, or overlaps."
+msgstr "Seleziona un poligono e trova tutte le particelle adiacenti usando predicati spaziali: tocca, interseca o si sovrappone."
+
+msgid "Attribute Table"
+msgstr "Tabella Attributi"
+
+msgid "View feature properties in paginated tables with server-side search, sort, and column filtering via Panel Tabulator."
+msgstr "Visualizza le proprietà degli elementi in tabelle paginate con ricerca, ordinamento e filtraggio per colonna lato server tramite Panel Tabulator."
+
+msgid "Session State"
+msgstr "Stato Sessione"
+
+msgid "Current GeoDataFrame persists across requests. Load, combine, filter, and clear layers within a session."
+msgstr "Il GeoDataFrame corrente persiste tra le richieste. Carica, combina, filtra e cancella livelli all'interno di una sessione."
+
+msgid "API Reference"
+msgstr "Riferimento API"
+
+msgid "Tech Stack"
+msgstr "Stack Tecnologico"
+
+# cadastral_data.html strings
+msgid "Back to Map"
+msgstr "Torna alla Mappa"
+
+msgid "Italian Cadastral Data Structure"
+msgstr "Struttura Dati Catastale Italiana"
+
+msgid "Filter by Region:"
+msgstr "Filtra per Regione:"
+
+msgid "Enter region name..."
+msgstr "Inserisci nome regione..."
+
+msgid "Filter by Province:"
+msgstr "Filtra per Provincia:"
+
+msgid "Enter province code..."
+msgstr "Inserisci codice provincia..."
+
+msgid "Filter by Municipality:"
+msgstr "Filtra per Comune:"
+
+msgid "Enter municipality name..."
+msgstr "Inserisci nome comune..."
+
+msgid "Apply Filters"
+msgstr "Applica Filtri"
+
+msgid "Clear All"
+msgstr "Cancella Tutto"
+
+msgid "Available:"
+msgstr "Disponibili:"
+
+msgid "Missing:"
+msgstr "Mancanti:"
+
+msgid "Check File Availability"
+msgstr "Controlla Disponibilità File"
+
+msgid "Clear Cache"
+msgstr "Svuota Cache"
+
+msgid "No files available"
+msgstr "Nessun file disponibile"
+
+msgid "No Results Found"
+msgstr "Nessun Risultato Trovato"
+
+msgid "No cadastral data matches your current filter criteria."
+msgstr "Nessun dato catastale corrisponde ai criteri di filtro correnti."
+
+msgid "Please try adjusting your search terms or clear the filters to see all data."
+msgstr "Prova a modificare i termini di ricerca o cancella i filtri per vedere tutti i dati."
+
+msgid "No Cadastral Data Available"
+msgstr "Nessun Dato Catastale Disponibile"
+
+msgid "The cadastral structure file could not be found or loaded."
+msgstr "Il file di struttura catastale non è stato trovato o caricato."
+
+msgid "Please ensure the cadastral data is properly configured."
+msgstr "Assicurati che i dati catastali siano correttamente configurati."

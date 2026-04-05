@@ -679,15 +679,15 @@ def clear_current_layers():
 
 def find_adjacent_polygons(gdf: gpd.GeoDataFrame, selected_idx: int, touch_method: str = "touches") -> List[int]:
     """
-    Find polygons adjacent to the selected polygon.
-    
+    Find polygons adjacent to the selected polygon (positional-index based).
+
     Args:
         gdf: GeoDataFrame containing polygons
-        selected_idx: Index of the selected polygon
+        selected_idx: Positional index of the selected polygon
         touch_method: Method to determine adjacency ('touches', 'intersects', 'overlaps')
-    
+
     Returns:
-        List of indices of adjacent polygons
+        List of GDF index labels of adjacent polygons
     """
     logger.info(f"Finding adjacent polygons: selected_idx={selected_idx}, method={touch_method}, gdf_len={len(gdf)}")
 
@@ -696,24 +696,51 @@ def find_adjacent_polygons(gdf: gpd.GeoDataFrame, selected_idx: int, touch_metho
         return []
 
     selected_geom = gdf.iloc[selected_idx].geometry
-    logger.debug(f"Selected geometry type: {selected_geom.geom_type}")
+    return find_adjacent_polygons_by_geometry(gdf, selected_geom, touch_method, exclude_idx=selected_idx)
+
+
+def find_adjacent_polygons_by_geometry(
+    gdf: gpd.GeoDataFrame,
+    selected_geom,
+    touch_method: str = "touches",
+    exclude_idx=None,
+) -> List[int]:
+    """
+    Find polygons adjacent to the given Shapely geometry.
+
+    Args:
+        gdf: GeoDataFrame containing polygons
+        selected_geom: Shapely geometry of the selected polygon
+        touch_method: 'touches', 'intersects', or 'overlaps'
+        exclude_idx: GDF index label to skip (the selected polygon's own row)
+
+    Returns:
+        List of GDF index labels of adjacent polygons
+    """
+    logger.info(f"Finding adjacent polygons by geometry: method={touch_method}, gdf_len={len(gdf)}")
     adjacent_indices = []
 
     for idx, row in gdf.iterrows():
-        if idx == selected_idx:
+        if exclude_idx is not None and idx == exclude_idx:
+            continue
+        geom = row.geometry
+        if geom is None or geom.is_empty:
             continue
 
         try:
-            # Check spatial relationship
             if touch_method == "touches":
-                is_adjacent = selected_geom.touches(row.geometry)
+                is_adjacent = selected_geom.touches(geom)
             elif touch_method == "intersects":
-                is_adjacent = selected_geom.intersects(row.geometry) and not selected_geom.within(row.geometry)
+                is_adjacent = (
+                    selected_geom.intersects(geom)
+                    and not selected_geom.within(geom)
+                    and not geom.within(selected_geom)
+                    and not selected_geom.equals(geom)
+                )
             elif touch_method == "overlaps":
-                is_adjacent = selected_geom.overlaps(row.geometry)
+                is_adjacent = selected_geom.overlaps(geom)
             else:
-                # Default to touches
-                is_adjacent = selected_geom.touches(row.geometry)
+                is_adjacent = selected_geom.touches(geom)
 
             if is_adjacent:
                 logger.debug(f"Found adjacent polygon at index {idx}")

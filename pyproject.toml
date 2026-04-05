@@ -46,6 +46,7 @@ dependencies = [
     # AECS4U Storage (optional - app uses direct boto3/gcs fallback without it)
     # Install from Google Artifact Registry when needed:
     #   uv pip install aecs4u-storage --index-url https://europe-west1-python.pkg.dev/apps-aecs4u/python-packages/simple/
+    "babel>=2.18.0",
 ]
 
 [tool.black]

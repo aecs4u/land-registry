@@ -26,8 +26,13 @@ router = APIRouter()
 # Use aecs4u-theme templates when the package is installed
 try:
     import aecs4u_theme
+    from aecs4u_theme.setup import _clerk_appearance_filter
     _THEME_TEMPLATES_DIR = Path(aecs4u_theme.__file__).parent / "templates"
     _theme_templates = Jinja2Templates(directory=str(_THEME_TEMPLATES_DIR))
+    # Register filters required by aecs4u-theme templates
+    _theme_templates.env.filters["clerk_appearance"] = _clerk_appearance_filter
+    from land_registry.i18n import contextvar_gettext as _cvgt
+    _theme_templates.env.globals["_"] = _cvgt
     _USE_THEME_TEMPLATES = True
 except ImportError:
     _theme_templates = None

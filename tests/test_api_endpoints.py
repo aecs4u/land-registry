@@ -81,7 +81,11 @@ class TestCadastralStructureEndpoints:
         response = client.get("/cadastral-data")
         assert response.status_code == 200
         assert "text/html" in response.headers["content-type"]
-        assert "Italian Cadastral Data Structure" in response.text
+        # Page title is translated — check for either locale
+        assert (
+            "Italian Cadastral Data Structure" in response.text
+            or "Struttura Dati Catastale Italiana" in response.text
+        )
 
 
 class TestFileUploadEndpoints:

@@ -177,8 +177,7 @@ class MapControlsManager:
             
             group_html = f'''
                 <!-- {group.title} Controls -->
-                <div class="map-controls" id="{group.id}" style="{position_style};
-">
+                <div class="map-controls" id="{group.id}" style="{position_style}">
                     <div class="control-group-header">{group.title}</div>
             '''
             

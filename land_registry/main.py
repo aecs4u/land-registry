@@ -18,6 +18,7 @@ from tornado.ioloop import IOLoop
 from land_registry.cadastral_utils import load_cadastral_structure, get_cadastral_stats
 from land_registry.dashboard import TEMPLATE
 from land_registry.file_availability_db import file_availability_db
+from land_registry.i18n import LocaleMiddleware, detect_locale, make_gettext, contextvar_gettext, _current_locale as _i18n_locale_var
 from land_registry.map import get_current_gdf, get_current_layers, map_generator
 from land_registry.dependencies import _map_state
 from land_registry.routers.api import api_router
@@ -329,6 +330,9 @@ if _THEME_AVAILABLE:
 else:
     logger.warning("aecs4u-theme not installed - running without theme package")
 
+# Locale detection middleware (cookie → Accept-Language → default 'it')
+app.add_middleware(LocaleMiddleware)
+
 # Include HTML auth pages (login/register forms) at /auth prefix
 # These provide GET endpoints for browser-accessible pages
 # (aecs4u-auth only provides POST API endpoints)
@@ -356,6 +360,8 @@ else:
     logger.error("Static files directory not found - static content will not be served")
 
 templates = Jinja2Templates(directory=templates_dir)
+templates.env.globals["_"] = contextvar_gettext
+# locale is passed per-request in template context (set by each route handler)
 
 
 @app.get("/health")
@@ -417,8 +423,11 @@ async def _build_main_map_shell_context(request: Request) -> dict:
         asyncio.to_thread(server_document, PANEL_MAPPING_TABLE_URL),
     )
 
+    locale = detect_locale(request)
     return {
         "request": request,
+        "_": make_gettext(locale),
+        "locale": locale,
         "folium_map_html": folium_map_html,
         "map_table": map_table,
         "adjacency_table": adjacency_table,
@@ -489,8 +498,11 @@ async def redirect_root_to_map():
 async def landing_page(request: Request):
     """Landing page summarizing all application features"""
     stats = get_cadastral_stats()
+    locale = detect_locale(request)
     return templates.TemplateResponse("landing.html", {
         "request": request,
+        "_": make_gettext(locale),
+        "locale": locale,
         "total_regions": stats['total_regions'],
         "total_provinces": stats['total_provinces'],
         "total_municipalities": stats['total_municipalities'],
@@ -574,8 +586,11 @@ async def show_cadastral_data(request: Request):
             logger.error(f"Could not access file availability cache: {cache_error}", exc_info=True)
 
         # Render template with cadastral data and flags
+        locale = detect_locale(request)
         return templates.TemplateResponse("cadastral_data.html", {
             "request": request,
+            "_": make_gettext(locale),
+            "locale": locale,
             "cadastral_data": cadastral_data,
             "municipality_flags": municipality_flags,
             "total_regions": stats['total_regions'],

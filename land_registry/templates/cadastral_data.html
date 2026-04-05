@@ -4,39 +4,39 @@ Registry Viewer{% endblock %} {% block external_css %}
 {% endblock %} {% block extra_css %}
 <link rel="stylesheet" href="/static/cadastral_data.css" />
 {% endblock %} {% block content %}
-<a href="/" class="back-link">← Back to Map</a>
+<a href="/" class="back-link">← {{ _('Back to Map') }}</a>
 
 <div class="header">
-  <h1>Italian Cadastral Data Structure</h1>
+  <h1>{{ _('Italian Cadastral Data Structure') }}</h1>
 </div>
 
 <!-- Filter Section -->
 <div class="filter-section">
   <div class="filter-row">
     <div class="filter-group">
-      <label for="regionFilter">Filter by Region:</label>
-      <input type="text" id="regionFilter" placeholder="Enter region name..." />
+      <label for="regionFilter">{{ _('Filter by Region:') }}</label>
+      <input type="text" id="regionFilter" placeholder="{{ _('Enter region name...') }}" />
     </div>
     <div class="filter-group">
-      <label for="provinceFilter">Filter by Province:</label>
+      <label for="provinceFilter">{{ _('Filter by Province:') }}</label>
       <input
         type="text"
         id="provinceFilter"
-        placeholder="Enter province code..."
+        placeholder="{{ _('Enter province code...') }}"
       />
     </div>
     <div class="filter-group">
-      <label for="municipalityFilter">Filter by Municipality:</label>
+      <label for="municipalityFilter">{{ _('Filter by Municipality:') }}</label>
       <input
         type="text"
         id="municipalityFilter"
-        placeholder="Enter municipality name..."
+        placeholder="{{ _('Enter municipality name...') }}"
       />
     </div>
     <div class="filter-actions">
-      <button class="filter-btn" onclick="applyFilters()">Apply Filters</button>
+      <button class="filter-btn" onclick="applyFilters()">{{ _('Apply Filters') }}</button>
       <button class="filter-btn secondary" onclick="clearFilters()">
-        Clear All
+        {{ _('Clear All') }}
       </button>
     </div>
   </div>
@@ -56,8 +56,8 @@ Registry Viewer{% endblock %} {% block external_css %}
   >
   {% if available_files is defined and missing_files is defined %}
   <div class="file-availability">
-    <span class="available-files">✅ Available: {{ available_files }}</span>
-    <span class="missing-files">❌ Missing: {{ missing_files }}</span>
+    <span class="available-files">✅ {{ _('Available:') }} {{ available_files }}</span>
+    <span class="missing-files">❌ {{ _('Missing:') }} {{ missing_files }}</span>
     {% if total_files > 0 %}
     <span class="availability-percentage"
       >📈 {{ "%.1f"|format((available_files / total_files * 100)) }}%
@@ -69,14 +69,14 @@ Registry Viewer{% endblock %} {% block external_css %}
       class="check-availability-btn"
       onclick="checkFileAvailability()"
     >
-      🔄 Check File Availability
+      🔄 {{ _('Check File Availability') }}
     </button>
     <button
       id="clearCacheBtn"
       class="check-availability-btn secondary"
       onclick="clearAvailabilityCache()"
     >
-      🗑️ Clear Cache
+      🗑️ {{ _('Clear Cache') }}
     </button>
   </div>
   <div
@@ -153,7 +153,7 @@ Registry Viewer{% endblock %} {% block external_css %}
               municipality_data.get('files', [])|length > 5 %} ... (and {{
               municipality_data.get('files', [])|length - 5 }} more) {% endif %}
               {% else %}
-              <em>No files available</em>
+              <em>{{ _('No files available') }}</em>
               {% endif %}
             </div>
           </div>
@@ -168,17 +168,17 @@ Registry Viewer{% endblock %} {% block external_css %}
 
 <!-- No Results Message -->
 <div id="noResultsMessage" class="no-data" style="display: none">
-  <h2>🔍 No Results Found</h2>
-  <p>No cadastral data matches your current filter criteria.</p>
+  <h2>🔍 {{ _('No Results Found') }}</h2>
+  <p>{{ _('No cadastral data matches your current filter criteria.') }}</p>
   <p>
-    Please try adjusting your search terms or clear the filters to see all data.
+    {{ _('Please try adjusting your search terms or clear the filters to see all data.') }}
   </p>
 </div>
 {% else %}
 <div class="no-data">
-  <h2>📄 No Cadastral Data Available</h2>
-  <p>The cadastral structure file could not be found or loaded.</p>
-  <p>Please ensure the cadastral data is properly configured.</p>
+  <h2>📄 {{ _('No Cadastral Data Available') }}</h2>
+  <p>{{ _('The cadastral structure file could not be found or loaded.') }}</p>
+  <p>{{ _('Please ensure the cadastral data is properly configured.') }}</p>
 </div>
 {% endif %} {% endblock %} {% block external_js %}
 <!-- Minimal external JavaScript - Clerk SDK is loaded from base.html -->

@@ -841,16 +841,19 @@ function updateDataDependentButtons() {
         updateExportButtons();
     }
 
+    // Update polygon management buttons (require data to be loaded)
+    const removePolygonsBtn = document.getElementById('removePolygonsBtn');
+    const zoomToPolygonsBtn = document.getElementById('zoomToPolygonsBtn');
+    const exportAllBtn = document.getElementById('exportAllBtn');
+    if (removePolygonsBtn) removePolygonsBtn.disabled = !hasData;
+    if (zoomToPolygonsBtn) zoomToPolygonsBtn.disabled = !hasData;
+    if (exportAllBtn) exportAllBtn.disabled = !hasData;
+
     // Update display control buttons
     const selectionInfoBtn = document.querySelector('[onclick="toggleSelectionInfo()"]');
     const polygonsVisibilityBtn = document.querySelector('[onclick="togglePolygonsVisibility()"]');
-
-    if (selectionInfoBtn) {
-        selectionInfoBtn.disabled = !hasData;
-    }
-    if (polygonsVisibilityBtn) {
-        polygonsVisibilityBtn.disabled = !hasData;
-    }
+    if (selectionInfoBtn) selectionInfoBtn.disabled = !hasData;
+    if (polygonsVisibilityBtn) polygonsVisibilityBtn.disabled = !hasData;
 
     debugLog('Data-dependent buttons updated. Has data:', hasData);
 }

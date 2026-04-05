@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ request.state.locale | default('it') }}">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -96,6 +96,8 @@
     {% endblock %}
     <script src="/static/table-manager.js"></script>
 
+    <script src="/static/i18n.js"></script>
+    {% block i18n_data %}{% endblock %}
     {% block app_js %}{% endblock %}
     {% block data_scripts %}{% endblock %}
     {% block extra_js %}{% endblock %}
