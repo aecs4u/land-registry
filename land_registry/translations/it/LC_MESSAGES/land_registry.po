@@ -725,3 +725,24 @@ msgstr "es. 1"
 
 msgid "No results"
 msgstr "Nessun risultato"
+
+msgid "Region"
+msgstr "Regione"
+
+msgid "Province"
+msgstr "Provincia"
+
+msgid "Municipality (required)"
+msgstr "Comune (obbligatorio)"
+
+msgid "Select region…"
+msgstr "Seleziona regione…"
+
+msgid "Select province…"
+msgstr "Seleziona provincia…"
+
+msgid "Select municipality…"
+msgstr "Seleziona comune…"
+
+msgid "Select a municipality before searching."
+msgstr "Seleziona un comune prima di cercare."

@@ -408,9 +408,21 @@
             <div class="tool-panel-section">
               <h5>{{ _('Search Parcels') }}</h5>
               <div class="tool-field">
-                <label>{{ _('Comune (required)') }}</label>
-                <select id="searchComune" class="tool-select">
-                  <option value="">{{ _('Select comune…') }}</option>
+                <label>{{ _('Region') }}</label>
+                <select id="searchRegion" class="tool-select" onchange="onSearchRegionChange()">
+                  <option value="">{{ _('Select region…') }}</option>
+                </select>
+              </div>
+              <div class="tool-field">
+                <label>{{ _('Province') }}</label>
+                <select id="searchProvince" class="tool-select" onchange="onSearchProvinceChange()" disabled>
+                  <option value="">{{ _('Select province…') }}</option>
+                </select>
+              </div>
+              <div class="tool-field">
+                <label>{{ _('Municipality (required)') }}</label>
+                <select id="searchMunicipality" class="tool-select" disabled>
+                  <option value="">{{ _('Select municipality…') }}</option>
                 </select>
               </div>
               <div class="tool-field">

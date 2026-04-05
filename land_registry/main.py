@@ -441,8 +441,10 @@ async def _build_main_map_shell_context(request: Request) -> dict:
         "Analyzing spatial relationships...": gt("Analyzing spatial relationships..."),
         "No zones saved yet.": gt("No zones saved yet."),
         "No zones match the search.": gt("No zones match the search."),
-        "Select comune…": gt("Select comune…"),
-        "Select a comune before searching.": gt("Select a comune before searching."),
+        "Select region…": gt("Select region…"),
+        "Select province…": gt("Select province…"),
+        "Select municipality…": gt("Select municipality…"),
+        "Select a municipality before searching.": gt("Select a municipality before searching."),
         "No results": gt("No results"),
     }
 

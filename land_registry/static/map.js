@@ -3311,31 +3311,100 @@ function _parseCadastralRef(ref) {
     return { foglio, particella, sub };
 }
 
+// Cached cadastral structure for cascading Region → Province → Municipality selects
+let _cadastralStructure = null;
+
+function _mkOpt(value, label, disabled = false) {
+    const o = document.createElement('option');
+    o.value = value;
+    o.textContent = label;
+    if (disabled) o.disabled = true;
+    return o;
+}
+
+function _resetSelect(id, placeholder) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.innerHTML = '';
+    el.appendChild(_mkOpt('', placeholder));
+    el.value = '';
+    el.disabled = true;
+}
+
 /**
- * Populate the Comune dropdown by querying the server.
- * Called after data loads so the list is always in sync.
+ * Load cadastral structure once, then populate the Region dropdown.
+ * Called when the Explore panel opens or after data loads.
  */
 window.refreshSearchComuneList = async function() {
-    const select = document.getElementById('searchComune');
-    if (!select) return;
-    try {
-        const resp = await fetch('/api/v1/search/comuni');
-        if (!resp.ok) return;
-        const data = await resp.json();
-        const comuni = data.comuni || [];
-        const prev = select.value;
-        const placeholder = window.t ? window.t('Select comune…') : 'Select comune…';
-        select.innerHTML = `<option value="">${placeholder}</option>`;
-        comuni.forEach(c => {
-            const opt = document.createElement('option');
-            opt.value = c;
-            opt.textContent = c;
-            select.appendChild(opt);
-        });
-        if (prev && comuni.includes(prev)) select.value = prev;
-    } catch (e) {
-        console.warn('[Search] Could not refresh comune list:', e);
+    const regionSel = document.getElementById('searchRegion');
+    if (!regionSel) return;
+
+    if (!_cadastralStructure) {
+        try {
+            const resp = await fetch('/api/v1/get-cadastral-structure/');
+            if (!resp.ok) return;
+            _cadastralStructure = await resp.json();
+        } catch (e) {
+            console.warn('[Search] Could not load cadastral structure:', e);
+            return;
+        }
     }
+
+    const prev = regionSel.value;
+    const placeholder = window.t ? window.t('Select region…') : 'Select region…';
+    regionSel.innerHTML = '';
+    regionSel.appendChild(_mkOpt('', placeholder));
+    Object.keys(_cadastralStructure).sort().forEach(r => {
+        regionSel.appendChild(_mkOpt(r, r));
+    });
+    regionSel.disabled = false;
+    if (prev && _cadastralStructure[prev]) {
+        regionSel.value = prev;
+        onSearchRegionChange();
+    } else {
+        _resetSelect('searchProvince', window.t ? window.t('Select province…') : 'Select province…');
+        _resetSelect('searchMunicipality', window.t ? window.t('Select municipality…') : 'Select municipality…');
+    }
+};
+
+window.onSearchRegionChange = function() {
+    const region = document.getElementById('searchRegion')?.value || '';
+    const provinceSel = document.getElementById('searchProvince');
+    if (!provinceSel) return;
+
+    _resetSelect('searchProvince', window.t ? window.t('Select province…') : 'Select province…');
+    _resetSelect('searchMunicipality', window.t ? window.t('Select municipality…') : 'Select municipality…');
+
+    if (!region || !_cadastralStructure?.[region]) return;
+
+    const provinces = _cadastralStructure[region];
+    provinceSel.innerHTML = '';
+    provinceSel.appendChild(_mkOpt('', window.t ? window.t('Select province…') : 'Select province…'));
+    Object.keys(provinces).sort().forEach(p => {
+        provinceSel.appendChild(_mkOpt(p, p));
+    });
+    provinceSel.disabled = false;
+};
+
+window.onSearchProvinceChange = function() {
+    const region = document.getElementById('searchRegion')?.value || '';
+    const province = document.getElementById('searchProvince')?.value || '';
+    const muniSel = document.getElementById('searchMunicipality');
+    if (!muniSel) return;
+
+    _resetSelect('searchMunicipality', window.t ? window.t('Select municipality…') : 'Select municipality…');
+
+    if (!region || !province || !_cadastralStructure?.[region]?.[province]) return;
+
+    const municipalities = _cadastralStructure[region][province];
+    muniSel.innerHTML = '';
+    muniSel.appendChild(_mkOpt('', window.t ? window.t('Select municipality…') : 'Select municipality…'));
+    Object.values(municipalities)
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .forEach(m => {
+            muniSel.appendChild(_mkOpt(m.code, `${m.name} (${m.code})`));
+        });
+    muniSel.disabled = false;
 };
 
 /**
@@ -3343,21 +3412,21 @@ window.refreshSearchComuneList = async function() {
  * Comune (ADMINISTRATIVEUNIT) is required; foglio, particella, subalterno are optional.
  */
 window.searchParcels = async function() {
-    const comuneSelect    = document.getElementById('searchComune');
+    const muniSelect      = document.getElementById('searchMunicipality');
     const foglioInput     = document.getElementById('searchFoglio');
     const particellaInput = document.getElementById('searchParticella');
     const subInput        = document.getElementById('searchSubalterno');
     const resultsDiv      = document.getElementById('searchResults');
     const resultCountSpan = document.getElementById('searchResultCount');
 
-    const comuneSearch    = (comuneSelect?.value    || '').trim();
+    const comuneSearch    = (muniSelect?.value      || '').trim();
     const foglioSearch    = (foglioInput?.value     || '').trim();
     const particellaSearch= (particellaInput?.value || '').trim();
     const subSearch       = (subInput?.value        || '').trim();
 
     if (!comuneSearch) {
-        alert(window.t ? window.t('Select a comune before searching.') : 'Select a comune before searching.');
-        comuneSelect?.focus();
+        alert(window.t ? window.t('Select a municipality before searching.') : 'Select a municipality before searching.');
+        muniSelect?.focus();
         return;
     }
 
@@ -3439,6 +3508,9 @@ window.clearParcelSearch = function() {
         const el = document.getElementById(id);
         if (el) el.value = '';
     });
+    // Reset cascading selects back to just region (keep region/province selection)
+    const muniSel = document.getElementById('searchMunicipality');
+    if (muniSel) muniSel.value = '';
     const resultsDiv = document.getElementById('searchResults');
     if (resultsDiv) { resultsDiv.style.display = 'none'; resultsDiv.classList.remove('no-results'); }
 };
