@@ -947,6 +947,10 @@
     if (!isOpen) {
       panel.style.display = 'block';
       btn.classList.add('active');
+      // Refresh comune dropdown when Explore panel opens
+      if (panelId === 'panelExplore' && window.refreshSearchComuneList) {
+        window.refreshSearchComuneList();
+      }
     }
   }
   function closeToolPanel(panelId) {
