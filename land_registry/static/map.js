@@ -462,6 +462,7 @@ function toggleSidebar() {
     if (!sidebar) return;
 
     const collapsed = sidebar.classList.toggle('collapsed');
+    document.body.classList.toggle('sidebar-collapsed', collapsed);
     if (expandBtn) expandBtn.style.display = collapsed ? 'flex' : 'none';
     if (collapseBtn) collapseBtn.style.display = collapsed ? 'none' : 'flex';
     localStorage.setItem('sidebarCollapsed', collapsed ? '1' : '0');
@@ -480,6 +481,7 @@ function toggleSidebar() {
             const expandBtn = document.getElementById('sidebarExpandBtn');
             const collapseBtn = document.getElementById('sidebarCollapseBtn');
             if (sidebar) sidebar.classList.add('collapsed');
+            document.body.classList.add('sidebar-collapsed');
             if (expandBtn) expandBtn.style.display = 'flex';
             if (collapseBtn) collapseBtn.style.display = 'none';
         });

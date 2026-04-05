@@ -208,15 +208,20 @@ html, body {
    margin-left/margin-top offsets. This app uses a flex container instead. */
 .main-content {
   flex: 1;
-  width: 100%;       /* fill full container width */
-  min-width: 0;      /* prevent flex child from overflowing */
+  min-width: 0;
   position: relative;
   height: 100%;
-  margin-left: 0 !important;    /* neutralise .sidebar-visible .main-content rule */
+  /* Sidebar is position:fixed (from aecs4u-theme layout.css), so push main content
+     to the right to avoid being hidden underneath it. */
+  margin-left: 300px !important;
   margin-right: 0 !important;
-  margin-top: 0 !important;     /* neutralise theme's margin-top: var(--header-height) */
-  padding: 0 !important;        /* neutralise theme's padding: 2rem */
-  transition: flex 0.25s ease;
+  margin-top: 0 !important;
+  padding: 0 !important;
+  transition: margin-left 0.25s ease;
+}
+/* When sidebar is collapsed, reclaim the space */
+body.sidebar-collapsed .main-content {
+  margin-left: 0 !important;
 }
 
 /* ── Auth widget (top-right, from clerk-auth.js) ────────────── */
@@ -249,7 +254,8 @@ html, body {
 }
 
 .map-container {
-  height: 100% !important;
+  flex: 1 1 0 !important;   /* take remaining space after .map-header */
+  min-height: 0 !important; /* allow shrinking in flex context */
   width: 100% !important;
   position: relative;
   display: flex !important;
@@ -2672,9 +2678,36 @@ body.dark-mode .adj-detail-table tbody tr:hover {
 }
 
 .drawing-section h3 {
-  margin: 0 0 15px 0;
+  margin: 0 0 16px 0;
   color: #007cba;
   font-size: 1.2em;
+}
+
+.drawing-subsection {
+  margin-bottom: 4px;
+}
+
+.drawing-subsection-title {
+  margin: 0 0 8px 0;
+  font-size: 0.85em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: #555;
+}
+
+.drawing-subsection-divider {
+  border: none;
+  border-top: 1px solid #e9ecef;
+  margin: 16px 0;
+}
+
+body.dark-mode .drawing-subsection-title {
+  color: #94a3b8;
+}
+
+body.dark-mode .drawing-subsection-divider {
+  border-color: #334155;
 }
 
 .drawn-polygons-list {
@@ -2843,7 +2876,8 @@ body.dark-mode .adj-detail-table tbody tr:hover {
   display: flex !important;
   flex-direction: column !important;
   width: 100% !important;
-  height: 100% !important;
+  flex: 1 1 0 !important;
+  min-height: 0 !important;
 }
 
 /* Leaflet Plugins Styling */
@@ -6350,20 +6384,19 @@ h4,
 [data-theme="dark"] .nav-dropdown-item:hover { background: #383838; }
 
 /* ── Map toolbar ─────────────────────────────────── */
-.map-container { position: relative; display: flex; flex-direction: column; }
 #folium-map-container { flex: 1; min-height: 0; }
 .map-toolbar {
   display: flex; flex-direction: row; gap: 2px;
   padding: 4px 8px;
   background: #fff; border-bottom: 1px solid #dee2e6;
-  z-index: 500; flex-shrink: 0; width: 100%;
+  z-index: 500; flex-shrink: 0;
 }
 .map-tool-btn {
   display: flex; flex-direction: row; align-items: center; gap: 6px;
   background: none; border: none; border-radius: 6px;
-  padding: 6px 12px; cursor: pointer; color: #495057;
+  padding: 6px 14px; cursor: pointer; color: #495057;
   font-size: 13px; font-weight: 500; transition: background 0.15s, color 0.15s;
-  white-space: nowrap;
+  white-space: nowrap; flex: 0 0 auto; width: auto;
 }
 .map-tool-btn i { font-size: 14px; }
 .map-tool-btn:hover { background: #e9ecef; color: #212529; }
