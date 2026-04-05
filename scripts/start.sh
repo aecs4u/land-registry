@@ -1,117 +1,62 @@
 #!/bin/bash
-# Lighthouse - Start script
+# land-registry — start script
+# Registry: /data/aecs4u.it/apps.json
 
 set -e
 
-# Colors for output
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m' # No Color
+# ── App configuration ──────────────────────────────────────────────────────────
+APP_NAME="Land Registry"
+MODULE="land_registry.main:app"
+DEFAULT_PORT=8011              # must match /data/aecs4u.it/apps.json
+DEFAULT_HOST="0.0.0.0"
+# ──────────────────────────────────────────────────────────────────────────────
 
-# Parse command line arguments
-CUSTOM_PORT=""
-CUSTOM_HOST=""
+GREEN='\033[0;32m'; BLUE='\033[0;34m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
 
 usage() {
-    echo "Usage: $0 [options]"
-    echo ""
+    echo "Usage: $0 [OPTIONS]"
     echo "Options:"
-    echo "  -p, --port PORT    Specify the port to run the server on (default: 8001)"
-    echo "  -h, --host HOST    Specify the host to bind to (default: 0.0.0.0)"
-    echo "  --help             Display this help message"
-    echo ""
+    echo "  -p, --port PORT   Port to listen on  (default: $DEFAULT_PORT)"
+    echo "  -H, --host HOST   Host to bind to    (default: $DEFAULT_HOST)"
+    echo "  --no-reload       Disable auto-reload"
+    echo "  --help            Show this help"
     exit 0
 }
 
+RELOAD=true
+HOST=""
+PORT=""
+
 while [[ $# -gt 0 ]]; do
     case $1 in
-        -p|--port)
-            CUSTOM_PORT="$2"
-            shift 2
-            ;;
-        -h|--host)
-            CUSTOM_HOST="$2"
-            shift 2
-            ;;
-        --help)
-            usage
-            ;;
-        *)
-            echo -e "${RED}Unknown option: $1${NC}"
-            usage
-            ;;
+        -p|--port)   PORT="$2"; shift 2 ;;
+        -H|--host)   HOST="$2"; shift 2 ;;
+        --no-reload) RELOAD=false; shift ;;
+        --help)      usage ;;
+        *) echo -e "${RED}Unknown option: $1${NC}"; usage ;;
     esac
 done
 
-echo -e "${BLUE}╔════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║         Lighthouse Control Panel       ║${NC}"
-echo -e "${BLUE}╚════════════════════════════════════════╝${NC}"
-echo ""
+HOST="${HOST:-$DEFAULT_HOST}"
+PORT="${PORT:-$DEFAULT_PORT}"
 
-# Check if .env file exists
-if [ ! -f .env ]; then
-    echo -e "${YELLOW}⚠️  No .env file found. Creating from .env.example...${NC}"
-    if [ -f .env.example ]; then
-        cp .env.example .env
-        echo -e "${GREEN}✓ Created .env file${NC}"
-        echo -e "${YELLOW}⚠️  Please edit .env with your configuration before starting${NC}"
-        exit 0
-    else
-        echo -e "${RED}✗ .env.example not found${NC}"
-        exit 1
-    fi
-fi
+cd "$(dirname "$0")/.."
 
-# Check if virtual environment exists
-if [ ! -d ".venv" ]; then
-    echo -e "${YELLOW}⚠️  No virtual environment found. Creating...${NC}"
-    uv venv .venv
-    echo -e "${GREEN}✓ Created virtual environment${NC}"
-fi
+[ ! -f .env ] && [ -f .env.example ] && {
+    echo -e "${YELLOW}Creating .env from .env.example — edit it before restarting if needed${NC}"
+    cp .env.example .env
+}
 
-# Activate virtual environment
-echo -e "${BLUE}Activating virtual environment...${NC}"
-source .venv/bin/activate
-
-# Check if dependencies are installed
-if [ -f "requirements.txt" ]; then
-    echo -e "${YELLOW}Installing dependencies...${NC}"
-    uv pip install -r requirements.txt
-    echo -e "${GREEN}✓ Dependencies installed${NC}"
-fi
-
-# Get host and port from command line, then .env, or use defaults
-if [ -n "$CUSTOM_HOST" ]; then
-    HOST="$CUSTOM_HOST"
-else
-    HOST=${HOST:-0.0.0.0}
-fi
-
-if [ -n "$CUSTOM_PORT" ]; then
-    PORT="$CUSTOM_PORT"
-else
-    PORT=${PORT:-8001}
-fi
-
-echo ""
-echo -e "${GREEN}Starting Lighthouse...${NC}"
-echo -e "${BLUE}Host: ${HOST}${NC}"
-echo -e "${BLUE}Port: ${PORT}${NC}"
-echo ""
-
-# Ensure sitecustomize can be discovered for runtime patches
 export PYTHONPATH="$(pwd):${PYTHONPATH:-}"
 
-clear
+echo -e "${BLUE}Starting ${APP_NAME} → http://${HOST}:${PORT}${NC}"
 
-# Start the application via Python for proper Ctrl+C signal handling
+# Use python runner directly for proper Ctrl+C signal handling
 # (uv run + uvicorn --reload creates nested processes that swallow SIGINT)
 exec python -c "
 import signal, sys, uvicorn
 signal.signal(signal.SIGINT, lambda *_: (print('\nShutting down...'), sys.exit(0)))
-uvicorn.run('land_registry.main:app', host='$HOST', port=int('$PORT'),
-            reload=True, reload_delay=0.25, timeout_graceful_shutdown=3,
+uvicorn.run('$MODULE', host='$HOST', port=int('$PORT'),
+            reload=$RELOAD, reload_delay=0.25, timeout_graceful_shutdown=3,
             timeout_keep_alive=2, log_level='info')
 "
