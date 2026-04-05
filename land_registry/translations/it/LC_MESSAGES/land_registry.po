@@ -683,3 +683,21 @@ msgstr "Il file di struttura catastale non è stato trovato o caricato."
 
 msgid "Please ensure the cadastral data is properly configured."
 msgstr "Assicurati che i dati catastali siano correttamente configurati."
+
+msgid "0 polygons selected"
+msgstr "0 poligoni selezionati"
+
+msgid "1 polygon selected"
+msgstr "1 poligono selezionato"
+
+msgid "{n} polygons selected"
+msgstr "{n} poligoni selezionati"
+
+msgid "No polygons loaded"
+msgstr "Nessun poligono caricato"
+
+msgid "{n} polygons on map"
+msgstr "{n} poligoni sulla mappa"
+
+msgid "Analyzing spatial relationships..."
+msgstr "Analisi delle relazioni spaziali..."

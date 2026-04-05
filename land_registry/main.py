@@ -424,10 +424,30 @@ async def _build_main_map_shell_context(request: Request) -> dict:
     )
 
     locale = detect_locale(request)
+    gt = make_gettext(locale)
+
+    # JS-side translated strings (injected as window._i18n via i18n_data block)
+    i18n_strings = {
+        "0 polygons selected": gt("0 polygons selected"),
+        "1 polygon selected": gt("1 polygon selected"),
+        "{n} polygons selected": gt("{n} polygons selected"),
+        "No polygons loaded": gt("No polygons loaded"),
+        "{n} polygons on map": gt("{n} polygons on map"),
+        "Loading...": gt("Loading..."),
+        "Preparing...": gt("Preparing..."),
+        "0 files": gt("0 files"),
+        "0 features": gt("0 features"),
+        "No data loaded": gt("No data loaded"),
+        "Analyzing spatial relationships...": gt("Analyzing spatial relationships..."),
+        "No zones saved yet.": gt("No zones saved yet."),
+        "No zones match the search.": gt("No zones match the search."),
+    }
+
     return {
         "request": request,
-        "_": make_gettext(locale),
+        "_": gt,
         "locale": locale,
+        "i18n_strings": i18n_strings,
         "folium_map_html": folium_map_html,
         "map_table": map_table,
         "adjacency_table": adjacency_table,

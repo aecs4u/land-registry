@@ -683,3 +683,21 @@ msgstr "The cadastral structure file could not be found or loaded."
 
 msgid "Please ensure the cadastral data is properly configured."
 msgstr "Please ensure the cadastral data is properly configured."
+
+msgid "0 polygons selected"
+msgstr "0 polygons selected"
+
+msgid "1 polygon selected"
+msgstr "1 polygon selected"
+
+msgid "{n} polygons selected"
+msgstr "{n} polygons selected"
+
+msgid "No polygons loaded"
+msgstr "No polygons loaded"
+
+msgid "{n} polygons on map"
+msgstr "{n} polygons on map"
+
+msgid "Analyzing spatial relationships..."
+msgstr "Analyzing spatial relationships..."

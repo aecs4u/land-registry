@@ -6350,30 +6350,30 @@ h4,
 [data-theme="dark"] .nav-dropdown-item:hover { background: #383838; }
 
 /* ── Map toolbar ─────────────────────────────────── */
-.map-container { position: relative; display: flex; }
-#folium-map-container { flex: 1; min-width: 0; }
+.map-container { position: relative; display: flex; flex-direction: column; }
+#folium-map-container { flex: 1; min-height: 0; }
 .map-toolbar {
-  display: flex; flex-direction: column; gap: 2px;
-  padding: 6px 4px;
-  background: #fff; border-right: 1px solid #dee2e6;
-  z-index: 500; flex-shrink: 0; width: 56px;
+  display: flex; flex-direction: row; gap: 2px;
+  padding: 4px 8px;
+  background: #fff; border-bottom: 1px solid #dee2e6;
+  z-index: 500; flex-shrink: 0; width: 100%;
 }
 .map-tool-btn {
-  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  display: flex; flex-direction: row; align-items: center; gap: 6px;
   background: none; border: none; border-radius: 6px;
-  padding: 8px 4px; cursor: pointer; color: #495057;
-  font-size: 10px; font-weight: 500; transition: background 0.15s, color 0.15s;
-  width: 100%;
+  padding: 6px 12px; cursor: pointer; color: #495057;
+  font-size: 13px; font-weight: 500; transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
 }
-.map-tool-btn i { font-size: 16px; }
+.map-tool-btn i { font-size: 14px; }
 .map-tool-btn:hover { background: #e9ecef; color: #212529; }
 .map-tool-btn.active { background: #dbe4ff; color: #3b5bdb; }
 
-/* ── Floating tool panels ────────────────────────── */
+/* ── Floating tool panels — drop down below horizontal toolbar ─── */
 .tool-panel {
-  display: none; position: absolute; left: 56px; top: 0; bottom: 0;
-  width: 280px; background: #fff; border-right: 1px solid #dee2e6;
-  z-index: 490; overflow-y: auto; box-shadow: 2px 0 8px rgba(0,0,0,0.08);
+  display: none; position: absolute; left: 0; top: 40px; bottom: 0;
+  width: 300px; background: #fff; border-right: 1px solid #dee2e6;
+  z-index: 490; overflow-y: auto; box-shadow: 2px 4px 16px rgba(0,0,0,0.12);
   flex-shrink: 0;
 }
 .tool-panel-header {
@@ -6428,7 +6428,7 @@ h4,
 [data-theme="dark"] .map-tool-btn { color: #ccc; }
 [data-theme="dark"] .map-tool-btn:hover { background: #383838; color: #fff; }
 [data-theme="dark"] .map-tool-btn.active { background: #1c3a5c; color: #74c0fc; }
-[data-theme="dark"] .tool-panel { background: #2c2c2c; border-color: #444; }
+[data-theme="dark"] .tool-panel { background: #2c2c2c; border-color: #444; border-right-color: #444; }
 [data-theme="dark"] .tool-panel-header { background: #333; border-color: #444; }
 [data-theme="dark"] .tool-input, [data-theme="dark"] .tool-select { background: #1e1e1e; border-color: #555; color: #e0e0e0; }
 [data-theme="dark"] .tool-btn-ghost { background: #383838; border-color: #555; color: #ccc; }

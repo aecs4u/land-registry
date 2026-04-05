@@ -570,9 +570,15 @@ function updateAdjacencyButtonState() {
     }
 
     if (selectedCount) {
-        const countText = window.selectedPolygons.length === 1
-            ? '1 polygon selected'
-            : `${window.selectedPolygons.length} polygons selected`;
+        const n = window.selectedPolygons.length;
+        let countText;
+        if (n === 0) {
+            countText = window.t('0 polygons selected');
+        } else if (n === 1) {
+            countText = window.t('1 polygon selected');
+        } else {
+            countText = (window.t('{n} polygons selected') || '{n} polygons selected').replace('{n}', n);
+        }
         selectedCount.textContent = countText;
     }
 }

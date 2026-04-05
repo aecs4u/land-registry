@@ -567,7 +567,7 @@
       </div>
 
       <div class="map-container">
-        <!-- Vertical map toolbar -->
+        <!-- Map toolbar — horizontal bar at top of map area -->
         <div class="map-toolbar" id="mapToolbar">
           <button class="map-tool-btn" id="toolBtnExplore" onclick="toggleToolPanel('panelExplore', 'toolBtnExplore')" title="{{ _('Explore') }}">
             <i class="fas fa-search"></i>
@@ -586,6 +586,7 @@
             <span>{{ _('Actions') }}</span>
           </button>
         </div>
+
         <div id="folium-map-container">
           {% if folium_map_html %} {{ folium_map_html|safe }} {% else %}
           <div class="no-map-message">
@@ -973,3 +974,5 @@
   }
 </script>
 {% endblock %}
+
+{% block i18n_data %}<script>window._i18n = {{ i18n_strings | tojson }};</script>{% endblock %}
