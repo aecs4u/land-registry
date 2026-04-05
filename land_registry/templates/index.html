@@ -377,195 +377,6 @@
         <div id="tableInfo" class="table-info">{{ _('No data loaded') }}</div>
       </div>
 
-      <!-- Floating tool panels (hidden by default) -->
-      <div class="tool-panel" id="panelExplore">
-        <div class="tool-panel-header">
-          <span>{{ _('Explore') }}</span>
-          <button class="tool-panel-close" onclick="closeToolPanel('panelExplore')">&times;</button>
-        </div>
-        <div class="tool-panel-body">
-          <!-- Parcel Search -->
-          <div class="tool-panel-section">
-            <h5>{{ _('Search Parcels') }}</h5>
-            <div class="search-row">
-              <label>{{ _('Foglio') }}</label>
-              <input type="text" id="searchFoglio" placeholder="{{ _('e.g., 12') }}" class="tool-input" />
-            </div>
-            <div class="search-row">
-              <label>{{ _('Particella') }}</label>
-              <input type="text" id="searchParticella" placeholder="{{ _('e.g., 456') }}" class="tool-input" />
-            </div>
-            <div class="tool-row">
-              <button onclick="searchParcels()" class="tool-btn">{{ _('Search') }}</button>
-              <button onclick="clearParcelSearch()" class="tool-btn-ghost">{{ _('Clear') }}</button>
-            </div>
-            <div id="searchResults" class="search-results" style="display:none">
-              <span id="searchResultCount">0 parcels found</span>
-            </div>
-          </div>
-          <!-- Layer Manager -->
-          <div class="tool-panel-section">
-            <h5>{{ _('Layer Manager') }}</h5>
-            <div class="tool-row">
-              <button onclick="toggleTreeLayers()" class="tool-btn-ghost">{{ _('Toggle Layers') }}</button>
-              <button onclick="refreshTreeLayers()" class="tool-btn-ghost">{{ _('Refresh') }}</button>
-            </div>
-            <div class="tool-row">
-              <button onclick="expandAllTreeLayers()" class="tool-btn-ghost">{{ _('Expand All') }}</button>
-              <button onclick="collapseAllTreeLayers()" class="tool-btn-ghost">{{ _('Collapse All') }}</button>
-            </div>
-          </div>
-          <!-- View Tools -->
-          <div class="tool-panel-section">
-            <h5>{{ _('View Tools') }}</h5>
-            <div class="tool-row">
-              <button onclick="resetMapView()" class="tool-btn-ghost">{{ _('Reset View') }}</button>
-              <button onclick="toggleCoordinates()" class="tool-btn-ghost">{{ _('Coordinates') }}</button>
-            </div>
-            <div class="tool-row">
-              <button onclick="toggleMiniMap()" class="tool-btn-ghost">{{ _('MiniMap') }}</button>
-              <button onclick="showPluginInfo()" class="tool-btn-ghost">{{ _('Plugin Info') }}</button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="tool-panel" id="panelAnalyse">
-        <div class="tool-panel-header">
-          <span>{{ _('Analyse') }}</span>
-          <button class="tool-panel-close" onclick="closeToolPanel('panelAnalyse')">&times;</button>
-        </div>
-        <div class="tool-panel-body">
-          <div class="tool-panel-section">
-            <h5>{{ _('Spatial Analysis') }}</h5>
-            <div class="tool-field">
-              <label>{{ _('Selection Mode:') }}</label>
-              <select id="selectionMode" onchange="changeSelectionMode()" class="tool-select">
-                <option value="adjacency">{{ _('Find Adjacency') }}</option>
-              </select>
-            </div>
-            <div class="tool-field">
-              <label>{{ _('Adjacency Method:') }}</label>
-              <select id="adjacencyMethod" class="tool-select">
-                <option value="intersects">{{ _('Intersects (any overlap)') }}</option>
-                <option value="touches">{{ _('Touches (shared boundary)') }}</option>
-                <option value="overlaps">{{ _('Overlaps (area overlap)') }}</option>
-              </select>
-            </div>
-            <div id="selectionControls">
-              <div class="tool-row">
-                <button onclick="findAdjacencyForSelected()" id="findAdjacencyBtn" disabled class="tool-btn">
-                  {{ _('Find Adjacent') }}
-                </button>
-                <button onclick="clearPolygonSelection()" id="clearSelectionBtn" disabled class="tool-btn-ghost">
-                  {{ _('Clear') }}
-                </button>
-              </div>
-              <div id="selectedCount" class="tool-info-text">{{ _('0 polygons selected') }}</div>
-            </div>
-          </div>
-          <div class="tool-panel-section">
-            <h5>{{ _('Polygon Management') }}</h5>
-            <div class="tool-row">
-              <button onclick="removeAllPolygons()" id="removePolygonsBtn" disabled class="tool-btn-danger">{{ _('Remove All') }}</button>
-              <button onclick="autoZoomToAllPolygons()" id="zoomToPolygonsBtn" disabled class="tool-btn-ghost">{{ _('Zoom to Fit') }}</button>
-            </div>
-            <div class="tool-row">
-              <button onclick="exportSelectedParcels()" id="exportSelectedBtn" disabled class="tool-btn-ghost">{{ _('Export Selected') }}</button>
-              <button onclick="exportAllParcels()" id="exportAllBtn" disabled class="tool-btn-ghost">{{ _('Export All') }}</button>
-            </div>
-            <div id="polygonCount" class="tool-info-text">{{ _('No polygons loaded') }}</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="tool-panel" id="panelZones">
-        <div class="tool-panel-header">
-          <span>{{ _('Zones') }}</span>
-          <button class="tool-panel-close" onclick="closeToolPanel('panelZones')">&times;</button>
-        </div>
-        <div class="tool-panel-body">
-          <div class="tool-panel-section">
-            <div class="tool-row" style="justify-content:space-between;align-items:center">
-              <h5 style="margin:0">{{ _('Zone Manager') }} <span id="zoneCount" class="zone-count-badge">0</span></h5>
-              <button onclick="showZoneSaveForm()" id="addZoneBtn" class="tool-btn" disabled>{{ _('New Zone') }}</button>
-            </div>
-            <!-- Save form -->
-            <div class="zone-save-form" id="zoneSaveForm" style="display:none;margin-top:8px">
-              <div class="tool-field">
-                <label>{{ _('Zone Name') }}</label>
-                <input type="text" id="zoneName" placeholder="{{ _('Enter zone name...') }}" maxlength="200" class="tool-input" />
-              </div>
-              <div class="tool-field">
-                <label>{{ _('Description') }}</label>
-                <textarea id="zoneDescription" placeholder="{{ _('Optional description...') }}" rows="2" maxlength="2000" class="tool-input"></textarea>
-              </div>
-              <div class="tool-row">
-                <div class="tool-field" style="flex:1">
-                  <label>{{ _('Color') }}</label>
-                  <input type="color" id="zoneColor" value="#3388ff" />
-                </div>
-                <div class="tool-field" style="flex:2">
-                  <label>{{ _('Tags') }}</label>
-                  <input type="text" id="zoneTags" placeholder="{{ _('e.g., residential, priority') }}" class="tool-input" />
-                </div>
-              </div>
-              <div class="tool-row">
-                <button onclick="saveCurrentDrawingAsZone()" class="tool-btn">{{ _('Save Zone') }}</button>
-                <button onclick="cancelZoneSave()" class="tool-btn-ghost">{{ _('Cancel') }}</button>
-              </div>
-            </div>
-            <div class="tool-row" style="margin-top:8px">
-              <button onclick="loadAllZones()" id="loadZonesBtn" class="tool-btn-ghost">{{ _('Refresh Zones') }}</button>
-            </div>
-            <div class="tool-row" style="margin-top:4px">
-              <input type="text" id="zoneSearchInput" class="tool-input" placeholder="{{ _('Search zones...') }}" oninput="applyZoneSearchFilter()" />
-              <button onclick="clearZoneSearch()" id="zoneSearchClearBtn" class="tool-btn-ghost">{{ _('Clear') }}</button>
-            </div>
-            <p id="zoneSearchNoResults" class="zone-search-no-results" style="display:none">{{ _('No zones match the search.') }}</p>
-            <div id="zoneList" class="zone-list">
-              <p class="zone-empty-message">{{ _('No zones saved yet.') }}</p>
-            </div>
-            <div class="zone-bulk-actions" id="zoneBulkActions" style="display:none">
-              <div class="tool-row">
-                <button onclick="showAllZones()" class="tool-btn-ghost">Select All</button>
-                <button onclick="hideAllZones()" class="tool-btn-ghost">Deselect All</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="tool-panel" id="panelActions">
-        <div class="tool-panel-header">
-          <span>{{ _('Actions') }}</span>
-          <button class="tool-panel-close" onclick="closeToolPanel('panelActions')">&times;</button>
-        </div>
-        <div class="tool-panel-body">
-          <div class="tool-panel-section">
-            <h5>{{ _('Market Filters') }}</h5>
-            <div class="tool-row">
-              <button onclick="toggleAuctionLayer()" class="tool-btn-ghost">{{ _('Toggle Auctions') }}</button>
-              <button onclick="filterActiveAuctions()" class="tool-btn-ghost">{{ _('Active Only') }}</button>
-            </div>
-            <div class="tool-field">
-              <label>{{ _('Type') }}</label>
-              <select id="auctionTypeFilter" onchange="filterAuctionsByType()" class="tool-select">
-                <option value="">{{ _('All Types') }}</option>
-                <option value="residential">{{ _('Residential') }}</option>
-                <option value="commercial">{{ _('Commercial') }}</option>
-                <option value="agricultural">{{ _('Agricultural') }}</option>
-                <option value="industrial">{{ _('Industrial') }}</option>
-              </select>
-            </div>
-            <div class="tool-field">
-              <label>{{ _('Max Price (€)') }}</label>
-              <input type="number" id="maxPriceFilter" onchange="filterAuctionsByPrice()" placeholder="150000" class="tool-input" />
-            </div>
-          </div>
-        </div>
-      </div>
-
       <div class="map-container">
         <!-- Map toolbar — horizontal bar at top of map area -->
         <div class="map-toolbar" id="mapToolbar">
@@ -585,6 +396,185 @@
             <i class="fas fa-filter"></i>
             <span>{{ _('Actions') }}</span>
           </button>
+        </div>
+
+        <!-- Tool panels — positioned inside map-container so top:0 sits flush below toolbar -->
+        <div class="tool-panel" id="panelExplore">
+          <div class="tool-panel-header">
+            <span>{{ _('Explore') }}</span>
+            <button class="tool-panel-close" onclick="closeToolPanel('panelExplore')">&times;</button>
+          </div>
+          <div class="tool-panel-body">
+            <div class="tool-panel-section">
+              <h5>{{ _('Search Parcels') }}</h5>
+              <div class="search-row">
+                <label>{{ _('Foglio') }}</label>
+                <input type="text" id="searchFoglio" placeholder="{{ _('e.g., 12') }}" class="tool-input" />
+              </div>
+              <div class="search-row">
+                <label>{{ _('Particella') }}</label>
+                <input type="text" id="searchParticella" placeholder="{{ _('e.g., 456') }}" class="tool-input" />
+              </div>
+              <div class="tool-row">
+                <button onclick="searchParcels()" class="tool-btn">{{ _('Search') }}</button>
+                <button onclick="clearParcelSearch()" class="tool-btn-ghost">{{ _('Clear') }}</button>
+              </div>
+              <div id="searchResults" class="search-results" style="display:none">
+                <span id="searchResultCount">0 parcels found</span>
+              </div>
+            </div>
+            <div class="tool-panel-section">
+              <h5>{{ _('Layer Manager') }}</h5>
+              <div class="tool-row">
+                <button onclick="toggleTreeLayers()" class="tool-btn-ghost">{{ _('Toggle Layers') }}</button>
+                <button onclick="refreshTreeLayers()" class="tool-btn-ghost">{{ _('Refresh') }}</button>
+              </div>
+              <div class="tool-row">
+                <button onclick="expandAllTreeLayers()" class="tool-btn-ghost">{{ _('Expand All') }}</button>
+                <button onclick="collapseAllTreeLayers()" class="tool-btn-ghost">{{ _('Collapse All') }}</button>
+              </div>
+            </div>
+            <div class="tool-panel-section">
+              <h5>{{ _('View Tools') }}</h5>
+              <div class="tool-row">
+                <button onclick="resetMapView()" class="tool-btn-ghost">{{ _('Reset View') }}</button>
+                <button onclick="toggleCoordinates()" class="tool-btn-ghost">{{ _('Coordinates') }}</button>
+              </div>
+              <div class="tool-row">
+                <button onclick="toggleMiniMap()" class="tool-btn-ghost">{{ _('MiniMap') }}</button>
+                <button onclick="showPluginInfo()" class="tool-btn-ghost">{{ _('Plugin Info') }}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="tool-panel" id="panelAnalyse">
+          <div class="tool-panel-header">
+            <span>{{ _('Analyse') }}</span>
+            <button class="tool-panel-close" onclick="closeToolPanel('panelAnalyse')">&times;</button>
+          </div>
+          <div class="tool-panel-body">
+            <div class="tool-panel-section">
+              <h5>{{ _('Spatial Analysis') }}</h5>
+              <div class="tool-field">
+                <label>{{ _('Adjacency Method:') }}</label>
+                <select id="adjacencyMethod" class="tool-select">
+                  <option value="intersects">{{ _('Intersects (any overlap)') }}</option>
+                  <option value="touches">{{ _('Touches (shared boundary)') }}</option>
+                  <option value="overlaps">{{ _('Overlaps (area overlap)') }}</option>
+                </select>
+              </div>
+              <div id="selectionControls">
+                <div class="tool-row">
+                  <button onclick="findAdjacencyForSelected()" id="findAdjacencyBtn" disabled class="tool-btn">
+                    {{ _('Find Adjacent') }}
+                  </button>
+                  <button onclick="clearPolygonSelection()" id="clearSelectionBtn" disabled class="tool-btn-ghost">
+                    {{ _('Clear') }}
+                  </button>
+                </div>
+                <div id="selectedCount" class="tool-info-text">{{ _('0 polygons selected') }}</div>
+              </div>
+            </div>
+            <div class="tool-panel-section">
+              <h5>{{ _('Polygon Management') }}</h5>
+              <div class="tool-row">
+                <button onclick="removeAllPolygons()" id="removePolygonsBtn" disabled class="tool-btn-danger">{{ _('Remove All') }}</button>
+                <button onclick="autoZoomToAllPolygons()" id="zoomToPolygonsBtn" disabled class="tool-btn-ghost">{{ _('Zoom to Fit') }}</button>
+              </div>
+              <div class="tool-row">
+                <button onclick="exportSelectedParcels()" id="exportSelectedBtn" disabled class="tool-btn-ghost">{{ _('Export Selected') }}</button>
+                <button onclick="exportAllParcels()" id="exportAllBtn" disabled class="tool-btn-ghost">{{ _('Export All') }}</button>
+              </div>
+              <div id="polygonCount" class="tool-info-text">{{ _('No polygons loaded') }}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="tool-panel" id="panelZones">
+          <div class="tool-panel-header">
+            <span>{{ _('Zones') }}</span>
+            <button class="tool-panel-close" onclick="closeToolPanel('panelZones')">&times;</button>
+          </div>
+          <div class="tool-panel-body">
+            <div class="tool-panel-section">
+              <div class="tool-row" style="justify-content:space-between;align-items:center">
+                <h5 style="margin:0">{{ _('Zone Manager') }} <span id="zoneCount" class="zone-count-badge">0</span></h5>
+                <button onclick="showZoneSaveForm()" id="addZoneBtn" class="tool-btn" disabled>{{ _('New Zone') }}</button>
+              </div>
+              <div class="zone-save-form" id="zoneSaveForm" style="display:none;margin-top:8px">
+                <div class="tool-field">
+                  <label>{{ _('Zone Name') }}</label>
+                  <input type="text" id="zoneName" placeholder="{{ _('Enter zone name...') }}" maxlength="200" class="tool-input" />
+                </div>
+                <div class="tool-field">
+                  <label>{{ _('Description') }}</label>
+                  <textarea id="zoneDescription" placeholder="{{ _('Optional description...') }}" rows="2" maxlength="2000" class="tool-input"></textarea>
+                </div>
+                <div class="tool-row">
+                  <div class="tool-field" style="flex:1">
+                    <label>{{ _('Color') }}</label>
+                    <input type="color" id="zoneColor" value="#3388ff" />
+                  </div>
+                  <div class="tool-field" style="flex:2">
+                    <label>{{ _('Tags') }}</label>
+                    <input type="text" id="zoneTags" placeholder="{{ _('e.g., residential, priority') }}" class="tool-input" />
+                  </div>
+                </div>
+                <div class="tool-row">
+                  <button onclick="saveCurrentDrawingAsZone()" class="tool-btn">{{ _('Save Zone') }}</button>
+                  <button onclick="cancelZoneSave()" class="tool-btn-ghost">{{ _('Cancel') }}</button>
+                </div>
+              </div>
+              <div class="tool-row" style="margin-top:8px">
+                <button onclick="loadAllZones()" id="loadZonesBtn" class="tool-btn-ghost">{{ _('Refresh Zones') }}</button>
+              </div>
+              <div class="tool-row" style="margin-top:4px">
+                <input type="text" id="zoneSearchInput" class="tool-input" placeholder="{{ _('Search zones...') }}" oninput="applyZoneSearchFilter()" />
+                <button onclick="clearZoneSearch()" id="zoneSearchClearBtn" class="tool-btn-ghost">{{ _('Clear') }}</button>
+              </div>
+              <p id="zoneSearchNoResults" class="zone-search-no-results" style="display:none">{{ _('No zones match the search.') }}</p>
+              <div id="zoneList" class="zone-list">
+                <p class="zone-empty-message">{{ _('No zones saved yet.') }}</p>
+              </div>
+              <div class="zone-bulk-actions" id="zoneBulkActions" style="display:none">
+                <div class="tool-row">
+                  <button onclick="showAllZones()" class="tool-btn-ghost">{{ _('Select All') }}</button>
+                  <button onclick="hideAllZones()" class="tool-btn-ghost">{{ _('Deselect All') }}</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="tool-panel" id="panelActions">
+          <div class="tool-panel-header">
+            <span>{{ _('Actions') }}</span>
+            <button class="tool-panel-close" onclick="closeToolPanel('panelActions')">&times;</button>
+          </div>
+          <div class="tool-panel-body">
+            <div class="tool-panel-section">
+              <h5>{{ _('Market Filters') }}</h5>
+              <div class="tool-row">
+                <button onclick="toggleAuctionLayer()" class="tool-btn-ghost">{{ _('Toggle Auctions') }}</button>
+                <button onclick="filterActiveAuctions()" class="tool-btn-ghost">{{ _('Active Only') }}</button>
+              </div>
+              <div class="tool-field">
+                <label>{{ _('Type') }}</label>
+                <select id="auctionTypeFilter" onchange="filterAuctionsByType()" class="tool-select">
+                  <option value="">{{ _('All Types') }}</option>
+                  <option value="residential">{{ _('Residential') }}</option>
+                  <option value="commercial">{{ _('Commercial') }}</option>
+                  <option value="agricultural">{{ _('Agricultural') }}</option>
+                  <option value="industrial">{{ _('Industrial') }}</option>
+                </select>
+              </div>
+              <div class="tool-field">
+                <label>{{ _('Max Price (€)') }}</label>
+                <input type="number" id="maxPriceFilter" onchange="filterAuctionsByPrice()" placeholder="150000" class="tool-input" />
+              </div>
+            </div>
+          </div>
         </div>
 
         <div id="folium-map-container">
@@ -723,49 +713,34 @@
         </div>
         <div class="drawing-controls">
           <div class="drawing-section">
-            <h3>{{ _('Drawn Polygons') }}</h3>
-            <div id="drawnPolygonsList" class="drawn-polygons-list">
-              <p>{{ _('No polygons drawn yet. Switch to Map View and use the draw toolbar.') }}</p>
-            </div>
-            <div class="drawing-actions">
-              <button onclick="saveDrawnPolygons()" class="control-btn">{{ _('Save Polygons') }}</button>
-              <button onclick="clearDrawnPolygons()" class="control-btn">{{ _('Clear Polygons') }}</button>
-            </div>
-          </div>
+            <h3>{{ _('Drawn Shapes') }}</h3>
 
-          <div class="drawing-section">
-            <h3>{{ _('Drawn Polylines') }}</h3>
-            <div id="drawnPolylinesList" class="drawn-polylines-list">
-              <p>{{ _('No polylines drawn yet.') }}</p>
+            <!-- Polygons sub-section -->
+            <div class="drawing-subsection">
+              <h4 class="drawing-subsection-title">{{ _('Polygons') }}</h4>
+              <div id="drawnPolygonsList" class="drawn-polygons-list">
+                <p>{{ _('No polygons drawn yet. Switch to Map View and use the draw toolbar.') }}</p>
+              </div>
+              <div class="drawing-actions">
+                <button onclick="saveDrawnPolygons()" class="control-btn">{{ _('Save') }}</button>
+                <button onclick="clearDrawnPolygons()" class="control-btn">{{ _('Clear') }}</button>
+              </div>
             </div>
-            <div class="drawing-actions">
-              <button onclick="saveDrawnPolylines()" id="savePolylinesBtn" class="control-btn">
-                {{ _('Save Polylines') }}
-              </button>
-              <button
-                onclick="deleteSelectedPolyline()"
-                id="deletePolylineBtn"
-                disabled
-                class="control-btn"
-              >
-                {{ _('Delete Selected') }}
-              </button>
-              <button
-                onclick="undoLastPolyline()"
-                id="undoPolylineBtn"
-                disabled
-                class="control-btn"
-              >
-                {{ _('Undo Last') }}
-              </button>
-              <button
-                onclick="clearAllPolylines()"
-                id="clearPolylinesBtn"
-                disabled
-                class="control-btn"
-              >
-                {{ _('Clear Polylines') }}
-              </button>
+
+            <div class="drawing-subsection-divider"></div>
+
+            <!-- Polylines sub-section -->
+            <div class="drawing-subsection">
+              <h4 class="drawing-subsection-title">{{ _('Polylines') }}</h4>
+              <div id="drawnPolylinesList" class="drawn-polylines-list">
+                <p>{{ _('No polylines drawn yet.') }}</p>
+              </div>
+              <div class="drawing-actions">
+                <button onclick="saveDrawnPolylines()" id="savePolylinesBtn" class="control-btn">{{ _('Save') }}</button>
+                <button onclick="deleteSelectedPolyline()" id="deletePolylineBtn" disabled class="control-btn">{{ _('Delete Selected') }}</button>
+                <button onclick="undoLastPolyline()" id="undoPolylineBtn" disabled class="control-btn">{{ _('Undo Last') }}</button>
+                <button onclick="clearAllPolylines()" id="clearPolylinesBtn" disabled class="control-btn">{{ _('Clear') }}</button>
+              </div>
             </div>
           </div>
 
@@ -916,6 +891,17 @@
       }
     }
   });
+
+  // Set --toolbar-h CSS variable so panels align flush below the toolbar
+  function _updateToolbarHeight() {
+    const tb = document.getElementById('mapToolbar');
+    if (tb) {
+      document.querySelector('.map-container')
+        ?.style.setProperty('--toolbar-h', tb.offsetHeight + 'px');
+    }
+  }
+  document.addEventListener('DOMContentLoaded', _updateToolbarHeight);
+  window.addEventListener('resize', _updateToolbarHeight);
 
   // Map toolbar panel toggling
   function toggleToolPanel(panelId, btnId) {

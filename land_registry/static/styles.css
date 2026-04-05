@@ -6402,10 +6402,17 @@ h4,
 .map-tool-btn:hover { background: #e9ecef; color: #212529; }
 .map-tool-btn.active { background: #dbe4ff; color: #3b5bdb; }
 
-/* ── Floating tool panels — appear below toolbar, sized to content ── */
+/* ── Floating tool panels — inside .map-container, below toolbar ── */
 .tool-panel {
-  display: none; position: absolute; left: 0; top: 40px;
-  width: 300px; height: auto; max-height: calc(100vh - 180px);
+  /* Panels live inside .map-container (flex column). The toolbar is the
+     first flex child in normal flow; panels are absolute so they don't
+     push the map down. top:0 here is relative to .map-container, but
+     the toolbar pushes the stacking context down via flex — so we use
+     the toolbar's rendered height set as a CSS var by JS, with a safe
+     fallback of 41px. */
+  display: none; position: absolute; left: 0;
+  top: var(--toolbar-h, 41px);
+  width: 300px; height: auto; max-height: calc(100vh - 200px);
   background: #fff; border: 1px solid #dee2e6; border-radius: 0 0 8px 8px;
   /* Must be above Leaflet controls (z-index 1000) and drawing toolbar */
   z-index: 1500; overflow-y: auto;
