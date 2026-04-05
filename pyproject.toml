@@ -49,6 +49,9 @@ dependencies = [
     "babel>=2.18.0",
 ]
 
+[project.scripts]
+land-registry = "land_registry.cli:main"
+
 [tool.black]
 line_length = 120
 # target_version = ['py37', 'py38', 'py39', 'py310']

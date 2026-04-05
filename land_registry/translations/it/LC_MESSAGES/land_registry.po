@@ -701,3 +701,27 @@ msgstr "{n} poligoni sulla mappa"
 
 msgid "Analyzing spatial relationships..."
 msgstr "Analisi delle relazioni spaziali..."
+
+msgid "Comune (required)"
+msgstr "Comune (obbligatorio)"
+
+msgid "Select comune…"
+msgstr "Seleziona comune…"
+
+msgid "Subalterno (optional)"
+msgstr "Subalterno (opzionale)"
+
+msgid "Select a comune before searching."
+msgstr "Seleziona un comune prima di cercare."
+
+msgid "e.g., 35"
+msgstr "es. 35"
+
+msgid "e.g., 257"
+msgstr "es. 257"
+
+msgid "e.g., 1"
+msgstr "es. 1"
+
+msgid "No results"
+msgstr "Nessun risultato"
