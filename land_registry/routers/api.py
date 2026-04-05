@@ -23,7 +23,7 @@ import hashlib
 
 from land_registry.dashboard import STATE
 from land_registry.map import (
-    extract_qpkg_data, find_adjacent_polygons,
+    extract_qpkg_data, find_adjacent_polygons, find_adjacent_polygons_by_geometry,
     get_current_gdf, set_current_gdf, set_current_layers, get_current_layers
 )
 from land_registry.s3_storage import get_s3_storage, S3Settings, configure_s3_storage
@@ -450,42 +450,57 @@ async def generate_map(file: UploadFile = File(...)):
 
 @api_router.post("/get-adjacent-polygons/")
 async def get_adjacent_polygons(selection: PolygonSelection):
-    """Get selected polygon and its adjacent polygons"""
+    """Get selected polygon and its adjacent polygons."""
     current_gdf = get_current_gdf()
 
     if current_gdf is None:
-        raise HTTPException(status_code=400, detail="No data loaded. Please upload a QPKG file first.")
+        raise HTTPException(
+            status_code=400,
+            detail="No data loaded. Please load cadastral files first."
+        )
 
     try:
-        logger.info(f"Finding adjacent polygons for feature {selection.feature_id} using method {selection.touch_method}")
+        from shapely.geometry import shape as shapely_shape
+
+        logger.info(
+            f"Finding adjacent polygons for feature {selection.feature_id} "
+            f"using method {selection.touch_method}"
+        )
         logger.debug(f"GeoDataFrame has {len(current_gdf)} features")
 
-        # Find adjacent polygons
-        adjacent_indices = find_adjacent_polygons(current_gdf, selection.feature_id, selection.touch_method)
+        # Use the geometry sent by the client — avoids positional-index mismatch
+        # when feature_id from a streamed/FGB layer doesn't line up with current_gdf row order.
+        selected_geom = shapely_shape(selection.geometry)
 
-        logger.info(f"Found {len(adjacent_indices)} adjacent polygons: {adjacent_indices}")
+        adjacent_indices = find_adjacent_polygons_by_geometry(
+            current_gdf, selected_geom, selection.touch_method
+        )
 
-        # Include the selected polygon
-        all_indices = [selection.feature_id] + adjacent_indices
+        logger.info(f"Found {len(adjacent_indices)} adjacent polygons")
 
-        # Filter GeoDataFrame to selected and adjacent polygons
-        filtered_gdf = current_gdf.iloc[all_indices].copy()
+        # Resolve adjacent feature_id values for frontend highlighting
+        if "feature_id" in current_gdf.columns:
+            adjacent_feature_ids = current_gdf.loc[adjacent_indices, "feature_id"].tolist()
+        else:
+            adjacent_feature_ids = list(adjacent_indices)
 
-        # Add selection status
-        filtered_gdf['selection_type'] = ['selected' if i == selection.feature_id else 'adjacent'
-                                        for i in all_indices]
-
-        # Convert to GeoJSON
-        geojson_data = filtered_gdf.to_json()
+        # Build result GeoJSON (adjacent polygons only; selected is already on the map)
+        if adjacent_indices:
+            filtered_gdf = current_gdf.loc[adjacent_indices].copy()
+            filtered_gdf["selection_type"] = "adjacent"
+            geojson_data = json.loads(filtered_gdf.to_json())
+        else:
+            geojson_data = {"type": "FeatureCollection", "features": []}
 
         return {
-            "geojson": json.loads(geojson_data),
+            "geojson": geojson_data,
             "selected_id": selection.feature_id,
-            "adjacent_ids": adjacent_indices,
-            "total_count": len(all_indices)
+            "adjacent_ids": adjacent_feature_ids,
+            "total_count": len(adjacent_indices) + 1,
         }
 
     except Exception as e:
+        logger.exception(f"Error in get_adjacent_polygons: {e}")
         raise HTTPException(status_code=500, detail=f"Error processing selection: {str(e)}")
 
 
@@ -524,6 +539,102 @@ async def get_attributes():
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error getting attributes: {str(e)}")
+
+
+@api_router.get("/search/comuni")
+async def search_comuni():
+    """Return the sorted list of unique ADMINISTRATIVEUNIT values in the current dataset."""
+    current_gdf = get_current_gdf()
+    if current_gdf is None or current_gdf.empty:
+        return {"comuni": []}
+
+    col = "ADMINISTRATIVEUNIT"
+    if col not in current_gdf.columns:
+        return {"comuni": []}
+
+    comuni = sorted(
+        str(v).strip().upper()
+        for v in current_gdf[col].dropna().unique()
+        if str(v).strip()
+    )
+    return {"comuni": comuni}
+
+
+@api_router.get("/search/parcels")
+async def search_parcels(
+    comune: str,
+    foglio: Optional[str] = None,
+    particella: Optional[str] = None,
+    subalterno: Optional[str] = None,
+):
+    """
+    Search parcels in the loaded dataset by comune (required) plus optional
+    foglio, particella, and subalterno filters.
+
+    Returns a GeoJSON FeatureCollection of matching parcels.
+    """
+    current_gdf = get_current_gdf()
+    if current_gdf is None or current_gdf.empty:
+        raise HTTPException(status_code=400, detail="No data loaded. Please load cadastral files first.")
+
+    comune = comune.strip().upper()
+    foglio = (foglio or "").strip()
+    particella = (particella or "").strip()
+    subalterno = (subalterno or "").strip()
+
+    import re
+
+    def _parse_ref(ref: str):
+        """Parse NATIONALCADASTRALREFERENCE: {COMUNE}_{FOGLIO_PADDED}.{PARTICELLA}[/{SUB}]"""
+        if not ref:
+            return "", "", ""
+        without_comune = re.sub(r"^[^_]+_", "", ref)
+        dot_idx = without_comune.find(".")
+        if dot_idx == -1:
+            return re.sub(r"^0+", "", without_comune) or without_comune, "", ""
+        f = re.sub(r"^0+", "", without_comune[:dot_idx]) or without_comune[:dot_idx]
+        rest = without_comune[dot_idx + 1:]
+        slash_idx = rest.find("/")
+        p = rest if slash_idx == -1 else rest[:slash_idx]
+        s = "" if slash_idx == -1 else rest[slash_idx + 1:]
+        return f, p, s
+
+    mask = pd.Series([True] * len(current_gdf), index=current_gdf.index)
+
+    # Filter by comune
+    if "ADMINISTRATIVEUNIT" in current_gdf.columns:
+        mask &= current_gdf["ADMINISTRATIVEUNIT"].fillna("").str.strip().str.upper() == comune
+
+    matches = current_gdf[mask].copy()
+
+    if foglio or particella or subalterno:
+        def _row_matches(row) -> bool:
+            props = row.to_dict()
+            ref = str(props.get("NATIONALCADASTRALREFERENCE", "") or
+                      props.get("NATIONALCADASTRALZONINGREFERENCE", ""))
+            pf, pp, ps = _parse_ref(ref)
+
+            f_val = str(props.get("foglio") or props.get("FOGLIO") or pf or "").strip()
+            p_val = str(props.get("LABEL") or props.get("particella") or props.get("PARTICELLA") or pp or "").strip()
+            s_val = str(props.get("subalterno") or props.get("SUBALTERNO") or props.get("sub") or ps or "").strip()
+
+            if foglio and f_val != foglio:
+                return False
+            if particella and p_val != particella:
+                return False
+            if subalterno and s_val != subalterno:
+                return False
+            return True
+
+        matches = matches[matches.apply(_row_matches, axis=1)]
+
+    count = len(matches)
+    if count == 0:
+        return {"type": "FeatureCollection", "features": [], "count": 0}
+
+    geojson = json.loads(matches.to_json())
+    geojson["count"] = count
+    return geojson
 
 
 # ============================================================================
@@ -3491,12 +3602,25 @@ async def load_fgb_file(region_slug: str, layer_type: str):
         
         # Read FGB file using geopandas
         gdf = gpd.read_file(fgb_path)
-        
+
+        # Tag layer type and set feature_id for adjacency analysis
+        gdf["layer_type"] = layer_type
+        gdf["feature_id"] = range(len(gdf))
+
+        # Merge into current_gdf so adjacency analysis works immediately
+        existing_gdf = get_current_gdf()
+        if existing_gdf is not None and not existing_gdf.empty:
+            combined = gpd.pd.concat([existing_gdf, gdf], ignore_index=True)
+            combined["feature_id"] = range(len(combined))
+            set_current_gdf(combined)
+        else:
+            set_current_gdf(gdf.copy())
+
         # Convert to GeoJSON
         geojson = json.loads(gdf.to_json())
-        
+
         logger.info(f"Loaded {len(gdf)} features from {filename}")
-        
+
         return {
             "success": True,
             "filename": filename,
@@ -3549,6 +3673,9 @@ async def load_cadastral_files_stream(request: CadastralFileRequest):
             from land_registry.map import clear_current_layers
             clear_current_layers()
             set_current_gdf(None)
+
+        # Save pre-existing GDF (for append mode) before the loop
+        original_existing_gdf = None if clear_existing else get_current_gdf()
 
         # Create S3 client only if needed
         s3_client = None
@@ -3617,6 +3744,16 @@ async def load_cadastral_files_stream(request: CadastralFileRequest):
                     all_gdfs.append(gdf)
                     total_features += feature_count
 
+                    # Update current_gdf incrementally so adjacency analysis works
+                    # as soon as the first layer is rendered, without waiting for all files.
+                    _parts = (
+                        ([original_existing_gdf] if original_existing_gdf is not None else [])
+                        + all_gdfs
+                    )
+                    _incremental = gpd.pd.concat(_parts, ignore_index=True)
+                    _incremental["feature_id"] = range(len(_incremental))
+                    set_current_gdf(_incremental)
+
                     # Stream the layer data so frontend can render immediately
                     yield json.dumps({
                         "event": "layer",
@@ -3642,11 +3779,10 @@ async def load_cadastral_files_stream(request: CadastralFileRequest):
         combined_layers.update(layers_data)
         set_current_layers(combined_layers)
 
+        # current_gdf was already updated incrementally after each file — just compute bounds.
         new_bounds = None
         if all_gdfs:
             new_combined_gdf = gpd.pd.concat(all_gdfs, ignore_index=True)
-            existing_gdf = get_current_gdf()
-
             try:
                 bounds = new_combined_gdf.total_bounds
                 if bounds is not None and len(bounds) == 4:
@@ -3658,14 +3794,6 @@ async def load_cadastral_files_stream(request: CadastralFileRequest):
                     }
             except Exception as e:
                 logger.warning(f"Could not calculate bounds: {e}")
-
-            if existing_gdf is not None and not existing_gdf.empty:
-                combined_gdf = gpd.pd.concat([existing_gdf, new_combined_gdf], ignore_index=True)
-                combined_gdf['feature_id'] = range(len(combined_gdf))
-                set_current_gdf(combined_gdf)
-            else:
-                new_combined_gdf['feature_id'] = range(len(new_combined_gdf))
-                set_current_gdf(new_combined_gdf)
 
         load_time = time.time() - start_time
         successful = len([l for l in layers_data.values() if "error" not in l])
@@ -3684,3 +3812,55 @@ async def load_cadastral_files_stream(request: CadastralFileRequest):
         media_type="application/x-ndjson",
         headers={"X-Content-Type-Options": "nosniff"},
     )
+
+
+# ============================================================================
+# Adjacency Export Endpoints
+# ============================================================================
+
+@api_router.post("/export-adjacency/{fmt}")
+async def export_adjacency(fmt: str, rows: List[Dict[str, Any]] = Body(...)):
+    """Export adjacency rows to CSV, Excel, or Parquet."""
+    if fmt not in ("csv", "xlsx", "parquet"):
+        raise HTTPException(status_code=400, detail="fmt must be csv, xlsx, or parquet")
+
+    if not rows:
+        raise HTTPException(status_code=400, detail="No rows provided")
+
+    df = pd.DataFrame(rows)
+
+    if fmt == "csv":
+        csv_data = df.to_csv(index=False)
+        return StreamingResponse(
+            iter([csv_data]),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=adjacency.csv"},
+        )
+
+    if fmt == "xlsx":
+        try:
+            import openpyxl  # noqa: F401
+        except ImportError:
+            raise HTTPException(status_code=500, detail="openpyxl not installed")
+        buf = BytesIO()
+        df.to_excel(buf, index=False)
+        buf.seek(0)
+        return StreamingResponse(
+            buf,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=adjacency.xlsx"},
+        )
+
+    if fmt == "parquet":
+        try:
+            import pyarrow  # noqa: F401
+        except ImportError:
+            raise HTTPException(status_code=500, detail="pyarrow not installed")
+        buf = BytesIO()
+        df.to_parquet(buf, index=False)
+        buf.seek(0)
+        return StreamingResponse(
+            buf,
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": "attachment; filename=adjacency.parquet"},
+        )

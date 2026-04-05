@@ -9,7 +9,7 @@
       <div class="d-flex align-items-center gap-2">
         <button class="btn btn-link sidebar-toggle p-1" id="sidebarToggle" type="button"
                 onclick="toggleSidebar()"
-                title="Toggle sidebar" aria-label="Toggle sidebar" aria-controls="app-sidebar" aria-expanded="true">
+                title="{{ _('Toggle sidebar') }}" aria-label="{{ _('Toggle sidebar') }}" aria-controls="app-sidebar" aria-expanded="true">
           <i class="fas fa-bars"></i>
         </button>
         <a class="navbar-brand" href="/">
@@ -18,22 +18,46 @@
             <path fill="#fff" d="M6 8h8v6H6zM16 8h10v6H16zM6 16h10v8H6zM18 16h8v8h-8z"/>
             <path fill="#28a745" d="M7 9h6v4H7zM17 9h8v4h-8zM7 17h8v6H7zM19 17h6v6h-6z"/>
           </svg>
-          <h1 class="logo-text">Land Registry</h1>
+          <h1 class="logo-text">{{ _('Land Registry') }}</h1>
         </a>
       </div>
 
-      <!-- Right: dark-mode toggle + user menu -->
-      <div class="d-flex align-items-center gap-3">
+      <!-- Right: language selector + dark mode + user menu -->
+      <div class="d-flex align-items-center gap-2">
+        <!-- Language selector -->
+        <div class="nav-lang-selector">
+          <select id="langSelect" onchange="changeLang(this.value)" title="{{ _('Language') }}">
+            <option value="it" {% if request.state.locale == 'it' %}selected{% endif %}>🇮🇹 IT</option>
+            <option value="en" {% if request.state.locale == 'en' %}selected{% endif %}>🇬🇧 EN</option>
+          </select>
+        </div>
+
+        <!-- Dark mode toggle -->
         <button onclick="toggleDarkMode()" class="btn btn-link theme-toggle p-1" id="themeToggleBtn"
-                title="Toggle dark mode" aria-label="Toggle dark mode">
+                title="{{ _('Toggle dark mode') }}" aria-label="{{ _('Toggle dark mode') }}">
           <i class="fas fa-moon" id="themeIcon"></i>
         </button>
 
+        <!-- User menu -->
         {% if clerk_publishable_key %}
-        <!-- Clerk user button rendered by clerk-auth.js into #auth-widget -->
         <a href="/auth/login?next=/map" class="btn btn-primary btn-sm" id="navSignInBtn"
-           style="display:none">Sign In</a>
+           style="display:none">{{ _('Sign In') }}</a>
         {% endif %}
+        <div id="navUserMenu" class="nav-user-menu" style="display:none">
+          <button class="nav-user-btn" onclick="toggleUserDropdown()" id="navUserBtn">
+            <i class="fas fa-user-circle"></i>
+            <span id="navUserName">User</span>
+            <i class="fas fa-chevron-down nav-chevron"></i>
+          </button>
+          <div class="nav-user-dropdown" id="navUserDropdown" style="display:none">
+            <div class="nav-user-email" id="navUserEmail"></div>
+            <hr class="nav-dropdown-divider">
+            <button class="nav-dropdown-item" onclick="handleSidebarLogout()">
+              <i class="fas fa-sign-out-alt"></i> {{ _('Sign Out') }}
+            </button>
+          </div>
+        </div>
+        <div id="sidebar-auth-status" style="display:none"></div>
       </div>
     </div>
   </div>
@@ -42,57 +66,47 @@
 
 <div class="container" style="margin-top: var(--header-height, 64px);">
   <div class="sidebar" id="app-sidebar">
-    <div class="sidebar-header">
-      <h1>Cadastre</h1>
-      <div class="sidebar-header-actions">
-        <button onclick="toggleDarkMode()" class="theme-toggle-btn" title="Toggle dark mode" id="themeToggleBtn">
-          <span class="theme-icon">🌙</span>
-        </button>
-        <button class="sidebar-collapse-btn" id="sidebarCollapseBtn" onclick="toggleSidebar()" title="Collapse sidebar" aria-label="Toggle sidebar">
-          &#8249;
-        </button>
-      </div>
-    </div>
+    <div class="sidebar-brand">{{ _('Cadastre') }}</div>
 
-    <div class="sidebar-group-title">Data Catalog</div>
+    <div class="sidebar-group-title">{{ _('Data Catalog') }}</div>
     <div class="navigation-links">
       <a href="/cadastral-data" target="_blank" class="nav-link"
-        >Browse All Cadastral Data</a
+        >{{ _('Browse All Cadastral Data') }}</a
       >
     </div>
 
-    <div class="sidebar-group-title">Data</div>
+    <div class="sidebar-group-title">{{ _('Data') }}</div>
     <div class="upload-section">
       <div class="upload-tabs">
         <button type="button" class="upload-tab" onclick="showUploadTab('file')">
-          File Upload
+          {{ _('File Upload') }}
         </button>
         <button type="button" class="upload-tab active" onclick="showUploadTab('cadastral')">
-          Cadastral Selection
+          {{ _('Cadastral Selection') }}
         </button>
         <button type="button" class="upload-tab" onclick="showUploadTab('database')">
-          Local Database
+          {{ _('Local Database') }}
         </button>
       </div>
 
       <div class="upload-content">
         <div id="fileUpload" class="file-upload" style="display: none">
-          <label for="fileInput">Upload QPKG or GPKG File:</label>
+          <label for="fileInput">{{ _('Upload QPKG or GPKG File:') }}</label>
           <input type="file" id="fileInput" accept=".qpkg,.gpkg" />
-          <button onclick="uploadFile()">Upload & Visualize</button>
+          <button onclick="uploadFile()">{{ _('Upload & Visualize') }}</button>
         </div>
 
         <!-- Database Query Tab -->
         <div id="databaseQuery" class="database-query" style="display: none">
           <!-- Data Source Selector -->
           <div class="db-source-section">
-            <label>Data Source:</label>
+            <label>{{ _('Data Source:') }}</label>
             <div class="source-toggle">
               <button type="button" id="sourceSpatialite" class="source-btn active" onclick="selectDataSource('spatialite')">
-                SpatiaLite
+                {{ _('SpatiaLite') }}
               </button>
               <button type="button" id="sourceFgb" class="source-btn" onclick="selectDataSource('fgb')">
-                FlatGeobuf
+                {{ _('FlatGeobuf') }}
               </button>
             </div>
             <small class="help-text" id="sourceHelp">SpatiaLite: Full query support | FlatGeobuf: Faster loading, per-region files</small>
@@ -106,37 +120,37 @@
           <!-- Geographic Filters (SpatiaLite) -->
           <div class="db-filter-section" id="spatialiteFilters">
             <div class="cadastral-step">
-              <label for="dbRegion">Region:</label>
+              <label for="dbRegion">{{ _('Select Region(s):') }}</label>
               <select id="dbRegion" onchange="loadDbProvinces()">
-                <option value="">All Regions</option>
+                <option value="">{{ _('All Regions') }}</option>
               </select>
             </div>
 
             <div class="cadastral-step">
-              <label for="dbProvince">Province:</label>
+              <label for="dbProvince">{{ _('Select Province(s):') }}</label>
               <select id="dbProvince" onchange="loadDbComuni()" disabled>
-                <option value="">All Provinces</option>
+                <option value="">{{ _('All Provinces') }}</option>
               </select>
             </div>
 
             <div class="cadastral-step">
-              <label for="dbComune">Comune:</label>
+              <label for="dbComune">{{ _('Select Municipality(ies):') }}</label>
               <select id="dbComune" disabled>
-                <option value="">All Comuni</option>
+                <option value="">{{ _('All Comuni') }}</option>
               </select>
             </div>
 
             <div class="cadastral-step">
-              <label for="dbLayerType">Layer Type:</label>
+              <label for="dbLayerType">{{ _('Select File Type(s):') }}</label>
               <select id="dbLayerType">
-                <option value="">All Types</option>
-                <option value="map">Mappa (Fogli)</option>
-                <option value="ple">Particelle (PLE)</option>
+                <option value="">{{ _('All Types') }}</option>
+                <option value="map">{{ _('Mappa (MAP)') }}</option>
+                <option value="ple">{{ _('Particelle (PLE)') }}</option>
               </select>
             </div>
 
             <div class="cadastral-step">
-              <label for="dbLimit">Max Records:</label>
+              <label for="dbLimit">{{ _('Max Records:') }}</label>
               <select id="dbLimit">
                 <option value="100">100</option>
                 <option value="500">500</option>
@@ -150,9 +164,9 @@
           <!-- FlatGeobuf Region Selector -->
           <div class="db-filter-section" id="fgbFilters" style="display: none;">
             <div class="cadastral-step">
-              <label for="fgbRegione">Region:</label>
+              <label for="fgbRegione">{{ _('Select Region(s):') }}</label>
               <select id="fgbRegione" onchange="updateFgbLayerInfo()">
-                <option value="">Select a Region</option>
+                <option value="">{{ _('Select a Region') }}</option>
               </select>
             </div>
             <div class="cadastral-step">
@@ -182,7 +196,7 @@
           <!-- Action Buttons (SpatiaLite) -->
           <div class="db-actions" id="spatialiteActions">
             <button onclick="loadFromDatabase()" id="loadDbBtn" class="load-db-btn">
-              Query Database
+              {{ _('Query Database') }}
             </button>
           </div>
 
@@ -209,45 +223,45 @@
               <div class="stat-number" id="totalRegions">
                 {{ "{:,}".format(total_regions|default(0)) }}
               </div>
-              <div class="stat-label">Regions</div>
+              <div class="stat-label">{{ _('Regions') }}</div>
             </div>
             <div class="stat-card">
               <div class="stat-number" id="totalProvinces">
                 {{ "{:,}".format(total_provinces|default(0)) }}
               </div>
-              <div class="stat-label">Provinces</div>
+              <div class="stat-label">{{ _('Provinces') }}</div>
             </div>
             <div class="stat-card">
               <div class="stat-number" id="totalMunicipalities">
                 {{ "{:,}".format(total_municipalities|default(0)) }}
               </div>
-              <div class="stat-label">Municipalities</div>
+              <div class="stat-label">{{ _('Municipalities') }}</div>
             </div>
             <div class="stat-card">
               <div class="stat-number" id="totalFiles">
                 {{ "{:,}".format(total_files|default(0)) }}
               </div>
-              <div class="stat-label">GPKG Files</div>
+              <div class="stat-label">{{ _('GPKG Files') }}</div>
             </div>
           </div>
 
           <div class="cadastral-step">
-            <label for="cadastralRegions">Select Region(s):</label>
+            <label for="cadastralRegions">{{ _('Select Region(s):') }}</label>
             <select id="cadastralRegions" multiple size="4">
-              <option value="" disabled>Loading regions...</option>
+              <option value="" disabled>{{ _('Loading regions...') }}</option>
             </select>
           </div>
 
           <div class="cadastral-step">
-            <label for="cadastralProvinces">Select Province(s):</label>
+            <label for="cadastralProvinces">{{ _('Select Province(s):') }}</label>
             <select id="cadastralProvinces" multiple size="3" disabled>
-              <option value="" disabled>Select a region first</option>
+              <option value="" disabled>{{ _('Select a region first') }}</option>
             </select>
           </div>
 
           <div class="cadastral-step">
             <label for="cadastralMunicipalities"
-              >Select Municipality(ies):</label
+              >{{ _('Select Municipality(ies):') }}</label
             >
             <select
               id="cadastralMunicipalities"
@@ -255,26 +269,26 @@
               size="3"
               disabled
             >
-              <option value="" disabled>Select a province first</option>
+              <option value="" disabled>{{ _('Select a province first') }}</option>
             </select>
           </div>
 
           <div class="cadastral-step">
-            <label>Select File Type(s):</label>
+            <label>{{ _('Select File Type(s):') }}</label>
             <div class="file-type-checkboxes" id="cadastralFileTypes">
               <div
                 class="file-type-checkbox selected"
                 onclick="toggleFileType(this, 'MAP')"
               >
                 <input type="checkbox" id="fileTypeMAP" value="MAP" checked />
-                <label for="fileTypeMAP">Mappa (MAP)</label>
+                <label for="fileTypeMAP">{{ _('Mappa (MAP)') }}</label>
               </div>
               <div
                 class="file-type-checkbox selected"
                 onclick="toggleFileType(this, 'PLE')"
               >
                 <input type="checkbox" id="fileTypePLE" value="PLE" />
-                <label for="fileTypePLE">Particelle (PLE)</label>
+                <label for="fileTypePLE">{{ _('Particelle (PLE)') }}</label>
               </div>
             </div>
           </div>
@@ -284,7 +298,7 @@
             class="selection-summary"
             style="display: none"
           >
-            <h4>Selection Summary</h4>
+            <h4>{{ _('Selection Summary') }}</h4>
             <div id="summaryContent"></div>
             <div id="filesList" class="files-list"></div>
           </div>
@@ -294,23 +308,23 @@
             id="loadCadastralBtn"
             disabled
           >
-            Load Selected Files
+            {{ _('Load Selected Files') }}
           </button>
 
           <!-- Loading Progress Indicator -->
           <div id="loadingProgress" class="loading-progress" style="display: none">
             <div class="progress-header">
-              <span id="progressStatus">Loading...</span>
+              <span id="progressStatus">{{ _('Loading...') }}</span>
               <span id="progressPercent">0%</span>
             </div>
             <div class="progress-bar-container">
               <div id="progressBar" class="progress-bar"></div>
             </div>
             <div id="progressDetails" class="progress-details">
-              <span id="currentFile">Preparing...</span>
+              <span id="currentFile">{{ _('Preparing...') }}</span>
             </div>
             <div id="progressStats" class="progress-stats">
-              <span id="loadedCount">0 files</span> · <span id="featureCount">0 features</span>
+              <span id="loadedCount">{{ _('0 files') }}</span> · <span id="featureCount">{{ _('0 features') }}</span>
             </div>
           </div>
         </div>
@@ -319,8 +333,8 @@
 
     <!-- Recent Files History -->
     <div class="sidebar-group-title" id="recentFilesTitle" style="display: none;">
-      Recent
-      <button onclick="clearRecentFiles()" class="clear-recent-btn" title="Clear history">Clear</button>
+      {{ _('Recent') }}
+      <button onclick="clearRecentFiles()" class="clear-recent-btn" title="{{ _('Clear history') }}">{{ _('Clear') }}</button>
     </div>
     <div class="recent-files-section" id="recentFilesSection" style="display: none;">
       <div id="recentFilesList" class="recent-files-list">
@@ -328,312 +342,14 @@
       </div>
     </div>
 
-    <div class="sidebar-group-title">Explore</div>
-    <div class="config-section">
-      <!-- Parcel Search -->
-      <div class="parcel-search">
-        <h4>🔍 Search Parcels</h4>
-        <div class="search-inputs">
-          <div class="search-row">
-            <label for="searchFoglio">Foglio</label>
-            <input type="text" id="searchFoglio" placeholder="e.g., 12" />
-          </div>
-          <div class="search-row">
-            <label for="searchParticella">Particella</label>
-            <input type="text" id="searchParticella" placeholder="e.g., 456" />
-          </div>
-        </div>
-        <div class="search-actions">
-          <button onclick="searchParcels()" class="search-btn" title="Search for matching parcels">
-            Search
-          </button>
-          <button onclick="clearParcelSearch()" class="clear-search-btn" title="Clear search results">
-            Clear
-          </button>
-        </div>
-        <div id="searchResults" class="search-results" style="display: none">
-          <span id="searchResultCount">0 parcels found</span>
-        </div>
-      </div>
 
-      <!-- TreeLayers Control Management -->
-      <div class="treelayers-controls">
-        <h4>Layer Manager</h4>
-        <div class="control-row">
-          <button
-            onclick="toggleTreeLayers()"
-            class="control-btn"
-            title="Show/hide the layers panel"
-          >
-            Toggle Layers
-          </button>
-          <button
-            onclick="refreshTreeLayers()"
-            class="control-btn"
-            title="Refresh layers panel"
-          >
-            Refresh
-          </button>
-        </div>
-        <div class="control-row">
-          <button
-            onclick="expandAllTreeLayers()"
-            class="control-btn"
-            title="Expand all layer groups"
-          >
-            Expand All
-          </button>
-          <button
-            onclick="collapseAllTreeLayers()"
-            class="control-btn"
-            title="Collapse all layer groups"
-          >
-            Collapse All
-          </button>
-        </div>
-      </div>
 
-      <!-- Advanced Tools -->
-      <div class="advanced-controls">
-        <h4>View Tools</h4>
-        <div class="control-row">
-          <button
-            onclick="resetMapView()"
-            class="control-btn"
-            title="Reset map to default view"
-          >
-            Reset View
-          </button>
-          <button
-            onclick="toggleCoordinates()"
-            class="control-btn"
-            title="Toggle coordinate display"
-          >
-            Coordinates
-          </button>
-        </div>
-        <div class="control-row">
-          <button
-            onclick="toggleMiniMap()"
-            class="control-btn"
-            title="Toggle overview minimap"
-          >
-            Toggle MiniMap
-          </button>
-          <button
-            onclick="showPluginInfo()"
-            class="control-btn"
-            title="Show plugin information"
-          >
-            Plugin Info
-          </button>
-        </div>
-      </div>
-    </div>
 
-    <div class="sidebar-group-title">Analyze</div>
-    <div class="controls">
-      <h4>Spatial Analysis</h4>
 
-      <div class="control-group">
-        <label for="selectionMode">Selection Mode:</label>
-        <select id="selectionMode" onchange="changeSelectionMode()">
-          <option value="adjacency">Find Adjacency</option>
-        </select>
-      </div>
-
-      <div class="control-group">
-        <label for="adjacencyMethod">Adjacency Method:</label>
-        <select id="adjacencyMethod">
-          <option value="intersects">Intersects (any overlap)</option>
-          <option value="touches">Touches (shared boundary)</option>
-          <option value="overlaps">Overlaps (area overlap)</option>
-        </select>
-      </div>
-
-      <div id="selectionControls">
-        <div class="adjacency-buttons">
-          <button
-            onclick="findAdjacencyForSelected()"
-            id="findAdjacencyBtn"
-            disabled
-          >
-            Find Adjacent Polygons
-          </button>
-          <button
-            onclick="clearPolygonSelection()"
-            id="clearSelectionBtn"
-            disabled
-            style="margin-left: 10px"
-          >
-            Clear Selection
-          </button>
-        </div>
-        <div id="selectedCount" class="table-info">0 polygons selected</div>
-      </div>
-
-      <!-- Polygon Management -->
-      <div class="polygon-management">
-        <h4>Polygon Management</h4>
-        <div class="control-row">
-          <button
-            onclick="removeAllPolygons()"
-            id="removePolygonsBtn"
-            disabled
-            class="remove-btn"
-          >
-            Remove All
-          </button>
-          <button
-            onclick="autoZoomToAllPolygons()"
-            id="zoomToPolygonsBtn"
-            disabled
-            class="zoom-btn"
-          >
-            Zoom to Fit
-          </button>
-        </div>
-        <div class="control-row">
-          <button
-            onclick="exportSelectedParcels()"
-            id="exportSelectedBtn"
-            disabled
-            class="export-btn"
-            title="Export selected parcels to GeoJSON file"
-          >
-            Export Selected
-          </button>
-          <button
-            onclick="exportAllParcels()"
-            id="exportAllBtn"
-            disabled
-            class="export-btn"
-            title="Export all loaded parcels to GeoJSON file"
-          >
-            Export All
-          </button>
-        </div>
-        <div id="polygonCount" class="table-info">No polygons loaded</div>
-      </div>
-    </div>
-
-    <div class="sidebar-group-title">Zones</div>
-    <div class="zone-manager-section">
-      <div class="zone-manager-header">
-        <h4>
-          Zone Manager
-          <span id="zoneCount" class="zone-count-badge">0</span>
-        </h4>
-        <button onclick="showZoneSaveForm()" id="addZoneBtn" class="control-btn" disabled>
-          New Zone
-        </button>
-      </div>
-
-      <!-- Save form (hidden by default) -->
-      <div class="zone-save-form" id="zoneSaveForm" style="display: none;">
-        <div class="zone-form-field">
-          <label for="zoneName">Zone Name</label>
-          <input type="text" id="zoneName" placeholder="Enter zone name..." maxlength="200" />
-        </div>
-        <div class="zone-form-field">
-          <label for="zoneDescription">Description</label>
-          <textarea id="zoneDescription" placeholder="Optional description..." rows="2" maxlength="2000"></textarea>
-        </div>
-        <div class="zone-form-row">
-          <div class="zone-form-field" style="flex:1;">
-            <label for="zoneColor">Color</label>
-            <input type="color" id="zoneColor" value="#3388ff" />
-          </div>
-          <div class="zone-form-field" style="flex:2;">
-            <label for="zoneTags">Tags (comma-separated)</label>
-            <input type="text" id="zoneTags" placeholder="e.g., residential, priority" />
-          </div>
-        </div>
-        <div class="control-row">
-          <button onclick="saveCurrentDrawingAsZone()" class="zone-save-btn">Save Zone</button>
-          <button onclick="cancelZoneSave()" class="zone-cancel-btn">Cancel</button>
-        </div>
-      </div>
-
-      <div class="control-row">
-        <button onclick="loadAllZones()" id="loadZonesBtn" class="control-btn">
-          Refresh Zones
-        </button>
-      </div>
-
-      <div class="control-row zone-search-row">
-        <input
-          type="text"
-          id="zoneSearchInput"
-          class="zone-search-input"
-          placeholder="Search zones..."
-          oninput="applyZoneSearchFilter()"
-        />
-        <button onclick="clearZoneSearch()" id="zoneSearchClearBtn" class="control-btn zone-search-clear-btn">
-          Clear
-        </button>
-      </div>
-      <p id="zoneSearchNoResults" class="zone-search-no-results" style="display: none;">
-        No zones match the current search.
-      </p>
-
-      <!-- Zone list -->
-      <div id="zoneList" class="zone-list">
-        <p class="zone-empty-message">No zones saved yet. Draw a shape and save it as a zone.</p>
-      </div>
-
-      <div class="zone-bulk-actions" id="zoneBulkActions" style="display: none;">
-        <div class="control-row">
-          <button onclick="showAllZones()" class="control-btn">Select All</button>
-          <button onclick="hideAllZones()" class="control-btn">Deselect All</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="sidebar-group-title">Actions</div>
-    <div class="auctionControls">
-      <h4>Market Filters</h4>
-      <div class="control-row">
-        <button onclick="toggleAuctionLayer()" class="control-btn">
-          Toggle Auctions
-        </button>
-        <button onclick="filterActiveAuctions()" class="control-btn">
-          Active Only
-        </button>
-      </div>
-      <div class="control-row">
-        <select id="auctionTypeFilter" onchange="filterAuctionsByType()">
-          <option value="">All Types</option>
-          <option value="residential">Residential</option>
-          <option value="commercial">Commercial</option>
-          <option value="agricultural">Agricultural</option>
-          <option value="industrial">Industrial</option>
-        </select>
-      </div>
-      <div class="control-row">
-        <label>Max Price: &euro;</label>
-        <input
-          type="number"
-          id="maxPriceFilter"
-          onchange="filterAuctionsByPrice()"
-          placeholder="150000"
-        />
-      </div>
-    </div>
-
-    <div class="sidebar-group-title">Account</div>
-    <div class="auth-section">
-      <h4>User Account</h4>
-      <div id="sidebar-auth-container" class="auth-container">
-        <div id="sidebar-auth-status" class="auth-status">
-          <div class="loading-text">Checking authentication...</div>
-        </div>
-      </div>
-    </div>
   </div>
 
   <!-- Expand handle shown when sidebar is collapsed -->
-  <button class="sidebar-expand-btn" id="sidebarExpandBtn" onclick="toggleSidebar()" title="Expand sidebar" aria-label="Expand sidebar" style="display:none">
+  <button class="sidebar-expand-btn" id="sidebarExpandBtn" onclick="toggleSidebar()" title="{{ _('Expand sidebar') }}" aria-label="{{ _('Expand sidebar') }}" style="display:none">
     &#8250;
   </button>
 
@@ -641,37 +357,280 @@
     <!-- View Toggle Buttons -->
     <div class="view-toggle">
       <button id="mapViewBtn" class="active" onclick="showMapView()">
-        Map View
+        {{ _('Map View') }}
       </button>
       <button id="tableViewBtn" onclick="handleTableViewClick()" class="">
-        Table View
+        {{ _('Table View') }}
       </button>
       <button id="adjacencyViewBtn" onclick="showAdjacencyView()" class="">
-        Adjacency
+        {{ _('Adjacency') }}
       </button>
       <button id="mappingViewBtn" onclick="showMappingView()" class="">
-        Mapping
+        {{ _('Mapping') }}
       </button>
     </div>
 
     <!-- Map View -->
     <div id="mapView" class="view-content active" style="display: block">
       <div class="map-header">
-        <h2>Map</h2>
-        <div id="tableInfo" class="table-info">No data loaded</div>
+        <h2>{{ _('Map') }}</h2>
+        <div id="tableInfo" class="table-info">{{ _('No data loaded') }}</div>
       </div>
 
       <div class="map-container">
+        <!-- Map toolbar — horizontal bar at top of map area -->
+        <div class="map-toolbar" id="mapToolbar">
+          <button class="map-tool-btn" id="toolBtnExplore" onclick="toggleToolPanel('panelExplore', 'toolBtnExplore')" title="{{ _('Explore') }}">
+            <i class="fas fa-search"></i>
+            <span>{{ _('Explore') }}</span>
+          </button>
+          <button class="map-tool-btn" id="toolBtnAnalyse" onclick="toggleToolPanel('panelAnalyse', 'toolBtnAnalyse')" title="{{ _('Analyse') }}">
+            <i class="fas fa-drafting-compass"></i>
+            <span>{{ _('Analyse') }}</span>
+          </button>
+          <button class="map-tool-btn" id="toolBtnZones" onclick="toggleToolPanel('panelZones', 'toolBtnZones')" title="{{ _('Zones') }}">
+            <i class="fas fa-layer-group"></i>
+            <span>{{ _('Zones') }}</span>
+          </button>
+          <button class="map-tool-btn" id="toolBtnActions" onclick="toggleToolPanel('panelActions', 'toolBtnActions')" title="{{ _('Actions') }}">
+            <i class="fas fa-filter"></i>
+            <span>{{ _('Actions') }}</span>
+          </button>
+        </div>
+
+        <!-- Tool panels — positioned inside map-container so top:0 sits flush below toolbar -->
+        <div class="tool-panel" id="panelExplore">
+          <div class="tool-panel-header">
+            <span>{{ _('Explore') }}</span>
+            <button class="tool-panel-close" onclick="closeToolPanel('panelExplore')">&times;</button>
+          </div>
+          <div class="tool-panel-body">
+            <div class="tool-panel-section">
+              <h5>{{ _('Search Parcels') }}</h5>
+              <div class="tool-field">
+                <label>{{ _('Region') }}</label>
+                <select id="searchRegion" class="tool-select" onchange="onSearchRegionChange()">
+                  <option value="">{{ _('Select region…') }}</option>
+                </select>
+              </div>
+              <div class="tool-field">
+                <label>{{ _('Province') }}</label>
+                <select id="searchProvince" class="tool-select" onchange="onSearchProvinceChange()" disabled>
+                  <option value="">{{ _('Select province…') }}</option>
+                </select>
+              </div>
+              <div class="tool-field">
+                <label>{{ _('Municipality (required)') }}</label>
+                <select id="searchMunicipality" class="tool-select" disabled>
+                  <option value="">{{ _('Select municipality…') }}</option>
+                </select>
+              </div>
+              <div class="tool-field">
+                <label>{{ _('Foglio') }}</label>
+                <input type="text" id="searchFoglio" placeholder="{{ _('e.g., 35') }}" class="tool-input" />
+              </div>
+              <div class="tool-field">
+                <label>{{ _('Particella') }}</label>
+                <input type="text" id="searchParticella" placeholder="{{ _('e.g., 257') }}" class="tool-input" />
+              </div>
+              <div class="tool-field">
+                <label>{{ _('Subalterno (optional)') }}</label>
+                <input type="text" id="searchSubalterno" placeholder="{{ _('e.g., 1') }}" class="tool-input" />
+              </div>
+              <div class="tool-row">
+                <button onclick="searchParcels()" class="tool-btn">{{ _('Search') }}</button>
+                <button onclick="clearParcelSearch()" class="tool-btn-ghost">{{ _('Clear') }}</button>
+              </div>
+              <div id="searchResults" class="search-results" style="display:none">
+                <span id="searchResultCount"></span>
+              </div>
+            </div>
+            <div class="tool-panel-section">
+              <h5>{{ _('Layer Manager') }}</h5>
+              <div class="tool-row">
+                <button onclick="toggleTreeLayers()" class="tool-btn-ghost">{{ _('Toggle Layers') }}</button>
+                <button onclick="refreshTreeLayers()" class="tool-btn-ghost">{{ _('Refresh') }}</button>
+              </div>
+              <div class="tool-row">
+                <button onclick="expandAllTreeLayers()" class="tool-btn-ghost">{{ _('Expand All') }}</button>
+                <button onclick="collapseAllTreeLayers()" class="tool-btn-ghost">{{ _('Collapse All') }}</button>
+              </div>
+            </div>
+            <div class="tool-panel-section">
+              <h5>{{ _('View Tools') }}</h5>
+              <div class="tool-row">
+                <button onclick="resetMapView()" class="tool-btn-ghost">{{ _('Reset View') }}</button>
+                <button onclick="toggleCoordinates()" class="tool-btn-ghost">{{ _('Coordinates') }}</button>
+              </div>
+              <div class="tool-row">
+                <button onclick="toggleMiniMap()" class="tool-btn-ghost">{{ _('MiniMap') }}</button>
+                <button onclick="showPluginInfo()" class="tool-btn-ghost">{{ _('Plugin Info') }}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="tool-panel" id="panelAnalyse">
+          <div class="tool-panel-header">
+            <span>{{ _('Analyse') }}</span>
+            <button class="tool-panel-close" onclick="closeToolPanel('panelAnalyse')">&times;</button>
+          </div>
+          <div class="tool-panel-body">
+            <div class="tool-panel-section">
+              <h5>{{ _('Spatial Analysis') }}</h5>
+              <div class="tool-field">
+                <label>{{ _('Adjacency Method:') }}</label>
+                <select id="adjacencyMethod" class="tool-select">
+                  <option value="intersects">{{ _('Intersects (any overlap)') }}</option>
+                  <option value="touches">{{ _('Touches (shared boundary)') }}</option>
+                  <option value="overlaps">{{ _('Overlaps (area overlap)') }}</option>
+                </select>
+              </div>
+              <div id="selectionControls">
+                <div class="tool-row">
+                  <button onclick="findAdjacencyForSelected()" id="findAdjacencyBtn" disabled class="tool-btn">
+                    {{ _('Find Adjacent') }}
+                  </button>
+                  <button onclick="clearPolygonSelection()" id="clearSelectionBtn" disabled class="tool-btn-ghost">
+                    {{ _('Clear') }}
+                  </button>
+                </div>
+                <div id="selectedCount" class="tool-info-text">{{ _('0 polygons selected') }}</div>
+              </div>
+            </div>
+            <div class="tool-panel-section">
+              <h5>{{ _('Polygon Management') }}</h5>
+              <div class="tool-row">
+                <button onclick="removeAllPolygons()" id="removePolygonsBtn" disabled class="tool-btn-danger">{{ _('Remove All') }}</button>
+                <button onclick="autoZoomToAllPolygons()" id="zoomToPolygonsBtn" disabled class="tool-btn-ghost">{{ _('Zoom to Fit') }}</button>
+              </div>
+              <div class="tool-row">
+                <button onclick="exportSelectedParcels()" id="exportSelectedBtn" disabled class="tool-btn-ghost">{{ _('Export Selected') }}</button>
+                <button onclick="exportAllParcels()" id="exportAllBtn" disabled class="tool-btn-ghost">{{ _('Export All') }}</button>
+              </div>
+              <div id="polygonCount" class="tool-info-text">{{ _('No polygons loaded') }}</div>
+            </div>
+
+            <div class="tool-panel-section">
+              <h5>{{ _('Region Layer') }}</h5>
+              <div class="tool-row" style="align-items:center;gap:8px;">
+                <label class="tool-toggle-label" style="flex:1;font-size:13px;">{{ _('Show regions') }}</label>
+                <label class="tool-toggle-switch">
+                  <input type="checkbox" id="regionLayerToggle" checked onchange="toggleRegionLayer(this.checked)">
+                  <span class="tool-toggle-slider"></span>
+                </label>
+              </div>
+              <div class="tool-field" style="margin-top:8px;">
+                <label>{{ _('Border color') }}</label>
+                <div class="tool-row" style="gap:6px;align-items:center;">
+                  <input type="color" id="regionBorderColor" value="#b45309"
+                         oninput="applyRegionLayerColor()" style="width:36px;height:28px;padding:2px;border:1px solid #ced4da;border-radius:4px;cursor:pointer;">
+                  <input type="color" id="regionFillColor" value="#f59e0b"
+                         oninput="applyRegionLayerColor()" style="width:36px;height:28px;padding:2px;border:1px solid #ced4da;border-radius:4px;cursor:pointer;">
+                  <span style="font-size:11px;color:#868e96;">{{ _('border / fill') }}</span>
+                  <button onclick="resetRegionLayerColor()" class="tool-btn-ghost" style="margin-left:auto;font-size:11px;padding:3px 7px;">{{ _('Reset') }}</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="tool-panel" id="panelZones">
+          <div class="tool-panel-header">
+            <span>{{ _('Zones') }}</span>
+            <button class="tool-panel-close" onclick="closeToolPanel('panelZones')">&times;</button>
+          </div>
+          <div class="tool-panel-body">
+            <div class="tool-panel-section">
+              <div class="tool-row" style="justify-content:space-between;align-items:center">
+                <h5 style="margin:0">{{ _('Zone Manager') }} <span id="zoneCount" class="zone-count-badge">0</span></h5>
+                <button onclick="showZoneSaveForm()" id="addZoneBtn" class="tool-btn" disabled>{{ _('New Zone') }}</button>
+              </div>
+              <div class="zone-save-form" id="zoneSaveForm" style="display:none;margin-top:8px">
+                <div class="tool-field">
+                  <label>{{ _('Zone Name') }}</label>
+                  <input type="text" id="zoneName" placeholder="{{ _('Enter zone name...') }}" maxlength="200" class="tool-input" />
+                </div>
+                <div class="tool-field">
+                  <label>{{ _('Description') }}</label>
+                  <textarea id="zoneDescription" placeholder="{{ _('Optional description...') }}" rows="2" maxlength="2000" class="tool-input"></textarea>
+                </div>
+                <div class="tool-row">
+                  <div class="tool-field" style="flex:1">
+                    <label>{{ _('Color') }}</label>
+                    <input type="color" id="zoneColor" value="#3388ff" />
+                  </div>
+                  <div class="tool-field" style="flex:2">
+                    <label>{{ _('Tags') }}</label>
+                    <input type="text" id="zoneTags" placeholder="{{ _('e.g., residential, priority') }}" class="tool-input" />
+                  </div>
+                </div>
+                <div class="tool-row">
+                  <button onclick="saveCurrentDrawingAsZone()" class="tool-btn">{{ _('Save Zone') }}</button>
+                  <button onclick="cancelZoneSave()" class="tool-btn-ghost">{{ _('Cancel') }}</button>
+                </div>
+              </div>
+              <div class="tool-row" style="margin-top:8px">
+                <button onclick="loadAllZones()" id="loadZonesBtn" class="tool-btn-ghost">{{ _('Refresh Zones') }}</button>
+              </div>
+              <div class="tool-row" style="margin-top:4px">
+                <input type="text" id="zoneSearchInput" class="tool-input" placeholder="{{ _('Search zones...') }}" oninput="applyZoneSearchFilter()" />
+                <button onclick="clearZoneSearch()" id="zoneSearchClearBtn" class="tool-btn-ghost">{{ _('Clear') }}</button>
+              </div>
+              <p id="zoneSearchNoResults" class="zone-search-no-results" style="display:none">{{ _('No zones match the search.') }}</p>
+              <div id="zoneList" class="zone-list">
+                <p class="zone-empty-message">{{ _('No zones saved yet.') }}</p>
+              </div>
+              <div class="zone-bulk-actions" id="zoneBulkActions" style="display:none">
+                <div class="tool-row">
+                  <button onclick="showAllZones()" class="tool-btn-ghost">{{ _('Select All') }}</button>
+                  <button onclick="hideAllZones()" class="tool-btn-ghost">{{ _('Deselect All') }}</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="tool-panel" id="panelActions">
+          <div class="tool-panel-header">
+            <span>{{ _('Actions') }}</span>
+            <button class="tool-panel-close" onclick="closeToolPanel('panelActions')">&times;</button>
+          </div>
+          <div class="tool-panel-body">
+            <div class="tool-panel-section">
+              <h5>{{ _('Market Filters') }}</h5>
+              <div class="tool-row">
+                <button onclick="toggleAuctionLayer()" class="tool-btn-ghost">{{ _('Toggle Auctions') }}</button>
+                <button onclick="filterActiveAuctions()" class="tool-btn-ghost">{{ _('Active Only') }}</button>
+              </div>
+              <div class="tool-field">
+                <label>{{ _('Type') }}</label>
+                <select id="auctionTypeFilter" onchange="filterAuctionsByType()" class="tool-select">
+                  <option value="">{{ _('All Types') }}</option>
+                  <option value="residential">{{ _('Residential') }}</option>
+                  <option value="commercial">{{ _('Commercial') }}</option>
+                  <option value="agricultural">{{ _('Agricultural') }}</option>
+                  <option value="industrial">{{ _('Industrial') }}</option>
+                </select>
+              </div>
+              <div class="tool-field">
+                <label>{{ _('Max Price (€)') }}</label>
+                <input type="number" id="maxPriceFilter" onchange="filterAuctionsByPrice()" placeholder="150000" class="tool-input" />
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div id="folium-map-container">
           {% if folium_map_html %} {{ folium_map_html|safe }} {% else %}
           <div class="no-map-message">
-            <h3>Welcome to the Land Registry Viewer</h3>
-            <p>Get started by loading cadastral data:</p>
+            <h3>{{ _('Welcome to the Land Registry Viewer') }}</h3>
+            <p>{{ _('Get started by loading cadastral data:') }}</p>
             <ol class="quick-start-steps">
-              <li><strong>Select a Region</strong> from the sidebar (e.g., LAZIO)</li>
-              <li><strong>Choose a Province</strong> (e.g., RM for Roma)</li>
-              <li><strong>Pick Municipality(ies)</strong> to view</li>
-              <li><strong>Click "Load Selected Files"</strong> to display parcels</li>
+              <li><strong>{{ _('Select a Region') }}</strong> from the sidebar (e.g., LAZIO)</li>
+              <li><strong>{{ _('Choose a Province') }}</strong> (e.g., RM for Roma)</li>
+              <li><strong>{{ _('Pick Municipality(ies) to view') }}</strong></li>
+              <li><strong>{{ _('Click "Load Selected Files" to display parcels') }}</strong></li>
             </ol>
             <p class="quick-start-tip">
               <strong>Tip:</strong> Press <kbd>F</kbd> to fit map to data, <kbd>R</kbd> to reset view, <kbd>Esc</kbd> to clear selection
@@ -686,39 +645,39 @@
     <div id="tableView" class="view-content" style="display: none">
       <div class="table-container">
         <div class="table-header">
-          <h2>Polygon Attributes</h2>
-          <div id="tableViewInfo" class="table-info">No data loaded</div>
+          <h2>{{ _('Polygon Attributes') }}</h2>
+          <div id="tableViewInfo" class="table-info">{{ _('No data loaded') }}</div>
         </div>
 
         <!-- Table Controls -->
         <div class="table-controls">
           <div class="control-row">
             <div class="search-container">
-              <input type="text" id="tableSearch" placeholder="Search all columns…" class="search-input">
+              <input type="text" id="tableSearch" placeholder="{{ _('Search all columns…') }}" class="search-input">
               <button onclick="searchTable()" class="search-btn">🔍</button>
             </div>
             <div class="filter-container">
               <select id="tableFilterField" class="filter-select">
-                <option value="">Filter by column…</option>
+                <option value="">{{ _('Filter by column…') }}</option>
               </select>
-              <input type="text" id="tableFilterValue" placeholder="Filter value…" class="filter-input">
-              <button onclick="filterTable()" class="filter-btn">Filter</button>
-              <button onclick="clearTableFilters()" class="clear-btn">Clear</button>
+              <input type="text" id="tableFilterValue" placeholder="{{ _('Filter value…') }}" class="filter-input">
+              <button onclick="filterTable()" class="filter-btn">{{ _('Filter') }}</button>
+              <button onclick="clearTableFilters()" class="clear-btn">{{ _('Clear') }}</button>
             </div>
           </div>
           <div class="control-row">
             <div class="sort-container">
               <select id="tableSortField" class="sort-select">
-                <option value="">Sort by column…</option>
+                <option value="">{{ _('Sort by column…') }}</option>
               </select>
               <select id="tableSortDirection" class="sort-direction">
-                <option value="asc">Ascending</option>
-                <option value="desc">Descending</option>
+                <option value="asc">{{ _('Ascending') }}</option>
+                <option value="desc">{{ _('Descending') }}</option>
               </select>
-              <button onclick="sortTable()" class="sort-btn">Sort</button>
+              <button onclick="sortTable()" class="sort-btn">{{ _('Sort') }}</button>
             </div>
             <div class="page-size-container">
-              <label>Rows per page:</label>
+              <label>{{ _('Rows per page:') }}</label>
               <select id="tablePageSize" class="page-size-select" onchange="changeTablePageSize()">
                 <option value="25">25</option>
                 <option value="50">50</option>
@@ -734,7 +693,7 @@
             <p>Loading data…</p>
           </div>
           <div class="no-data-message">
-            <p>No geospatial data loaded. Please upload a file or select cadastral data to view attributes.</p>
+            <p>{{ _('No geospatial data loaded. Please upload a file or select cadastral data to view attributes.') }}</p>
           </div>
           <div class="table-wrapper" style="display: none;">
             <table id="dataTable" class="data-table">
@@ -747,14 +706,14 @@
         <!-- Pagination -->
         <div class="pagination-container" style="display: none;">
           <div class="pagination-info">
-            <span id="tableRecordInfo">Showing 0 to 0 of 0 entries</span>
+            <span id="tableRecordInfo">{{ _('Showing 0 to 0 of 0 entries') }}</span>
           </div>
           <div class="pagination-controls">
-            <button onclick="goToTablePage(1)" id="tableFirstBtn" class="page-btn">First</button>
-            <button onclick="goToTablePage(currentTablePage - 1)" id="tablePrevBtn" class="page-btn">Prev</button>
+            <button onclick="goToTablePage(1)" id="tableFirstBtn" class="page-btn">{{ _('First') }}</button>
+            <button onclick="goToTablePage(currentTablePage - 1)" id="tablePrevBtn" class="page-btn">{{ _('Prev') }}</button>
             <span class="page-numbers" id="tablePageNumbers"></span>
-            <button onclick="goToTablePage(currentTablePage + 1)" id="tableNextBtn" class="page-btn">Next</button>
-            <button onclick="goToTablePage(totalTablePages)" id="tableLastBtn" class="page-btn">Last</button>
+            <button onclick="goToTablePage(currentTablePage + 1)" id="tableNextBtn" class="page-btn">{{ _('Next') }}</button>
+            <button onclick="goToTablePage(totalTablePages)" id="tableLastBtn" class="page-btn">{{ _('Last') }}</button>
           </div>
         </div>
       </div>
@@ -764,22 +723,22 @@
     <div id="adjacencyView" class="view-content" style="display: none">
       <div class="adjacency-container">
         <div class="adjacency-header">
-          <h2>Adjacency Analysis</h2>
+          <h2>{{ _('Adjacency Analysis') }}</h2>
           <div id="adjacencyInfo" class="table-info">
-            Select a polygon on the map, then use Analysis Tools to find adjacent features.
+            {{ _('Select a polygon on the map, then use Analysis Tools to find adjacent features.') }}
           </div>
         </div>
         <div id="adjacencyResults" class="adjacency-results">
           <div class="adjacency-section">
-            <h3>Selected Polygon</h3>
+            <h3>{{ _('Selected Polygon') }}</h3>
             <div id="selectedPolygonInfo" class="polygon-info">
-              <p>No polygon selected. Switch to Map View, click a polygon, then return here.</p>
+              <p>{{ _('No polygon selected. Switch to Map View, click a polygon, then return here.') }}</p>
             </div>
           </div>
           <div class="adjacency-section adjacency-section-neighbors">
-            <h3>Adjacent Polygons</h3>
+            <h3>{{ _('Adjacent Polygons') }}</h3>
             <div id="adjacentPolygonsInfo" class="polygon-info">
-              <p>Adjacent polygons will appear here after running the analysis.</p>
+              <p>{{ _('Adjacent polygons will appear here after running the analysis.') }}</p>
             </div>
           </div>
         </div>
@@ -790,76 +749,61 @@
     <div id="mappingView" class="view-content" style="display: none">
       <div class="mapping-container">
         <div class="mapping-header">
-          <h2>Drawing Management</h2>
+          <h2>{{ _('Drawing Management') }}</h2>
           <div class="mapping-info">
-            Use the drawing tools on the map to create polygons, polylines, and markers.
+            {{ _('Use the drawing tools on the map to create polygons, polylines, and markers.') }}
           </div>
           <div id="mappingZoneContext" class="mapping-zone-context" style="display: none;"></div>
         </div>
         <div class="drawing-controls">
           <div class="drawing-section">
-            <h3>Drawn Polygons</h3>
-            <div id="drawnPolygonsList" class="drawn-polygons-list">
-              <p>No polygons drawn yet. Switch to Map View and use the draw toolbar.</p>
-            </div>
-            <div class="drawing-actions">
-              <button onclick="saveDrawnPolygons()" class="control-btn">Save Polygons</button>
-              <button onclick="clearDrawnPolygons()" class="control-btn">Clear Polygons</button>
-            </div>
-          </div>
+            <h3>{{ _('Drawn Shapes') }}</h3>
 
-          <div class="drawing-section">
-            <h3>Drawn Polylines</h3>
-            <div id="drawnPolylinesList" class="drawn-polylines-list">
-              <p>No polylines drawn yet.</p>
+            <!-- Polygons sub-section -->
+            <div class="drawing-subsection">
+              <h4 class="drawing-subsection-title">{{ _('Polygons') }}</h4>
+              <div id="drawnPolygonsList" class="drawn-polygons-list">
+                <p>{{ _('No polygons drawn yet. Switch to Map View and use the draw toolbar.') }}</p>
+              </div>
+              <div class="drawing-actions">
+                <button onclick="saveDrawnPolygons()" class="control-btn">{{ _('Save') }}</button>
+                <button onclick="clearDrawnPolygons()" class="control-btn">{{ _('Clear') }}</button>
+              </div>
             </div>
-            <div class="drawing-actions">
-              <button onclick="saveDrawnPolylines()" id="savePolylinesBtn" class="control-btn">
-                Save Polylines
-              </button>
-              <button
-                onclick="deleteSelectedPolyline()"
-                id="deletePolylineBtn"
-                disabled
-                class="control-btn"
-              >
-                Delete Selected
-              </button>
-              <button
-                onclick="undoLastPolyline()"
-                id="undoPolylineBtn"
-                disabled
-                class="control-btn"
-              >
-                Undo Last
-              </button>
-              <button
-                onclick="clearAllPolylines()"
-                id="clearPolylinesBtn"
-                disabled
-                class="control-btn"
-              >
-                Clear Polylines
-              </button>
+
+            <div class="drawing-subsection-divider"></div>
+
+            <!-- Polylines sub-section -->
+            <div class="drawing-subsection">
+              <h4 class="drawing-subsection-title">{{ _('Polylines') }}</h4>
+              <div id="drawnPolylinesList" class="drawn-polylines-list">
+                <p>{{ _('No polylines drawn yet.') }}</p>
+              </div>
+              <div class="drawing-actions">
+                <button onclick="saveDrawnPolylines()" id="savePolylinesBtn" class="control-btn">{{ _('Save') }}</button>
+                <button onclick="deleteSelectedPolyline()" id="deletePolylineBtn" disabled class="control-btn">{{ _('Delete Selected') }}</button>
+                <button onclick="undoLastPolyline()" id="undoPolylineBtn" disabled class="control-btn">{{ _('Undo Last') }}</button>
+                <button onclick="clearAllPolylines()" id="clearPolylinesBtn" disabled class="control-btn">{{ _('Clear') }}</button>
+              </div>
             </div>
           </div>
 
           <div class="mapping-stats">
             <div class="stat-item">
-              <span class="stat-label">Total Drawn:</span>
+              <span class="stat-label">{{ _('Total Drawn:') }}</span>
               <span id="drawnCount" class="stat-value">0</span>
             </div>
             <div class="stat-item">
-              <span class="stat-label">Selected:</span>
+              <span class="stat-label">{{ _('Selected:') }}</span>
               <span id="drawnSelected" class="stat-value">0</span>
             </div>
             <div class="stat-item">
-              <span class="stat-label">Polylines:</span>
+              <span class="stat-label">{{ _('Polylines:') }}</span>
               <span id="mappingPolylineCount" class="stat-value">0</span>
             </div>
             <div class="stat-item">
-              <span class="stat-label">Selected Polyline:</span>
-              <span id="selectedPolyline" class="stat-value">None</span>
+              <span class="stat-label">{{ _('Selected Polyline:') }}</span>
+              <span id="selectedPolyline" class="stat-value">{{ _('None') }}</span>
             </div>
           </div>
         </div>
@@ -870,7 +814,7 @@
   <!-- Parcel Info Panel (slides in from right) -->
   <div id="parcelInfoPanel" class="parcel-info-panel">
     <div class="parcel-info-header-bar">
-      <span>Parcel Details</span>
+      <span>{{ _('Parcel Details') }}</span>
       <button onclick="hideParcelInfo()" class="close-panel-btn" title="Close panel">&times;</button>
     </div>
     <div id="parcelInfoContent" class="parcel-info-body">
@@ -879,48 +823,6 @@
   </div>
 </div>
 
-<!-- ── aecs4u-theme Footer ──────────────────────────────────────────── -->
-<footer class="site-footer">
-  <div class="footer-container">
-    <div class="footer-content">
-      <!-- Brand -->
-      <div class="footer-section footer-brand">
-        <div class="footer-logo">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" height="24">
-            <rect fill="#1a5490" width="32" height="32" rx="4"/>
-            <path fill="#fff" d="M6 8h8v6H6zM16 8h10v6H16zM6 16h10v8H6zM18 16h8v8h-8z"/>
-            <path fill="#28a745" d="M7 9h6v4H7zM17 9h8v4h-8zM7 17h8v6H7zM19 17h6v6h-6z"/>
-          </svg>
-          <span>Land Registry</span>
-        </div>
-        <p class="footer-tagline">Italian cadastral data viewer</p>
-      </div>
-
-      <!-- Data -->
-      <div class="footer-section">
-        <h6 class="footer-title">Data</h6>
-        <ul class="footer-links">
-          <li><a href="/map"><i class="fas fa-map"></i> Map</a></li>
-          <li><a href="/cadastral-data" target="_blank"><i class="fas fa-database"></i> Browse Cadastral</a></li>
-        </ul>
-      </div>
-
-      <!-- Legal -->
-      <div class="footer-section">
-        <h6 class="footer-title">Legal</h6>
-        <ul class="footer-links">
-          <li><a href="/terms"><i class="fas fa-file-contract"></i> Terms</a></li>
-          <li><a href="/privacy"><i class="fas fa-user-shield"></i> Privacy</a></li>
-        </ul>
-      </div>
-    </div>
-
-    <div class="footer-bottom">
-      <p class="copyright">&copy; {{ now().year if now is defined else "2025" }} AECS4U Srl — Land Registry Viewer</p>
-    </div>
-  </div>
-</footer>
-<!-- ──────────────────────────────────────────────────────────────────── -->
 
 {% endblock %} {% block data_scripts %}
 <script>
@@ -989,28 +891,21 @@
 {% endblock %} {% block app_js %}
 <script src="/static/folium-interface.js"></script>
 <script>
-  // Update sidebar authentication status
+  // Update nav authentication status
   function updateSidebarAuth() {
-    const sidebarAuth = document.getElementById('sidebar-auth-status');
-    if (!sidebarAuth) return;
-
+    const navUserMenu = document.getElementById('navUserMenu');
+    const navSignInBtn = document.getElementById('navSignInBtn');
     if (window.Clerk && window.Clerk.user) {
       const user = window.Clerk.user;
-      sidebarAuth.innerHTML = `
-        <div class="user-logged-in">
-          <div class="user-email">${user.primaryEmailAddress?.emailAddress || 'User'}</div>
-          <button class="sidebar-logout-btn" onclick="handleSidebarLogout()">Sign Out</button>
-        </div>
-      `;
+      document.getElementById('navUserName').textContent =
+        user.firstName || user.primaryEmailAddress?.emailAddress?.split('@')[0] || 'User';
+      document.getElementById('navUserEmail').textContent =
+        user.primaryEmailAddress?.emailAddress || '';
+      if (navUserMenu) navUserMenu.style.display = 'flex';
+      if (navSignInBtn) navSignInBtn.style.display = 'none';
     } else if (window.Clerk) {
-      sidebarAuth.innerHTML = `
-        <div class="user-not-logged-in">
-          <button class="sidebar-login-btn" onclick="window.location.href='/auth/login?next=' + encodeURIComponent(window.location.pathname)">Sign In</button>
-          <button class="sidebar-register-btn" onclick="window.location.href='/auth/register'">Register</button>
-        </div>
-      `;
-    } else {
-      sidebarAuth.innerHTML = '<div class="loading-text">Auth loading...</div>';
+      if (navUserMenu) navUserMenu.style.display = 'none';
+      if (navSignInBtn) navSignInBtn.style.display = 'inline-block';
     }
   }
 
@@ -1041,6 +936,57 @@
     }
   });
 
+  // Set --toolbar-h CSS variable so panels align flush below the toolbar
+  function _updateToolbarHeight() {
+    const tb = document.getElementById('mapToolbar');
+    if (tb) {
+      document.querySelector('.map-container')
+        ?.style.setProperty('--toolbar-h', tb.offsetHeight + 'px');
+    }
+  }
+  document.addEventListener('DOMContentLoaded', _updateToolbarHeight);
+  window.addEventListener('resize', _updateToolbarHeight);
+
+  // Map toolbar panel toggling
+  function toggleToolPanel(panelId, btnId) {
+    const panel = document.getElementById(panelId);
+    const btn = document.getElementById(btnId);
+    const isOpen = panel.style.display === 'block';
+    // Close all panels first
+    document.querySelectorAll('.tool-panel').forEach(p => p.style.display = 'none');
+    document.querySelectorAll('.map-tool-btn').forEach(b => b.classList.remove('active'));
+    // Open this one unless it was already open
+    if (!isOpen) {
+      panel.style.display = 'block';
+      btn.classList.add('active');
+      // Refresh comune dropdown when Explore panel opens
+      if (panelId === 'panelExplore' && window.refreshSearchComuneList) {
+        window.refreshSearchComuneList();
+      }
+    }
+  }
+  function closeToolPanel(panelId) {
+    const panel = document.getElementById(panelId);
+    if (panel) panel.style.display = 'none';
+    document.querySelectorAll('.map-tool-btn').forEach(b => b.classList.remove('active'));
+  }
+  // Language selector — saves cookie and reloads so server renders correct locale
+  function changeLang(lang) {
+    document.cookie = 'lang=' + lang + '; path=/; max-age=31536000; SameSite=Lax';
+    window.location.reload();
+  }
+  // User menu dropdown
+  function toggleUserDropdown() {
+    const dd = document.getElementById('navUserDropdown');
+    if (dd) dd.style.display = dd.style.display === 'block' ? 'none' : 'block';
+  }
+  document.addEventListener('click', function(e) {
+    if (!e.target.closest('#navUserBtn')) {
+      const dd = document.getElementById('navUserDropdown');
+      if (dd) dd.style.display = 'none';
+    }
+  });
+
   // View switching - keep tableInfo and tableViewInfo in sync
   function handleTableViewClick() {
       document.querySelectorAll('.view-content').forEach(el => el.classList.remove('active'));
@@ -1062,3 +1008,5 @@
   }
 </script>
 {% endblock %}
+
+{% block i18n_data %}<script>window._i18n = {{ i18n_strings | tojson }};</script>{% endblock %}

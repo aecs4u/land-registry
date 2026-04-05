@@ -52,11 +52,41 @@ python run_dev.py
 
 # Or use uvicorn directly
 uvicorn land_registry.main:app --reload --host 0.0.0.0 --port 8000
+
+# Or use the unified CLI
+land-registry serve --target main --host 0.0.0.0 --port 8000 --reload
 ```
 
 Access the application at `http://localhost:8000`
 
 The Panel server will automatically start on `http://localhost:5006` for interactive dashboards.
+
+### CLI
+
+The project includes a unified CLI entrypoint:
+
+```bash
+land-registry --help
+```
+
+Full reference: [docs/CLI.md](docs/CLI.md)
+
+Useful commands:
+
+```bash
+# Run app targets
+land-registry serve --target main --reload
+land-registry serve --target main --port 8001
+
+# Inspect effective configuration and routes
+land-registry info
+land-registry routes --target main
+
+# Cadastral/cache operations
+land-registry cadastral-stats --json
+land-registry cache show
+land-registry cache clear --all
+```
 
 ## Usage
 

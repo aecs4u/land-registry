@@ -570,9 +570,15 @@ function updateAdjacencyButtonState() {
     }
 
     if (selectedCount) {
-        const countText = window.selectedPolygons.length === 1
-            ? '1 polygon selected'
-            : `${window.selectedPolygons.length} polygons selected`;
+        const n = window.selectedPolygons.length;
+        let countText;
+        if (n === 0) {
+            countText = window.t('0 polygons selected');
+        } else if (n === 1) {
+            countText = window.t('1 polygon selected');
+        } else {
+            countText = (window.t('{n} polygons selected') || '{n} polygons selected').replace('{n}', n);
+        }
         selectedCount.textContent = countText;
     }
 }
@@ -1575,12 +1581,12 @@ async function findAdjacencyForSelected() {
         adjacentPolygonsInfo.innerHTML = `<p>Analyzing spatial relationships...</p>`;
     }
 
-    // Collect {feature_id, geometry} from selected polygons
+    // Collect {feature_id, geometry, properties} from selected polygons
     const featureInfos = window.selectedPolygons.map(layer => {
         const props = layer.feature && layer.feature.properties;
         const geom = layer.feature && layer.feature.geometry;
         if (props && props.feature_id !== undefined && props.feature_id !== null && geom) {
-            return { feature_id: parseInt(props.feature_id), geometry: geom };
+            return { feature_id: parseInt(props.feature_id), geometry: geom, properties: props };
         }
         return null;
     }).filter(Boolean);
@@ -1623,27 +1629,149 @@ async function findAdjacencyForSelected() {
         }
     }
 
-    // Display results
+    // Collect adjacent polygon properties from loaded layers
+    const adjacentPropsMap = _getFeaturePropertiesById([...allAdjacentIds]);
+    const adjacentRows = [...allAdjacentIds].map(id => adjacentPropsMap[String(id)] || { feature_id: id });
+    const selectedRows = featureInfos.map(f => f.properties);
+
+    // Display selected polygons table
     if (selectedPolygonInfo) {
-        const propRows = featureInfos.map(({ feature_id }) => `<li>Feature ID: ${feature_id}</li>`).join('');
         selectedPolygonInfo.innerHTML = `
-            <h4>Selected Polygons (${count})</h4>
-            <ul style="margin:4px 0;padding-left:18px;">${propRows}</ul>
-            <small>Method: ${method}</small>
+            <div class="adj-panel-toolbar">
+                <span class="adj-count-badge">${selectedRows.length}</span>
+                <span class="adj-method-label">Method: <em>${method}</em></span>
+                <div class="adj-export-btns">
+                    <button onclick="_exportAdjRows('selected','csv')" class="adj-export-btn">CSV</button>
+                    <button onclick="_exportAdjRows('selected','xlsx')" class="adj-export-btn">Excel</button>
+                    <button onclick="_exportAdjRows('selected','parquet')" class="adj-export-btn">Parquet</button>
+                </div>
+            </div>
+            ${_buildAdjTable(selectedRows, 'adj-selected-rows')}
         `;
     }
 
+    // Display adjacent polygons table
     if (adjacentPolygonsInfo) {
         if (errors.length > 0 && allAdjacentIds.size === 0) {
             adjacentPolygonsInfo.innerHTML = `<p style="color:red;">Error: ${errors.join('; ')}</p>`;
         } else {
             const errNote = errors.length > 0 ? `<p style="color:orange;font-size:0.85em;">${errors.join('; ')}</p>` : '';
             adjacentPolygonsInfo.innerHTML = `
-                <p><strong>${allAdjacentIds.size}</strong> adjacent polygon(s) found.</p>
-                ${allAdjacentIds.size > 0 ? `<p style="font-size:0.85em;color:#555;">IDs: ${[...allAdjacentIds].join(', ')}</p>` : ''}
+                <div class="adj-panel-toolbar">
+                    <span class="adj-count-badge">${adjacentRows.length}</span>
+                    <span class="adj-method-label">${adjacentRows.length} polygon(s) found</span>
+                    <div class="adj-export-btns">
+                        <button onclick="_exportAdjRows('adjacent','csv')" class="adj-export-btn">CSV</button>
+                        <button onclick="_exportAdjRows('adjacent','xlsx')" class="adj-export-btn">Excel</button>
+                        <button onclick="_exportAdjRows('adjacent','parquet')" class="adj-export-btn">Parquet</button>
+                    </div>
+                </div>
                 ${errNote}
+                ${adjacentRows.length > 0 ? _buildAdjTable(adjacentRows, 'adj-adjacent-rows') : '<p class="adj-empty">No adjacent polygons found.</p>'}
             `;
         }
+    }
+}
+
+/** Build an HTML detail table from an array of row objects and cache for export. */
+function _buildAdjTable(rows, cacheKey) {
+    if (!rows || rows.length === 0) return '<p class="adj-empty">No data.</p>';
+
+    if (!window._adjRowsCache) window._adjRowsCache = {};
+    window._adjRowsCache[cacheKey] = rows;
+
+    const excludeKeys = new Set(['geometry', 'style', '__folium_color']);
+    const allKeys = [...new Set(rows.flatMap(r => Object.keys(r)))].filter(k => !excludeKeys.has(k));
+    if (allKeys.length === 0) return '<p class="adj-empty">No properties available.</p>';
+
+    const thead = `<tr>${allKeys.map(k => `<th>${k}</th>`).join('')}</tr>`;
+    const tbody = rows.map(row =>
+        `<tr>${allKeys.map(k => {
+            const v = row[k];
+            return `<td>${v !== undefined && v !== null ? String(v) : ''}</td>`;
+        }).join('')}</tr>`
+    ).join('');
+
+    return `<div class="adj-table-scroll"><table class="adj-detail-table"><thead>${thead}</thead><tbody>${tbody}</tbody></table></div>`;
+}
+
+/** Collect feature properties from loaded Leaflet layers by feature_id. */
+function _getFeaturePropertiesById(ids) {
+    const idSet = new Set(ids.map(String));
+    const results = {};
+    document.querySelectorAll('.leaflet-container').forEach(mapEl => {
+        const mapId = Object.keys(window).find(k => window[k] && window[k]._container === mapEl);
+        if (!mapId) return;
+        window[mapId].eachLayer(layer => {
+            if (layer.eachLayer) {
+                layer.eachLayer(subLayer => {
+                    const props = subLayer.feature && subLayer.feature.properties;
+                    if (props && idSet.has(String(props.feature_id))) {
+                        results[String(props.feature_id)] = props;
+                    }
+                });
+            }
+        });
+    });
+    return results;
+}
+
+/** Export adjacency rows (cached by _buildAdjTable) to csv/xlsx/parquet. */
+async function _exportAdjRows(which, format) {
+    if (!window._adjRowsCache) { alert('No data to export.'); return; }
+    const cacheKey = which === 'selected' ? 'adj-selected-rows' : 'adj-adjacent-rows';
+    const rows = window._adjRowsCache[cacheKey];
+    if (!rows || rows.length === 0) { alert('No data to export.'); return; }
+
+    const excludeKeys = new Set(['geometry', 'style', '__folium_color']);
+    const cleanRows = rows.map(row => {
+        const r = {};
+        for (const [k, v] of Object.entries(row)) {
+            if (!excludeKeys.has(k)) r[k] = v;
+        }
+        return r;
+    });
+
+    if (format === 'csv') {
+        const allKeys = [...new Set(cleanRows.flatMap(r => Object.keys(r)))];
+        const csvLines = [
+            allKeys.join(','),
+            ...cleanRows.map(row => allKeys.map(k => {
+                const v = row[k] !== undefined && row[k] !== null ? String(row[k]) : '';
+                return v.includes(',') || v.includes('"') || v.includes('\n')
+                    ? `"${v.replace(/"/g, '""')}"` : v;
+            }).join(','))
+        ];
+        const blob = new Blob([csvLines.join('\n')], { type: 'text/csv' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `${which}-polygons.csv`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        return;
+    }
+
+    // Server-side export (xlsx / parquet)
+    try {
+        const ext = format === 'xlsx' ? 'xlsx' : 'parquet';
+        const response = await fetch(`/api/v1/export-adjacency/${format}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(cleanRows)
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            alert(`Export failed: ${err.detail || response.status}`);
+            return;
+        }
+        const blob = await response.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `${which}-polygons.${ext}`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+    } catch (err) {
+        alert(`Export error: ${err.message}`);
     }
 }
 
@@ -2233,6 +2361,8 @@ async function _loadCadastralProgressive(filePaths, loadButton, originalText) {
                     window.hasData = true;
                     // Populate attribute field suggestions for Select by Attribute
                     setTimeout(_populateSelectAttrFields, 300);
+                    // Refresh comune dropdown in parcel search
+                    setTimeout(() => { if (window.refreshSearchComuneList) window.refreshSearchComuneList(); }, 400);
                 }
 
                 // Zoom to new data bounds
@@ -2767,11 +2897,12 @@ function selectDataSource(source) {
     document.getElementById('spatialiteFilters').style.display = source === 'spatialite' ? 'block' : 'none';
     document.getElementById('fgbFilters').style.display = source === 'fgb' ? 'block' : 'none';
 
-    // Show/hide appropriate action buttons
-    document.getElementById('spatialiteActions').style.display = source === 'spatialite' ? 'flex' : 'none';
-    document.getElementById('spatialiteClear').style.display = source === 'spatialite' ? 'flex' : 'none';
-    document.getElementById('fgbActions').style.display = source === 'fgb' ? 'flex' : 'none';
-    document.getElementById('fgbClear').style.display = source === 'fgb' ? 'flex' : 'none';
+    // Show/hide appropriate action buttons (guard against missing elements)
+    const _show = (id, visible) => { const el = document.getElementById(id); if (el) el.style.display = visible ? 'flex' : 'none'; };
+    _show('spatialiteActions', source === 'spatialite');
+    _show('spatialiteClear', source === 'spatialite');
+    _show('fgbActions', source === 'fgb');
+    _show('fgbClear', source === 'fgb');
 
     // Load FGB regions if switching to FGB
     if (source === 'fgb' && window.fgbRegions.length === 0) {
@@ -2940,6 +3071,8 @@ async function loadFgbRegion() {
                 document.getElementById('zoomToPolygonsBtn').disabled = false;
 
                 console.log('[FGB] Loaded ' + count + ' features from ' + regionName);
+                // Refresh comune dropdown in parcel search
+                setTimeout(() => { if (window.refreshSearchComuneList) window.refreshSearchComuneList(); }, 300);
             } else {
                 alert('No features found in this region/layer');
             }
@@ -2980,3 +3113,70 @@ window.loadFgbRegion = loadFgbRegion;
 window.clearFgbSelection = clearFgbSelection;
 
 console.log('[FGB] Functions loaded successfully');
+
+// ============================================================
+// Region Layer Controls
+// ============================================================
+
+const REGION_LAYER_DEFAULTS = { border: '#b45309', fill: '#f59e0b', fillOpacity: 0.08, opacity: 0.85, weight: 2 };
+
+/** Find the Italy Regions GeoJSON layer inside the Folium iframe. */
+function _getRegionLayer() {
+    const mapEls = document.querySelectorAll('.leaflet-container');
+    for (const mapEl of mapEls) {
+        const mapId = Object.keys(window).find(k => window[k] && window[k]._container === mapEl);
+        if (!mapId) continue;
+        const map = window[mapId];
+        let found = null;
+        map.eachLayer(layer => {
+            if (found) return;
+            // Folium names layers via options.name or the layer control
+            if (layer.options && layer.options.name === 'Italy Regions') {
+                found = layer;
+            }
+            // Also try matching on GeoJSON sub-layers that carry className
+            if (!found && layer.eachLayer) {
+                layer.eachLayer(sub => {
+                    if (!found && sub.options && sub.options.className === 'italy-region-layer') {
+                        found = layer; // parent GeoJSON layer
+                    }
+                });
+            }
+        });
+        if (found) return { map, layer: found };
+    }
+    return null;
+}
+
+function toggleRegionLayer(visible) {
+    const result = _getRegionLayer();
+    if (!result) return;
+    const { map, layer } = result;
+    if (visible) {
+        if (!map.hasLayer(layer)) layer.addTo(map);
+    } else {
+        if (map.hasLayer(layer)) map.removeLayer(layer);
+    }
+}
+
+function applyRegionLayerColor() {
+    const borderColor = document.getElementById('regionBorderColor')?.value || REGION_LAYER_DEFAULTS.border;
+    const fillColor   = document.getElementById('regionFillColor')?.value  || REGION_LAYER_DEFAULTS.fill;
+    const result = _getRegionLayer();
+    if (!result) return;
+    result.layer.setStyle({
+        color: borderColor,
+        fillColor: fillColor,
+        weight: REGION_LAYER_DEFAULTS.weight,
+        opacity: REGION_LAYER_DEFAULTS.opacity,
+        fillOpacity: REGION_LAYER_DEFAULTS.fillOpacity,
+    });
+}
+
+function resetRegionLayerColor() {
+    const borderEl = document.getElementById('regionBorderColor');
+    const fillEl   = document.getElementById('regionFillColor');
+    if (borderEl) borderEl.value = REGION_LAYER_DEFAULTS.border;
+    if (fillEl)   fillEl.value   = REGION_LAYER_DEFAULTS.fill;
+    applyRegionLayerColor();
+}

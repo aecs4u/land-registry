@@ -116,15 +116,14 @@ class TestCorrectedAPIEndpoints:
             "touch_method": "touches"
         })
         assert response.status_code == 400
-        assert response.json()["detail"] == "No data loaded. Please upload a QPKG file first."
+        assert "No data loaded" in response.json()["detail"]
 
     @patch('land_registry.routers.api.get_current_gdf')
-    @patch('land_registry.routers.api.find_adjacent_polygons')
-    def test_get_adjacent_polygons_success_actual_response(self, mock_find_adjacent, mock_get_gdf):
+    def test_get_adjacent_polygons_success_actual_response(self, mock_get_gdf):
         """Test adjacent polygons success - check actual response structure."""
         client = TestClient(app)
 
-        # Create test GeoDataFrame with feature_id column
+        # Two polygons sharing the edge x=1 — polygon2 touches polygon1
         polygon1 = Polygon([(0, 0), (1, 0), (1, 1), (0, 1), (0, 0)])
         polygon2 = Polygon([(1, 0), (2, 0), (2, 1), (1, 1), (1, 0)])
         gdf = gpd.GeoDataFrame({
@@ -132,8 +131,8 @@ class TestCorrectedAPIEndpoints:
             'name': ['Feature 0', 'Feature 1']
         }, geometry=[polygon1, polygon2])
         mock_get_gdf.return_value = gdf
-        mock_find_adjacent.return_value = [1]
 
+        # Send polygon1's geometry — endpoint uses geometry-based adjacency
         response = client.post("/api/v1/get-adjacent-polygons/", json={
             "feature_id": 0,
             "geometry": {

@@ -175,15 +175,14 @@
 
   <!-- Hero -->
   <header class="hero">
-    <h1>Land Registry Viewer</h1>
+    <h1>{{ _('Land Registry Viewer') }}</h1>
     <p>
-      Visualize, query, and analyze Italian cadastral data on an interactive map
-      with drawing tools, spatial analysis, and multi-source data loading.
+      {{ _('Visualize, query, and analyze Italian cadastral data on an interactive map with drawing tools, spatial analysis, and multi-source data loading.') }}
     </p>
     <div class="hero-actions">
-      <a href="/map" class="btn-primary">Open Map</a>
-      <a href="/" class="btn-secondary">Index &amp; Dashboard</a>
-      <a href="/cadastral-data" class="btn-secondary">Cadastral Browser</a>
+      <a href="/map" class="btn-primary">{{ _('Open Map') }}</a>
+      <a href="/" class="btn-secondary">{{ _('Index & Dashboard') }}</a>
+      <a href="/cadastral-data" class="btn-secondary">{{ _('Cadastral Browser') }}</a>
     </div>
   </header>
 
@@ -191,19 +190,19 @@
   <div class="stats-bar">
     <div class="stat-card">
       <div class="num">{{ total_regions }}</div>
-      <div class="label">Regions</div>
+      <div class="label">{{ _('Regions') }}</div>
     </div>
     <div class="stat-card">
       <div class="num">{{ total_provinces }}</div>
-      <div class="label">Provinces</div>
+      <div class="label">{{ _('Provinces') }}</div>
     </div>
     <div class="stat-card">
       <div class="num">{{ total_municipalities }}</div>
-      <div class="label">Municipalities</div>
+      <div class="label">{{ _('Municipalities') }}</div>
     </div>
     <div class="stat-card">
       <div class="num">{{ total_files }}</div>
-      <div class="label">Cadastral Files</div>
+      <div class="label">{{ _('Cadastral Files') }}</div>
     </div>
   </div>
 
@@ -211,53 +210,53 @@
 
     <!-- Interactive Mapping -->
     <section>
-      <div class="section-title"><span class="icon">&#127758;</span> Interactive Mapping</div>
+      <div class="section-title"><span class="icon">&#127758;</span> {{ _('Interactive Mapping') }}</div>
       <div class="feature-grid">
         <div class="feature-card">
-          <h3>Leaflet Map</h3>
-          <p>Full-screen interactive map with multiple basemap providers, geocoding, minimap, mouse coordinates, and marker clustering.</p>
+          <h3>{{ _('Leaflet Map') }}</h3>
+          <p>{{ _('Full-screen interactive map with multiple basemap providers, geocoding, minimap, mouse coordinates, and marker clustering.') }}</p>
         </div>
         <div class="feature-card">
-          <h3>Drawing Tools</h3>
-          <p>Create polygons, circles, rectangles, polylines, and markers directly on the map using Leaflet Draw. Save and reload your drawings.</p>
+          <h3>{{ _('Drawing Tools') }}</h3>
+          <p>{{ _('Create polygons, circles, rectangles, polylines, and markers directly on the map using Leaflet Draw. Save and reload your drawings.') }}</p>
         </div>
         <div class="feature-card">
-          <h3>Zone Management</h3>
-          <p>Save drawn geometries as named zones with descriptions, colors, and tags. Toggle visibility and export as GeoJSON.</p>
+          <h3>{{ _('Zone Management') }}</h3>
+          <p>{{ _('Save drawn geometries as named zones with descriptions, colors, and tags. Toggle visibility and export as GeoJSON.') }}</p>
         </div>
         <div class="feature-card">
-          <h3>Folium Map Generation</h3>
-          <p>Server-side map rendering via Folium, embedded in the index page with cadastral overlays and multiple layer support.</p>
+          <h3>{{ _('Folium Map Generation') }}</h3>
+          <p>{{ _('Server-side map rendering via Folium, embedded in the index page with cadastral overlays and multiple layer support.') }}</p>
         </div>
       </div>
     </section>
 
     <!-- Cadastral Data -->
     <section>
-      <div class="section-title"><span class="icon">&#128196;</span> Italian Cadastral Data</div>
+      <div class="section-title"><span class="icon">&#128196;</span> {{ _('Italian Cadastral Data') }}</div>
       <div class="feature-grid">
         <div class="feature-card">
-          <h3>Hierarchical Browser</h3>
-          <p>Navigate the full Italian cadastral hierarchy: Regione &rarr; Provincia &rarr; Comune &rarr; file, with expandable tree views and municipality flags.</p>
+          <h3>{{ _('Hierarchical Browser') }}</h3>
+          <p>{{ _('Navigate the full Italian cadastral hierarchy: Regione → Provincia → Comune → file, with expandable tree views and municipality flags.') }}</p>
         </div>
         <div class="feature-card">
-          <h3>Advanced Query Engine</h3>
-          <p>Filter by Foglio, Particella (single, list, or range), bounding box, point-in-polygon, and date ranges via the cadastral query API.</p>
+          <h3>{{ _('Advanced Query Engine') }}</h3>
+          <p>{{ _('Filter by Foglio, Particella (single, list, or range), bounding box, point-in-polygon, and date ranges via the cadastral query API.') }}</p>
         </div>
         <div class="feature-card">
-          <h3>File Availability Cache</h3>
-          <p>SQLite-backed cache that tracks which cadastral files exist in S3, with batch checking and configurable TTL.</p>
+          <h3>{{ _('File Availability Cache') }}</h3>
+          <p>{{ _('SQLite-backed cache that tracks which cadastral files exist in S3, with batch checking and configurable TTL.') }}</p>
         </div>
         <div class="feature-card">
-          <h3>Statistics &amp; Coverage</h3>
-          <p>Real-time counts of regions, provinces, municipalities, and files. Cache status and availability metrics.</p>
+          <h3>{{ _('Statistics & Coverage') }}</h3>
+          <p>{{ _('Real-time counts of regions, provinces, municipalities, and files. Cache status and availability metrics.') }}</p>
         </div>
       </div>
     </section>
 
     <!-- Data Sources -->
     <section>
-      <div class="section-title"><span class="icon">&#128230;</span> Data Sources</div>
+      <div class="section-title"><span class="icon">&#128230;</span> {{ _('Data Sources') }}</div>
       <ul class="source-list">
         <li><span class="bullet"></span> File upload (QPKG / GPKG / SHP / GeoJSON / KML)</li>
         <li><span class="bullet"></span> AWS S3 bucket (public &amp; private)</li>
@@ -270,26 +269,26 @@
 
     <!-- Spatial Analysis -->
     <section>
-      <div class="section-title"><span class="icon">&#128269;</span> Spatial Analysis</div>
+      <div class="section-title"><span class="icon">&#128269;</span> {{ _('Spatial Analysis') }}</div>
       <div class="feature-grid">
         <div class="feature-card">
-          <h3>Adjacency Analysis</h3>
-          <p>Select a polygon and find all adjacent parcels using spatial predicates: touches, intersects, or overlaps.</p>
+          <h3>{{ _('Adjacency Analysis') }}</h3>
+          <p>{{ _('Select a polygon and find all adjacent parcels using spatial predicates: touches, intersects, or overlaps.') }}</p>
         </div>
         <div class="feature-card">
-          <h3>Attribute Table</h3>
-          <p>View feature properties in paginated tables with server-side search, sort, and column filtering via Panel Tabulator.</p>
+          <h3>{{ _('Attribute Table') }}</h3>
+          <p>{{ _('View feature properties in paginated tables with server-side search, sort, and column filtering via Panel Tabulator.') }}</p>
         </div>
         <div class="feature-card">
-          <h3>Session State</h3>
-          <p>Current GeoDataFrame persists across requests. Load, combine, filter, and clear layers within a session.</p>
+          <h3>{{ _('Session State') }}</h3>
+          <p>{{ _('Current GeoDataFrame persists across requests. Load, combine, filter, and clear layers within a session.') }}</p>
         </div>
       </div>
     </section>
 
     <!-- API Endpoints -->
     <section>
-      <div class="section-title"><span class="icon">&#128268;</span> API Reference</div>
+      <div class="section-title"><span class="icon">&#128268;</span> {{ _('API Reference') }}</div>
 
       <div class="endpoint-group">
         <h3>Pages</h3>
@@ -374,7 +373,7 @@
 
     <!-- Tech Stack -->
     <section>
-      <div class="section-title"><span class="icon">&#9881;</span> Tech Stack</div>
+      <div class="section-title"><span class="icon">&#9881;</span> {{ _('Tech Stack') }}</div>
       <div class="tech-grid">
         <span class="tech-tag">FastAPI</span>
         <span class="tech-tag">Leaflet.js</span>

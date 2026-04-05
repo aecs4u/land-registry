@@ -462,6 +462,7 @@ function toggleSidebar() {
     if (!sidebar) return;
 
     const collapsed = sidebar.classList.toggle('collapsed');
+    document.body.classList.toggle('sidebar-collapsed', collapsed);
     if (expandBtn) expandBtn.style.display = collapsed ? 'flex' : 'none';
     if (collapseBtn) collapseBtn.style.display = collapsed ? 'none' : 'flex';
     localStorage.setItem('sidebarCollapsed', collapsed ? '1' : '0');
@@ -480,6 +481,7 @@ function toggleSidebar() {
             const expandBtn = document.getElementById('sidebarExpandBtn');
             const collapseBtn = document.getElementById('sidebarCollapseBtn');
             if (sidebar) sidebar.classList.add('collapsed');
+            document.body.classList.add('sidebar-collapsed');
             if (expandBtn) expandBtn.style.display = 'flex';
             if (collapseBtn) collapseBtn.style.display = 'none';
         });
@@ -841,16 +843,19 @@ function updateDataDependentButtons() {
         updateExportButtons();
     }
 
+    // Update polygon management buttons (require data to be loaded)
+    const removePolygonsBtn = document.getElementById('removePolygonsBtn');
+    const zoomToPolygonsBtn = document.getElementById('zoomToPolygonsBtn');
+    const exportAllBtn = document.getElementById('exportAllBtn');
+    if (removePolygonsBtn) removePolygonsBtn.disabled = !hasData;
+    if (zoomToPolygonsBtn) zoomToPolygonsBtn.disabled = !hasData;
+    if (exportAllBtn) exportAllBtn.disabled = !hasData;
+
     // Update display control buttons
     const selectionInfoBtn = document.querySelector('[onclick="toggleSelectionInfo()"]');
     const polygonsVisibilityBtn = document.querySelector('[onclick="togglePolygonsVisibility()"]');
-
-    if (selectionInfoBtn) {
-        selectionInfoBtn.disabled = !hasData;
-    }
-    if (polygonsVisibilityBtn) {
-        polygonsVisibilityBtn.disabled = !hasData;
-    }
+    if (selectionInfoBtn) selectionInfoBtn.disabled = !hasData;
+    if (polygonsVisibilityBtn) polygonsVisibilityBtn.disabled = !hasData;
 
     debugLog('Data-dependent buttons updated. Has data:', hasData);
 }
@@ -3287,171 +3292,242 @@ window.loadCadastralSelection = async function() {
 let searchHighlightLayer = null;
 
 /**
- * Search for parcels by foglio and/or particella
+ * Parse NATIONALCADASTRALREFERENCE to extract foglio and particella.
+ * Format: {COMUNE_CODE}_{FOGLIO_PADDED}.{PARTICELLA}[/{SUBALTERNO}]
+ * e.g.  "A018_003500.257"  →  foglio="3500", particella="257", sub=""
+ *        "A018_003500.257/1" → foglio="3500", particella="257", sub="1"
  */
-window.searchParcels = function() {
-    const foglioInput = document.getElementById('searchFoglio');
-    const particellaInput = document.getElementById('searchParticella');
-    const resultsDiv = document.getElementById('searchResults');
-    const resultCountSpan = document.getElementById('searchResultCount');
+function _parseCadastralRef(ref) {
+    if (!ref) return { foglio: '', particella: '', sub: '' };
+    // Strip comune prefix: everything up to and including first underscore
+    const withoutComune = ref.replace(/^[^_]+_/, '');   // "003500.257" or "003500.257/1"
+    const dotIdx = withoutComune.indexOf('.');
+    if (dotIdx === -1) return { foglio: withoutComune.replace(/^0+/, '') || withoutComune, particella: '', sub: '' };
+    const foglio = withoutComune.slice(0, dotIdx).replace(/^0+/, '') || withoutComune.slice(0, dotIdx);
+    const rest = withoutComune.slice(dotIdx + 1);        // "257" or "257/1"
+    const slashIdx = rest.indexOf('/');
+    const particella = slashIdx === -1 ? rest : rest.slice(0, slashIdx);
+    const sub = slashIdx === -1 ? '' : rest.slice(slashIdx + 1);
+    return { foglio, particella, sub };
+}
 
-    const foglioSearch = (foglioInput?.value || '').trim().toLowerCase();
-    const particellaSearch = (particellaInput?.value || '').trim().toLowerCase();
+// Cached cadastral structure for cascading Region → Province → Municipality selects
+let _cadastralStructure = null;
 
-    if (!foglioSearch && !particellaSearch) {
-        alert('Please enter a foglio number, particella number, or both.');
-        return;
+function _mkOpt(value, label, disabled = false) {
+    const o = document.createElement('option');
+    o.value = value;
+    o.textContent = label;
+    if (disabled) o.disabled = true;
+    return o;
+}
+
+function _resetSelect(id, placeholder) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.innerHTML = '';
+    el.appendChild(_mkOpt('', placeholder));
+    el.value = '';
+    el.disabled = true;
+}
+
+/**
+ * Load cadastral structure once, then populate the Region dropdown.
+ * Called when the Explore panel opens or after data loads.
+ */
+window.refreshSearchComuneList = async function() {
+    const regionSel = document.getElementById('searchRegion');
+    if (!regionSel) return;
+
+    if (!_cadastralStructure) {
+        try {
+            const resp = await fetch('/api/v1/get-cadastral-structure/');
+            if (!resp.ok) return;
+            _cadastralStructure = await resp.json();
+        } catch (e) {
+            console.warn('[Search] Could not load cadastral structure:', e);
+            return;
+        }
     }
 
-    // Clear previous search highlights
-    clearParcelSearch();
-
-    // Collect all matching features from all layers
-    const matchingFeatures = [];
-
-    map.eachLayer(function(layer) {
-        // Check if this is a GeoJSON layer group
-        if (layer instanceof L.LayerGroup || layer instanceof L.GeoJSON) {
-            layer.eachLayer(function(sublayer) {
-                if (sublayer.feature) {
-                    const feature = sublayer.feature;
-                    const props = feature.properties || {};
-
-                    // Extract foglio and particella from LABEL or specific fields
-                    // LABEL format is typically "foglio/particella" e.g., "12/456"
-                    const label = (props.LABEL || '').toLowerCase();
-                    const foglio = (props.foglio || props.FOGLIO || '').toString().toLowerCase();
-                    const particella = (props.particella || props.PARTICELLA || '').toString().toLowerCase();
-
-                    let matches = true;
-
-                    // Check foglio match
-                    if (foglioSearch) {
-                        const foglioFromLabel = label.split('/')[0] || '';
-                        if (foglio !== foglioSearch && foglioFromLabel !== foglioSearch) {
-                            matches = false;
-                        }
-                    }
-
-                    // Check particella match
-                    if (particellaSearch && matches) {
-                        const particellaFromLabel = label.split('/')[1] || '';
-                        if (particella !== particellaSearch && particellaFromLabel !== particellaSearch) {
-                            matches = false;
-                        }
-                    }
-
-                    if (matches) {
-                        matchingFeatures.push({
-                            feature: feature,
-                            layer: sublayer
-                        });
-                    }
-                }
-            });
-        }
+    const prev = regionSel.value;
+    const placeholder = window.t ? window.t('Select region…') : 'Select region…';
+    regionSel.innerHTML = '';
+    regionSel.appendChild(_mkOpt('', placeholder));
+    Object.keys(_cadastralStructure).sort().forEach(r => {
+        regionSel.appendChild(_mkOpt(r, r));
     });
-
-    // Show results
-    if (resultsDiv && resultCountSpan) {
-        resultsDiv.style.display = 'block';
-        resultCountSpan.textContent = `${matchingFeatures.length} parcel${matchingFeatures.length !== 1 ? 's' : ''} found`;
-
-        if (matchingFeatures.length === 0) {
-            resultsDiv.classList.add('no-results');
-        } else {
-            resultsDiv.classList.remove('no-results');
-        }
+    regionSel.disabled = false;
+    if (prev && _cadastralStructure[prev]) {
+        regionSel.value = prev;
+        onSearchRegionChange();
+    } else {
+        _resetSelect('searchProvince', window.t ? window.t('Select province…') : 'Select province…');
+        _resetSelect('searchMunicipality', window.t ? window.t('Select municipality…') : 'Select municipality…');
     }
+};
 
-    if (matchingFeatures.length === 0) {
-        return;
-    }
+window.onSearchRegionChange = function() {
+    const region = document.getElementById('searchRegion')?.value || '';
+    const provinceSel = document.getElementById('searchProvince');
+    if (!provinceSel) return;
 
-    // Create highlight layer for matching features
-    const highlightFeatures = matchingFeatures.map(m => m.feature);
-    const highlightGeoJSON = {
-        type: 'FeatureCollection',
-        features: highlightFeatures
-    };
+    _resetSelect('searchProvince', window.t ? window.t('Select province…') : 'Select province…');
+    _resetSelect('searchMunicipality', window.t ? window.t('Select municipality…') : 'Select municipality…');
 
-    searchHighlightLayer = L.geoJSON(highlightGeoJSON, {
-        style: {
-            color: '#ff6600',
-            weight: 4,
-            fillColor: '#ff6600',
-            fillOpacity: 0.3,
-            opacity: 1
-        },
-        onEachFeature: function(feature, layer) {
-            const props = feature.properties || {};
-            const label = props.LABEL || 'Unknown';
-            const comune = props.ADMINISTRATIVEUNIT || '';
-            const area = props.area_display || '';
+    if (!region || !_cadastralStructure?.[region]) return;
 
-            layer.bindPopup(`
-                <div class="search-result-popup">
-                    <strong>📍 ${label}</strong><br>
-                    ${comune ? `<span style="color:#666">Comune: ${comune}</span><br>` : ''}
-                    ${area ? `<span style="color:#666">Area: ${area}</span>` : ''}
-                </div>
-            `);
-        }
-    }).addTo(map);
+    const provinces = _cadastralStructure[region];
+    provinceSel.innerHTML = '';
+    provinceSel.appendChild(_mkOpt('', window.t ? window.t('Select province…') : 'Select province…'));
+    Object.keys(provinces).sort().forEach(p => {
+        provinceSel.appendChild(_mkOpt(p, p));
+    });
+    provinceSel.disabled = false;
+};
 
-    // Fit map to show all results
-    const bounds = searchHighlightLayer.getBounds();
-    if (bounds.isValid()) {
-        map.fitBounds(bounds, { padding: [50, 50], maxZoom: 17 });
-    }
+window.onSearchProvinceChange = function() {
+    const region = document.getElementById('searchRegion')?.value || '';
+    const province = document.getElementById('searchProvince')?.value || '';
+    const muniSel = document.getElementById('searchMunicipality');
+    if (!muniSel) return;
 
-    // If only one result, open its popup
-    if (matchingFeatures.length === 1) {
-        searchHighlightLayer.eachLayer(function(layer) {
-            layer.openPopup();
+    _resetSelect('searchMunicipality', window.t ? window.t('Select municipality…') : 'Select municipality…');
+
+    if (!region || !province || !_cadastralStructure?.[region]?.[province]) return;
+
+    const municipalities = _cadastralStructure[region][province];
+    muniSel.innerHTML = '';
+    muniSel.appendChild(_mkOpt('', window.t ? window.t('Select municipality…') : 'Select municipality…'));
+    Object.values(municipalities)
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .forEach(m => {
+            muniSel.appendChild(_mkOpt(m.code, `${m.name} (${m.code})`));
         });
-    }
-
-    debugLog(`Search found ${matchingFeatures.length} parcels matching foglio="${foglioSearch}" particella="${particellaSearch}"`);
+    muniSel.disabled = false;
 };
 
 /**
- * Clear search results and highlights
+ * Search parcels via server-side API.
+ * Comune (ADMINISTRATIVEUNIT) is required; foglio, particella, subalterno are optional.
  */
-window.clearParcelSearch = function() {
-    // Remove highlight layer
-    if (searchHighlightLayer) {
-        map.removeLayer(searchHighlightLayer);
-        searchHighlightLayer = null;
-    }
-
-    // Clear inputs
-    const foglioInput = document.getElementById('searchFoglio');
+window.searchParcels = async function() {
+    const muniSelect      = document.getElementById('searchMunicipality');
+    const foglioInput     = document.getElementById('searchFoglio');
     const particellaInput = document.getElementById('searchParticella');
-    if (foglioInput) foglioInput.value = '';
-    if (particellaInput) particellaInput.value = '';
+    const subInput        = document.getElementById('searchSubalterno');
+    const resultsDiv      = document.getElementById('searchResults');
+    const resultCountSpan = document.getElementById('searchResultCount');
 
-    // Hide results
-    const resultsDiv = document.getElementById('searchResults');
-    if (resultsDiv) {
-        resultsDiv.style.display = 'none';
-        resultsDiv.classList.remove('no-results');
+    const comuneSearch    = (muniSelect?.value      || '').trim();
+    const foglioSearch    = (foglioInput?.value     || '').trim();
+    const particellaSearch= (particellaInput?.value || '').trim();
+    const subSearch       = (subInput?.value        || '').trim();
+
+    if (!comuneSearch) {
+        alert(window.t ? window.t('Select a municipality before searching.') : 'Select a municipality before searching.');
+        muniSelect?.focus();
+        return;
     }
+
+    // Show loading state
+    if (resultCountSpan) resultCountSpan.textContent = '…';
+    if (resultsDiv) { resultsDiv.style.display = 'block'; resultsDiv.classList.remove('no-results'); }
+
+    // Build query string
+    const params = new URLSearchParams({ comune: comuneSearch });
+    if (foglioSearch)     params.set('foglio',     foglioSearch);
+    if (particellaSearch) params.set('particella', particellaSearch);
+    if (subSearch)        params.set('subalterno', subSearch);
+
+    let geojson;
+    try {
+        const resp = await fetch('/api/v1/search/parcels?' + params.toString());
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            alert('Search error: ' + (err.detail || resp.statusText));
+            return;
+        }
+        geojson = await resp.json();
+    } catch (e) {
+        alert('Search error: ' + e.message);
+        return;
+    }
+
+    const n = geojson.count ?? (geojson.features?.length ?? 0);
+
+    if (resultCountSpan) {
+        resultCountSpan.textContent = n === 0
+            ? (window.t ? window.t('No results') : 'No results')
+            : `${n} ${n !== 1 ? 'parcels' : 'parcel'} found`;
+    }
+    if (resultsDiv) resultsDiv.classList.toggle('no-results', n === 0);
+
+    if (n === 0) return;
+
+    // Remove previous highlight
+    const mapObj = getFoliumMapInstance ? getFoliumMapInstance() : (window.map || null);
+    if (!mapObj) return;
+    if (searchHighlightLayer) { mapObj.removeLayer(searchHighlightLayer); searchHighlightLayer = null; }
+
+    searchHighlightLayer = L.geoJSON(geojson, {
+        style: { color: '#ff6600', weight: 3, fillColor: '#ff9933', fillOpacity: 0.35 },
+        onEachFeature: function(feature, layer) {
+            const p = feature.properties || {};
+            const ref = p.NATIONALCADASTRALREFERENCE || p.NATIONALCADASTRALZONINGREFERENCE || '';
+            const parsed = _parseCadastralRef(ref);
+            const comune = p.ADMINISTRATIVEUNIT || '';
+            const foglio = p.foglio || p.FOGLIO || parsed.foglio || '—';
+            const particella = p.LABEL || p.particella || parsed.particella || '—';
+            const sub = p.subalterno || p.SUBALTERNO || parsed.sub || '';
+            const area = p.area_display || '';
+            layer.bindPopup(
+                `<div class="search-result-popup">` +
+                `<strong>📍 ${comune} · F.${foglio} p.${particella}${sub ? '/' + sub : ''}</strong><br>` +
+                `${area ? `<span style="color:#666">Area: ${area}</span>` : ''}` +
+                `</div>`
+            );
+        }
+    }).addTo(mapObj);
+
+    const bounds = searchHighlightLayer.getBounds();
+    if (bounds.isValid()) mapObj.fitBounds(bounds, { padding: [50, 50], maxZoom: 17 });
+    if (n === 1) searchHighlightLayer.eachLayer(l => l.openPopup());
 };
 
-// Add keyboard shortcut for search (Enter key in inputs)
+/**
+ * Clear search results and highlights.
+ */
+window.clearParcelSearch = function() {
+    const mapObj = getFoliumMapInstance ? getFoliumMapInstance() : (window.map || null);
+    if (searchHighlightLayer && mapObj) {
+        mapObj.removeLayer(searchHighlightLayer);
+        searchHighlightLayer = null;
+    }
+    ['searchFoglio', 'searchParticella', 'searchSubalterno'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+    // Reset cascading selects back to just region (keep region/province selection)
+    const muniSel = document.getElementById('searchMunicipality');
+    if (muniSel) muniSel.value = '';
+    const resultsDiv = document.getElementById('searchResults');
+    if (resultsDiv) { resultsDiv.style.display = 'none'; resultsDiv.classList.remove('no-results'); }
+};
+
+// Keyboard: Enter triggers search from any of the four inputs
 document.addEventListener('DOMContentLoaded', function() {
-    const foglioInput = document.getElementById('searchFoglio');
-    const particellaInput = document.getElementById('searchParticella');
+    const foglioInput    = document.getElementById('searchFoglio');
+    const particellaInput= document.getElementById('searchParticella');
+    const subInput       = document.getElementById('searchSubalterno');
 
     const handleEnter = function(e) {
-        if (e.key === 'Enter') {
-            window.searchParcels();
-        }
+        if (e.key === 'Enter') window.searchParcels();
     };
 
-    if (foglioInput) foglioInput.addEventListener('keypress', handleEnter);
+    if (foglioInput)     foglioInput.addEventListener('keypress', handleEnter);
     if (particellaInput) particellaInput.addEventListener('keypress', handleEnter);
+    if (subInput)        subInput.addEventListener('keypress', handleEnter);
 });
 
 // ==========================================
