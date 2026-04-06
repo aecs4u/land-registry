@@ -3480,6 +3480,50 @@ async def get_datashader_categorical(
 
 
 # ============================================================================
+# GHSL (Global Human Settlement Layer) Endpoints
+# ============================================================================
+
+@api_router.get("/ghsl/status")
+async def ghsl_status():
+    """Check whether a GHSL raster is available and which file is active."""
+    from land_registry.dependencies import _ghsl_registry
+    service = _ghsl_registry.get_service()
+    if service is None:
+        return {"available": False, "raster_path": None, "data_dir": None}
+    return service.status_info()
+
+
+@api_router.post("/ghsl/enrich")
+async def ghsl_enrich(mode: str = "broad"):
+    """Re-enrich current GDF with GHSL classification (e.g. after mode change)."""
+    from land_registry.dependencies import _ghsl_registry
+    service = _ghsl_registry.get_service()
+    if service is None or not service.available:
+        raise HTTPException(status_code=503, detail="GHSL raster not available")
+
+    current_gdf = get_current_gdf()
+    if current_gdf is None or current_gdf.empty:
+        raise HTTPException(status_code=400, detail="No data loaded")
+
+    # Strip existing GHSL columns so enrichment re-processes all rows
+    for col in ("ghsl_class_code", "ghsl_class_label", "urban_status"):
+        if col in current_gdf.columns:
+            current_gdf.drop(columns=[col], inplace=True)
+
+    service.enrich_geodataframe(current_gdf, mode=mode)
+    set_current_gdf(current_gdf)
+
+    stats = {
+        "total": len(current_gdf),
+        "urban": int((current_gdf.get("urban_status") == "urban").sum()) if "urban_status" in current_gdf.columns else 0,
+        "not_urban": int((current_gdf.get("urban_status") == "not_urban").sum()) if "urban_status" in current_gdf.columns else 0,
+        "unknown": int((current_gdf.get("urban_status") == "unknown").sum()) if "urban_status" in current_gdf.columns else 0,
+        "mode": mode,
+    }
+    return stats
+
+
+# ============================================================================
 # FlatGeobuf (FGB) API Endpoints
 # ============================================================================
 

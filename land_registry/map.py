@@ -641,9 +641,22 @@ def get_current_gdf():
 def set_current_gdf(gdf):
     """Set the current GeoDataFrame.
 
+    Automatically enriches with GHSL urban/rural classification when a raster
+    is available and ``ghsl_enrich_on_load`` is enabled.
+
     NOTE: _sync_to_panel is disabled as it causes deadlock when param watchers
     try to recompute while blocking the async event loop.
     """
+    if gdf is not None and not gdf.empty:
+        try:
+            from land_registry.config import ghsl_settings
+            if ghsl_settings.ghsl_enrich_on_load:
+                from land_registry.dependencies import _ghsl_registry
+                service = _ghsl_registry.get_service()
+                if service is not None:
+                    gdf = service.enrich_geodataframe(gdf, mode=ghsl_settings.ghsl_default_mode)
+        except Exception:
+            logger.warning("GHSL enrichment failed", exc_info=True)
     _map_state.set_gdf(gdf)
     # _sync_to_panel(gdf)  # Disabled - causes deadlock
 

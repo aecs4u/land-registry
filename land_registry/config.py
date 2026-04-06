@@ -317,6 +317,20 @@ class PanelServerSettings(BaseSettings):
         extra = "ignore"
 
 
+class GHSLSettings(BaseSettings):
+    """GHSL (Global Human Settlement Layer) raster configuration."""
+
+    ghsl_data_dir: str = "/data/ghsl"
+    ghsl_raster_path: Optional[str] = None  # explicit override; auto-discovered if None
+    ghsl_default_mode: str = "broad"  # "broad" or "strict"
+    ghsl_enrich_on_load: bool = True  # enrich GDF automatically when data loads
+
+    class Config:
+        env_prefix = "GHSL_"
+        case_sensitive = False
+        extra = "ignore"
+
+
 def get_panel_url(route: str = "") -> str:
     """Helper to build Panel server URLs"""
     return f"http://{panel_settings.panel_host}:{panel_settings.panel_port}{route}"
@@ -333,6 +347,7 @@ cadastral_settings = CadastralSettings()
 map_controls_settings = MapControlsSettings()
 panel_settings = PanelServerSettings()
 spatialite_settings = SpatialiteSettings()
+ghsl_settings = GHSLSettings()
 
 # Auto-detect Neon PostgreSQL configuration
 if os.getenv("DATABASE_URL"):

@@ -226,12 +226,41 @@ class DatashaderRegistry:
 
 
 # ============================================================================
+# GHSLRegistry — wraps GHSLService
+# ============================================================================
+
+class GHSLRegistry:
+    """Thread-safe lazy singleton for GHSLService."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._service = None
+
+    def get_service(self):
+        """Get or create the GHSLService instance (may return None if unavailable)."""
+        with self._lock:
+            if self._service is None:
+                try:
+                    from land_registry.ghsl_service import GHSLService
+                    from land_registry.config import ghsl_settings
+                    self._service = GHSLService(
+                        data_dir=ghsl_settings.ghsl_data_dir,
+                        raster_path=ghsl_settings.ghsl_raster_path,
+                    )
+                    logger.info("GHSLService created (data_dir=%s)", ghsl_settings.ghsl_data_dir)
+                except Exception as e:
+                    logger.warning("Failed to create GHSLService: %s", e)
+            return self._service
+
+
+# ============================================================================
 # Module-level singletons (one per process)
 # ============================================================================
 
 _map_state = MapState()
 _cadastral_registry = CadastralRegistry()
 _datashader_registry = DatashaderRegistry()
+_ghsl_registry = GHSLRegistry()
 
 
 # ============================================================================
