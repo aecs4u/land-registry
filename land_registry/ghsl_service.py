@@ -1,10 +1,11 @@
 """
-GHSL (Global Human Settlement Layer) raster sampling service.
+GHSL (Global Human Settlement Layer) service.
 
-Opens GHS-SMOD / DEGURBA TIFF files (including inside ZIP archives via GDAL
-/vsizip/) and batch-samples class codes at polygon centroids. The main public
-API is ``enrich_geodataframe(gdf, mode)`` which adds ``ghsl_class_code``,
-``ghsl_class_label`` and ``urban_status`` columns in-place.
+Two enrichment layers:
+1. **DEGURBA raster** — samples GHS-SMOD TIFF at polygon centroids to add
+   ``ghsl_class_code``, ``ghsl_class_label`` and ``urban_status``.
+2. **UCDB spatial join** — joins parcels with the Urban Centre Database to add
+   ``ucdb_name``, ``ucdb_pop_2025``, ``ucdb_area_km2``, ``ucdb_gdp_2020``.
 """
 
 import logging
@@ -239,7 +240,141 @@ class GHSLService:
             "crs": str(self._raster.crs) if self._raster else None,
             "shape": list(self._raster.shape) if self._raster else None,
             "data_dir": self._data_dir,
+            "ucdb_available": self._ucdb is not None,
+            "ucdb_italy_count": len(self._ucdb) if self._ucdb is not None else 0,
         }
+
+    # ------------------------------------------------------------------
+    # UCDB (Urban Centre Database) spatial join
+    # ------------------------------------------------------------------
+
+    _ucdb = None  # cached Italian urban centres GeoDataFrame (EPSG:4326)
+
+    def _ensure_ucdb(self) -> bool:
+        """Lazy-load Italian urban centres from UCDB GPKG inside ZIP."""
+        if self._ucdb is not None:
+            return True
+        with self._lock:
+            if self._ucdb is not None:
+                return True
+            try:
+                import geopandas as _gpd
+
+                ucdb_zip = None
+                for entry in Path(self._data_dir).iterdir():
+                    if "UCDB" in entry.name.upper() and "GLOBE" in entry.name.upper() and entry.suffix.lower() == ".zip":
+                        # Prefer the main UCDB, not MTUC or OSM_COMPLETENESS
+                        if "MTUC" not in entry.name.upper() and "COMPLETENESS" not in entry.name.upper():
+                            ucdb_zip = str(entry)
+                            break
+
+                if not ucdb_zip:
+                    logger.info("No UCDB GPKG found in %s", self._data_dir)
+                    return False
+
+                # Find the .gpkg inside the zip
+                gpkg_name = None
+                with zipfile.ZipFile(ucdb_zip) as zf:
+                    for n in zf.namelist():
+                        if n.lower().endswith(".gpkg"):
+                            gpkg_name = n
+                            break
+                if not gpkg_name:
+                    return False
+
+                vsi_path = f"/vsizip/{ucdb_zip}/{gpkg_name}"
+                layer = "GHS_UCDB_THEME_GENERAL_CHARACTERISTICS_GLOBE_R2024A"
+
+                gdf = _gpd.read_file(vsi_path, layer=layer)
+                # Strip BOM from column names and string values
+                gdf.columns = [c.lstrip("\ufeff") for c in gdf.columns]
+                for col in gdf.select_dtypes(include="object").columns:
+                    gdf[col] = gdf[col].str.lstrip("\ufeff")
+
+                # Filter to Italy and reproject to EPSG:4326
+                italy = gdf[gdf["GC_CNT_GAD_2025"] == "Italy"].copy()
+                italy = italy.to_crs("EPSG:4326")
+
+                # Load GDP from socioeconomic layer
+                try:
+                    se = _gpd.read_file(vsi_path, layer="GHS_UCDB_THEME_SOCIOECONOMIC_GLOBE_R2024A")
+                    se.columns = [c.lstrip("\ufeff") for c in se.columns]
+                    se_italy = se[se["ID_UC_G0"].isin(italy["ID_UC_G0"])][
+                        ["ID_UC_G0", "SC_GDP_AVG_2020"]
+                    ].copy()
+                    italy = italy.merge(se_italy, on="ID_UC_G0", how="left")
+                except Exception:
+                    italy["SC_GDP_AVG_2020"] = None
+
+                # Rename for clarity
+                italy = italy.rename(columns={
+                    "GC_UCN_MAI_2025": "ucdb_name",
+                    "GC_POP_TOT_2025": "ucdb_pop_2025",
+                    "GC_UCA_KM2_2025": "ucdb_area_km2",
+                    "SC_GDP_AVG_2020": "ucdb_gdp_2020",
+                    "ID_UC_G0": "ucdb_id",
+                })
+                # Keep only the columns we'll join
+                keep = ["ucdb_id", "ucdb_name", "ucdb_pop_2025", "ucdb_area_km2", "ucdb_gdp_2020", "geometry"]
+                self._ucdb = italy[[c for c in keep if c in italy.columns]].copy()
+                logger.info("UCDB loaded: %d Italian urban centres", len(self._ucdb))
+                return True
+            except Exception:
+                logger.warning("Failed to load UCDB", exc_info=True)
+                return False
+
+    def enrich_ucdb(self, gdf):
+        """Spatial-join parcels with UCDB urban centres.
+
+        Adds ucdb_name, ucdb_pop_2025, ucdb_area_km2, ucdb_gdp_2020 columns.
+        Parcels outside any urban centre get NaN.  Idempotent.
+        """
+        if gdf is None or gdf.empty:
+            return gdf
+        if not self._ensure_ucdb():
+            return gdf
+
+        # Skip if already enriched
+        if "ucdb_name" in gdf.columns:
+            mask = gdf["ucdb_name"].isna()
+            if not mask.any():
+                return gdf
+        else:
+            mask = gdf.index == gdf.index  # all True
+
+        import geopandas as _gpd
+        import warnings
+
+        subset = gdf.loc[mask].copy()
+        # Use centroid for point-in-polygon join
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            subset_pts = subset.copy()
+            subset_pts.geometry = subset.geometry.centroid
+
+        # Ensure CRS match (UCDB is EPSG:4326; cadastral data may be EPSG:6706)
+        if subset_pts.crs and self._ucdb.crs and subset_pts.crs != self._ucdb.crs:
+            subset_pts = subset_pts.to_crs(self._ucdb.crs)
+
+        joined = _gpd.sjoin(
+            subset_pts, self._ucdb, how="left", predicate="within"
+        )
+        # Drop duplicates (parcel on boundary of two UCs — keep first)
+        joined = joined[~joined.index.duplicated(keep="first")]
+
+        for col in ("ucdb_name", "ucdb_pop_2025", "ucdb_area_km2", "ucdb_gdp_2020"):
+            if col in joined.columns:
+                gdf.loc[mask, col] = joined[col].values
+
+        n_matched = gdf.loc[mask, "ucdb_name"].notna().sum()
+        logger.info("UCDB join: %d/%d parcels inside an urban centre", n_matched, mask.sum())
+        return gdf
+
+    def get_ucdb_italy(self):
+        """Return the cached Italian UCDB GeoDataFrame (or None)."""
+        if self._ensure_ucdb():
+            return self._ucdb
+        return None
 
     def close(self):
         with self._lock:

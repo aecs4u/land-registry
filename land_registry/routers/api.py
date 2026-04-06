@@ -3493,6 +3493,21 @@ async def ghsl_status():
     return service.status_info()
 
 
+@api_router.get("/ghsl/ucdb")
+async def ghsl_ucdb():
+    """Return Italian urban centres from UCDB (GeoJSON FeatureCollection)."""
+    from land_registry.dependencies import _ghsl_registry
+    service = _ghsl_registry.get_service()
+    if service is None:
+        raise HTTPException(status_code=503, detail="GHSL service not available")
+    ucdb = service.get_ucdb_italy()
+    if ucdb is None or ucdb.empty:
+        return {"type": "FeatureCollection", "features": [], "count": 0}
+    geojson = json.loads(ucdb.to_json())
+    geojson["count"] = len(ucdb)
+    return geojson
+
+
 @api_router.post("/ghsl/enrich")
 async def ghsl_enrich(mode: str = "broad"):
     """Re-enrich current GDF with GHSL classification (e.g. after mode change)."""

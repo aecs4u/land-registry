@@ -655,6 +655,7 @@ def set_current_gdf(gdf):
                 service = _ghsl_registry.get_service()
                 if service is not None:
                     gdf = service.enrich_geodataframe(gdf, mode=ghsl_settings.ghsl_default_mode)
+                    gdf = service.enrich_ucdb(gdf)
         except Exception:
             logger.warning("GHSL enrichment failed", exc_info=True)
     _map_state.set_gdf(gdf)
