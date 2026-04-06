@@ -23,6 +23,355 @@ let drawnPolylines = [];
 let selectedPolyline = null;
 let polylineHistory = [];
 
+// Urban contour overlay management
+let urbanContourLayers = [];
+let urbanContourSources = [];
+
+const GHSL_CLASS_LABELS = Object.freeze({
+    30: 'urban centre',
+    23: 'dense urban cluster',
+    22: 'semi-dense urban cluster',
+    21: 'suburban or peri-urban',
+    13: 'rural cluster',
+    12: 'low density rural',
+    11: 'very low density rural',
+    10: 'water'
+});
+
+const GHSL_URBAN_CODES_BROAD = new Set([30, 23, 22, 21]);
+const GHSL_URBAN_CODES_STRICT = new Set([30, 23, 22]);
+const GHSL_NOT_URBAN_CODES_BROAD = new Set([13, 12, 11, 10]);
+const GHSL_NOT_URBAN_CODES_STRICT = new Set([21, 13, 12, 11, 10]);
+
+const URBAN_STATUS_PROPERTY_KEYS = [
+    'urban_status', 'urban_classification', 'classification_status', 'ghsl_status', 'degurba_status'
+];
+const URBAN_CLASS_CODE_PROPERTY_KEYS = [
+    'class_code', 'ghsl_class_code', 'ghsl_smod', 'ghsl_smod_code', 'smod', 'smod_code', 'degurba_code'
+];
+const URBAN_CLASS_LABEL_PROPERTY_KEYS = [
+    'class_label', 'ghsl_class_label', 'ghsl_label', 'smod_label', 'degurba_label'
+];
+
+const GHSL_LABEL_TO_CODE = Object.freeze({
+    'urban centre': 30,
+    'urban center': 30,
+    'dense urban cluster': 23,
+    'semi dense urban cluster': 22,
+    'semi-dense urban cluster': 22,
+    'suburban or peri urban': 21,
+    'suburban or peri-urban': 21,
+    'rural cluster': 13,
+    'low density rural': 12,
+    'very low density rural': 11,
+    'water': 10
+});
+
+function getUrbanContourMode() {
+    const modeEl = document.getElementById('urbanContourMode');
+    const mode = (modeEl?.value || 'broad').toLowerCase();
+    return mode === 'strict' ? 'strict' : 'broad';
+}
+
+function isUrbanContourEnabled() {
+    const enabledEl = document.getElementById('urbanContourEnabled');
+    return enabledEl ? !!enabledEl.checked : true;
+}
+
+function _toLowerLookup(properties) {
+    const lookup = {};
+    if (!properties || typeof properties !== 'object') {
+        return lookup;
+    }
+    Object.keys(properties).forEach(key => {
+        lookup[key.toLowerCase()] = properties[key];
+    });
+    return lookup;
+}
+
+function _normalizeClassText(value) {
+    return String(value ?? '')
+        .trim()
+        .toLowerCase()
+        .replace(/[_-]+/g, ' ')
+        .replace(/\s+/g, ' ');
+}
+
+function _parseClassCode(value) {
+    if (value === null || value === undefined || value === '') return null;
+    if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value);
+    if (typeof value === 'string') {
+        const match = value.trim().match(/^-?\d+/);
+        if (!match) return null;
+        const parsed = Number.parseInt(match[0], 10);
+        return Number.isNaN(parsed) ? null : parsed;
+    }
+    return null;
+}
+
+function _normalizeUrbanStatus(value) {
+    const txt = _normalizeClassText(value);
+    const compact = txt.replace(/\s+/g, '');
+    if (!compact) return null;
+    if (compact === 'urban' || compact === 'urbano') return 'urban';
+    if (compact === 'noturban' || compact === 'nonurban' || compact === 'rural') return 'not_urban';
+    if (compact === 'unknown' || compact === 'nodata' || compact === 'na') return 'unknown';
+    return null;
+}
+
+function classifyUrbanStatusFromClassCode(classCode, mode) {
+    const urbanCodes = mode === 'strict' ? GHSL_URBAN_CODES_STRICT : GHSL_URBAN_CODES_BROAD;
+    const notUrbanCodes = mode === 'strict' ? GHSL_NOT_URBAN_CODES_STRICT : GHSL_NOT_URBAN_CODES_BROAD;
+    const classLabel = GHSL_CLASS_LABELS[classCode] || null;
+
+    if (urbanCodes.has(classCode)) {
+        return { status: 'urban', classCode, classLabel };
+    }
+    if (notUrbanCodes.has(classCode)) {
+        return { status: 'not_urban', classCode, classLabel };
+    }
+    return { status: 'unknown', classCode, classLabel };
+}
+
+function classifyFeatureUrbanStatus(feature, mode) {
+    const props = feature?.properties;
+    if (!props || typeof props !== 'object') return null;
+
+    const lookup = _toLowerLookup(props);
+
+    // Prefer explicit status if available
+    for (const key of URBAN_STATUS_PROPERTY_KEYS) {
+        if (!Object.prototype.hasOwnProperty.call(lookup, key)) continue;
+        const status = _normalizeUrbanStatus(lookup[key]);
+        if (status) {
+            return {
+                status,
+                classCode: _parseClassCode(lookup.class_code ?? lookup.ghsl_class_code ?? lookup.smod_code),
+                classLabel: lookup.class_label || null,
+                hasSignal: true
+            };
+        }
+    }
+
+    // Try class code-based classification (GHSL/DEGURBA-compatible)
+    for (const key of URBAN_CLASS_CODE_PROPERTY_KEYS) {
+        if (!Object.prototype.hasOwnProperty.call(lookup, key)) continue;
+        const code = _parseClassCode(lookup[key]);
+        if (code === null) {
+            return { status: 'unknown', classCode: null, classLabel: null, hasSignal: true };
+        }
+        const classified = classifyUrbanStatusFromClassCode(code, mode);
+        return { ...classified, hasSignal: true };
+    }
+
+    // Fallback to class label-based mapping
+    for (const key of URBAN_CLASS_LABEL_PROPERTY_KEYS) {
+        if (!Object.prototype.hasOwnProperty.call(lookup, key)) continue;
+        const normalizedLabel = _normalizeClassText(lookup[key]);
+        if (!normalizedLabel) {
+            return { status: 'unknown', classCode: null, classLabel: null, hasSignal: true };
+        }
+        const classCode = GHSL_LABEL_TO_CODE[normalizedLabel];
+        if (classCode !== undefined) {
+            const classified = classifyUrbanStatusFromClassCode(classCode, mode);
+            return { ...classified, classLabel: GHSL_CLASS_LABELS[classCode], hasSignal: true };
+        }
+        if (normalizedLabel === 'unknown') {
+            return { status: 'unknown', classCode: null, classLabel: 'unknown', hasSignal: true };
+        }
+        return { status: 'unknown', classCode: null, classLabel: String(lookup[key]), hasSignal: true };
+    }
+
+    // No urban classification signal found in properties
+    return null;
+}
+
+function buildUrbanContourFeatureCollection(sourceGeoJson, mode) {
+    const out = {
+        type: 'FeatureCollection',
+        features: []
+    };
+    const stats = { urban: 0, not_urban: 0, unknown: 0, totalClassified: 0 };
+
+    if (!sourceGeoJson?.features || !Array.isArray(sourceGeoJson.features)) {
+        return { featureCollection: out, stats };
+    }
+
+    sourceGeoJson.features.forEach(feature => {
+        const geomType = feature?.geometry?.type;
+        if (geomType !== 'Polygon' && geomType !== 'MultiPolygon') return;
+
+        const classified = classifyFeatureUrbanStatus(feature, mode);
+        if (!classified || !classified.hasSignal) return;
+
+        stats.totalClassified += 1;
+        stats[classified.status] += 1;
+
+        out.features.push({
+            type: 'Feature',
+            geometry: feature.geometry,
+            properties: {
+                ...(feature.properties || {}),
+                _urban_status: classified.status,
+                _urban_mode: mode,
+                _urban_class_code: classified.classCode,
+                _urban_class_label: classified.classLabel
+            }
+        });
+    });
+
+    return { featureCollection: out, stats };
+}
+
+function getUrbanContourStyle(feature) {
+    const status = feature?.properties?._urban_status;
+    if (status === 'urban') {
+        return {
+            color: '#d62828',
+            weight: 2.4,
+            opacity: 0.95,
+            dashArray: '10 6',
+            fillColor: '#e76f51',
+            fillOpacity: 0.12
+        };
+    }
+    if (status === 'not_urban') {
+        return {
+            color: '#2a9d8f',
+            weight: 2.2,
+            opacity: 0.9,
+            dashArray: '5 8',
+            fillColor: '#2a9d8f',
+            fillOpacity: 0.07
+        };
+    }
+    return {
+        color: '#6c757d',
+        weight: 1.8,
+        opacity: 0.75,
+        dashArray: '3 8',
+        fillColor: '#6c757d',
+        fillOpacity: 0
+    };
+}
+
+function ensureUrbanContourPane() {
+    if (!map) return;
+    if (!map.getPane('urbanContourPane')) {
+        const pane = map.createPane('urbanContourPane');
+        pane.style.zIndex = '460';
+        pane.style.pointerEvents = 'none';
+    }
+}
+
+function clearUrbanContourEntriesFromTree() {
+    if (!window.treeLayersControl) return;
+    try {
+        const overlays = window.treeLayersControl.getOverlayLayers();
+        const dataLayers = overlays?.['📊 Data Layers'];
+        if (!dataLayers) return;
+        Object.keys(dataLayers).forEach(label => {
+            if (label.startsWith('🌆 ')) {
+                delete dataLayers[label];
+            }
+        });
+        window.treeLayersControl.refresh();
+    } catch (error) {
+        console.warn('Could not clear urban contour entries from TreeLayers:', error);
+    }
+}
+
+function removeUrbanContourLayerByName(sourceName) {
+    urbanContourLayers = urbanContourLayers.filter(entry => {
+        if (entry.name !== sourceName) return true;
+        try {
+            if (entry.layer && map && map.hasLayer(entry.layer)) {
+                map.removeLayer(entry.layer);
+            }
+        } catch (_) {}
+        return false;
+    });
+}
+
+function clearUrbanContourLayers() {
+    urbanContourLayers.forEach(entry => {
+        try {
+            if (entry.layer && map && map.hasLayer(entry.layer)) {
+                map.removeLayer(entry.layer);
+            }
+        } catch (_) {}
+    });
+    urbanContourLayers = [];
+    clearUrbanContourEntriesFromTree();
+}
+
+function registerUrbanContourSource(sourceName, sourceGeoJson) {
+    if (!sourceGeoJson?.features || !Array.isArray(sourceGeoJson.features)) return;
+    const name = sourceName || `Layer ${urbanContourSources.length + 1}`;
+    urbanContourSources = urbanContourSources.filter(src => src.name !== name);
+    urbanContourSources.push({ name, geojson: sourceGeoJson });
+}
+
+function registerUrbanContourLayerInTree(sourceName, contourLayer, mode) {
+    if (!window.treeLayersControl || !contourLayer) return;
+    try {
+        const overlays = window.treeLayersControl.getOverlayLayers();
+        if (!overlays['📊 Data Layers']) {
+            overlays['📊 Data Layers'] = {};
+        }
+        const label = `🌆 ${sourceName} Urban Contour (${mode})`;
+        overlays['📊 Data Layers'][label] = contourLayer;
+        window.treeLayersControl.refresh();
+    } catch (error) {
+        console.warn('Could not register urban contour layer in TreeLayers:', error);
+    }
+}
+
+function applyUrbanContourLayerForSource(sourceGeoJson, sourceName) {
+    if (!map || !sourceGeoJson) return null;
+
+    removeUrbanContourLayerByName(sourceName);
+
+    if (!isUrbanContourEnabled()) return null;
+
+    const mode = getUrbanContourMode();
+    const { featureCollection, stats } = buildUrbanContourFeatureCollection(sourceGeoJson, mode);
+    if (!featureCollection.features.length) return null;
+
+    ensureUrbanContourPane();
+
+    const contourLayer = L.geoJSON(featureCollection, {
+        pane: 'urbanContourPane',
+        interactive: false,
+        style: getUrbanContourStyle
+    });
+
+    contourLayer.options = contourLayer.options || {};
+    contourLayer.options.cadastralLayer = true;
+    contourLayer.options.urbanContourLayer = true;
+
+    contourLayer.addTo(map);
+    if (typeof contourLayer.bringToFront === 'function') {
+        contourLayer.bringToFront();
+    }
+
+    urbanContourLayers.push({ name: sourceName, layer: contourLayer, stats, mode });
+    registerUrbanContourLayerInTree(sourceName, contourLayer, mode);
+    return contourLayer;
+}
+
+function rebuildUrbanContourLayers() {
+    clearUrbanContourLayers();
+    if (!isUrbanContourEnabled()) return;
+    urbanContourSources.forEach(source => {
+        applyUrbanContourLayerForSource(source.geojson, source.name);
+    });
+}
+
+window.onUrbanContourConfigChange = function() {
+    rebuildUrbanContourLayers();
+};
+
 // ==========================================
 // URL State Management
 // ==========================================
@@ -2194,6 +2543,9 @@ function loadGeoJsonData() {
         try {
             const geoJsonData = window.geoJsonData;
             if (geoJsonData && geoJsonData.features && geoJsonData.features.length > 0) {
+                urbanContourSources = [];
+                clearUrbanContourLayers();
+
                 // Use WebGL renderer for high performance
                 const featureCount = geoJsonData.features.length;
                 console.log(`[loadGeoJsonData] Loading ${featureCount} features`);
@@ -2213,6 +2565,8 @@ function loadGeoJsonData() {
                 });
 
                 if (currentGeoJsonLayer) {
+                    currentGeoJsonLayer.options = currentGeoJsonLayer.options || {};
+                    currentGeoJsonLayer.options.cadastralLayer = true;
                     currentGeoJsonLayer.addTo(map);
                 } else {
                     console.warn('[loadGeoJsonData] WebGLRenderer returned null layer');
@@ -2248,6 +2602,9 @@ function loadGeoJsonData() {
                         console.warn('Could not update TreeLayers control:', e);
                     }
                 }
+
+                registerUrbanContourSource('Current Cadastral Data', geoJsonData);
+                rebuildUrbanContourLayers();
             }
         } catch (error) {
             console.error('Error loading GeoJSON data:', error);
@@ -3534,10 +3891,20 @@ document.addEventListener('DOMContentLoaded', function() {
 // Helper functions for loading cadastral data
 // ==========================================
 function clearMap() {
+    if (window.WebGLRenderer && typeof window.WebGLRenderer.clearLayers === 'function') {
+        window.WebGLRenderer.clearLayers();
+    }
+
+    clearUrbanContourLayers();
+    urbanContourSources = [];
+
     if (currentGeoJsonLayer) {
-        map.removeLayer(currentGeoJsonLayer);
+        if (map.hasLayer(currentGeoJsonLayer)) {
+            map.removeLayer(currentGeoJsonLayer);
+        }
         currentGeoJsonLayer = null;
     }
+
     // Clear any other dynamic layers
     map.eachLayer(function(layer) {
         if (layer !== map.getDefaultTileLayer &&
@@ -3549,6 +3916,7 @@ function clearMap() {
 
 function addGeoJsonToMap(geojson, options = {}) {
     if (!map || !geojson) return;
+    const layerName = options.name || 'New Cadastral Layer';
 
     // Use WebGL renderer for high performance
     const layer = WebGLRenderer.renderGeoJSON(geojson, {
@@ -3571,6 +3939,8 @@ function addGeoJsonToMap(geojson, options = {}) {
         return null;
     }
 
+    layer.options = layer.options || {};
+    layer.options.cadastralLayer = true;
     layer.addTo(map);
 
     // Store as current layer for fitting bounds
@@ -3590,7 +3960,6 @@ function addGeoJsonToMap(geojson, options = {}) {
 
     // Update tree layers control with new layer
     if (window.treeLayersControl) {
-        const layerName = options.name || 'New Cadastral Layer';
         // Add layer to tree control
         try {
             const overlayLayers = window.treeLayersControl.getOverlayLayers();
@@ -3604,6 +3973,9 @@ function addGeoJsonToMap(geojson, options = {}) {
             console.warn('Could not update tree layers control:', e);
         }
     }
+
+    registerUrbanContourSource(layerName, geojson);
+    applyUrbanContourLayerForSource(geojson, layerName);
 
     return layer;
 }

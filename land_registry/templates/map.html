@@ -286,6 +286,25 @@
                     <button onclick="showPluginInfo()" class="control-btn" title="Show plugin information">Plugin Info</button>
                 </div>
             </div>
+
+            <!-- Urban contour overlay controls -->
+            <div class="advanced-controls">
+                <h4>🌆 Urban Contour</h4>
+                <div class="control-row">
+                    <label for="urbanContourEnabled" style="display:flex; align-items:center; gap:6px; margin:0;">
+                        <input type="checkbox" id="urbanContourEnabled" checked onchange="onUrbanContourConfigChange()">
+                        Enable overlay
+                    </label>
+                </div>
+                <div class="control-row">
+                    <label for="urbanContourMode">Mode:</label>
+                    <select id="urbanContourMode" onchange="onUrbanContourConfigChange()" class="filter-select" style="min-width: 150px;">
+                        <option value="broad" selected>Broad (30,23,22,21 urban)</option>
+                        <option value="strict">Strict (30,23,22 urban)</option>
+                    </select>
+                </div>
+                <small class="help-text">Based on GHSL/DEGURBA classes: urban, not_urban, unknown.</small>
+            </div>
         </div>
 
         <!-- 4. Analysis & Selection -->
