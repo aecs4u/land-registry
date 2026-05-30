@@ -158,5 +158,5 @@ explicit = true
 
 [tool.uv.sources]
 # AECS4U packages from Google Artifact Registry
-aecs4u-auth = { index = "aecs4u-gar" }
-aecs4u-storage = { index = "aecs4u-gar" }
+aecs4u-auth = { git = "https://github.com/aecs4u/aecs4u-auth.git", branch = "main" }
+aecs4u-storage = { git = "https://github.com/aecs4u/aecs4u-storage.git", branch = "main" }
