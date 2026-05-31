@@ -40,7 +40,7 @@ else:
 
 # Import aecs4u-theme (optional)
 try:
-    from aecs4u_theme import setup_theme, ThemeConfig
+    from aecs4u_theme import setup_theme_from_env
     _THEME_AVAILABLE = True
 except ImportError:
     _THEME_AVAILABLE = False
@@ -311,22 +311,9 @@ if _AUTH_AVAILABLE:
 else:
     logger.warning("aecs4u-auth not installed - running without authentication")
 
-# Setup theme using aecs4u-theme (if available)
+# Setup theme using aecs4u-theme — reads AECS4U_SITE_NAME, THEME_PRIMARY_COLOR etc. from env
 if _THEME_AVAILABLE:
-    setup_theme(
-        app,
-        config=ThemeConfig(
-            site_id="land-registry",
-            site_name=app_settings.app_name,
-            favicon="/static/favicon.svg",
-            primary_color="#1a5490",
-            default_mode="light",
-            allow_mode_switch=True,
-            sidebar_enabled=True,
-        ),
-        static_url_path="/static/aecs4u-theme",
-        mount_static=True,
-    )
+    setup_theme_from_env(app, static_url_path="/static/aecs4u-theme")
 else:
     logger.warning("aecs4u-theme not installed - running without theme package")
 
