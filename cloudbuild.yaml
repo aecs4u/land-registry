@@ -2,13 +2,16 @@
 # Usage: gcloud builds submit --config cloudbuild.yaml .
 
 steps:
-  # Step 1: Generate access token for Artifact Registry
+  # Step 1: Generate GAR token and fetch GITHUB_TOKEN from Secret Manager
   - name: "gcr.io/cloud-builders/gcloud"
-    id: "generate-token"
+    id: "generate-tokens"
     entrypoint: "bash"
     args:
       - "-c"
-      - 'gcloud auth print-access-token > /workspace/.gar-token && echo "Token generated successfully"'
+      - |
+        gcloud auth print-access-token > /workspace/.gar-token
+        gcloud secrets versions access latest --secret=GITHUB_TOKEN --project=apps-aecs4u > /workspace/.github-token 2>/dev/null || echo "" > /workspace/.github-token
+        echo "Tokens generated"
 
   # Step 2: Build Docker image with BuildKit caching
   - name: "gcr.io/cloud-builders/docker"
@@ -20,8 +23,10 @@ steps:
       - "-c"
       - |
         GAR_TOKEN=$$(cat /workspace/.gar-token)
+        GITHUB_TOKEN=$$(cat /workspace/.github-token)
         docker build \
           --build-arg GAR_TOKEN="$$GAR_TOKEN" \
+          --build-arg GITHUB_TOKEN="$$GITHUB_TOKEN" \
           --progress=plain \
           -t europe-west1-docker.pkg.dev/apps-aecs4u/cloud-run-source-deploy/land-registry-service:latest \
           -t europe-west1-docker.pkg.dev/apps-aecs4u/cloud-run-source-deploy/land-registry-service:$BUILD_ID \

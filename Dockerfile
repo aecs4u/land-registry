@@ -23,20 +23,20 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 # Copy dependency files first for better caching
 COPY pyproject.toml uv.lock* ./
 
-# GAR authentication options:
-# 1. Cloud Build: Pass GAR_TOKEN as build arg (preferred for CI/CD)
-# 2. Local with keyring: Set UV_KEYRING_PROVIDER=subprocess and have gcloud auth configured
-# 3. Local with token: Set UV_INDEX_AECS4U_GAR_USERNAME/PASSWORD env vars
 ARG GAR_TOKEN=""
+ARG GITHUB_TOKEN=""
 
-# Install keyring for GAR authentication (works with both Cloud Build and local)
+# Install keyring for GAR authentication
 RUN pip install --no-cache-dir keyrings.google-artifactregistry-auth
 
-# Install Python dependencies using uv
-# Uses keyring with the Google auth plugin, which will:
-# - In Cloud Build: Use the service account's ADC via metadata server
-# - Locally: Use gcloud auth credentials
+# Configure git auth for private aecs4u repos on GitHub
+RUN if [ -n "$GITHUB_TOKEN" ]; then \
+    git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"; \
+fi
+
 ENV UV_KEYRING_PROVIDER=subprocess
+
+# Install Python dependencies (excluding project code for better layer caching)
 RUN --mount=type=cache,target=/root/.cache/uv \
     if [ -n "$GAR_TOKEN" ]; then \
         UV_INDEX_AECS4U_GAR_USERNAME=oauth2accesstoken \
@@ -46,7 +46,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
         uv sync --frozen --no-dev --no-install-project; \
     fi
 
-# Copy application code and data
+# Copy application code
 COPY . .
 
 # Install the project itself
