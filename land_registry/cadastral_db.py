@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Optional, Generator
 from datetime import datetime
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
