@@ -18,9 +18,9 @@
 # Google Cloud Platform Configuration
 # -----------------------------------------------------------------------------
 gcp:
-  project_id: ""
+  project_id: "apps-aecs4u"
   region: "europe-west1"
-  service_name: "lighthouse-service"
+  service_name: "land-registry-service"
 
 # -----------------------------------------------------------------------------
 # Cloud Run Configuration

@@ -1,0 +1,69 @@
+# Cloud Build configuration with GAR (Google Artifact Registry) authentication
+# Usage: gcloud builds submit --config cloudbuild.yaml .
+
+steps:
+  # Step 1: Generate access token for Artifact Registry
+  - name: "gcr.io/cloud-builders/gcloud"
+    id: "generate-token"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - 'gcloud auth print-access-token > /workspace/.gar-token && echo "Token generated successfully"'
+
+  # Step 2: Build Docker image with BuildKit caching
+  - name: "gcr.io/cloud-builders/docker"
+    id: "build"
+    entrypoint: "bash"
+    env:
+      - "DOCKER_BUILDKIT=1"
+    args:
+      - "-c"
+      - |
+        GAR_TOKEN=$$(cat /workspace/.gar-token)
+        docker build \
+          --build-arg GAR_TOKEN="$$GAR_TOKEN" \
+          --progress=plain \
+          -t europe-west1-docker.pkg.dev/apps-aecs4u/cloud-run-source-deploy/land-registry-service:latest \
+          -t europe-west1-docker.pkg.dev/apps-aecs4u/cloud-run-source-deploy/land-registry-service:$BUILD_ID \
+          .
+
+  # Step 3: Push to Artifact Registry
+  - name: "gcr.io/cloud-builders/docker"
+    id: "push"
+    args:
+      - "push"
+      - "--all-tags"
+      - "europe-west1-docker.pkg.dev/apps-aecs4u/cloud-run-source-deploy/land-registry-service"
+
+  # Step 4: Deploy to Cloud Run
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: "deploy"
+    entrypoint: "gcloud"
+    args:
+      - "run"
+      - "deploy"
+      - "land-registry-service"
+      - "--image=europe-west1-docker.pkg.dev/apps-aecs4u/cloud-run-source-deploy/land-registry-service:latest"
+      - "--region=europe-west1"
+      - "--platform=managed"
+      - "--allow-unauthenticated"
+      - "--memory=1Gi"
+      - "--cpu=1"
+      - "--max-instances=2"
+      - "--min-instances=0"
+      - "--concurrency=80"
+      - "--execution-environment=gen2"
+      - "--port=8080"
+      - "--timeout=300"
+      - "--cpu-boost"
+      - "--cpu-throttling"
+      - "--no-session-affinity"
+      - "--set-env-vars=ENVIRONMENT=production,DEBUG=false,LOG_LEVEL=INFO,DATABASE_URL=postgresql://neondb_owner:npg_by4FnPipXJ9M@ep-shy-shape-a2rpjawn-pooler.eu-central-1.aws.neon.tech/land-registry?sslmode=require,CLERK_SECRET_KEY=sk_test_QrIjZ4fQHgHsSlbdNIFyEagl1KOds5jygTi9SGjEeU,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_Y2hhbXBpb24tbXVsbGV0LTc2LmNsZXJrLmFjY291bnRzLmRldiQ,LOGFIRE_TOKEN=pylf_v1_eu_XCggY9q8MCsYrPxyjf21T9tnRdwkJY6l2VD242v9Ns7R"
+
+images:
+  - "europe-west1-docker.pkg.dev/apps-aecs4u/cloud-run-source-deploy/land-registry-service"
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: "1200s"
