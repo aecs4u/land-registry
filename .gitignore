@@ -69,6 +69,17 @@ data/*.sqlite-shm
 land_registry.db
 file_availability.db
 
+# Local cadastral data symlink (points to /data/catasto, 45 GB)
+data/catasto
+
+# Playwright MCP screenshots and test artefacts
+docs/Screenshot_*.png
+test_datashader_webgl.py
+
+# Local tool config
+.codex
+.mcp.json
+
 # Flask stuff:
 instance/
 .webassets-cache
