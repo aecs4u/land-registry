@@ -53,10 +53,14 @@ echo -e "${BLUE}Starting ${APP_NAME} → http://${HOST}:${PORT}${NC}"
 
 # Use python runner directly for proper Ctrl+C signal handling
 # (uv run + uvicorn --reload creates nested processes that swallow SIGINT)
-exec python -c "
+PYTHON_BIN="$(pwd)/.venv/bin/python"
+[ -x "$PYTHON_BIN" ] || PYTHON_BIN="python"
+
+PYTHON_RELOAD=$([ "$RELOAD" = "true" ] && echo "True" || echo "False")
+exec "$PYTHON_BIN" -c "
 import signal, sys, uvicorn
 signal.signal(signal.SIGINT, lambda *_: (print('\nShutting down...'), sys.exit(0)))
 uvicorn.run('$MODULE', host='$HOST', port=int('$PORT'),
-            reload=$RELOAD, reload_delay=0.25, timeout_graceful_shutdown=3,
+            reload=$PYTHON_RELOAD, reload_delay=0.25, timeout_graceful_shutdown=3,
             timeout_keep_alive=2, log_level='info')
 "

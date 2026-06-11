@@ -24,41 +24,23 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 # Copy dependency files first for better caching
 COPY pyproject.toml uv.lock* ./
 
-ARG GAR_TOKEN=""
 ARG GITHUB_TOKEN=""
-
-# Install keyring for GAR authentication
-RUN pip install --no-cache-dir keyrings.google-artifactregistry-auth
 
 # Configure git auth for private aecs4u repos on GitHub
 RUN if [ -n "$GITHUB_TOKEN" ]; then \
     git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"; \
 fi
 
-ENV UV_KEYRING_PROVIDER=subprocess
-
 # Install Python dependencies (excluding project code for better layer caching)
 RUN --mount=type=cache,target=/root/.cache/uv \
-    if [ -n "$GAR_TOKEN" ]; then \
-        UV_INDEX_AECS4U_GAR_USERNAME=oauth2accesstoken \
-        UV_INDEX_AECS4U_GAR_PASSWORD="$GAR_TOKEN" \
-        uv sync --frozen --no-dev --no-install-project; \
-    else \
-        uv sync --frozen --no-dev --no-install-project; \
-    fi
+    uv sync --frozen --no-dev --no-install-project
 
 # Copy application code
 COPY . .
 
 # Install the project itself
 RUN --mount=type=cache,target=/root/.cache/uv \
-    if [ -n "$GAR_TOKEN" ]; then \
-        UV_INDEX_AECS4U_GAR_USERNAME=oauth2accesstoken \
-        UV_INDEX_AECS4U_GAR_PASSWORD="$GAR_TOKEN" \
-        uv sync --frozen --no-dev; \
-    else \
-        uv sync --frozen --no-dev; \
-    fi
+    uv sync --frozen --no-dev
 
 # Ensure static files and templates are properly accessible
 RUN mkdir -p /app/land_registry/static /app/land_registry/templates /app/data

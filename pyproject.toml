@@ -40,12 +40,10 @@ dependencies = [
     "panel>=1.3.0",
     "param>=2.0.0",
     "rich>=14.1.0",
-    # AECS4U Authentication (optional - app runs without it)
-    # Install from Google Artifact Registry when auth is needed:
-    #   uv pip install aecs4u-auth --index-url https://europe-west1-python.pkg.dev/apps-aecs4u/python-packages/simple/
-    # AECS4U Storage (optional - app uses direct boto3/gcs fallback without it)
-    # Install from Google Artifact Registry when needed:
-    #   uv pip install aecs4u-storage --index-url https://europe-west1-python.pkg.dev/apps-aecs4u/python-packages/simple/
+    # AECS4U packages
+    "aecs4u-auth",
+    "aecs4u-storage",
+    "aecs4u-theme",
     "babel>=2.18.0",
     # GHSL raster sampling for urban/rural classification
     "rasterio>=1.3.0",
@@ -62,9 +60,6 @@ exclude = '__pycache__'
 [tool.isort]
 profile = "black"
 filter_files = ["__pycache__"]
-
-# Optional private packages (install manually when GAR credentials are available):
-#   uv pip install aecs4u-auth aecs4u-storage --index-url https://europe-west1-python.pkg.dev/apps-aecs4u/python-packages/simple/
 
 [dependency-groups]
 dev = [
@@ -142,21 +137,7 @@ exclude_lines = [
 [tool.setuptools.packages.find]
 where = ["land_registry"]
 
-# =============================================================================
-# UV Configuration - Private Package Sources
-# =============================================================================
-
-# Use keyring for authentication to Google Artifact Registry
-[tool.uv]
-keyring-provider = "subprocess"
-
-# Define the Google Artifact Registry index for aecs4u packages
-[[tool.uv.index]]
-name = "aecs4u-gar"
-url = "https://europe-west1-python.pkg.dev/apps-aecs4u/python-packages/simple/"
-explicit = true
-
 [tool.uv.sources]
-# AECS4U packages from Google Artifact Registry
 aecs4u-auth = { git = "https://github.com/aecs4u/aecs4u-auth.git", branch = "main" }
 aecs4u-storage = { git = "https://github.com/aecs4u/aecs4u-storage.git", branch = "main" }
+aecs4u-theme = { git = "https://github.com/aecs4u/aecs4u-theme.git", branch = "main" }
