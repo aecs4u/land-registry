@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y \
     libgeos-dev \
     libsqlite3-mod-spatialite \
     curl \
+    git \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
