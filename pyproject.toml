@@ -137,6 +137,15 @@ exclude_lines = [
 [tool.setuptools.packages.find]
 where = ["land_registry"]
 
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+ignore = ["E402", "E722"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["F401", "F811", "F841"]
+
 [tool.uv.sources]
 aecs4u-auth = { git = "https://github.com/aecs4u/aecs4u-auth.git", branch = "main" }
 aecs4u-storage = { git = "https://github.com/aecs4u/aecs4u-storage.git", branch = "main" }

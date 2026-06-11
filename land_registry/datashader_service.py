@@ -8,7 +8,7 @@ enabling visualization of millions of cadastral parcels without client-side perf
 import logging
 from collections import OrderedDict
 from io import BytesIO
-from typing import Literal, Optional
+from typing import Optional
 
 import colorcet
 import datashader as ds

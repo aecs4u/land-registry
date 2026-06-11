@@ -12,9 +12,7 @@ RUN apt-get update && apt-get install -y \
     libgdal-dev \
     libproj-dev \
     libgeos-dev \
-    libsqlite3-mod-spatialite \
     curl \
-    git \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
@@ -24,23 +22,19 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 # Copy dependency files first for better caching
 COPY pyproject.toml uv.lock* ./
 
-ARG GITHUB_TOKEN=""
+# Install keyring for GAR authentication (needed before uv sync)
+RUN uv pip install --system keyrings.google-artifactregistry-auth
 
-# Configure git auth for private aecs4u repos on GitHub
-RUN if [ -n "$GITHUB_TOKEN" ]; then \
-    git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"; \
-fi
+# Install Python dependencies using uv
+# The keyring will use Application Default Credentials (ADC) during Cloud Build
+ENV UV_KEYRING_PROVIDER=subprocess
+RUN uv sync --frozen --no-dev --no-install-project
 
-# Install Python dependencies (excluding project code for better layer caching)
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-install-project
-
-# Copy application code
+# Copy application code and data
 COPY . .
 
 # Install the project itself
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev
 
 # Ensure static files and templates are properly accessible
 RUN mkdir -p /app/land_registry/static /app/land_registry/templates /app/data

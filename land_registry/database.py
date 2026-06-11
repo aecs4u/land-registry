@@ -9,7 +9,6 @@ Uses Neon serverless PostgreSQL for persistent storage of:
 - Application metadata
 """
 
-import os
 import logging
 from contextlib import asynccontextmanager, contextmanager
 from typing import Optional, Any, AsyncGenerator, Generator

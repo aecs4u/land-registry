@@ -21,7 +21,7 @@ import logging
 import json
 import tempfile
 import os
-from typing import Optional, List, Dict, Any, Union, BinaryIO
+from typing import Optional, Dict, Any, Union, BinaryIO
 from pathlib import Path
 
 import geopandas as gpd

@@ -18,7 +18,7 @@ from tornado.ioloop import IOLoop
 from land_registry.cadastral_utils import load_cadastral_structure, get_cadastral_stats
 from land_registry.dashboard import TEMPLATE
 from land_registry.file_availability_db import file_availability_db
-from land_registry.i18n import LocaleMiddleware, detect_locale, make_gettext, contextvar_gettext, _current_locale as _i18n_locale_var
+from land_registry.i18n import LocaleMiddleware, detect_locale, make_gettext, contextvar_gettext
 from land_registry.map import get_current_gdf, get_current_layers, map_generator
 from land_registry.dependencies import _map_state
 from land_registry.routers.api import api_router

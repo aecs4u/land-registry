@@ -6,7 +6,7 @@ Centralizes all API endpoints for better organization and maintainability
 import boto3
 from botocore import UNSIGNED
 from botocore.config import Config
-from fastapi import APIRouter, Body, UploadFile, File, HTTPException, Depends, Header
+from fastapi import APIRouter, Body, UploadFile, File, HTTPException, Depends
 from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPBearer
 import geopandas as gpd
@@ -23,7 +23,7 @@ import hashlib
 
 from land_registry.dashboard import STATE
 from land_registry.map import (
-    extract_qpkg_data, find_adjacent_polygons, find_adjacent_polygons_by_geometry,
+    extract_qpkg_data, find_adjacent_polygons_by_geometry,
     get_current_gdf, set_current_gdf, set_current_layers, get_current_layers
 )
 from land_registry.s3_storage import get_s3_storage, S3Settings, configure_s3_storage
@@ -36,13 +36,12 @@ from land_registry.models import (
     CadastralCacheInfoResponse
 )
 from land_registry.cadastral_db import CadastralDatabase, CadastralFilter
-from land_registry.dependencies import _cadastral_registry, _datashader_registry
+from land_registry.dependencies import _cadastral_registry, _datashader_registry, _discover_ple_databases
 # Import proper JWT verification from aecs4u-auth
 from land_registry.routers.auth import (
     get_current_user,
     get_current_user_optional,
     get_current_superuser,
-    require_role,
     ClerkUser,
 )
 
@@ -2234,10 +2233,8 @@ async def clear_drawn_polygons():
 # ============================================================================
 
 from land_registry.models import (
-    ZoneCreateRequest, ZoneUpdateRequest, ZoneResponse,
-    ZoneDetailResponse, ZoneListResponse, ZoneBulkVisibilityRequest,
-    MicrozoneBulkVisibilityRequest, MicrozoneCreateRequest, MicrozoneUpdateRequest, MicrozoneResponse,
-    MicrozoneDetailResponse, MicrozoneListResponse
+    ZoneCreateRequest, ZoneUpdateRequest, ZoneBulkVisibilityRequest,
+    MicrozoneBulkVisibilityRequest, MicrozoneCreateRequest, MicrozoneUpdateRequest
 )
 from land_registry.sqlite_db import get_sqlite_db
 from land_registry.zone_rules import (
@@ -3332,7 +3329,6 @@ def _rows_to_features(rows) -> list:
 # ============================================================================
 
 from fastapi.responses import Response, StreamingResponse
-from land_registry.datashader_service import DatashaderTileService
 import asyncio
 
 # Datashader service accessor — delegates to DatashaderRegistry in dependencies.py
@@ -3855,7 +3851,7 @@ async def load_cadastral_files_stream(request: CadastralFileRequest):
                 logger.warning(f"Could not calculate bounds: {e}")
 
         load_time = time.time() - start_time
-        successful = len([l for l in layers_data.values() if "error" not in l])
+        successful = len([layer for layer in layers_data.values() if "error" not in layer])
 
         # Send completion event
         yield json.dumps({

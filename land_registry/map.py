@@ -3,7 +3,7 @@ from branca.element import Template, MacroElement
 import colorsys
 import folium
 from folium.plugins import (
-    Draw, Fullscreen, MeasureControl
+    Draw, MeasureControl
 )
 from folium.plugins.treelayercontrol import TreeLayerControl
 import geopandas as gpd
