@@ -27,10 +27,10 @@ gcp:
 # -----------------------------------------------------------------------------
 cloudrun:
   # Resource allocation - varies by environment
-  memory: "1Gi"
+  memory: "512Mi"
   cpu: 1
   min_instances: 0
-  max_instances: 2
+  max_instances: 3
   concurrency: 80
 
   # Environment and runtime
@@ -41,18 +41,14 @@ cloudrun:
 
   # Performance settings
   cpu_boost: true
-  no_cpu_throttling: false
 
   # Security
   allow_unauthenticated: true
   vpc_connector: ""
-  session_affinity: false
 
   # Cloud SQL connection (format: project:region:instance)
-  cloudsql_instances: ""
 
   # Health checks
-  startup_probe_timeout: 600
 
 # -----------------------------------------------------------------------------
 # Cloud Build Configuration (for GAR authentication)

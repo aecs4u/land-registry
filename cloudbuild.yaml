@@ -47,9 +47,9 @@ steps:
       - "--region=europe-west1"
       - "--platform=managed"
       - "--allow-unauthenticated"
-      - "--memory=1Gi"
+      - "--memory=512Mi"
       - "--cpu=1"
-      - "--max-instances=2"
+      - "--max-instances=3"
       - "--min-instances=0"
       - "--concurrency=80"
       - "--execution-environment=gen2"
@@ -57,7 +57,6 @@ steps:
       - "--timeout=300"
       - "--cpu-boost"
       - "--cpu-throttling"
-      - "--no-session-affinity"
       - "--set-env-vars=ENVIRONMENT=production,DEBUG=false,LOG_LEVEL=INFO,DATABASE_URL=postgresql://neondb_owner:npg_by4FnPipXJ9M@ep-shy-shape-a2rpjawn-pooler.eu-central-1.aws.neon.tech/land-registry?sslmode=require,CLERK_SECRET_KEY=sk_test_QrIjZ4fQHgHsSlbdNIFyEagl1KOds5jygTi9SGjEeU,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_Y2hhbXBpb24tbXVsbGV0LTc2LmNsZXJrLmFjY291bnRzLmRldiQ,LOGFIRE_TOKEN=pylf_v1_eu_XCggY9q8MCsYrPxyjf21T9tnRdwkJY6l2VD242v9Ns7R"
 
 images:
