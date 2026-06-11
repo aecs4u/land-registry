@@ -60,6 +60,7 @@ steps:
       - "--cpu-boost"
       - "--cpu-throttling"
       - "--set-env-vars=ENVIRONMENT=production,DEBUG=false,LOG_LEVEL=INFO,DATABASE_URL=postgresql://neondb_owner:npg_by4FnPipXJ9M@ep-shy-shape-a2rpjawn-pooler.eu-central-1.aws.neon.tech/land-registry?sslmode=require,CLERK_SECRET_KEY=sk_test_QrIjZ4fQHgHsSlbdNIFyEagl1KOds5jygTi9SGjEeU,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_Y2hhbXBpb24tbXVsbGV0LTc2LmNsZXJrLmFjY291bnRzLmRldiQ,LOGFIRE_TOKEN=pylf_v1_eu_XCggY9q8MCsYrPxyjf21T9tnRdwkJY6l2VD242v9Ns7R"
+      - "--set-secrets=SECRET_KEY=LAND_REGISTRY_SECRET_KEY:latest,SESSION_SECRET_KEY=LAND_REGISTRY_SESSION_SECRET_KEY:latest"
 
 images:
   - "europe-west1-docker.pkg.dev/apps-aecs4u/cloud-run-source-deploy/land-registry-service"
