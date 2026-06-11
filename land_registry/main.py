@@ -458,7 +458,8 @@ async def _build_main_map_shell_context(request: Request) -> dict:
 async def serve_map_shell(request: Request):
     """Serve the canonical map shell with full workflow capabilities."""
     context = await _build_main_map_shell_context(request)
-    return templates.TemplateResponse("index.html", context)
+    context.pop("request", None)  # starlette 1.x injects request automatically
+    return templates.TemplateResponse(request, "index.html", context)
 
 
 @app.get("/map_table")
@@ -468,8 +469,7 @@ def show_map_table(request: Request):
     Uses configured Panel route from settings (currently points to main dashboard).
     """
     tabulator = server_document(PANEL_MAP_TABLE_URL)
-    return templates.TemplateResponse("tabulator.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "tabulator.html", {
         "tabulator": tabulator
     })
 
@@ -481,8 +481,7 @@ def show_adjacency_table(request: Request):
     Uses configured Panel route from settings (currently points to main dashboard).
     """
     tabulator = server_document(PANEL_ADJACENCY_TABLE_URL)
-    return templates.TemplateResponse("tabulator.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "tabulator.html", {
         "tabulator": tabulator
     })
 
@@ -494,8 +493,7 @@ def show_mapping_table(request: Request):
     Uses configured Panel route from settings (currently points to main dashboard).
     """
     tabulator = server_document(PANEL_MAPPING_TABLE_URL)
-    return templates.TemplateResponse("tabulator.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "tabulator.html", {
         "tabulator": tabulator
     })
 
@@ -511,8 +509,7 @@ async def landing_page(request: Request):
     """Landing page summarizing all application features"""
     stats = get_cadastral_stats()
     locale = detect_locale(request)
-    return templates.TemplateResponse("landing.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "landing.html", {
         "_": make_gettext(locale),
         "locale": locale,
         "total_regions": stats['total_regions'],
@@ -599,8 +596,7 @@ async def show_cadastral_data(request: Request):
 
         # Render template with cadastral data and flags
         locale = detect_locale(request)
-        return templates.TemplateResponse("cadastral_data.html", {
-            "request": request,
+        return templates.TemplateResponse(request, "cadastral_data.html", {
             "_": make_gettext(locale),
             "locale": locale,
             "cadastral_data": cadastral_data,
