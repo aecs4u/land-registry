@@ -49,6 +49,7 @@ steps:
       - "--region=europe-west1"
       - "--platform=managed"
       - "--allow-unauthenticated"
+      - "--ingress=all"
       - "--memory=512Mi"
       - "--cpu=1"
       - "--max-instances=3"
