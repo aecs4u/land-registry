@@ -84,6 +84,7 @@ jobs:
             --region=${{ env.GCP_REGION }} \
             --project=${{ env.GCP_PROJECT_ID }} \
             --platform=managed \
+            --service-account=land-registry-runtime@apps-aecs4u.iam.gserviceaccount.com \
             --allow-unauthenticated \
             --ingress=all \
             --memory=512Mi \
