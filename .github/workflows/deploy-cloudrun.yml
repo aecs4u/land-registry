@@ -67,7 +67,6 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          target: runtime
           push: true
           build-args: |
             GITHUB_TOKEN=${{ env.BUILD_GITHUB_TOKEN }}
