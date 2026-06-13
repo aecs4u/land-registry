@@ -20,10 +20,24 @@ import zipfile
 
 from land_registry.config import map_controls_settings, app_settings
 
-# Redirect Folium's jQuery from code.jquery.com → cdn.jsdelivr.net (CSP-allowed)
-_folium_mod._default_js = [
-    (name, "https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js") if name == "jquery" else (name, url)
+# Patch Folium Map.default_js/css to replace CDN URLs blocked by CSP.
+# Must patch the class attribute (set at class-definition time), not the module-level
+# _default_js list (which Map.default_js was already bound to at import time).
+_JS_REPLACEMENTS = {"jquery": "https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"}
+_CSS_REPLACEMENTS = {
+    # netdna.bootstrapcdn.com is not in the CSP allowlist; drop legacy Bootstrap 3 glyphicons
+    # (only used by Leaflet.awesome-markers which is not used in this project)
+    "glyphicons_css": None,
+}
+
+folium.Map.default_js = [
+    (name, _JS_REPLACEMENTS.get(name, url))
     for name, url in _folium_mod._default_js
+]
+folium.Map.default_css = [
+    (name, url)
+    for name, url in _folium_mod._default_css
+    if _CSS_REPLACEMENTS.get(name, url) is not None
 ]
 
 # Configure logger

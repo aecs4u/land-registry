@@ -2264,7 +2264,20 @@ button:hover {
   }
 }
 
+@media (max-width: 400px) {
+  /* view-toggle: 4 buttons × ~94px = ~376px at 480px breakpoint — clips on 375px */
+  .view-toggle button {
+    padding: 8px 8px;
+    font-size: 10px;
+  }
+}
+
 @media (max-width: 480px) {
+  .map-toolbar {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
   .map-controls {
     max-width: 160px;
     padding: 6px;
