@@ -33,8 +33,9 @@ def _ctx(request: Request, **extra) -> dict:
     return {
         "request": request,
         "clerk_publishable_key": getattr(config, "clerk_publishable_key", ""),
+        "static_url_path": "/static/aecs4u-theme",
         "site_name": "Land Registry",
-        "site_logo": "",
+        "site_logo": "/static/aecs4u-theme/img/aecs4u.png",
         "auth_login_url": "/auth/login",
         "auth_register_url": "/auth/register",
         "auth_callback_url": "/auth/callback",

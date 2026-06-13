@@ -351,6 +351,12 @@ templates.env.globals["_"] = contextvar_gettext
 # locale is passed per-request in template context (set by each route handler)
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/static/aecs4u-theme/icons/favicon.png", status_code=301)
+
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint for Cloud Run"""
