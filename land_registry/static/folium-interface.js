@@ -120,6 +120,9 @@ function _createCadastralLayer(geojson, color, popupPriorityKeys) {
     });
 }
 
+// Priority property order for cadastral feature popups (DB-tab layer)
+const _CADASTRAL_PRIORITY = ['regione', 'provincia', 'comune_name', 'foglio', 'particella', 'layer_type'];
+
 // ============================================================
 // Layer Panel — per-file layer visibility controls
 // ============================================================
@@ -1536,15 +1539,17 @@ function addGeoJSONToMap(geojson, layerName) {
     }
     
     // Create GeoJSON layer — per-feature colour based on layer_type (ple/map)
-    const _CADASTRAL_PRIORITY = ['regione', 'provincia', 'comune_name', 'foglio', 'particella', 'layer_type'];
+    // Handlers are built once per colour to avoid per-feature closure allocation.
+    const _pleHandler = _makeFeatureHandler('#e74c3c', _CADASTRAL_PRIORITY);
+    const _mapHandler = _makeFeatureHandler('#3498db', _CADASTRAL_PRIORITY);
     const geoJsonLayer = L.geoJSON(geojson, {
         style: function(feature) {
             const color = feature.properties?.layer_type === 'ple' ? '#e74c3c' : '#3498db';
             return _cadStyle(color);
         },
         onEachFeature: function(feature, layer) {
-            const color = feature.properties?.layer_type === 'ple' ? '#e74c3c' : '#3498db';
-            return _makeFeatureHandler(color, _CADASTRAL_PRIORITY)(feature, layer);
+            const handler = feature.properties?.layer_type === 'ple' ? _pleHandler : _mapHandler;
+            handler(feature, layer);
         },
     });
     

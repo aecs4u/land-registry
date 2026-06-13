@@ -723,15 +723,15 @@ async def get_cadastral_cache_info():
 
 
 def _load_cadastral_json() -> dict:
-    """Load and return the cadastral structure JSON, raising HTTPException on failure."""
-    path = get_cadastral_structure_path()
-    if not path:
-        raise HTTPException(status_code=404, detail="Cadastral structure file not found locally")
+    """Return the cadastral structure dict via the S3-aware cached loader."""
+    from land_registry.cadastral_utils import load_cadastral_structure
     try:
-        with open(path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        cadastral = load_cadastral_structure()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error reading cadastral structure: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error loading cadastral structure: {str(e)}")
+    if not cadastral:
+        raise HTTPException(status_code=404, detail="Cadastral structure data not available")
+    return cadastral.data
 
 
 @api_router.get("/get-regions/")
