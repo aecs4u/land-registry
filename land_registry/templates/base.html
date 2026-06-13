@@ -45,22 +45,14 @@
     <!-- Auth widget (top-right corner, rendered by clerk-auth.js) -->
     <div id="auth-widget"></div>
 
-    <!-- Clerk configuration data-island (read by clerk-auth.js) -->
     {% if clerk_publishable_key %}
-    <div id="clerk-config"
-         data-publishable-key="{{ clerk_publishable_key }}"
-         data-sign-in-url="/auth/login"
-         data-sign-up-url="/auth/register"
-         data-after-sign-in-url="/map"
-         data-after-sign-up-url="/map"
-         style="display:none"></div>
-
-    <!-- Clerk SDK -->
+    <!-- Clerk config read by clerk-auth.js (JSON textContent, not data attributes) -->
+    <div id="clerk-config" style="display:none">{"publishable_key":"{{ clerk_publishable_key }}","sign_in_url":"/auth/login","sign_up_url":"/auth/register","after_sign_in_url":"/map","after_sign_up_url":"/map"}</div>
+    <!-- Clerk SDK (required by clerk-auth.js) — loaded via aecs4u-auth module -->
     <script async crossorigin="anonymous"
             data-clerk-publishable-key="{{ clerk_publishable_key }}"
             src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@latest/dist/clerk.browser.js"
             type="text/javascript"></script>
-    <!-- aecs4u-auth frontend module -->
     <script src="/static/aecs4u-auth/js/clerk-auth.js"></script>
     {% endif %}
 

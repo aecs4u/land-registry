@@ -31,7 +31,7 @@ from land_registry.models import TableDataResponse, ServiceUnavailableResponse
 from land_registry.core.clerk import _AUTH_AVAILABLE
 
 if _AUTH_AVAILABLE:
-    from aecs4u_auth import setup_auth, AuthConfig, get_auth_config
+    from aecs4u_auth import setup_auth, AuthConfig, get_auth_config, create_clerk_router
 else:
     from types import SimpleNamespace
 
@@ -322,8 +322,13 @@ app.add_middleware(LocaleMiddleware)
 
 # Include HTML auth pages (login/register forms) at /auth prefix
 # These provide GET endpoints for browser-accessible pages
-# (aecs4u-auth only provides POST API endpoints)
 app.include_router(auth_pages_router, prefix="/auth", tags=["auth"])
+
+# Include Clerk API routes (/auth/clerk/session, /auth/clerk/logout, /auth/clerk/callback)
+# These are the backend endpoints that clerk-auth.js calls for session sync and logout
+if _AUTH_AVAILABLE:
+    _clerk_pair = create_clerk_router()
+    app.include_router(_clerk_pair.api_router, tags=["auth"])
 
 # Include the API router with /api/v1 prefix
 app.include_router(api_router, prefix="/api/v1")

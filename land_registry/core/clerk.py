@@ -3,9 +3,9 @@ Clerk authentication module for Land Registry.
 Re-exports from aecs4u-auth package for backward compatibility.
 """
 
-from aecs4u_auth import RedirectToLogin as RedirectToClerkLogin
-from aecs4u_auth.core.clerk import (
+from aecs4u_auth import (
     ClerkUser,
+    RedirectToLogin as RedirectToClerkLogin,
     get_current_clerk_user,
     get_current_clerk_user_optional,
     get_current_clerk_user_or_redirect,

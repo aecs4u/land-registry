@@ -15,46 +15,30 @@
 function updateSidebarAuth() {
     const navUserMenu = document.getElementById('navUserMenu');
     const navSignInBtn = document.getElementById('navSignInBtn');
-    if (window.Clerk && window.Clerk.user) {
-        const user = window.Clerk.user;
+    const user = typeof ClerkAuth !== 'undefined' ? ClerkAuth.getUser() : null;
+    if (user) {
         document.getElementById('navUserName').textContent =
             user.firstName || user.primaryEmailAddress?.emailAddress?.split('@')[0] || 'User';
         document.getElementById('navUserEmail').textContent =
             user.primaryEmailAddress?.emailAddress || '';
         if (navUserMenu) navUserMenu.style.display = 'flex';
         if (navSignInBtn) navSignInBtn.style.display = 'none';
-    } else if (window.Clerk) {
+    } else {
         if (navUserMenu) navUserMenu.style.display = 'none';
         if (navSignInBtn) navSignInBtn.style.display = 'inline-block';
     }
 }
 
 async function handleSidebarLogout() {
-    if (window.Clerk) {
-        await window.Clerk.signOut();
-        await fetch('/auth/clerk/logout', { method: 'POST' });
-        window.location.reload();
+    if (typeof ClerkAuth !== 'undefined') {
+        await ClerkAuth.signOut();
     }
 }
 
-// Wait for Clerk SDK then wire up auth state
-window.addEventListener('load', async function () {
-    let attempts = 0;
-    while (!window.Clerk && attempts < 50) {
-        await new Promise(r => setTimeout(r, 100));
-        attempts++;
-    }
-    if (window.Clerk) {
-        await window.Clerk.load();
-        updateSidebarAuth();
-        window.Clerk.addListener(updateSidebarAuth);
-    } else {
-        const sidebarAuth = document.getElementById('sidebar-auth-status');
-        if (sidebarAuth) {
-            sidebarAuth.innerHTML = '<div class="loading-text">Auth unavailable</div>';
-        }
-    }
-});
+// Wire up auth state via ClerkAuth events (clerk-auth.js fires these after init)
+window.addEventListener('clerk:signin', updateSidebarAuth);
+window.addEventListener('clerk:signout', updateSidebarAuth);
+window.addEventListener('load', updateSidebarAuth);
 
 // ── Toolbar height CSS variable ───────────────────────────────────────────
 
@@ -155,7 +139,7 @@ document.addEventListener('DOMContentLoaded', function () {
     setTimeout(function () {
         if (typeof initZoneManager === 'function') initZoneManager();
         setTimeout(function () {
-            if (window.Clerk?.user && typeof loadAllZones === 'function') loadAllZones();
+            if (typeof ClerkAuth !== 'undefined' && ClerkAuth.isAuthenticated() && typeof loadAllZones === 'function') loadAllZones();
         }, 1500);
     }, 3000);
 });
