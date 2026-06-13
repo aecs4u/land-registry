@@ -74,6 +74,7 @@ data/catasto
 
 # Playwright MCP screenshots and test artefacts
 docs/Screenshot_*.png
+*.png
 test_datashader_webgl.py
 
 # Local tool config

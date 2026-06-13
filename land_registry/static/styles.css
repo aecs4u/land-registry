@@ -204,24 +204,35 @@ html, body {
 .theme-icon { transition: transform 0.3s ease; }
 
 /* ── Main content ─────────────────────────────────────────────── */
-/* Override aecs4u-theme layout.css: theme assumes a fixed-sidebar pattern with
-   margin-left/margin-top offsets. This app uses a flex container instead. */
+/* The sidebar is position:fixed (aecs4u-theme layout.css). We drive the
+   main-content left-margin via the theme's body class API so the two systems
+   stay in sync. Default: no margin (sidebar hidden / unknown state). */
 .main-content {
   flex: 1;
   min-width: 0;
   position: relative;
   height: 100%;
-  /* Sidebar is position:fixed (from aecs4u-theme layout.css), so push main content
-     to the right to avoid being hidden underneath it. */
-  margin-left: 300px !important;
+  margin-left: 0;
   margin-right: 0 !important;
   margin-top: 0 !important;
   padding: 0 !important;
   transition: margin-left 0.25s ease;
 }
-/* When sidebar is collapsed, reclaim the space */
+/* Theme signals sidebar is open → push content right */
+body.sidebar-visible .main-content {
+  margin-left: 300px;
+}
+/* Theme signals sidebar is hidden, or our legacy collapsed class → full width */
+body.sidebar-hidden .main-content,
 body.sidebar-collapsed .main-content {
-  margin-left: 0 !important;
+  margin-left: 0;
+}
+/* Mobile: sidebar is always an overlay; never push content */
+@media (max-width: 991px) {
+  .main-content,
+  body.sidebar-visible .main-content {
+    margin-left: 0 !important;
+  }
 }
 
 /* ── Auth widget (top-right, from clerk-auth.js) ────────────── */

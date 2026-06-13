@@ -12,6 +12,115 @@ window.cadastralDataCache = null;
 window.currentFileSelection = [];
 
 // ============================================================
+// Display helpers — region title-case + province full names
+// ============================================================
+
+function _toTitleCase(str) {
+    if (!str) return str;
+    return str.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+}
+
+const _PROVINCE_NAMES = {
+    AG:'Agrigento', AL:'Alessandria', AN:'Ancona', AO:'Aosta', AP:'Ascoli Piceno',
+    AQ:"L'Aquila", AR:'Arezzo', AT:'Asti', AV:'Avellino', BA:'Bari',
+    BG:'Bergamo', BI:'Biella', BL:'Belluno', BN:'Benevento', BO:'Bologna',
+    BR:'Brindisi', BS:'Brescia', BT:'Barletta-Andria-Trani', BZ:'Bolzano',
+    CA:'Cagliari', CB:'Campobasso', CE:'Caserta', CH:'Chieti', CL:'Caltanissetta',
+    CN:'Cuneo', CO:'Como', CR:'Cremona', CS:'Cosenza', CT:'Catania', CZ:'Catanzaro',
+    EN:'Enna', FC:'Forlì-Cesena', FE:'Ferrara', FG:'Foggia', FI:'Firenze',
+    FM:'Fermo', FR:'Frosinone', GE:'Genova', GO:'Gorizia', GR:'Grosseto',
+    IM:'Imperia', IS:'Isernia', KR:'Crotone', LC:'Lecco', LE:'Lecce',
+    LI:'Livorno', LO:'Lodi', LT:'Latina', LU:'Lucca', MB:'Monza e Brianza',
+    MC:'Macerata', ME:'Messina', MI:'Milano', MN:'Mantova', MO:'Modena',
+    MS:'Massa-Carrara', MT:'Matera', NA:'Napoli', NO:'Novara', NU:'Nuoro',
+    OR:'Oristano', PA:'Palermo', PC:'Piacenza', PD:'Padova', PE:'Pescara',
+    PG:'Perugia', PI:'Pisa', PN:'Pordenone', PO:'Prato', PR:'Parma',
+    PT:'Pistoia', PU:'Pesaro e Urbino', PV:'Pavia', PZ:'Potenza', RA:'Ravenna',
+    RC:'Reggio Calabria', RE:'Reggio Emilia', RG:'Ragusa', RI:'Rieti', RM:'Roma',
+    RN:'Rimini', RO:'Rovigo', SA:'Salerno', SI:'Siena', SO:'Sondrio', SP:'La Spezia',
+    SR:'Siracusa', SS:'Sassari', SU:'Sud Sardegna', SV:'Savona', TA:'Taranto',
+    TE:'Teramo', TN:'Trento', TO:'Torino', TP:'Trapani', TR:'Terni', TS:'Trieste',
+    TV:'Treviso', UD:'Udine', VA:'Varese', VB:'Verbano-Cusio-Ossola', VC:'Vercelli',
+    VE:'Venezia', VI:'Vicenza', VR:'Verona', VT:'Viterbo', VV:'Vibo Valentia',
+};
+
+function _provinceLabel(code) {
+    if (!code) return code;
+    const name = _PROVINCE_NAMES[code.toUpperCase()];
+    return name ? `${code} — ${name}` : code;
+}
+
+// ============================================================
+// Shared GeoJSON layer helpers
+// ============================================================
+
+/**
+ * Build HTML popup content from a feature's properties object.
+ * @param {Object} props - feature.properties
+ * @param {string[]} [priorityKeys] - keys to show first; defaults to all keys
+ */
+function _buildPopupContent(props, priorityKeys) {
+    if (!props) return '';
+    let html = '<div class="popup-content">';
+    const keys = priorityKeys
+        ? [...priorityKeys.filter(k => props[k] != null), ...Object.keys(props).filter(k => !priorityKeys.includes(k) && props[k] != null)]
+        : Object.keys(props).filter(k => props[k] != null && k !== 'geometry' && k !== 'id');
+    keys.forEach(k => { html += `<b>${k}:</b> ${props[k]}<br>`; });
+    return html + '</div>';
+}
+
+/**
+ * Return a Leaflet style object for a cadastral layer.
+ * @param {string} color - stroke / fill colour
+ */
+function _cadStyle(color) {
+    return { color, weight: 1.5, opacity: 0.9, fillOpacity: 0.3, fillColor: color };
+}
+
+/**
+ * Return an onEachFeature handler that:
+ *  - binds a popup from feature.properties
+ *  - toggles selection on click (red highlight / revert)
+ * @param {string} baseColor - normal fill colour
+ * @param {string[]} [popupPriorityKeys]
+ */
+function _makeFeatureHandler(baseColor, popupPriorityKeys) {
+    return function(feature, layer) {
+        const popupHtml = _buildPopupContent(feature.properties, popupPriorityKeys);
+        if (popupHtml) layer.bindPopup(popupHtml, { maxWidth: 350 });
+
+        layer.on('click', function(e) {
+            L.DomEvent.stopPropagation(e);
+            if (layer._selected) {
+                layer._selected = false;
+                layer.setStyle({ fillColor: baseColor, fillOpacity: 0.3 });
+                const idx = (window.selectedPolygons || []).indexOf(layer);
+                if (idx > -1) window.selectedPolygons.splice(idx, 1);
+            } else {
+                layer._selected = true;
+                layer.setStyle({ fillColor: '#e74c3c', fillOpacity: 0.7 });
+                if (!window.selectedPolygons) window.selectedPolygons = [];
+                window.selectedPolygons.push(layer);
+            }
+            if (typeof updateAdjacencyButtonState === 'function') updateAdjacencyButtonState();
+        });
+    };
+}
+
+/**
+ * Create and return a styled Leaflet GeoJSON layer ready to add to a map.
+ * @param {Object} geojson - GeoJSON FeatureCollection
+ * @param {string} color - base colour
+ * @param {string[]} [popupPriorityKeys]
+ */
+function _createCadastralLayer(geojson, color, popupPriorityKeys) {
+    return L.geoJSON(geojson, {
+        style: () => _cadStyle(color),
+        onEachFeature: _makeFeatureHandler(color, popupPriorityKeys),
+    });
+}
+
+// ============================================================
 // Layer Panel — per-file layer visibility controls
 // ============================================================
 const LayerPanel = (function() {
@@ -794,7 +903,7 @@ async function initDatabaseFilters() {
             window.dbHierarchyCache.regions.forEach(region => {
                 const opt = document.createElement('option');
                 opt.value = region;
-                opt.textContent = region;
+                opt.textContent = _toTitleCase(region);
                 regionSelect.appendChild(opt);
             });
         } else {
@@ -811,7 +920,7 @@ async function initDatabaseFilters() {
                 regions.forEach(region => {
                     const opt = document.createElement('option');
                     opt.value = region;
-                    opt.textContent = region;
+                    opt.textContent = _toTitleCase(region);
                     regionSelect.appendChild(opt);
                 });
             }
@@ -868,7 +977,7 @@ function populateProvinceSelect(provinces) {
     provinces.forEach(prov => {
         const opt = document.createElement('option');
         opt.value = prov;
-        opt.textContent = prov;
+        opt.textContent = _provinceLabel(prov);
         provinciaSelect.appendChild(opt);
     });
 }
@@ -1127,33 +1236,8 @@ async function executeDbQuery() {
                 window.hasData = true;
 
                 // Add to map with styling
-                window.geoJsonLayer = L.geoJSON(data.geojson, {
-                    style: function(feature) {
-                        return {
-                            color: '#3388ff',
-                            weight: 2,
-                            opacity: 0.8,
-                            fillOpacity: 0.3
-                        };
-                    },
-                    onEachFeature: function(feature, layer) {
-                        if (feature.properties) {
-                            let popupContent = '<div class="popup-content">';
-                            for (const [key, value] of Object.entries(feature.properties)) {
-                                if (value !== null && value !== undefined) {
-                                    popupContent += `<b>${key}:</b> ${value}<br>`;
-                                }
-                            }
-                            popupContent += '</div>';
-                            layer.bindPopup(popupContent);
-                        }
-
-                        // Click handler for selection
-                        layer.on('click', function(e) {
-                            handlePolygonClick(e, layer, feature);
-                        });
-                    }
-                }).addTo(window.map);
+                window.geoJsonLayer = _createCadastralLayer(data.geojson, '#3388ff')
+                    .addTo(window.map);
 
                 // Fit bounds to loaded data
                 const bounds = window.geoJsonLayer.getBounds();
@@ -1216,28 +1300,8 @@ async function searchCadastralReference() {
                 window.hasData = true;
 
                 // Add to map with highlight styling
-                window.geoJsonLayer = L.geoJSON(data.geojson, {
-                    style: function(feature) {
-                        return {
-                            color: '#ff7800',
-                            weight: 3,
-                            opacity: 1,
-                            fillOpacity: 0.5
-                        };
-                    },
-                    onEachFeature: function(feature, layer) {
-                        if (feature.properties) {
-                            let popupContent = '<div class="popup-content">';
-                            for (const [key, value] of Object.entries(feature.properties)) {
-                                if (value !== null && value !== undefined) {
-                                    popupContent += `<b>${key}:</b> ${value}<br>`;
-                                }
-                            }
-                            popupContent += '</div>';
-                            layer.bindPopup(popupContent).openPopup();
-                        }
-                    }
-                }).addTo(window.map);
+                window.geoJsonLayer = _createCadastralLayer(data.geojson, '#ff7800')
+                    .addTo(window.map);
 
                 // Fit bounds to result
                 const bounds = window.geoJsonLayer.getBounds();
@@ -1471,62 +1535,17 @@ function addGeoJSONToMap(geojson, layerName) {
         return;
     }
     
-    // Create GeoJSON layer with styling
+    // Create GeoJSON layer — per-feature colour based on layer_type (ple/map)
+    const _CADASTRAL_PRIORITY = ['regione', 'provincia', 'comune_name', 'foglio', 'particella', 'layer_type'];
     const geoJsonLayer = L.geoJSON(geojson, {
         style: function(feature) {
-            const layerType = feature.properties?.layer_type;
-            return {
-                color: layerType === 'ple' ? '#e74c3c' : '#3498db',
-                weight: 2,
-                opacity: 0.8,
-                fillOpacity: 0.3,
-                fillColor: layerType === 'ple' ? '#e74c3c' : '#3498db'
-            };
+            const color = feature.properties?.layer_type === 'ple' ? '#e74c3c' : '#3498db';
+            return _cadStyle(color);
         },
         onEachFeature: function(feature, layer) {
-            // Add popup with properties
-            if (feature.properties) {
-                let popupContent = '<div class="popup-content">';
-                const priorityProps = ['regione', 'provincia', 'comune_name', 'foglio', 'particella', 'layer_type'];
-                
-                // Show priority props first
-                priorityProps.forEach(key => {
-                    if (feature.properties[key] !== null && feature.properties[key] !== undefined) {
-                        popupContent += `<b>${key}:</b> ${feature.properties[key]}<br>`;
-                    }
-                });
-                
-                popupContent += '</div>';
-                layer.bindPopup(popupContent);
-            }
-            
-            // Add click handler for selection
-            layer.on('click', function(e) {
-                const isSelected = layer._selected || false;
-                
-                if (isSelected) {
-                    layer._selected = false;
-                    layer.setStyle({
-                        fillColor: layer.options.originalFillColor || layer.options.fillColor,
-                        fillOpacity: 0.3
-                    });
-                    const index = window.selectedPolygons.findIndex(p => p === layer);
-                    if (index > -1) window.selectedPolygons.splice(index, 1);
-                } else {
-                    layer._selected = true;
-                    if (!layer.options.originalFillColor) {
-                        layer.options.originalFillColor = layer.options.fillColor;
-                    }
-                    layer.setStyle({
-                        fillColor: '#ff0000',
-                        fillOpacity: 0.7
-                    });
-                    window.selectedPolygons.push(layer);
-                }
-                
-                updateAdjacencyButtonState();
-            });
-        }
+            const color = feature.properties?.layer_type === 'ple' ? '#e74c3c' : '#3498db';
+            return _makeFeatureHandler(color, _CADASTRAL_PRIORITY)(feature, layer);
+        },
     });
     
     // Add to map
@@ -2293,48 +2312,7 @@ async function _loadCadastralProgressive(filePaths, loadButton, originalText) {
                 // Add to Folium map immediately
                 const foliumMap = getFoliumMapInstance();
                 if (foliumMap && geojson && geojson.features && geojson.features.length > 0) {
-                    const geoJsonLayer = L.geoJSON(geojson, {
-                        style: function() {
-                            return {
-                                color: baseColor,
-                                weight: 1.5,
-                                opacity: 0.9,
-                                fillOpacity: 0.3,
-                                fillColor: baseColor
-                            };
-                        },
-                        onEachFeature: function(feature, layer) {
-                            // Build popup content from properties
-                            if (feature.properties) {
-                                let content = '<div class="popup-content">';
-                                Object.keys(feature.properties).forEach(key => {
-                                    if (key !== 'geometry' && key !== 'id') {
-                                        content += `<strong>${key}:</strong> ${feature.properties[key]}<br>`;
-                                    }
-                                });
-                                content += '</div>';
-                                layer.bindPopup(content, { maxWidth: 350 });
-                            }
-
-                            // Click handler for selection
-                            layer.on('click', function(e) {
-                                L.DomEvent.stopPropagation(e);
-                                if (layer._selected) {
-                                    layer._selected = false;
-                                    layer.setStyle({ fillColor: baseColor, fillOpacity: 0.3 });
-                                    const idx = (window.selectedPolygons || []).indexOf(layer);
-                                    if (idx > -1) window.selectedPolygons.splice(idx, 1);
-                                } else {
-                                    layer._selected = true;
-                                    layer.setStyle({ fillColor: '#e74c3c', fillOpacity: 0.7 });
-                                    if (!window.selectedPolygons) window.selectedPolygons = [];
-                                    window.selectedPolygons.push(layer);
-                                }
-                                updateAdjacencyButtonState();
-                            });
-                        }
-                    });
-
+                    const geoJsonLayer = _createCadastralLayer(geojson, baseColor);
                     geoJsonLayer.addTo(foliumMap);
                     layerGroup.addLayer(geoJsonLayer);
 

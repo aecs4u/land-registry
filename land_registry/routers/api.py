@@ -722,104 +722,62 @@ async def get_cadastral_cache_info():
         raise HTTPException(status_code=500, detail=f"Error getting cache info: {str(e)}")
 
 
+def _load_cadastral_json() -> dict:
+    """Load and return the cadastral structure JSON, raising HTTPException on failure."""
+    path = get_cadastral_structure_path()
+    if not path:
+        raise HTTPException(status_code=404, detail="Cadastral structure file not found locally")
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error reading cadastral structure: {str(e)}")
+
+
 @api_router.get("/get-regions/")
 async def get_regions():
-    """Get list of all regions"""
-    try:
-        # Use centralized settings to get cadastral structure path
-        cadastral_file_path = get_cadastral_structure_path()
-
-        if not cadastral_file_path:
-            raise HTTPException(status_code=404, detail="Cadastral structure file not found locally")
-
-        with open(cadastral_file_path, 'r', encoding='utf-8') as f:
-            cadastral_data = json.load(f)
-
-        regions = list(cadastral_data.keys())
-        return {"regions": sorted(regions)}
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error reading regions: {str(e)}")
+    """Get list of all regions."""
+    data = _load_cadastral_json()
+    return {"regions": sorted(data.keys())}
 
 
 @api_router.get("/get-provinces/")
 async def get_provinces(regions: str = None):
-    """Get list of provinces, optionally filtered by regions"""
-    try:
-        # Use centralized settings to get cadastral structure path
-        cadastral_file_path = get_cadastral_structure_path()
-
-        if not cadastral_file_path:
-            raise HTTPException(status_code=404, detail="Cadastral structure file not found locally")
-
-        with open(cadastral_file_path, 'r', encoding='utf-8') as f:
-            cadastral_data = json.load(f)
-
-        provinces = set()
-
-        if regions:
-            # Filter by specific regions
-            region_list = [r.strip() for r in regions.split(',')]
-            for region_name in region_list:
-                if region_name in cadastral_data:
-                    provinces.update(cadastral_data[region_name].keys())
-        else:
-            # Get all provinces
-            for region_data in cadastral_data.values():
-                provinces.update(region_data.keys())
-
-        return {"provinces": sorted(list(provinces))}
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error reading provinces: {str(e)}")
+    """Get provinces, optionally filtered by comma-separated region names."""
+    data = _load_cadastral_json()
+    region_list = [r.strip() for r in regions.split(',')] if regions else list(data.keys())
+    provinces: set[str] = set()
+    for r in region_list:
+        if r in data:
+            provinces.update(data[r].keys())
+    return {"provinces": sorted(provinces)}
 
 
 @api_router.get("/get-municipalities/")
 async def get_municipalities(regions: str = None, provinces: str = None):
-    """Get list of municipalities, optionally filtered by regions and provinces"""
-    try:
-        # Use centralized settings to get cadastral structure path
-        cadastral_file_path = get_cadastral_structure_path()
-
-        if not cadastral_file_path:
-            raise HTTPException(status_code=404, detail="Cadastral structure file not found locally")
-
-        with open(cadastral_file_path, 'r', encoding='utf-8') as f:
-            cadastral_data = json.load(f)
-
-        municipalities = []
-
-        region_list = [r.strip() for r in regions.split(',')] if regions else list(cadastral_data.keys())
-        province_list = [p.strip() for p in provinces.split(',')] if provinces else None
-
-        for region_name in region_list:
-            if region_name in cadastral_data:
-                region_data = cadastral_data[region_name]
-
-                # Filter by provinces if specified
-                target_provinces = province_list if province_list else list(region_data.keys())
-
-                for province_code in target_provinces:
-                    if province_code in region_data:
-                        province_data = region_data[province_code]
-
-                        for municipality_key, municipality_data in province_data.items():
-                            municipalities.append({
-                                "key": f"{region_name}|{province_code}|{municipality_key}",
-                                "name": municipality_data.get('name', municipality_key),
-                                "code": municipality_data.get('code', 'N/A'),
-                                "region": region_name,
-                                "province": province_code,
-                                "files_count": len(municipality_data.get('files', []))
-                            })
-
-        # Sort by name
-        municipalities.sort(key=lambda x: x['name'])
-
-        return {"municipalities": municipalities}
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error reading municipalities: {str(e)}")
+    """Get municipalities, optionally filtered by region and/or province."""
+    data = _load_cadastral_json()
+    region_list = [r.strip() for r in regions.split(',')] if regions else list(data.keys())
+    province_list = [p.strip() for p in provinces.split(',')] if provinces else None
+    municipalities = []
+    for region_name in region_list:
+        if region_name not in data:
+            continue
+        target_provinces = province_list if province_list else list(data[region_name].keys())
+        for province_code in target_provinces:
+            if province_code not in data[region_name]:
+                continue
+            for muni_key, muni in data[region_name][province_code].items():
+                municipalities.append({
+                    "key": f"{region_name}|{province_code}|{muni_key}",
+                    "name": muni.get('name', muni_key),
+                    "code": muni.get('code', 'N/A'),
+                    "region": region_name,
+                    "province": province_code,
+                    "files_count": len(muni.get('files', [])),
+                })
+    municipalities.sort(key=lambda x: x['name'])
+    return {"municipalities": municipalities}
 
 
 # ============================================================================

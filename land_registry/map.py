@@ -2,6 +2,7 @@
 from branca.element import Template, MacroElement
 import colorsys
 import folium
+import folium.folium as _folium_mod
 from folium.plugins import (
     Draw, MeasureControl
 )
@@ -18,6 +19,12 @@ from typing import List, Dict, Any, Optional, Union
 import zipfile
 
 from land_registry.config import map_controls_settings, app_settings
+
+# Redirect Folium's jQuery from code.jquery.com → cdn.jsdelivr.net (CSP-allowed)
+_folium_mod._default_js = [
+    (name, "https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js") if name == "jquery" else (name, url)
+    for name, url in _folium_mod._default_js
+]
 
 # Configure logger
 logger = logging.getLogger(__name__)

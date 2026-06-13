@@ -802,39 +802,24 @@ function initDarkMode() {
 }
 
 /**
- * Toggle sidebar collapsed/expanded state
+ * Sidebar state is managed entirely by aecs4u-theme's SidebarManager
+ * (which attaches to #sidebarToggle and toggles body.sidebar-visible /
+ * body.sidebar-hidden). We only need to react to those transitions so that
+ * Leaflet can recalculate its container dimensions.
  */
-function toggleSidebar() {
-    const sidebar = document.getElementById('app-sidebar');
-    const collapseBtn = document.getElementById('sidebarCollapseBtn');
-    const expandBtn = document.getElementById('sidebarExpandBtn');
-    if (!sidebar) return;
-
-    const collapsed = sidebar.classList.toggle('collapsed');
-    document.body.classList.toggle('sidebar-collapsed', collapsed);
-    if (expandBtn) expandBtn.style.display = collapsed ? 'flex' : 'none';
-    if (collapseBtn) collapseBtn.style.display = collapsed ? 'none' : 'flex';
-    localStorage.setItem('sidebarCollapsed', collapsed ? '1' : '0');
-
-    // Let Leaflet recalculate its container size after the CSS transition
-    setTimeout(() => {
-        if (typeof invalidateLeafletMap === 'function') invalidateLeafletMap();
-    }, 300);
-}
-
-/** Restore sidebar state from localStorage on page load */
-(function restoreSidebarState() {
-    if (localStorage.getItem('sidebarCollapsed') === '1') {
-        document.addEventListener('DOMContentLoaded', () => {
-            const sidebar = document.getElementById('app-sidebar');
-            const expandBtn = document.getElementById('sidebarExpandBtn');
-            const collapseBtn = document.getElementById('sidebarCollapseBtn');
-            if (sidebar) sidebar.classList.add('collapsed');
-            document.body.classList.add('sidebar-collapsed');
-            if (expandBtn) expandBtn.style.display = 'flex';
-            if (collapseBtn) collapseBtn.style.display = 'none';
-        });
-    }
+(function initSidebarLeafletSync() {
+    document.addEventListener('DOMContentLoaded', () => {
+        let lastHidden = document.body.classList.contains('sidebar-hidden');
+        new MutationObserver(() => {
+            const hidden = document.body.classList.contains('sidebar-hidden');
+            if (hidden !== lastHidden) {
+                lastHidden = hidden;
+                setTimeout(() => {
+                    if (typeof invalidateLeafletMap === 'function') invalidateLeafletMap();
+                }, 300);
+            }
+        }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    });
 })();
 
 /**
@@ -4672,7 +4657,7 @@ function populateRegionsSelect() {
     regions.forEach(regionName => {
         const option = document.createElement('option');
         option.value = regionName;
-        option.textContent = regionName;
+        option.textContent = typeof _toTitleCase === 'function' ? _toTitleCase(regionName) : regionName;
         regionsSelect.appendChild(option);
         debugLog('Added region:', regionName);
     });
@@ -4720,7 +4705,7 @@ function updateProvincesSelect() {
     Array.from(allProvinces).sort().forEach(provinceCode => {
         const option = document.createElement('option');
         option.value = provinceCode;
-        option.textContent = provinceCode;
+        option.textContent = typeof _provinceLabel === 'function' ? _provinceLabel(provinceCode) : provinceCode;
         provincesSelect.appendChild(option);
     });
 
