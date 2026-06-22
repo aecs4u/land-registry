@@ -36,7 +36,7 @@ class AppSettings(BaseSettings):
 
     class Config:
         env_prefix = "LAND_REGISTRY_"
-        env_file = ".env"
+        env_file=("../.env", ".env")
         case_sensitive = False
         extra = "ignore"
 
