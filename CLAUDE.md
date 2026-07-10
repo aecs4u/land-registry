@@ -123,4 +123,13 @@ The dev server runs on **port 8000**. Panel/Bokeh dashboard runs on **port 5006*
 - **Local Cadastral Data**: `/data/catasto/ITALIA/` (auto-detected in development)
 - **S3 Support**: Production mode uses unsigned S3 client for cadastral data
 - **WebGL Bundling**: Leaflet.glify is bundled locally (`static/vendor/`) — CDN was blocked by ORB
+
+## Deployment
+
+**All Cloud Run deployments MUST use `lighthouse cloudrun deploy`. Never use `gcloud run deploy` directly.**
+
+```bash
+lighthouse cloudrun deploy           # deploy to production
+lighthouse cloudrun deploy --follow  # deploy and stream logs
+```
 - **Panel Integration**: Bokeh dashboard embedded via `server_document()` (run in thread pool to avoid blocking)
