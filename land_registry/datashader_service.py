@@ -8,6 +8,7 @@ enabling visualization of millions of cadastral parcels without client-side perf
 import logging
 from collections import OrderedDict
 from io import BytesIO
+from pathlib import Path
 from typing import Optional
 
 import colorcet
@@ -16,7 +17,9 @@ import datashader.transfer_functions as tf
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+import pyogrio
 from PIL import Image
+from shapely.geometry import Point
 
 log = logging.getLogger(__name__)
 
@@ -39,9 +42,15 @@ class DatashaderTileService:
         self.db = cadastral_db
         self.tile_size = 256  # Standard map tile size (256x256 pixels)
 
-        # LRU tile cache: keys are (x, y, z, region, agg_type, colormap)
+        # LRU tile cache: keys are (x, y, z, region, agg_type, colormap) or
+        # ("boundary", x, y, z) for generate_boundary_tile.
         self._tile_cache: OrderedDict = OrderedDict()
         self._tile_cache_max = 100  # max cached tiles (~25 MB at ~256 KB/tile)
+
+        # region_slug -> (minx, miny, maxx, maxy) in the source fgb CRS (EPSG:6706),
+        # lazily populated by _region_fgb_bounds() from each file's header (cheap
+        # regardless of file size — used only to pick which fgb file(s) to read).
+        self._fgb_bounds: Optional[dict[str, tuple]] = None
 
         log.info("DatashaderTileService initialized with tile_size=%d", self.tile_size)
 
@@ -299,6 +308,165 @@ class DatashaderTileService:
                 exc_info=True,
             )
             return self._empty_image(width, height)
+
+    def generate_boundary_tile(self, x: int, y: int, z: int) -> bytes:
+        """
+        Generate a map tile showing actual cadastral zone ("foglio") boundary
+        polygons, rasterized from the per-region FlatGeobuf source files —
+        as opposed to generate_tile()'s centroid density heatmap.
+
+        Reads only the fgb file(s) whose bounds overlap this tile (via each
+        file's spatial index, no full-file load) and rasterizes both a light
+        fill and a crisp boundary line with datashader.
+
+        Args:
+            x: Tile X coordinate (TMS)
+            y: Tile Y coordinate (TMS)
+            z: Zoom level (0-18)
+
+        Returns:
+            PNG tile image as bytes (transparent where there is no data)
+        """
+        cache_key = ("boundary", x, y, z)
+        if cache_key in self._tile_cache:
+            self._tile_cache.move_to_end(cache_key)
+            log.debug("Boundary tile cache hit: %d/%d/%d", z, x, y)
+            return self._tile_cache[cache_key]
+
+        try:
+            bounds = self._tile_to_bbox(x, y, z)
+            bbox = (bounds["west"], bounds["south"], bounds["east"], bounds["north"])
+
+            fgb_files = self._candidate_fgb_files(bbox)
+            if not fgb_files:
+                return self._empty_tile()
+
+            # Defensive cap: this is a public, unauthenticated endpoint, and a
+            # low-zoom bbox can span several hundred-MB region files at once
+            # (a client respecting the intended minZoom never triggers this —
+            # see the sales-map TileLayer config). Stop accumulating once the
+            # tile would be too expensive to rasterize; partial coverage at
+            # that point is fine since the tile isn't meant to be viewed here.
+            max_features = 3000
+            frames = []
+            total = 0
+            for fgb_path in fgb_files:
+                try:
+                    frame = gpd.read_file(fgb_path, bbox=bbox, engine="pyogrio")
+                except Exception as e:
+                    log.warning(f"Failed reading {fgb_path} for tile {z}/{x}/{y}: {e}")
+                    continue
+                if frame is not None and len(frame) > 0:
+                    frames.append(frame)
+                    total += len(frame)
+                if total >= max_features:
+                    log.warning(
+                        f"Tile {z}/{x}/{y} hit the {max_features}-feature cap "
+                        f"({len(fgb_files)} candidate file(s)); rendering partial coverage"
+                    )
+                    break
+
+            if not frames:
+                return self._empty_tile()
+
+            gdf = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
+            gdf = gdf.to_crs(4326)
+
+            canvas = ds.Canvas(
+                plot_width=self.tile_size,
+                plot_height=self.tile_size,
+                x_range=(bbox[0], bbox[2]),
+                y_range=(bbox[1], bbox[3]),
+            )
+
+            fill_agg = canvas.polygons(gdf, geometry="geometry", agg=ds.count())
+            fill_img = tf.shade(fill_agg, cmap=["#ffb100"], how="linear", alpha=60)
+
+            boundary = gdf.copy()
+            boundary["geometry"] = boundary.boundary
+            line_agg = canvas.line(boundary, geometry="geometry", agg=ds.any())
+            line_img = tf.shade(line_agg, cmap=["#cc5500"])
+
+            img = tf.stack(fill_img, line_img)
+            result = self._image_to_bytes(img)
+
+            self._tile_cache[cache_key] = result
+            if len(self._tile_cache) > self._tile_cache_max:
+                self._tile_cache.popitem(last=False)
+
+            return result
+
+        except Exception as e:
+            log.error(f"Error generating boundary tile {z}/{x}/{y}: {e}", exc_info=True)
+            return self._empty_tile()
+
+    def _region_fgb_bounds(self) -> dict[str, tuple]:
+        """
+        Lazily map each cadastral_map.<region>.fgb file to its total_bounds
+        (in the source EPSG:6706 CRS), read once from each file's header via
+        pyogrio (cheap regardless of file size — no full read).
+        """
+        if self._fgb_bounds is not None:
+            return self._fgb_bounds
+
+        from land_registry.config import spatialite_settings
+
+        fgb_dir = Path(spatialite_settings.fgb_directory)
+        bounds: dict[str, tuple] = {}
+        if not fgb_dir.exists():
+            log.warning(f"FGB directory does not exist: {fgb_dir}")
+            self._fgb_bounds = bounds
+            return bounds
+
+        for fgb_path in fgb_dir.glob("cadastral_map.*.fgb"):
+            try:
+                info = pyogrio.read_info(fgb_path)
+                bounds[fgb_path.name] = tuple(info["total_bounds"])
+            except Exception as e:
+                log.warning(f"Failed reading fgb header for {fgb_path}: {e}")
+
+        self._fgb_bounds = bounds
+        log.info(f"Indexed {len(bounds)} cadastral_map fgb file(s) for boundary tiles")
+        return bounds
+
+    def _candidate_fgb_files(self, bbox: tuple) -> list:
+        """
+        Return the cadastral_map.*.fgb files whose bounds overlap ``bbox``.
+
+        The bounds comparison is a coarse EPSG:6706-vs-EPSG:4326 rectangle
+        overlap (the two CRSs are close enough in extent for file selection —
+        actual geometry is reprojected properly before rendering).
+        """
+        from land_registry.config import spatialite_settings
+
+        fgb_dir = Path(spatialite_settings.fgb_directory)
+        west, south, east, north = bbox
+        matches = []
+        for name, (minx, miny, maxx, maxy) in self._region_fgb_bounds().items():
+            if minx > east or maxx < west or miny > north or maxy < south:
+                continue
+            matches.append(fgb_dir / name)
+        return matches
+
+    def warmup_jit(self) -> None:
+        """
+        Pay datashader/numba's one-time JIT compile cost (~7s for
+        Canvas.polygons/Canvas.line) with a throwaway call, so the first real
+        tile request doesn't stall. Call this once at process startup, off
+        the request path.
+        """
+        try:
+            dummy = gpd.GeoDataFrame(
+                {"geometry": [Point(0, 0).buffer(0.01)]}, crs=4326
+            )
+            canvas = ds.Canvas(plot_width=16, plot_height=16, x_range=(-1, 1), y_range=(-1, 1))
+            canvas.polygons(dummy, geometry="geometry", agg=ds.count())
+            boundary = dummy.copy()
+            boundary["geometry"] = boundary.boundary
+            canvas.line(boundary, geometry="geometry", agg=ds.any())
+            log.info("Datashader JIT warm-up complete")
+        except Exception as e:
+            log.warning(f"Datashader JIT warm-up failed (non-fatal): {e}")
 
     def _polygons_to_points(self, gdf: gpd.GeoDataFrame) -> pd.DataFrame:
         """

@@ -501,3 +501,32 @@ class TestDatashaderEndpoints:
 
         assert response.status_code == 200
         assert response.headers["content-type"] == "image/png"
+
+
+class TestCadastralBoundaryTileEndpoint:
+    """GET /api/v1/tiles/cadastral-boundaries/{z}/{x}/{y}.png"""
+
+    def test_tile_endpoint_success(self, client):
+        mock_service = MagicMock()
+        mock_service.generate_boundary_tile.return_value = b"\x89PNG\r\n\x1a\n"
+
+        with patch("land_registry.routers.api.get_datashader_service", return_value=mock_service):
+            response = client.get("/api/v1/tiles/cadastral-boundaries/13/4257/2923.png")
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "image/png"
+        assert response.headers["access-control-allow-origin"] == "*"
+        mock_service.generate_boundary_tile.assert_called_once_with(4257, 2923, 13)
+
+    def test_tile_endpoint_error_returns_empty_tile(self, client):
+        """Errors degrade gracefully to an empty tile (200), not 500."""
+        empty_png = b"\x89PNG\r\n\x1a\n"
+        mock_service = MagicMock()
+        mock_service.generate_boundary_tile.side_effect = Exception("fgb read failed")
+        mock_service._empty_tile.return_value = empty_png
+
+        with patch("land_registry.routers.api.get_datashader_service", return_value=mock_service):
+            response = client.get("/api/v1/tiles/cadastral-boundaries/13/4257/2923.png")
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "image/png"

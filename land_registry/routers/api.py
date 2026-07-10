@@ -3349,6 +3349,42 @@ async def get_datashader_tile(
         return Response(content=empty, media_type="image/png")
 
 
+@api_router.get("/tiles/cadastral-boundaries/{z}/{x}/{y}.png")
+async def get_cadastral_boundary_tile(z: int, x: int, y: int):
+    """
+    Generate a map tile of actual cadastral zone ("foglio") boundary polygons,
+    rasterized on demand from the per-region cadastral_map.*.fgb source files.
+
+    Unlike /tiles/datashader/{z}/{x}/{y}.png (a centroid density heatmap
+    sourced from the cadastral DB), this reads real polygon geometry
+    filtered to the tile's bounding box and draws its fill/outline —
+    intended as a Leaflet TileLayer overlay showing zone shapes, not density.
+
+    Returns:
+        PNG tile image (transparent where there is no data for this tile)
+    """
+    try:
+        service = get_datashader_service()
+
+        tile_bytes = await asyncio.to_thread(
+            service.generate_boundary_tile, x, y, z
+        )
+
+        return Response(
+            content=tile_bytes,
+            media_type="image/png",
+            headers={
+                "Cache-Control": "public, max-age=3600",  # Cache tiles for 1 hour
+                "Access-Control-Allow-Origin": "*",
+            },
+        )
+    except Exception as e:
+        logger.error(f"Cadastral boundary tile error {z}/{x}/{y}: {e}", exc_info=True)
+        service = get_datashader_service()
+        empty = service._empty_tile()
+        return Response(content=empty, media_type="image/png")
+
+
 @api_router.get("/datashader/heatmap/{region}")
 async def get_datashader_heatmap(
     region: str,

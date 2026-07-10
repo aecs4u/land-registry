@@ -248,6 +248,16 @@ async def lifespan(app: FastAPI):
             # Don't raise - let the app run without Panel
             # raise RuntimeError("Panel server failed to start")
 
+    # Pay datashader/numba's one-time JIT compile cost (~7s) in the background
+    # so the first real cadastral boundary tile request doesn't stall on it.
+    try:
+        from land_registry.dependencies import get_datashader_registry
+
+        service = get_datashader_registry().get_service()
+        asyncio.create_task(asyncio.to_thread(service.warmup_jit))
+    except Exception as e:
+        logger.warning(f"Could not schedule datashader JIT warm-up (non-fatal): {e}")
+
     logger.info(f"Application startup complete - Panel server ready at {PANEL_DASHBOARD_URL}")
 
     yield
@@ -287,6 +297,36 @@ app = FastAPI(
     debug=app_settings.debug,
     lifespan=lifespan
 )
+
+# aecs4u_auth's SecurityHeadersMiddleware (added below by setup_auth) stamps
+# every response with Cross-Origin-Resource-Policy: same-origin, which blocks
+# the cadastral tile endpoint from being embedded as a Leaflet TileLayer on
+# real-estates' sales map (a different origin) — browsers reject the <img>
+# load with ERR_BLOCKED_BY_RESPONSE.NotSameOrigin even though CORS headers are
+# fine. Added *before* setup_auth() so it wraps outermost and runs last on the
+# way out, letting it override that one header for just this public,
+# non-sensitive tile route without loosening CORP anywhere else.
+class _CadastralTileCorpMiddleware:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope["path"].startswith("/api/v1/tiles/cadastral-boundaries/"):
+            async def send_wrapper(message):
+                if message["type"] == "http.response.start":
+                    headers = [
+                        (k, v) for k, v in message["headers"]
+                        if k.lower() != b"cross-origin-resource-policy"
+                    ]
+                    headers.append((b"cross-origin-resource-policy", b"cross-origin"))
+                    message["headers"] = headers
+                await send(message)
+            await self.app(scope, receive, send_wrapper)
+        else:
+            await self.app(scope, receive, send)
+
+
+app.add_middleware(_CadastralTileCorpMiddleware)
 
 # Setup authentication using aecs4u-auth (if available)
 if _AUTH_AVAILABLE:

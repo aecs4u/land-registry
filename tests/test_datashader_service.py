@@ -350,3 +350,109 @@ class TestGenerateCategoricalMap:
         svc = DatashaderTileService(cadastral_db=mock_db)
         result = svc.generate_categorical_map("LAZIO")
         assert isinstance(result, bytes)
+
+
+# ---------------------------------------------------------------------------
+# generate_boundary_tile / fgb file discovery
+#
+# Unlike generate_tile (centroid density heatmap from CadastralDatabase),
+# generate_boundary_tile reads real polygon geometry straight from the
+# cadastral_map.<region>.fgb source files. These tests write small synthetic
+# fgb files to a tmp dir (not the real /mnt/mobile dataset) so they're
+# self-contained in CI.
+# ---------------------------------------------------------------------------
+
+def _write_region_fgb(path, polygon, crs="EPSG:4326"):
+    gdf = gpd.GeoDataFrame({"geometry": [polygon]}, crs=crs)
+    gdf.to_file(path, driver="FlatGeobuf")
+
+
+@pytest.fixture
+def fgb_dir(tmp_path, monkeypatch):
+    """A tmp dir with one synthetic cadastral_map.*.fgb file, wired in as
+    spatialite_settings.fgb_directory."""
+    from land_registry.config import spatialite_settings
+
+    poly = Polygon([(12.0, 41.0), (12.1, 41.0), (12.1, 41.1), (12.0, 41.1)])
+    _write_region_fgb(tmp_path / "cadastral_map.laziotest.fgb", poly)
+
+    monkeypatch.setattr(spatialite_settings, "fgb_directory", str(tmp_path))
+    return tmp_path
+
+
+class TestRegionFgbBounds:
+
+    def test_missing_directory_returns_empty(self, service, monkeypatch, tmp_path):
+        from land_registry.config import spatialite_settings
+
+        monkeypatch.setattr(spatialite_settings, "fgb_directory", str(tmp_path / "does-not-exist"))
+        assert service._region_fgb_bounds() == {}
+
+    def test_indexes_fgb_files(self, service, fgb_dir):
+        bounds = service._region_fgb_bounds()
+        assert "cadastral_map.laziotest.fgb" in bounds
+        minx, miny, maxx, maxy = bounds["cadastral_map.laziotest.fgb"]
+        assert minx == pytest.approx(12.0, abs=0.01)
+        assert maxx == pytest.approx(12.1, abs=0.01)
+
+    def test_cached_after_first_call(self, service, fgb_dir):
+        first = service._region_fgb_bounds()
+        assert service._fgb_bounds is first
+        # Second call returns the same cached dict without re-globbing.
+        assert service._region_fgb_bounds() is first
+
+
+class TestCandidateFgbFiles:
+
+    def test_overlapping_bbox_matches(self, service, fgb_dir):
+        matches = service._candidate_fgb_files((11.9, 40.9, 12.2, 41.2))
+        assert [p.name for p in matches] == ["cadastral_map.laziotest.fgb"]
+
+    def test_non_overlapping_bbox_no_match(self, service, fgb_dir):
+        matches = service._candidate_fgb_files((0.0, 0.0, 1.0, 1.0))
+        assert matches == []
+
+
+class TestGenerateBoundaryTile:
+
+    def test_no_fgb_directory_returns_empty_tile(self, service, monkeypatch, tmp_path):
+        from land_registry.config import spatialite_settings
+
+        monkeypatch.setattr(spatialite_settings, "fgb_directory", str(tmp_path / "does-not-exist"))
+        # Tile 0/0/0 covers the whole world — but no fgb files exist to match.
+        result = service.generate_boundary_tile(0, 0, 0)
+        img = Image.open(io.BytesIO(result))
+        assert img.format == "PNG"
+        assert img.mode == "RGBA"
+        assert all(pixel[3] == 0 for pixel in img.getdata())
+
+    def test_tile_over_covered_area_returns_non_empty_png(self, service, fgb_dir):
+        # Tile 0/0/0 (whole world) definitely overlaps the synthetic polygon.
+        result = service.generate_boundary_tile(0, 0, 0)
+        assert isinstance(result, bytes)
+        img = Image.open(io.BytesIO(result))
+        assert img.format == "PNG"
+        assert img.size == (service.tile_size, service.tile_size)
+
+    def test_cache_hit_returns_cached_result(self, service):
+        cache_key = ("boundary", 1, 2, 3)
+        cached_bytes = b"cached_boundary_png"
+        service._tile_cache[cache_key] = cached_bytes
+        result = service.generate_boundary_tile(1, 2, 3)
+        assert result == cached_bytes
+
+
+class TestWarmupJit:
+
+    def test_warmup_does_not_raise(self, service):
+        """Smoke test: a real (small) datashader render must not error out."""
+        service.warmup_jit()  # no exception == pass
+
+    def test_warmup_failure_is_non_fatal(self, service, monkeypatch):
+        import land_registry.datashader_service as mod
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(mod.ds.Canvas, "polygons", _boom)
+        service.warmup_jit()  # swallowed and logged, not raised
