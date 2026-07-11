@@ -417,6 +417,24 @@ async def _build_main_map_shell_context(request: Request) -> dict:
 
     This is async to prevent blocking the event loop when calling server_document().
     """
+    # Optional ?lat=&lng=&zoom= permalink state (e.g. shared/bookmarked links).
+    # Falls back to the default Rome view when absent or malformed.
+    map_center = [41.9028, 12.4964]
+    map_zoom = 6
+    try:
+        lat_param = request.query_params.get("lat")
+        lng_param = request.query_params.get("lng")
+        if lat_param is not None and lng_param is not None:
+            lat, lng = float(lat_param), float(lng_param)
+            if -90 <= lat <= 90 and -180 <= lng <= 180:
+                map_center = [lat, lng]
+        zoom_param = request.query_params.get("zoom")
+        if zoom_param is not None:
+            zoom = int(float(zoom_param))
+            if 5 <= zoom <= 18:
+                map_zoom = zoom
+    except (TypeError, ValueError):
+        pass
     # Get current data status
     current_gdf = get_current_gdf()
     has_data = current_gdf is not None and not current_gdf.empty
@@ -438,8 +456,8 @@ async def _build_main_map_shell_context(request: Request) -> dict:
         cadastral_geojson=geojson_data if not current_layers else None,
         cadastral_layers=current_layers if current_layers else None,
         auction_geojson=None,  # Could add auction data here
-        center=[41.9028, 12.4964],  # Rome, Italy
-        zoom=6
+        center=map_center,  # Rome, Italy by default; overridable via ?lat=&lng=
+        zoom=map_zoom
     )
 
     # Inject Folium HTML directly into the page (not as srcdoc iframe).

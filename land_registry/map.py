@@ -4,7 +4,8 @@ import colorsys
 import folium
 import folium.folium as _folium_mod
 from folium.plugins import (
-    Draw, MeasureControl
+    LocateControl,
+    MeasureControl
 )
 from folium.plugins.treelayercontrol import TreeLayerControl
 import geopandas as gpd
@@ -971,20 +972,13 @@ class MapControlsManager:
 
         # Add comprehensive plugins based on settings
         if self.settings.enable_draw_tools:
-            draw = Draw(
-                export=False,  # Disabled - using custom ExportControl instead
-                position=self.settings.draw_position,
-                draw_options={
-                    'polyline': True,
-                    'polygon': True,
-                    'circle': True,
-                    'rectangle': True,
-                    'marker': True,
-                    'circlemarker': True
-                }
-            )
-            map_instance.add_child(draw)
-            
+            # NOTE: no server-side Draw() plugin here — folium-interface.js's
+            # initializeDrawingControls() adds the one actual L.Control.Draw
+            # client-side (wired to window.drawnItems / export / spatial
+            # analysis). A second Draw() rendered into the Folium HTML used to
+            # stack on top of it at the same 'bottomleft' position, showing two
+            # toolbars and blocking the zoom control on narrow viewports.
+
             # Add custom Export control
             export_control = ExportControl()
             map_instance.add_child(export_control)
@@ -1157,8 +1151,11 @@ class IntegratedMapGenerator:
             max_zoom=18,  # Standard max zoom for satellite imagery
         )
 
-        # Set the bounds after map creation
-        m.fit_bounds(italy_bounds)
+        # Only *fit the initial view* to all of Italy when the caller didn't
+        # request a specific center/zoom (e.g. a ?lat=&lng=&zoom= permalink) —
+        # fit_bounds would otherwise silently override it on every load.
+        if center is None:
+            m.fit_bounds(italy_bounds)
 
         # Add all tile layers from map.js mapProviders (Google Satellite last as default)
         tile_layers = [
@@ -1331,10 +1328,15 @@ class IntegratedMapGenerator:
             """
 
             # Add marker
+            # title (-> Leaflet sets icon.title, not just alt="" which only
+            # applies to <img> tags) gives the keyboard-focusable marker div an
+            # accessible name — it has no text content and Leaflet's own a11y
+            # support (role="button"/tabindex) doesn't add an aria-label itself.
             folium.Marker(
                 location=capital['coords'],
                 popup=folium.Popup(popup_html, max_width=250),
                 tooltip=f"{capital['name']} - {capital['region']}",
+                title=f"{capital['name']} - {capital['region']}",
                 icon=icon
             ).add_to(capitals_group)
 
@@ -1439,6 +1441,17 @@ class IntegratedMapGenerator:
 
         # Only TreeLayerControl is used (added within generate_folium_controls)
         # Basic LayerControl has been removed as requested
+
+        # "Find my location" button (Leaflet.locatecontrol, already loaded in
+        # base.html). Added server-side so it attaches to the real Folium map
+        # instance regardless of the client-side dead-code path in map.js's
+        # initializeMap(), which targets a #map div that doesn't exist on the
+        # injected-HTML /map page.
+        LocateControl(
+            position="topleft",
+            strings={"title": "Trova la mia posizione"},
+            flyTo=True,
+        ).add_to(m)
 
         return m
 
