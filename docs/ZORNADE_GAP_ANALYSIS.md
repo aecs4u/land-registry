@@ -54,7 +54,7 @@ Legend: ✅ have · 🟡 partial (pipeline or stub exists, no product surface) �
 |---|---|---|---|
 | 1 | Nationwide always-on parcel map (zoom-gated vector tiles, labelled polygons) | ❌ | We load files on demand into RAM; no vector tiles (datashader PNG only, no interactivity) |
 | 2 | Click parcel → detail panel (80+ fields, 17 sections) | ❌ | We only show raw attribute tables of loaded features |
-| 3 | URL state / deep links (`?lat&lng&zoom&parcel=`) + share | ❌ | No permalink support |
+| 3 | URL state / deep links (`?lat&lng&zoom&parcel=`) + share | 🟡 | ✅ `?lat=&lng=&zoom=` read on `GET /map` (server-side, threads into `create_comprehensive_map`). Missing: `&parcel=` (no stable parcel IDs yet — needs Phase 0), and write-back (URL doesn't update as the user pans/zooms) |
 | 4 | Hierarchical parcel finder that works without pre-loading | 🟡 | Hierarchy endpoints exist (file-tree based); search only works on loaded data |
 | 5 | Cadastral base data (particella, foglio, sezione, comune, area) | ✅/🟡 | Data present in FGB/WFS attributes; needs a per-parcel lookup keyed by stable ID |
 | 6 | OMI quotations (per zone, by type, yields) + 22-semester history + value estimator | 🟡 | ✅ Backend done: `aecs4u_stats.omi` (importer + queries) via `/api/v1/enrichment/omi/quotes`, `/omi/history` — comune/zone/typology quotes, full semester history. Missing: zone-geometry polygons (no spatial join, comune/zone lookup only) and a value-estimator endpoint/UI |
@@ -73,7 +73,7 @@ Legend: ✅ have · 🟡 partial (pipeline or stub exists, no product surface) �
 | 19 | Favorites / saved parcels | 🟡 | `saved_maps` + zones tables exist; no parcel-level favorites UX |
 | 20 | Community: profiles, leaderboard, guest contributor mode | ❌ | Clerk auth exists; no community layer |
 | 21 | Onboarding tour, donation/sponsor prompts | ❌ | Cosmetic, low priority |
-| 22 | Basemap switcher (dark/light/satellite) + geolocation | 🟡 | Folium tile layers exist; not a first-class 3-way switcher; no geolocate button |
+| 22 | Basemap switcher (dark/light/satellite) + geolocation | ✅ | Folium `LayerControl` already offers 10 basemaps (superset of Zornade's 3-way toggle) + weather overlays. ✅ Geolocate: `folium.plugins.LocateControl` now added server-side in `create_comprehensive_map` (the client-side `map.js` LocateControl code was dead — targets a `#map` div that doesn't exist on the injected-HTML page) |
 
 **Where we are ahead of Zornade:** QPKG/GPKG upload & inspection, polygon adjacency
 analysis with export, user-drawn zones/microzones, datashader density/categorical
@@ -242,10 +242,17 @@ get its cadastral data — no file loading step.
    as a differentiator Zornade lacks.
 
 ### Quick wins (do anytime, < a day each)
-- URL `?lat&lng&zoom` read/write on the existing Folium page.
-- Geolocate button; basemap 3-way switcher.
-- Welcome/onboarding modal with a short tour.
-- Attribution footer with data-source citations.
+- ✅ URL `?lat&lng&zoom` **read** on the existing Folium page (2026-07-11,
+  `main.py`/`map.py`). Still open: write-back (update the URL as the user
+  pans/zooms — needs a `moveend` listener via `getFoliumMapInstance()` in
+  `folium-interface.js` and `history.replaceState`).
+- ✅ Geolocate button (2026-07-11, `folium.plugins.LocateControl` added
+  server-side in `map.py`). Basemap switcher: already existed (10-layer
+  Folium `LayerControl`, superset of Zornade's 3-way toggle) — no work needed.
+- Welcome/onboarding modal with a short tour — not done, low priority.
+- Attribution footer with data-source citations — not done; the Folium map's
+  own Leaflet attribution control covers basemap tiles, but nothing credits
+  the enrichment data sources (ISTAT, OMI, MEF, ISPRA, DPC, NASA FIRMS).
 
 ## 5. Data source shopping list
 
