@@ -23,6 +23,7 @@ from land_registry.map import get_current_gdf, get_current_layers, map_generator
 from land_registry.dependencies import _map_state
 from land_registry.routers.api import api_router
 from land_registry.routers.auth_pages import router as auth_pages_router
+from land_registry.routers.enrichment import enrichment_router
 from land_registry.s3_storage import get_s3_storage
 from land_registry.config import app_settings, panel_settings, get_panel_url
 from land_registry.models import TableDataResponse, ServiceUnavailableResponse
@@ -372,6 +373,9 @@ if _AUTH_AVAILABLE:
 
 # Include the API router with /api/v1 prefix
 app.include_router(api_router, prefix="/api/v1")
+
+# Parcel enrichment backed by aecs4u-stats (ISTAT reference data, OSM POIs)
+app.include_router(enrichment_router, prefix="/api/v1/enrichment", tags=["enrichment"])
 
 root_folder = os.path.dirname(__file__)
 
