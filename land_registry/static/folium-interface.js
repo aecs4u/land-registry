@@ -515,11 +515,20 @@ function autoZoomToAllPolygons() {
         );
 
         if (latLngBounds.isValid()) {
-            foliumMap.fitBounds(latLngBounds, {
-                padding: [20, 20],
-                maxZoom: 18
-            });
-            console.log('[FoliumInterface] Map zoomed to fit all polygons');
+            // fitBounds does its own (stricter) validity check internally and
+            // throws rather than returning — LatLngBounds.isValid() above only
+            // confirms both corners are set, not that they're finite numbers,
+            // and this runs on a fixed timer that can race the Folium iframe's
+            // layers still attaching. Catch rather than let it go uncaught.
+            try {
+                foliumMap.fitBounds(latLngBounds, {
+                    padding: [20, 20],
+                    maxZoom: 18
+                });
+                console.log('[FoliumInterface] Map zoomed to fit all polygons');
+            } catch (e) {
+                console.warn('[FoliumInterface] fitBounds failed:', e);
+            }
         } else {
             console.warn('[FoliumInterface] Invalid bounds calculated');
         }

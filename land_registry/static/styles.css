@@ -474,7 +474,8 @@ body.sidebar-collapsed .main-content {
   font-weight: 500;
   border-bottom: none;
   overflow: visible;
-  white-space: nowrap;
+  white-space: normal;
+  line-height: 1.3;
   min-width: 0;
 }
 
@@ -2276,6 +2277,10 @@ button:hover {
   .map-toolbar {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+    /* Fade the trailing edge so a partially-hidden button (e.g. "Actions")
+       reads as "more to scroll to" rather than a clipped/broken layout. */
+    mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
+    -webkit-mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
   }
 
   .map-controls {
@@ -6529,4 +6534,5 @@ body.dark-mode .tool-toggle-switch input:checked + .tool-toggle-slider { backgro
   border-bottom: 1px solid #e9ecef;
   letter-spacing: 0.02em;
 }
-[data-theme="dark"] .sidebar-brand { color: #e0e0e0; border-color: #3a3a3a; }
+[data-theme="dark"] .sidebar-brand,
+body.dark-mode .sidebar-brand { color: #e0e0e0; border-color: #3a3a3a; }

@@ -214,8 +214,8 @@ class DatashaderRegistry:
                 try:
                     from land_registry.cadastral_db import CadastralDatabase
                     from land_registry.datashader_service import DatashaderTileService
-                    from land_registry.config import get_cadastral_db_path
-                    db = CadastralDatabase(get_cadastral_db_path())
+                    from land_registry.config import db_settings
+                    db = CadastralDatabase(Path(db_settings.sqlite_path))
                     self._service = DatashaderTileService(db)
                     logger.info("DatashaderTileService initialized")
                 except Exception as e:

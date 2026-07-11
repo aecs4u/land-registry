@@ -7,6 +7,7 @@ from fastapi.templating import Jinja2Templates
 
 from land_registry.config import auth_settings
 from land_registry.i18n import contextvar_gettext as _cvgt
+from land_registry.i18n import detect_locale as _get_locale
 
 router = APIRouter()
 
@@ -18,6 +19,7 @@ try:
     _templates = Jinja2Templates(directory=str(Path(aecs4u_theme.__file__).parent / "templates"))
     _templates.env.filters["clerk_appearance"] = _clerk_appearance_filter
     _templates.env.globals["_"] = _cvgt
+    _templates.env.globals["get_locale"] = _get_locale
     _THEME_AVAILABLE = True
 except ImportError:
     _templates = None

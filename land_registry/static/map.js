@@ -804,16 +804,25 @@ function initDarkMode() {
 /**
  * Sidebar state is managed entirely by aecs4u-theme's SidebarManager
  * (which attaches to #sidebarToggle and toggles body.sidebar-visible /
- * body.sidebar-hidden). We only need to react to those transitions so that
- * Leaflet can recalculate its container dimensions.
+ * body.sidebar-hidden). It never updates #sidebarToggle's aria-expanded,
+ * so we sync that here too, in the same observer that already reacts to
+ * these transitions to recalculate Leaflet's container dimensions.
  */
 (function initSidebarLeafletSync() {
     document.addEventListener('DOMContentLoaded', () => {
+        const toggle = document.getElementById('sidebarToggle');
+        const syncAriaExpanded = (hidden) => {
+            if (toggle) toggle.setAttribute('aria-expanded', String(!hidden));
+        };
+
         let lastHidden = document.body.classList.contains('sidebar-hidden');
+        syncAriaExpanded(lastHidden);
+
         new MutationObserver(() => {
             const hidden = document.body.classList.contains('sidebar-hidden');
             if (hidden !== lastHidden) {
                 lastHidden = hidden;
+                syncAriaExpanded(hidden);
                 setTimeout(() => {
                     if (typeof invalidateLeafletMap === 'function') invalidateLeafletMap();
                 }, 300);
