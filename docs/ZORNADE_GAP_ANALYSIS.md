@@ -32,7 +32,7 @@ development plan.
 | Adjacency analysis + export | `/api/v1/get-adjacent-polygons/`, `/export-adjacency/{fmt}` | Differentiator vs Zornade |
 | Zones / microzones / drawn polygons | `/api/v1/zones/*`, `sqlite_db.py` | User-drawn geometry persistence |
 | GHSL enrichment (DEGURBA + UCDB pop/GDP) | `ghsl_service.py` | Population/urbanization enrichment exists |
-| OMI import pipeline (QI + VCN → SQLite) | `scripts/omi_import.py` | **Data pipeline only — no API/UI on top** |
+| OMI import pipeline (QI + VCN → SQLite) | `aecs4u_stats.omi` (migrated upstream; local `scripts/omi_import.py` deleted) | Consumed via `stats_service.py` + `/api/v1/enrichment/omi/*` |
 | Auction properties (dummy data) | `/api/v1/auction-properties/` | Stub; differentiator if made real |
 | Neon PostgreSQL + SQLite + SpatiaLite modules | `database.py`, `sqlite_db.py`, `spatialite.py` | Storage plumbing available |
 | Panel/Bokeh attribute tables | `dashboard.py` | |

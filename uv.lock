@@ -40,6 +40,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "aecs4u-domain"
+version = "0.6.1"
+source = { git = "https://github.com/aecs4u/aecs4u-domain.git?branch=main#40350fb330df3d23b431954c42b845ac6aec25eb" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "sqlalchemy" },
+    { name = "sqlmodel" },
+]
+
+[[package]]
 name = "aecs4u-i18n"
 version = "0.1.0"
 source = { git = "https://github.com/aecs4u/aecs4u-i18n.git?branch=main#ed570636e04b0a094d2b8205060da7dade2cba25" }
@@ -53,8 +63,9 @@ dependencies = [
 [[package]]
 name = "aecs4u-stats"
 version = "0.1.0"
-source = { git = "https://github.com/aecs4u/aecs4u-stats.git?branch=main#a0b97713380db66cb6af8ce13d97148551b18435" }
+source = { git = "https://github.com/aecs4u/aecs4u-stats.git?branch=main#9fb4854ebf4f0686083b71ee452e803d0a7af272" }
 dependencies = [
+    { name = "aecs4u-domain" },
     { name = "duckdb" },
     { name = "httpx" },
     { name = "narwhals" },
