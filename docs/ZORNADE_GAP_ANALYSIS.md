@@ -52,8 +52,8 @@ Legend: ✅ have · 🟡 partial (pipeline or stub exists, no product surface) �
 
 | # | Zornade feature | Ours | Gap detail |
 |---|---|---|---|
-| 1 | Nationwide always-on parcel map (zoom-gated vector tiles, labelled polygons) | ❌ | We load files on demand into RAM; no vector tiles (datashader PNG only, no interactivity) |
-| 2 | Click parcel → detail panel (80+ fields, 17 sections) | ❌ | We only show raw attribute tables of loaded features |
+| 1 | Nationwide always-on parcel map (zoom-gated vector tiles, labelled polygons) | 🟡 | ✅ Backend proven: `aecs4u_stats.cadastral` (per-region DuckDB stores, built from local INSPIRE extracts) via `/api/v1/enrichment/parcels/{comune_code}`, `/parcels/in-bbox/`, `/fogli/{comune_code}`, `/parcel/by-reference/{ref}` — verified with a real import (Civitavecchia: 18,212 particelle/45 fogli in 3s) returning correct GeoJSON with centroids. Missing: no frontend consumes this yet (still file-upload-then-render); no vector tiles/PMTiles, so bbox queries would need to hit the API per pan/zoom |
+| 2 | Click parcel → detail panel (80+ fields, 17 sections) | 🟡 | ✅ Detail panel now exists (`#parcelInfoPanel`/`parcel-enrichment.js`, 2026-07-12): base attributes + 5 enrichment cards (Comune, OMI, IRPEF, Rischi, POI), wired into both parcel-rendering paths. Missing: only fires on already-loaded file-based parcels, not the new `aecs4u_stats.cadastral` store; fewer sections than Zornade's 17 |
 | 3 | URL state / deep links (`?lat&lng&zoom&parcel=`) + share | 🟡 | ✅ `?lat=&lng=&zoom=` read on `GET /map` (server-side, threads into `create_comprehensive_map`). Missing: `&parcel=` (no stable parcel IDs yet — needs Phase 0), and write-back (URL doesn't update as the user pans/zooms) |
 | 4 | Hierarchical parcel finder that works without pre-loading | 🟡 | Hierarchy endpoints exist (file-tree based); search only works on loaded data |
 | 5 | Cadastral base data (particella, foglio, sezione, comune, area) | ✅/🟡 | Data present in FGB/WFS attributes; needs a per-parcel lookup keyed by stable ID |
