@@ -134,3 +134,78 @@ async def get_bulletin():
     if result is None:
         raise HTTPException(status_code=503, detail="Protezione Civile bulletin unreachable")
     return result
+
+
+_CADASTRAL_BUILD_HINT = (
+    "Cadastral parcel store not built. Run: "
+    "python -m aecs4u_stats.cadastral.scripts.import_cadastral --regione <REGIONE>"
+)
+
+
+@enrichment_router.get("/parcels/in-bbox/")
+async def get_parcels_in_bbox(
+    min_lng: float = Query(..., ge=-180, le=180),
+    min_lat: float = Query(..., ge=-90, le=90),
+    max_lng: float = Query(..., ge=-180, le=180),
+    max_lat: float = Query(..., ge=-90, le=90),
+    limit: int = Query(5000, gt=0, le=20000),
+    include_geometry: bool = Query(True),
+):
+    """Parcels intersecting a WGS84 bounding box, across all built region stores."""
+    if not stats_service.cadastral_store_available():
+        raise HTTPException(status_code=503, detail=_CADASTRAL_BUILD_HINT)
+    return stats_service.get_parcels_in_bbox(
+        min_lng, min_lat, max_lng, max_lat, limit=limit, include_geometry=include_geometry,
+    )
+
+
+@enrichment_router.get("/parcels/{comune_code}")
+async def get_parcels(
+    comune_code: str,
+    foglio: Optional[str] = Query(None, description="Sheet label, e.g. 75 or 75A"),
+    particella: Optional[str] = Query(None, description="Parcel label, e.g. 63 or STRADA304"),
+    limit: int = Query(1000, gt=0, le=10000),
+    offset: int = Query(0, ge=0),
+    include_geometry: bool = Query(True),
+):
+    """Cadastral parcels of a comune as a GeoJSON FeatureCollection
+    (per-region DuckDB stores built from the AdE INSPIRE extracts)."""
+    if not stats_service.cadastral_store_available():
+        raise HTTPException(status_code=503, detail=_CADASTRAL_BUILD_HINT)
+    return stats_service.get_parcels(
+        comune_code, foglio=foglio, particella=particella,
+        limit=limit, offset=offset, include_geometry=include_geometry,
+    )
+
+
+@enrichment_router.get("/fogli/{comune_code}")
+async def get_fogli(comune_code: str):
+    """Sheet (foglio) list for a comune with per-sheet parcel counts."""
+    if not stats_service.cadastral_store_available():
+        raise HTTPException(status_code=503, detail=_CADASTRAL_BUILD_HINT)
+    return stats_service.get_fogli(comune_code)
+
+
+@enrichment_router.get("/parcel/by-reference/{national_reference}")
+async def get_parcel_by_reference(national_reference: str):
+    """One parcel Feature by exact NATIONALCADASTRALREFERENCE (e.g. H233_000100.1)."""
+    if not stats_service.cadastral_store_available():
+        raise HTTPException(status_code=503, detail=_CADASTRAL_BUILD_HINT)
+    result = stats_service.get_parcel_by_reference(national_reference)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"No parcel with reference '{national_reference}'")
+    return result
+
+
+@enrichment_router.get("/parcel/at-point")
+async def get_parcel_at_point(
+    lat: float = Query(..., ge=-90, le=90),
+    lng: float = Query(..., ge=-180, le=180),
+):
+    """The cadastral parcel containing a WGS84 point (click → parcel lookup)."""
+    if not stats_service.cadastral_store_available():
+        raise HTTPException(status_code=503, detail=_CADASTRAL_BUILD_HINT)
+    result = stats_service.get_parcel_at_point(lat, lng)
+    if result is None:
+        raise HTTPException(status_code=404, detail="No parcel at this point (region store missing or open water)")
+    return result

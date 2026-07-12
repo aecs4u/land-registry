@@ -97,6 +97,22 @@ The in-memory GDF remains only for the upload/analysis workflows.
 > migrations or a land-registry-side importer) rather than defining a new
 > parcel table locally.
 
+> **2026-07-12 — largely done upstream:** the bulk parcel store now lives in
+> **`aecs4u_stats.cadastral`** (migrated from this repo's
+> `scripts/import_cadastral_to_db.py`, now deleted): per-region DuckDB stores
+> built from `/data/catasto/ITALIA` via DuckDB `spatial` (no geopandas),
+> geodesic `area_sqm`/centroids, and `sheet_number` derived by spatial join
+> (the `NATIONALCADASTRALREFERENCE` layout varies per comune — with sezione
+> `H199C0075A0.63`, without `H233_000100.1` — so it is never parsed). Consumed
+> here via `stats_service.get_parcels/get_fogli/get_parcel_by_reference/
+> get_parcel_at_point/get_parcels_in_bbox` and exposed at
+> `/api/v1/enrichment/parcels/*`, `/fogli/*`, `/parcel/at-point`,
+> `/parcel/by-reference/*`. Build stores with
+> `python -m aecs4u_stats.cadastral.scripts.import_cadastral --regione <R>`.
+> Remaining P1 work in this repo: repoint the legacy `CadastralDatabase`
+> (SpatiaLite) paths in `routers/api.py` / `dependencies.py` /
+> `datashader_service.py` at the new store, then delete `cadastral_db.py`.
+
 **P2 — Vector tiles instead of (or beside) datashader PNGs.**
 Pre-generate PMTiles per region with tippecanoe from the existing FGB files
 (`scripts/merge_fgb_per_region.py` output), zoom-gated ≥15, served as static

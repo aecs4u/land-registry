@@ -25,6 +25,14 @@ import math
 from functools import lru_cache
 from typing import Any, Dict, List, Optional
 
+from aecs4u_stats.cadastral import (
+    cadastral_db_available,
+    fogli_for_comune,
+    parcel_at_point,
+    parcel_by_reference,
+    parcels_for_comune,
+    parcels_in_bbox,
+)
 from aecs4u_stats.hazards import (
     active_fires as _active_fires,
     get_comune_hazards,
@@ -68,6 +76,10 @@ def enrichment_status() -> Dict[str, Any]:
         "istat_municipalities": {
             "available": istat_db_available(),
             "path": str(ISTAT_SQLITE_PATH),
+        },
+        "cadastral_parcels": {
+            "available": cadastral_db_available(),
+            "note": "per-region DuckDB stores; build with python -m aecs4u_stats.cadastral.scripts.import_cadastral",
         },
         "osm_pois": {
             "available": poi_db_available(),
@@ -284,3 +296,59 @@ def get_criticality_bulletin() -> Optional[Dict[str, Any]]:
     """Latest Protezione Civile hydro-criticality bulletin (allerta meteo), or
     ``None`` if the live API is unreachable."""
     return latest_criticality_bulletin()
+
+
+def cadastral_store_available() -> bool:
+    """True when at least one per-region cadastral parcel store is built."""
+    return cadastral_db_available()
+
+
+def get_parcels(
+    comune: str,
+    foglio: Optional[str] = None,
+    particella: Optional[str] = None,
+    limit: int = 1000,
+    offset: int = 0,
+    include_geometry: bool = True,
+) -> Dict[str, Any]:
+    """Cadastral parcels of a comune (optionally one foglio/particella) as a
+    GeoJSON FeatureCollection, from the aecs4u-stats per-region DuckDB stores.
+
+    Parcel ``sheet_number`` is spatially derived at build time — reliable
+    nationally, unlike parsing NATIONALCADASTRALREFERENCE."""
+    fc = parcels_for_comune(
+        comune, foglio=foglio, particella=particella,
+        limit=limit, offset=offset, include_geometry=include_geometry,
+    )
+    fc["metadata"]["source"] = "Agenzia delle Entrate INSPIRE via aecs4u-stats"
+    return fc
+
+
+def get_fogli(comune: str) -> Dict[str, Any]:
+    """Sheet (foglio) list for a comune with per-sheet parcel counts."""
+    return {
+        "comune": comune,
+        "fogli": fogli_for_comune(comune),
+        "source": "Agenzia delle Entrate INSPIRE via aecs4u-stats",
+    }
+
+
+def get_parcel_by_reference(national_reference: str) -> Optional[Dict[str, Any]]:
+    """One parcel Feature by exact NATIONALCADASTRALREFERENCE, or ``None``."""
+    return parcel_by_reference(national_reference)
+
+
+def get_parcel_at_point(lat: float, lng: float) -> Optional[Dict[str, Any]]:
+    """The parcel Feature containing a WGS84 point, or ``None``."""
+    return parcel_at_point(lat, lng)
+
+
+def get_parcels_in_bbox(
+    min_lng: float, min_lat: float, max_lng: float, max_lat: float,
+    limit: int = 5000, include_geometry: bool = True,
+) -> Dict[str, Any]:
+    """Parcels intersecting a WGS84 bbox, across all built region stores."""
+    fc = parcels_in_bbox(min_lng, min_lat, max_lng, max_lat, limit=limit,
+                         include_geometry=include_geometry)
+    fc["metadata"]["source"] = "Agenzia delle Entrate INSPIRE via aecs4u-stats"
+    return fc
