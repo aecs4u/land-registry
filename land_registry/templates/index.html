@@ -456,6 +456,21 @@
               </div>
             </div>
             <div class="tool-panel-section">
+              <h5>{{ _('Enrichment Layers') }}</h5>
+              <div class="tool-row">
+                <button id="toggleEnrichmentPois" onclick="togglePoiLayer()" class="tool-btn-ghost" title="{{ _('Points of interest near the map center (schools, shops, hospitals…)') }}">
+                  {{ _('Points of Interest') }}
+                </button>
+              </div>
+              <div id="enrichmentPoiLegend" class="enrichment-legend"></div>
+              <div class="tool-row">
+                <button id="toggleEnrichmentFires" onclick="toggleFiresLayer()" class="tool-btn-ghost" title="{{ _('Active fire detections nationwide (NASA FIRMS)') }}">
+                  {{ _('Active Fires') }} <span id="enrichmentFiresCount"></span>
+                </button>
+                <button onclick="refreshFiresLayer()" class="tool-btn-ghost">{{ _('Refresh') }}</button>
+              </div>
+            </div>
+            <div class="tool-panel-section">
               <h5>{{ _('View Tools') }}</h5>
               <div class="tool-row">
                 <button onclick="resetMapView()" class="tool-btn-ghost">{{ _('Reset View') }}</button>
@@ -831,6 +846,7 @@
 {% endblock %} {% block app_js %}
 <script src="/static/folium-interface.js"></script>
 <script src="/static/parcel-enrichment.js"></script>
+<script src="/static/enrichment-layers.js"></script>
 <script src="/static/index-init.js"></script>
 {% endblock %}
 

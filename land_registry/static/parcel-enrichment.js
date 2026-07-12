@@ -169,6 +169,76 @@
         return rows + _sourceFootnote(data.source);
     }
 
+    function _renderFires(data) {
+        if (!data || !data.count) return _emptyState('Nessun incendio attivo rilevato nelle vicinanze (25 km).');
+        const sorted = (data.detections || []).slice().sort((a, b) => {
+            const da = `${a.acq_date || ''}${a.acq_time || ''}`;
+            const db = `${b.acq_date || ''}${b.acq_time || ''}`;
+            return db.localeCompare(da);
+        });
+        const rows = sorted.slice(0, 5).map(d => `
+            <div class="enrichment-row">
+                <span>${d.acq_date || '—'}${d.acq_time ? ' · ' + d.acq_time.slice(0, 2) + ':' + d.acq_time.slice(2) : ''}</span>
+                <strong title="Potenza radiativa del fuoco">${d.frp != null ? d.frp + ' MW' : '—'}</strong>
+            </div>`).join('');
+        return `
+            <div class="enrichment-row"><span>Rilevamenti (25 km)</span><strong>${data.count}</strong></div>
+            ${rows}
+            ${data.count > 5 ? `<div class="enrichment-empty text-muted">+ altri ${data.count - 5}</div>` : ''}
+            ${_sourceFootnote(data.source)}
+        `;
+    }
+
+    /** Map a DPC bulletin risk description to a Bootstrap badge class + short label. */
+    function _bulletinSeverity(description) {
+        const text = (description || '').toUpperCase();
+        if (text.includes('ROSSA')) return { cls: 'bg-danger', label: 'ALLERTA ROSSA' };
+        if (text.includes('ARANCIONE')) return { cls: 'bg-warning text-dark', label: 'ALLERTA ARANCIONE' };
+        if (text.includes('GIALLA')) return { cls: 'bg-warning text-dark', label: 'ALLERTA GIALLA' };
+        return { cls: 'bg-success', label: 'Nessuna allerta' };
+    }
+
+    /** Fold accents/case for loose comune-name matching ("Sant'Egidio" ~ "sant egidio"). */
+    function _foldName(name) {
+        return name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    }
+
+    /** Find the bulletin zone whose Comuni list contains muniName (accent/case-insensitive). */
+    function _findBulletinZone(bulletinData, muniName) {
+        if (!bulletinData || !muniName) return null;
+        const zones = bulletinData.today_zones;
+        if (!zones || !zones.objects) return null;
+        const target = _foldName(muniName);
+        for (const obj of Object.values(zones.objects)) {
+            for (const geom of (obj.geometries || [])) {
+                const comuni = (geom.properties && geom.properties['Comuni']) || [];
+                const match = comuni.some(c => _foldName(c) === target);
+                if (match) return geom.properties;
+            }
+        }
+        return null;
+    }
+
+    function _renderBulletin(bulletinData, muniName) {
+        if (!bulletinData) return _emptyState('Bollettino Protezione Civile non disponibile.');
+        const zone = _findBulletinZone(bulletinData, muniName);
+        if (!zone) return _emptyState('Comune non trovato nel bollettino odierno.');
+        const risks = [
+            ['Idraulico', zone['Per rischio idraulico']],
+            ['Temporali', zone['Per rischio temporali']],
+            ['Idrogeologico', zone['Per rischio idrogeologico']],
+        ];
+        const rows = risks.map(([label, desc]) => {
+            const sev = _bulletinSeverity(desc);
+            return `<div class="enrichment-row"><span>${label}</span><span class="badge ${sev.cls}">${sev.label}</span></div>`;
+        }).join('');
+        return `
+            <div class="enrichment-row"><span>Zona</span><strong>${zone['Nome zona'] || '—'}</strong></div>
+            ${rows}
+            ${_sourceFootnote(bulletinData.source)}
+        `;
+    }
+
     // ---- Orchestration -------------------------------------------------
 
     async function renderParcelEnrichment(feature, layer) {
@@ -196,11 +266,14 @@
             _loadingCard('chart-line', 'Quotazioni OMI'),
             _loadingCard('coins', 'Reddito IRPEF'),
             _loadingCard('triangle-exclamation', 'Rischi ambientali'),
+            _loadingCard('bullhorn', 'Bollettino di criticità'),
             centroid ? _loadingCard('map-pin', 'Punti di interesse') : '',
+            centroid ? _loadingCard('fire', 'Incendi attivi') : '',
         ].join('');
-        const [muniEl, omiEl, incomeEl, riskEl, poiEl] = container.querySelectorAll('.enrichment-card');
+        const [muniEl, omiEl, incomeEl, riskEl, bulletinEl, poiEl, firesEl] = container.querySelectorAll('.enrichment-card');
 
-        // Municipality first — we need its istat_code for the risks lookup.
+        // Municipality first — we need its istat_code for the risks lookup and
+        // its name for the bulletin's comune-to-zone lookup.
         const muniResult = await _fetchJson(`/api/v1/enrichment/municipality/${encodeURIComponent(cadastralCode)}`);
         const muniData = muniResult.ok ? muniResult.data : null;
         if (muniEl) muniEl.querySelector('.enrichment-card-body').innerHTML = _renderMunicipality(muniData);
@@ -216,11 +289,19 @@
                 ? _fetchJson(`/api/v1/enrichment/risks/${encodeURIComponent(istatCode)}`)
                     .then(r => { if (riskEl) riskEl.querySelector('.enrichment-card-body').innerHTML = _renderRisks(r.ok ? r.data : null); })
                 : Promise.resolve().then(() => { if (riskEl) riskEl.querySelector('.enrichment-card-body').innerHTML = _emptyState('Comune non identificato: impossibile recuperare i rischi.'); }),
+            _fetchJson('/api/v1/enrichment/bulletin')
+                .then(r => { if (bulletinEl) bulletinEl.querySelector('.enrichment-card-body').innerHTML = _renderBulletin(r.ok ? r.data : null, muniData ? muniData.name : null); }),
         ];
         if (centroid && poiEl) {
             tasks.push(
                 _fetchJson(`/api/v1/enrichment/pois/?lat=${centroid.lat}&lng=${centroid.lng}&radius_km=1`)
                     .then(r => { poiEl.querySelector('.enrichment-card-body').innerHTML = _renderPois(r.ok ? r.data : null); })
+            );
+        }
+        if (centroid && firesEl) {
+            tasks.push(
+                _fetchJson(`/api/v1/enrichment/fires?lat=${centroid.lat}&lng=${centroid.lng}&radius_km=25`)
+                    .then(r => { firesEl.querySelector('.enrichment-card-body').innerHTML = _renderFires(r.ok ? r.data : null); })
             );
         }
         await Promise.allSettled(tasks);

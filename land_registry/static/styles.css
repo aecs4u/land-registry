@@ -6639,6 +6639,16 @@ h4,
 }
 .tool-btn-ghost:disabled { opacity: 0.45; cursor: not-allowed; }
 .tool-btn-ghost:hover:not(:disabled) { background: #e9ecef; }
+.tool-btn-ghost.active { background: #dbe4ff; color: #3b5bdb; border-color: #b8c9ff; }
+
+.enrichment-legend {
+  display: flex; flex-wrap: wrap; gap: 6px 12px;
+  margin: 6px 0 2px; font-size: 11px; color: #495057;
+}
+.enrichment-legend-item { display: inline-flex; align-items: center; gap: 4px; }
+.enrichment-legend-dot {
+  display: inline-block; width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
+}
 .tool-btn-danger {
   flex: 1; background: #fa5252; color: #fff; border: none; border-radius: 5px;
   padding: 7px 10px; font-size: 12px; font-weight: 500; cursor: pointer;
@@ -6657,6 +6667,9 @@ h4,
 [data-theme="dark"] .tool-input, [data-theme="dark"] .tool-select { background: #1e1e1e; border-color: #555; color: #e0e0e0; }
 [data-theme="dark"] .tool-btn-ghost { background: #383838; border-color: #555; color: #ccc; }
 [data-theme="dark"] .tool-btn-ghost:hover:not(:disabled) { background: #444; }
+[data-theme="dark"] .tool-btn-ghost.active,
+body.dark-mode .tool-btn-ghost.active { background: #1c3a5c; color: #74c0fc; border-color: #2a4d78; }
+body.dark-mode .enrichment-legend { color: #adb5bd; }
 
 /* ── Toggle switch (used for layer on/off controls) ─── */
 .tool-toggle-label { font-size: 13px; color: #495057; }
