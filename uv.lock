@@ -63,7 +63,7 @@ dependencies = [
 [[package]]
 name = "aecs4u-stats"
 version = "0.1.0"
-source = { git = "https://github.com/aecs4u/aecs4u-stats.git?branch=main#1df3bb294fc69b126e0ac11270e0af694b6ffd34" }
+source = { git = "https://github.com/aecs4u/aecs4u-stats.git?branch=main#125e168f2e0021195c7f195931d311f476c4b098" }
 dependencies = [
     { name = "aecs4u-domain" },
     { name = "duckdb" },
