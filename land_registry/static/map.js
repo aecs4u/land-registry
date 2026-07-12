@@ -1036,6 +1036,13 @@ function showParcelInfo(feature, layer) {
     // Store current parcel for actions
     window.currentParcelFeature = feature;
     window.currentParcelLayer = layer;
+
+    // Fetch and append enrichment sections (ISTAT, OMI, IRPEF income, risks,
+    // POI) — see static/parcel-enrichment.js. Async and non-blocking: the
+    // base parcel info above renders immediately regardless of this.
+    if (typeof window.renderParcelEnrichment === 'function') {
+        window.renderParcelEnrichment(feature, layer);
+    }
 }
 
 /**

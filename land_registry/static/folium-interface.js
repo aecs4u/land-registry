@@ -103,6 +103,12 @@ function _makeFeatureHandler(baseColor, popupPriorityKeys) {
                 window.selectedPolygons.push(layer);
             }
             if (typeof updateAdjacencyButtonState === 'function') updateAdjacencyButtonState();
+
+            // Open the parcel detail panel (base info + enrichment sections).
+            // showParcelInfo lives in map.js and works from any map instance
+            // (it only touches DOM + fetch, not the Leaflet `map` global), so
+            // it's safe to call from this Folium-map click path too.
+            if (typeof showParcelInfo === 'function') showParcelInfo(feature, layer);
         });
     };
 }
@@ -839,6 +845,12 @@ function initializePolygonSelection() {
                                 updateAdjacencyButtonState();
 
                                 console.log('Polygon clicked, selected count:', window.selectedPolygons.length);
+
+                                // Open the parcel detail panel (base info + enrichment
+                                // sections) — see static/parcel-enrichment.js.
+                                if (typeof showParcelInfo === 'function' && subLayer.feature) {
+                                    showParcelInfo(subLayer.feature, subLayer);
+                                }
                             });
                         });
                     }

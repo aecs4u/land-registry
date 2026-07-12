@@ -3730,6 +3730,124 @@ body.dark-mode .drawing-subsection-divider {
   border-bottom: 1px solid #f0f0f0;
 }
 
+/* Parcel enrichment cards (static/parcel-enrichment.js) — ISTAT/OMI/IRPEF/
+   risk/POI sections appended below the base parcel info in #parcelInfoPanel. */
+#parcelEnrichmentSections {
+  margin-top: 20px;
+  border-top: 1px solid #eee;
+  padding-top: 16px;
+}
+
+.enrichment-card .card-header.enrichment-card-header {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 12px;
+  background: #f8f9fa;
+}
+
+.enrichment-card .card-header.enrichment-card-header i {
+  color: #1a5490;
+  margin-right: 6px;
+  width: 14px;
+  text-align: center;
+}
+
+.enrichment-card-body {
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.enrichment-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #888;
+}
+
+.enrichment-empty {
+  font-size: 12.5px;
+}
+
+.enrichment-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  gap: 8px;
+}
+
+.enrichment-row span:first-child {
+  color: #666;
+}
+
+.enrichment-source {
+  margin-top: 8px;
+  font-size: 10.5px;
+  color: #999;
+  border-top: 1px dashed #eee;
+  padding-top: 6px;
+}
+
+.enrichment-omi-row {
+  padding: 6px 0;
+  border-bottom: 1px solid #f5f5f5;
+}
+
+.enrichment-omi-row:last-child {
+  border-bottom: none;
+}
+
+.enrichment-omi-zone {
+  font-weight: 600;
+  font-size: 12.5px;
+}
+
+.enrichment-omi-values {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  color: #555;
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.enrichment-brackets {
+  margin-top: 8px;
+}
+
+.enrichment-bracket-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.enrichment-bracket-label {
+  flex: 0 0 60px;
+  font-size: 11px;
+  color: #666;
+}
+
+.enrichment-bracket-bar-track {
+  flex: 1;
+  height: 8px;
+  background: #f0f0f0;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.enrichment-bracket-bar {
+  height: 100%;
+  background: #1a5490;
+}
+
+.enrichment-bracket-pct {
+  flex: 0 0 36px;
+  text-align: right;
+  font-size: 11px;
+  color: #666;
+}
+
 .parcel-info-details .info-label {
   color: #666;
   font-size: 13px;
@@ -5766,6 +5884,41 @@ body.dark-mode .parcel-info-row {
 
 body.dark-mode .parcel-info-label {
   color: #94a3b8;
+}
+
+body.dark-mode #parcelEnrichmentSections {
+  border-color: #2d3a4f;
+}
+
+body.dark-mode .enrichment-card {
+  background: #16213e;
+  border-color: #2d3a4f;
+}
+
+body.dark-mode .enrichment-card .card-header.enrichment-card-header {
+  background: #0f3460;
+  color: #e4e4e7;
+}
+
+body.dark-mode .enrichment-card-body {
+  color: #e4e4e7;
+}
+
+body.dark-mode .enrichment-row span:first-child {
+  color: #94a3b8;
+}
+
+body.dark-mode .enrichment-source {
+  color: #64748b;
+  border-color: #2d3a4f;
+}
+
+body.dark-mode .enrichment-omi-row {
+  border-color: #2d3a4f;
+}
+
+body.dark-mode .enrichment-bracket-bar-track {
+  background: #2d3a4f;
 }
 
 body.dark-mode .parcel-info-value {
