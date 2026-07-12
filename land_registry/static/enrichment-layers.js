@@ -177,7 +177,47 @@
         if (btn) btn.classList.toggle('active', firesActive);
     }
 
+    // ---- Cadastral zone boundaries (own datashader tile endpoint) --------
+    //
+    // Same /api/v1/tiles/cadastral-boundaries/{z}/{x}/{y}.png endpoint that
+    // real-estates' sales map already consumes cross-origin (see the CORP
+    // override in main.py) — here it's same-origin, so no CORS/CORP concerns.
+    // minZoom mirrors real-estates: below it Leaflet simply never requests tiles.
+
+    let cadastralBoundaryLayer = null;
+    let cadastralBoundaryActive = false;
+
+    function toggleCadastralBoundaryLayer() {
+        const map = _getFoliumMap();
+        const btn = document.getElementById('toggleEnrichmentCadastral');
+        if (!map) { console.warn('[EnrichmentLayers] Map not ready'); return; }
+        if (!cadastralBoundaryLayer) {
+            if (map.createPane && !map.getPane('cadastralBoundaryPane')) {
+                map.createPane('cadastralBoundaryPane').style.zIndex = 440;
+            }
+            cadastralBoundaryLayer = L.tileLayer(
+                '/api/v1/tiles/cadastral-boundaries/{z}/{x}/{y}.png',
+                {
+                    pane: map.getPane('cadastralBoundaryPane') ? 'cadastralBoundaryPane' : undefined,
+                    opacity: 0.75,
+                    minZoom: 13,
+                    maxZoom: 19,
+                    attribution: 'Cadastral data',
+                }
+            );
+        }
+
+        cadastralBoundaryActive = !cadastralBoundaryActive;
+        if (cadastralBoundaryActive) {
+            cadastralBoundaryLayer.addTo(map);
+        } else {
+            map.removeLayer(cadastralBoundaryLayer);
+        }
+        if (btn) btn.classList.toggle('active', cadastralBoundaryActive);
+    }
+
     window.togglePoiLayer = togglePoiLayer;
     window.toggleFiresLayer = toggleFiresLayer;
     window.refreshFiresLayer = function () { if (firesActive) _refreshFiresLayer(); };
+    window.toggleCadastralBoundaryLayer = toggleCadastralBoundaryLayer;
 })();

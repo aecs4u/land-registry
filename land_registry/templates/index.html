@@ -63,7 +63,7 @@
 </nav>
 <!-- ──────────────────────────────────────────────────────────────────── -->
 
-<div class="container" style="margin-top: var(--header-height, 64px);">
+<div class="app-shell" style="margin-top: var(--header-height, 64px);">
   <div class="sidebar" id="app-sidebar">
     <div class="sidebar-brand">{{ _('Cadastre') }}</div>
 
@@ -468,6 +468,11 @@
                   {{ _('Active Fires') }} <span id="enrichmentFiresCount"></span>
                 </button>
                 <button onclick="refreshFiresLayer()" class="tool-btn-ghost">{{ _('Refresh') }}</button>
+              </div>
+              <div class="tool-row">
+                <button id="toggleEnrichmentCadastral" onclick="toggleCadastralBoundaryLayer()" class="tool-btn-ghost" title="{{ _('Cadastral zone (foglio) boundaries, rasterized from the source data — zoom in to load them') }}">
+                  {{ _('Cadastral Boundaries') }}
+                </button>
               </div>
             </div>
             <div class="tool-panel-section">

@@ -96,7 +96,11 @@ html, body {
   overflow: hidden;
 }
 
-.container {
+/* Renamed from .container: that class name collides with Bootstrap's own
+   .container utility (bootstrap.min.css, loaded in base.html), whose
+   breakpoint max-width rules (e.g. 1320px at >=1400px) were silently
+   clamping this app-shell layout on wide viewports. */
+.app-shell {
   display: flex;
   width: 100vw;
   height: calc(100vh - var(--header-height, 64px));
@@ -2145,7 +2149,7 @@ button:hover {
 
 /* Improved responsive design for mobile and tablet */
 @media (max-width: 768px) {
-  .container {
+  .app-shell {
     flex-direction: column;
   }
 
