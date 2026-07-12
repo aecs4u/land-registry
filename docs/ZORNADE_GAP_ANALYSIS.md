@@ -57,10 +57,10 @@ Legend: ✅ have · 🟡 partial (pipeline or stub exists, no product surface) �
 | 3 | URL state / deep links (`?lat&lng&zoom&parcel=`) + share | 🟡 | ✅ `?lat=&lng=&zoom=` read on `GET /map` (server-side, threads into `create_comprehensive_map`). Missing: `&parcel=` (no stable parcel IDs yet — needs Phase 0), and write-back (URL doesn't update as the user pans/zooms) |
 | 4 | Hierarchical parcel finder that works without pre-loading | 🟡 | Hierarchy endpoints exist (file-tree based); search only works on loaded data |
 | 5 | Cadastral base data (particella, foglio, sezione, comune, area) | ✅/🟡 | Data present in FGB/WFS attributes; needs a per-parcel lookup keyed by stable ID |
-| 6 | OMI quotations (per zone, by type, yields) + 22-semester history + value estimator | 🟡 | ✅ Backend done: `aecs4u_stats.omi` (importer + queries) via `/api/v1/enrichment/omi/quotes`, `/omi/history` — comune/zone/typology quotes, full semester history. Missing: zone-geometry polygons (no spatial join, comune/zone lookup only) and a value-estimator endpoint/UI |
+| 6 | OMI quotations (per zone, by type, yields) + 22-semester history + value estimator | 🟡 | ✅ Backend done: `aecs4u_stats.omi` (importer + queries) via `/api/v1/enrichment/omi/quotes`, `/omi/history` — comune/zone/typology quotes, full semester history. ✅ Zone-geometry polygons now also done (`aecs4u_stats.omi.boundaries`, KMZ→GeoJSON from the ondata mirror), not yet wired into a spatial join here. Missing: value-estimator endpoint/UI |
 | 7 | Environmental risks: seismic, flood (PGRA), landslide (PAI/IFFI), subsidence (InSAR), coastal erosion + composite risk score | 🟡 | ✅ Seismic zone (DPC, local store) + flood/landslide indicators (ISPRA IdroGEO, live API, verified against real Civitavecchia data) via `/api/v1/enrichment/risks/{istat_code}`. Missing: subsidence (InSAR), coastal erosion, and a composite 0–100 score |
 | 8 | Live overlays: satellite fire hotspots (FIRMS), Protezione Civile criticality bulletin | 🟡 | ✅ Backend done: `/api/v1/enrichment/fires` (NASA FIRMS, needs `FIRMS_MAP_KEY`) and `/api/v1/enrichment/bulletin` (DPC, verified live — returns today's real bulletin + zone TopoJSON). Missing: map-layer UI (markers/zone overlay + toggle) |
-| 9 | Solar PV potential per building (PVGIS-SARAH3, cash-flow, NPV, LCOE, payback) | ❌ | PVGIS extraction already exists in **`aecs4u-energy`** (`routers/api_pvgis.py`, `services/pvgis_download.py`) — reuse that instead of building a new client; not yet consumed here |
+| 9 | Solar PV potential per building (PVGIS-SARAH3, cash-flow, NPV, LCOE, payback) | ❌ | ✅ Client done and consolidated: `aecs4u_stats.pvgis` (v5_2 API client, local cache, CLI) is now the single PVGIS implementation org-wide — `aecs4u-energy` was rewritten to a thin shim over it (2026-07-12). Not yet consumed here; wire in via `aecs4u_stats.pvgis` directly (not via aecs4u-energy) plus the cash-flow/NPV/LCOE/payback computation, still missing everywhere |
 | 10 | Terrain: elevation, slope, aspect, roughness (Tinitaly DEM) | ❌ | Nothing — needs an `aecs4u_stats` raster-sampling subpackage (see §4 Phase 2) |
 | 11 | Demographics (ISTAT census sections: age, gender, indicators) | 🟡 | GHSL coarse pop/urbanization + aecs4u-stats municipality population history; no ISTAT sezioni yet |
 | 12 | Economy: MEF/IRPEF income distribution, VIIRS night lights | 🟡 | ✅ IRPEF done: `aecs4u_stats.mef` (comune-level income brackets, mean taxable income) via `/api/v1/enrichment/income/{cadastral_code}` — verified against real 2022 MEF data for Civitavecchia (25.5%/10.8%/26.4%/30.4% brackets, close to Zornade's reference-year figures). VIIRS night lights still missing |
@@ -159,13 +159,13 @@ python -m aecs4u_stats.hazards.scripts.import_seismic --file classificazione.xls
 IdroGEO, FIRMS and the DPC bulletin are runtime API clients with in-process
 TTL caching — no local store to build.
 
-The rule going forward: every new public dataset in the plan below (OMI zone
-polygons, ISTAT sezioni, DEM, CORINE, VIIRS, ANNCSU, MiBAC…) should be
-ingested as an `aecs4u_stats` subpackage (models + downloader + queries,
-reusable by every AECS4U app) and consumed here through `stats_service.py` —
-not ETL'd inside this repo. PVGIS solar data follows the same principle but
-already lives in **`aecs4u-energy`**, not `aecs4u-stats` — reuse it rather
-than building a third client (see item 9 in §2).
+The rule going forward: every new public dataset in the plan below (ISTAT
+sezioni, DEM, CORINE, VIIRS, ANNCSU, MiBAC…) should be ingested as an
+`aecs4u_stats` subpackage (models + downloader + queries, reusable by every
+AECS4U app) and consumed here through `stats_service.py` — not ETL'd inside
+this repo. OMI zone polygons (`aecs4u_stats.omi.boundaries`) and PVGIS solar
+(`aecs4u_stats.pvgis`, 2026-07-12 — `aecs4u-energy`'s former client is now a
+thin shim over it) already follow this rule (see items 6 and 9 in §2).
 
 ## 4. Development plan
 
@@ -229,11 +229,9 @@ get its cadastral data — no file loading step.
      needs the zone-polygon overlay + toggle on the map.
 
 ### Phase 4 — Advanced enrichment (~3–4 weeks, independently shippable items)
-1. Solar PV per parcel/building: **reuse `aecs4u-energy`'s existing PVGIS
-   client** (`aecs4u_energy.services.pvgis_download`, `/api/v1/pvgis/*`)
-   instead of building a new one — call it from `stats_service.py` (cross-app
-   HTTP call or extract the client to a shared package if both apps need it
-   in-process) and add the cash-flow/NPV/LCOE/payback computation on top.
+1. ~~Solar PV client~~ ✅ done, in-process reusable — `aecs4u_stats.pvgis`
+   (2026-07-12). Wire it into `stats_service.py` and add the
+   cash-flow/NPV/LCOE/payback computation on top; still not consumed here.
 2. ~~Economy: MEF/Dip. Finanze IRPEF income brackets~~ ✅ done
    (`aecs4u_stats.mef`, see Phase 2/§3 P4). Remaining: VIIRS Black Marble
    annual composite sampled at centroid (rural→metropoli classification).
@@ -284,7 +282,7 @@ get its cadastral data — no file loading step.
 | Landslide PAI/IFFI | ISPRA | open | 3 |
 | Active fires | NASA FIRMS | free API key | 3 |
 | Criticality bulletins | DPC open data (GitHub) | open JSON/shp | 3 |
-| Solar irradiance | JRC PVGIS API | integrated in **aecs4u-energy** (reuse, don't rebuild) | 4 |
+| Solar irradiance | JRC PVGIS API | integrated via **aecs4u-stats** (`aecs4u_stats.pvgis`); not yet consumed here | 4 |
 | IRPEF income | MEF Dip. Finanze | integrated via **aecs4u-stats** (`aecs4u_stats.mef`) | done |
 | VIIRS night lights | NASA Black Marble | open | 4 |
 | Civic addresses | ANNCSU | open | 4 |
@@ -314,8 +312,9 @@ P2 OMI zones + terrain + CORINE + ISTAT demographics          ██ 2w (was 3w)
    → OMI quotes/history, IRPEF income already served by the API
 P3 risk score + live-overlay UI + subsidence/erosion          ██ 2w (was 3w)
    → seismic, flood/landslide, fires, bulletin already served by the API
-P4 solar (via aecs4u-energy), VIIRS, addresses, buildings, POI, PDF  ███ 3w (was 4w)
-   → POI already served; solar reuses aecs4u-energy instead of a new client
+P4 solar (via aecs4u-stats), VIIRS, addresses, buildings, POI, PDF   ███ 3w (was 4w)
+   → POI + PVGIS client already served; solar still needs the cash-flow/NPV
+     computation and to be wired into stats_service.py
 P5 public API v2 + keys + catalog + community + auctions     ███ 3w
                                               total ≈ 14 weeks part-time
 ```
