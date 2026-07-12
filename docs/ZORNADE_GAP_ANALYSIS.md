@@ -35,6 +35,7 @@ development plan.
 | OMI import pipeline (QI + VCN → SQLite) | `aecs4u_stats.omi` (migrated upstream; local `scripts/omi_import.py` deleted) | Consumed via `stats_service.py` + `/api/v1/enrichment/omi/*` |
 | Auction properties (dummy data) | `/api/v1/auction-properties/` | Stub; differentiator if made real |
 | Neon PostgreSQL + SQLite + SpatiaLite modules | `database.py`, `sqlite_db.py`, `spatialite.py` | Storage plumbing available |
+| File/blob storage via **aecs4u-storage** (provider-agnostic: local/s3/gcs/azure/gdrive) | `storage.py` | Set `STORAGE_PROVIDER=gcs` + `STORAGE_GCS_BUCKET`/`STORAGE_GCS_PROJECT`/`STORAGE_GCS_CREDENTIALS_FILE` to use GCS; currently `s3` in `.env`. *(2026-07-12: removed the dead pre-aecs4u-storage `GCSStorageSettings`/`gcs_settings` and the old `gcs_storage.py` module's leftover `GCS_*` env vars from `.env.example` — they were never read by the live storage path.)* |
 | Panel/Bokeh attribute tables | `dashboard.py` | |
 | i18n scaffolding | `i18n.py` | |
 | Municipality flags (Wikidata) | `flags.py` | Fun extra, keep |

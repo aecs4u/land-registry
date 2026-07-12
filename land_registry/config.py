@@ -67,8 +67,8 @@ class StorageSettings(BaseSettings):
     """
     Unified storage settings using aecs4u-storage package.
 
-    This is the primary storage configuration. S3Settings and GCSStorageSettings
-    are kept for backward compatibility but new code should use this.
+    This is the primary storage configuration. S3Settings is kept for
+    backward compatibility but new code should use this.
     """
 
     # Provider: local, s3, gcs, azure
@@ -173,30 +173,6 @@ class DatabaseSettings(BaseSettings):
 
     class Config:
         env_prefix = "DB_"
-        case_sensitive = False
-        extra = "ignore"
-
-
-class GCSStorageSettings(BaseSettings):
-    """Google Cloud Storage settings for permanent file storage"""
-
-    # Primary storage bucket for app and user data
-    gcs_bucket_name: str = "aecs4u-storage"
-
-    # Path prefixes within the bucket
-    gcs_app_data_prefix: str = "land-registry/app-data"
-    gcs_user_data_prefix: str = "land-registry/user-data"
-    gcs_uploads_prefix: str = "land-registry/uploads"
-    gcs_exports_prefix: str = "land-registry/exports"
-
-    # Use GCS for storage (vs local filesystem)
-    use_gcs: bool = False
-
-    # Signed URL expiration (seconds)
-    gcs_signed_url_expiration: int = 3600
-
-    class Config:
-        env_prefix = "GCS_"
         case_sensitive = False
         extra = "ignore"
 
@@ -342,7 +318,6 @@ auth_settings = AuthSettings()
 storage_settings = StorageSettings()  # Primary unified storage config
 s3_settings = S3Settings()  # Legacy - for backward compatibility
 db_settings = DatabaseSettings()
-gcs_settings = GCSStorageSettings()  # Legacy - for backward compatibility
 cadastral_settings = CadastralSettings()
 map_controls_settings = MapControlsSettings()
 panel_settings = PanelServerSettings()
@@ -353,10 +328,6 @@ ghsl_settings = GHSLSettings()
 if os.getenv("DATABASE_URL"):
     db_settings.use_neon = True
     db_settings.database_url = os.getenv("DATABASE_URL")
-
-# Auto-detect GCS configuration in production
-if os.getenv("ENVIRONMENT") == "production" or os.getenv("GCS_USE_GCS") == "true":
-    gcs_settings.use_gcs = True
 
 
 def get_cadastral_structure_path() -> Optional[str]:

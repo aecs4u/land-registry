@@ -2,7 +2,7 @@
 Tests for the configuration module.
 
 Tests cover:
-- All settings classes (App, Auth, S3, Database, GCS, Cadastral, MapControls, Panel)
+- All settings classes (App, Auth, S3, Database, Cadastral, MapControls, Panel)
 - Environment variable loading
 - Auto-detection of configurations
 - Helper functions for paths
@@ -19,7 +19,6 @@ from land_registry.config import (
     StorageSettings,
     S3Settings,
     DatabaseSettings,
-    GCSStorageSettings,
     CadastralSettings,
     MapControlsSettings,
     PanelServerSettings,
@@ -33,7 +32,6 @@ from land_registry.config import (
     storage_settings,
     s3_settings,
     db_settings,
-    gcs_settings,
     cadastral_settings,
     map_controls_settings,
     panel_settings,
@@ -188,32 +186,6 @@ class TestDatabaseSettings:
 
         assert settings.cache_expiry_hours == 48
         assert settings.use_sqlite is False
-
-
-class TestGCSStorageSettings:
-    """Test Google Cloud Storage settings."""
-
-    def test_default_values(self):
-        """Test default GCS settings."""
-        settings = GCSStorageSettings()
-
-        assert settings.gcs_bucket_name == "aecs4u-storage"
-        assert settings.gcs_app_data_prefix == "land-registry/app-data"
-        assert settings.gcs_user_data_prefix == "land-registry/user-data"
-        assert settings.gcs_uploads_prefix == "land-registry/uploads"
-        assert settings.gcs_exports_prefix == "land-registry/exports"
-        assert settings.use_gcs is False
-        assert settings.gcs_signed_url_expiration == 3600
-
-    def test_env_prefix(self, monkeypatch):
-        """Test GCS_ environment prefix."""
-        monkeypatch.setenv("GCS_GCS_BUCKET_NAME", "my-bucket")
-        monkeypatch.setenv("GCS_USE_GCS", "true")
-
-        settings = GCSStorageSettings()
-
-        assert settings.gcs_bucket_name == "my-bucket"
-        assert settings.use_gcs is True
 
 
 class TestCadastralSettings:
@@ -419,11 +391,6 @@ class TestGlobalSettingsInstances:
         assert db_settings is not None
         assert isinstance(db_settings, DatabaseSettings)
 
-    def test_gcs_settings_instance(self):
-        """Test gcs_settings global instance exists."""
-        assert gcs_settings is not None
-        assert isinstance(gcs_settings, GCSStorageSettings)
-
     def test_cadastral_settings_instance(self):
         """Test cadastral_settings global instance exists."""
         assert cadastral_settings is not None
@@ -455,18 +422,6 @@ class TestAutoDetection:
         # After reload, check that use_neon was set
         # Note: This tests the behavior in the module-level code
         assert hasattr(config_module.db_settings, "use_neon")
-
-    def test_gcs_auto_detection_production(self, monkeypatch):
-        """Test GCS is auto-enabled in production."""
-        monkeypatch.setenv("ENVIRONMENT", "production")
-
-        from importlib import reload
-        import land_registry.config as config_module
-        reload(config_module)
-
-        # In production, GCS should be enabled
-        assert hasattr(config_module.gcs_settings, "use_gcs")
-
 
 class TestSettingsExtraIgnore:
     """Test that extra fields are ignored in settings."""
