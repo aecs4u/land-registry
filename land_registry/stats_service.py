@@ -22,6 +22,7 @@ are runtime API clients (no local store) — see ``get_environmental_risks``,
 
 import logging
 import math
+import re
 from functools import lru_cache
 from typing import Any, Dict, List, Optional
 
@@ -33,6 +34,9 @@ from aecs4u_stats.cadastral import (
     parcels_for_comune,
     parcels_in_bbox,
 )
+from aecs4u_stats.census import census_db_available as _census_db_available
+from aecs4u_stats.census import section_at_point as _census_section_at_point
+from aecs4u_stats.census import sections_for_comune as _census_sections_for_comune
 from aecs4u_stats.hazards import (
     active_fires as _active_fires,
     get_comune_hazards,
@@ -43,9 +47,17 @@ from aecs4u_stats.hazards import (
 )
 from aecs4u_stats.istat.config import ISTAT_SQLITE_PATH
 from aecs4u_stats.mef import income_by_cadastral_code, mef_db_available
-from aecs4u_stats.omi import omi_db_available, quote_history, quotes_for_comune
+from aecs4u_stats.omi import (
+    OMI_ZONES_DIR,
+    omi_db_available,
+    quote_history,
+    quotes_for_comune,
+    zone_boundaries,
+    zone_boundaries_available,
+)
 from aecs4u_stats.osm.config import POI_CATEGORIES
 from aecs4u_stats.osm.pois import pois_within_radius, resolve_poi_db
+from shapely.geometry import Point, shape
 
 logger = logging.getLogger(__name__)
 
@@ -81,12 +93,32 @@ def enrichment_status() -> Dict[str, Any]:
             "available": cadastral_db_available(),
             "note": "per-region DuckDB stores; build with python -m aecs4u_stats.cadastral.scripts.import_cadastral",
         },
+        "census_sections": {
+            "available": _census_db_available(),
+            "note": "2021 ISTAT census sections; build with python -m aecs4u_stats.census.scripts.import_census_sections --all",
+        },
+        "istat_safety": {
+            "available": safety_db_available(),
+            "note": "reported-crime rates (delitti denunciati), province level",
+        },
+        "istat_bes": {
+            "available": bes_db_available(),
+            "note": "BES territorial quality-of-life indicators, province level",
+        },
+        "istat_demographic": {
+            "available": demographic_db_available(),
+            "note": "ISTAT demographic indicators, province level",
+        },
         "osm_pois": {
             "available": poi_db_available(),
             "categories": sorted(POI_CATEGORIES),
         },
         "omi_quotes": {
             "available": omi_db_available(),
+        },
+        "omi_zone_boundaries": {
+            "available": OMI_ZONES_DIR.exists() and any(OMI_ZONES_DIR.glob("*.geojson")),
+            "path": str(OMI_ZONES_DIR),
         },
         "mef_irpef": {
             "available": mef_db_available(),
@@ -160,6 +192,7 @@ def get_municipality_by_cadastral_code(cadastral_code: str) -> Optional[Dict[str
             return {
                 "cadastral_code": muni.cadastral_code,
                 "istat_code": muni.alphanumeric_code,
+                "procom": muni.id,  # numeric national comune code — join key for census sections
                 "name": muni.italian_name or muni.official_name,
                 "province": province.name if province else None,
                 "province_sigla": province.vehicle_code if province else None,
@@ -237,6 +270,136 @@ def get_omi_history(comune: str, zona: str, cod_tipologia: Optional[str] = None)
         "history": rows,
         "source": "Agenzia delle Entrate OMI via aecs4u-stats",
     }
+
+
+def estimate_omi_value(
+    comune: str,
+    zona: str,
+    cod_tipologia: str,
+    area_sqm: float,
+    stato_conservazione: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Return a reproducible, explicitly non-appraisal OMI value range."""
+    try:
+        area = float(area_sqm)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(area) or area <= 0:
+        return None
+    rows = quotes_for_comune(comune, zona=zona)
+    type_code = str(cod_tipologia).strip().upper()
+    state = stato_conservazione.strip().casefold() if stato_conservazione else None
+    matches = [
+        row
+        for row in rows
+        if str(row.get("cod_tipologia", "")).strip().upper() == type_code
+        and (
+            state is None
+            or str(row.get("stato_conservazione", "")).strip().casefold() == state
+        )
+    ]
+    if len(matches) != 1:
+        return None
+
+    quote = matches[0]
+    try:
+        min_rate = float(quote["prezzo_min"])
+        max_rate = float(quote["prezzo_max"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not math.isfinite(min_rate) or not math.isfinite(max_rate) or min_rate < 0 or max_rate < min_rate:
+        return None
+
+    return {
+        "methodology": "omi-area-range-v1",
+        "input": {
+            "comune": comune,
+            "zona": zona.strip().upper(),
+            "cod_tipologia": str(quote.get("cod_tipologia", cod_tipologia)),
+            "stato_conservazione": quote.get("stato_conservazione"),
+            "area_sqm": area,
+        },
+        "quote": {
+            "anno": quote.get("anno"),
+            "semestre": quote.get("semestre"),
+            "tipologia": quote.get("tipologia"),
+            "prezzo_min_eur_sqm": min_rate,
+            "prezzo_max_eur_sqm": max_rate,
+        },
+        "value_range_eur": {
+            "min": round(area * min_rate, 2),
+            "max": round(area * max_rate, 2),
+        },
+        "disclaimer": (
+            "Stima indicativa ottenuta moltiplicando la superficie dichiarata per "
+            "l'intervallo OMI selezionato. Non è una perizia né una valutazione immobiliare."
+        ),
+        "source": "Agenzia delle Entrate OMI via aecs4u-stats",
+    }
+
+
+@lru_cache(maxsize=128)
+def _load_omi_zone_boundaries(province: str) -> Dict[str, Any]:
+    """Load one province's boundary collection once per worker process."""
+    return zone_boundaries(province)
+
+
+def _omi_zone_code(properties: Dict[str, Any]) -> Optional[str]:
+    """Extract a quote-compatible zone code from heterogeneous AdE KML fields."""
+    normalized = {
+        re.sub(r"[^a-z0-9]", "", str(key).lower()): value
+        for key, value in properties.items()
+    }
+    candidates = [
+        normalized.get(key)
+        for key in ("codzona", "codicezona", "zonaomi", "zonecode", "zona", "name")
+    ]
+    candidates.extend(properties.values())
+    for value in candidates:
+        if value is None or isinstance(value, (dict, list)):
+            continue
+        text = str(value).strip().upper()
+        exact = re.fullmatch(r"[A-Z][0-9]{1,3}", text)
+        match = exact or re.search(r"(?:^|\b)([A-Z][0-9]{1,3})(?:\b|$)", text)
+        if match:
+            return match.group(0) if exact else match.group(1)
+    return None
+
+
+def get_omi_zone_at_point(province: str, lat: float, lng: float) -> Dict[str, Any]:
+    """Match a WGS84 point to an OMI zone polygon for one province."""
+    result: Dict[str, Any] = {
+        "province": province,
+        "point": {"lat": lat, "lng": lng},
+        "matched": False,
+        "zone": None,
+        "source": "Agenzia delle Entrate OMI via aecs4u-stats",
+    }
+    if not zone_boundaries_available(province):
+        result["reason"] = "boundary_data_unavailable"
+        return result
+
+    point = Point(lng, lat)
+    for feature in _load_omi_zone_boundaries(province).get("features", []):
+        geometry = feature.get("geometry")
+        if not geometry:
+            continue
+        try:
+            if not shape(geometry).covers(point):
+                continue
+        except (TypeError, ValueError):
+            logger.warning("Invalid OMI boundary geometry for province %s", province)
+            continue
+        properties = feature.get("properties") or {}
+        zone = _omi_zone_code(properties)
+        if not zone:
+            result["reason"] = "zone_code_unavailable"
+            return result
+        result.update({"matched": True, "zone": zone})
+        return result
+
+    result["reason"] = "point_outside_zones"
+    return result
 
 
 def get_income_profile(cadastral_code: str, year: Optional[int] = None) -> Optional[Dict[str, Any]]:
@@ -352,3 +515,147 @@ def get_parcels_in_bbox(
                          include_geometry=include_geometry)
     fc["metadata"]["source"] = "Agenzia delle Entrate INSPIRE via aecs4u-stats"
     return fc
+
+
+# ---------------------------------------------------------------------------
+# ISTAT census sections (2021) — population/education/employment/foreign-
+# resident/household/dwelling-occupancy indicators at ~756,000-section
+# national granularity, the finest official socioeconomic signal available.
+# ---------------------------------------------------------------------------
+
+def census_db_available() -> bool:
+    """True when the 2021 census-sections store has been built on this host."""
+    return _census_db_available()
+
+
+def get_census_sections(cadastral_code: str, limit: int = 5000) -> Optional[Dict[str, Any]]:
+    """Census sections covering a comune (by catasto code) as a GeoJSON
+    FeatureCollection — each Feature's properties carry the 119 raw ISTAT
+    indicator counts plus a ``ratios`` sub-dict (education/employment/
+    foreign-resident/vacancy rate, avg household size)."""
+    muni = get_municipality_by_cadastral_code(cadastral_code)
+    if muni is None or muni.get("procom") is None:
+        return None
+    fc = _census_sections_for_comune(muni["procom"], limit=limit)
+    fc["metadata"]["source"] = "ISTAT Basi Territoriali 2021 via aecs4u-stats"
+    return fc
+
+
+def get_census_section_at_point(lat: float, lng: float) -> Optional[Dict[str, Any]]:
+    """The census section containing a WGS84 point, or ``None``."""
+    return _census_section_at_point(lat, lng)
+
+
+# ---------------------------------------------------------------------------
+# ISTAT safety/crime, BES quality-of-life, demographic indicators — province
+# (NUTS3) level. Resolved from a comune's catasto code via its province's
+# nuts3 code (see get_municipality_by_cadastral_code); no comune-level
+# granularity is published for these datasets.
+# ---------------------------------------------------------------------------
+
+@lru_cache(maxsize=1)
+def _istat_query_engine():
+    """Lazily created DuckDB-backed ISTATQueryEngine (separate from
+    ``_istat_engine()`` above, which is the SQLite/SQLModel municipality store)."""
+    from aecs4u_stats.istat.queries import ISTATQueryEngine
+
+    return ISTATQueryEngine()
+
+
+def safety_db_available() -> bool:
+    return _istat_query_engine().safety_available()
+
+
+def bes_db_available() -> bool:
+    return _istat_query_engine().bes_available()
+
+
+def demographic_db_available() -> bool:
+    return _istat_query_engine().demographic_available()
+
+
+def _resolve_nuts3(cadastral_code: str) -> Optional[Dict[str, Any]]:
+    muni = get_municipality_by_cadastral_code(cadastral_code)
+    if muni is None or not muni.get("nuts3"):
+        return None
+    return muni
+
+
+def get_crime_profile(cadastral_code: str, year: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    """Reported-crime (delitti denunciati) profile for a comune's province —
+    ISTAT publishes this at province (NUTS3), not comune, granularity."""
+    muni = _resolve_nuts3(cadastral_code)
+    if muni is None:
+        return None
+    engine = _istat_query_engine()
+    kpis = engine.get_safety_overview_kpis(ref_area=muni["nuts3"], year=year)
+    if not kpis or kpis.get("year") is None:
+        return None
+    return {
+        "cadastral_code": cadastral_code,
+        "province": muni["province"],
+        "nuts3": muni["nuts3"],
+        **kpis,
+        "crime_types_available": engine.list_crime_types(ref_area=muni["nuts3"]),
+        "source": "ISTAT (delitti denunciati) via aecs4u-stats",
+    }
+
+
+def get_quality_of_life_indicators(cadastral_code: str) -> Optional[Dict[str, Any]]:
+    """BES indicator codes available for a comune's province."""
+    muni = _resolve_nuts3(cadastral_code)
+    if muni is None:
+        return None
+    indicators = _istat_query_engine().list_bes_indicators(ref_area=muni["nuts3"])
+    if not indicators:
+        return None
+    return {
+        "cadastral_code": cadastral_code, "nuts3": muni["nuts3"],
+        "indicators": indicators, "source": "ISTAT BES via aecs4u-stats",
+    }
+
+
+def get_quality_of_life_indicator(
+    cadastral_code: str, data_type: str, year: Optional[int] = None
+) -> Optional[Dict[str, Any]]:
+    """Time series for one BES indicator (see ``get_quality_of_life_indicators``)."""
+    muni = _resolve_nuts3(cadastral_code)
+    if muni is None:
+        return None
+    series = _istat_query_engine().get_bes_indicator(data_type, ref_area=muni["nuts3"], year=year)
+    if not series:
+        return None
+    return {
+        "cadastral_code": cadastral_code, "nuts3": muni["nuts3"], "data_type": data_type,
+        "series": series, "source": "ISTAT BES via aecs4u-stats",
+    }
+
+
+def get_demographic_indicators(cadastral_code: str) -> Optional[Dict[str, Any]]:
+    """Demographic indicator codes available for a comune's province."""
+    muni = _resolve_nuts3(cadastral_code)
+    if muni is None:
+        return None
+    indicators = _istat_query_engine().list_demographic_indicators(ref_area=muni["nuts3"])
+    if not indicators:
+        return None
+    return {
+        "cadastral_code": cadastral_code, "nuts3": muni["nuts3"],
+        "indicators": indicators, "source": "ISTAT demographic indicators via aecs4u-stats",
+    }
+
+
+def get_demographic_indicator(
+    cadastral_code: str, data_type: str, year: Optional[int] = None
+) -> Optional[Dict[str, Any]]:
+    """Time series for one demographic indicator (see ``get_demographic_indicators``)."""
+    muni = _resolve_nuts3(cadastral_code)
+    if muni is None:
+        return None
+    series = _istat_query_engine().get_demographic_indicator(data_type, ref_area=muni["nuts3"], year=year)
+    if not series:
+        return None
+    return {
+        "cadastral_code": cadastral_code, "nuts3": muni["nuts3"], "data_type": data_type,
+        "series": series, "source": "ISTAT demographic indicators via aecs4u-stats",
+    }

@@ -362,19 +362,38 @@ class TestGenerateCategoricalMap:
 # self-contained in CI.
 # ---------------------------------------------------------------------------
 
-def _write_region_fgb(path, polygon, crs="EPSG:4326"):
-    gdf = gpd.GeoDataFrame({"geometry": [polygon]}, crs=crs)
+def _write_region_fgb(path, polygon, crs="EPSG:4326", **attributes):
+    data = {key: [value] for key, value in attributes.items()}
+    data["geometry"] = [polygon]
+    gdf = gpd.GeoDataFrame(data, crs=crs)
     gdf.to_file(path, driver="FlatGeobuf")
 
 
 @pytest.fixture
 def fgb_dir(tmp_path, monkeypatch):
-    """A tmp dir with one synthetic cadastral_map.*.fgb file, wired in as
-    spatialite_settings.fgb_directory."""
+    """Synthetic foglio and parcel FGB stores wired as the service data dir."""
     from land_registry.config import spatialite_settings
 
     poly = Polygon([(12.0, 41.0), (12.1, 41.0), (12.1, 41.1), (12.0, 41.1)])
-    _write_region_fgb(tmp_path / "cadastral_map.laziotest.fgb", poly)
+    _write_region_fgb(
+        tmp_path / "cadastral_map.laziotest.fgb",
+        poly,
+        LABEL="Foglio 4",
+        NATIONALCADASTRALZONINGREFERENCE="E204_000400",
+        _comune_name="GROTTAFERRATA",
+        _provincia="RM",
+        _regione="LAZIO",
+    )
+    parcel = Polygon([(12.02, 41.02), (12.04, 41.02), (12.04, 41.04), (12.02, 41.04)])
+    _write_region_fgb(
+        tmp_path / "cadastral_ple.laziotest.fgb",
+        parcel,
+        LABEL="194",
+        NATIONALCADASTRALREFERENCE="E204_000400.194",
+        _comune_name="GROTTAFERRATA",
+        _provincia="RM",
+        _regione="LAZIO",
+    )
 
     monkeypatch.setattr(spatialite_settings, "fgb_directory", str(tmp_path))
     return tmp_path
@@ -397,9 +416,17 @@ class TestRegionFgbBounds:
 
     def test_cached_after_first_call(self, service, fgb_dir):
         first = service._region_fgb_bounds()
-        assert service._fgb_bounds is first
+        assert service._fgb_bounds["map"] is first
         # Second call returns the same cached dict without re-globbing.
         assert service._region_fgb_bounds() is first
+
+    def test_map_and_parcel_bounds_are_cached_separately(self, service, fgb_dir):
+        map_bounds = service._region_fgb_bounds("map")
+        parcel_bounds = service._region_fgb_bounds("ple")
+
+        assert set(map_bounds) == {"cadastral_map.laziotest.fgb"}
+        assert set(parcel_bounds) == {"cadastral_ple.laziotest.fgb"}
+        assert service._fgb_bounds == {"map": map_bounds, "ple": parcel_bounds}
 
 
 class TestCandidateFgbFiles:
@@ -411,6 +438,10 @@ class TestCandidateFgbFiles:
     def test_non_overlapping_bbox_no_match(self, service, fgb_dir):
         matches = service._candidate_fgb_files((0.0, 0.0, 1.0, 1.0))
         assert matches == []
+
+    def test_parcel_layer_uses_ple_files(self, service, fgb_dir):
+        matches = service._candidate_fgb_files((12.0, 41.0, 12.1, 41.1), "ple")
+        assert [p.name for p in matches] == ["cadastral_ple.laziotest.fgb"]
 
 
 class TestGenerateBoundaryTile:
@@ -434,12 +465,42 @@ class TestGenerateBoundaryTile:
         assert img.format == "PNG"
         assert img.size == (service.tile_size, service.tile_size)
 
+    def test_parcel_tile_reads_ple_layer(self, service, fgb_dir):
+        result = service.generate_boundary_tile(0, 0, 0, "ple")
+        img = Image.open(io.BytesIO(result))
+        assert img.format == "PNG"
+        assert img.size == (service.tile_size, service.tile_size)
+
     def test_cache_hit_returns_cached_result(self, service):
-        cache_key = ("boundary", 1, 2, 3)
+        cache_key = ("boundary", "map", 1, 2, 3)
         cached_bytes = b"cached_boundary_png"
         service._tile_cache[cache_key] = cached_bytes
         result = service.generate_boundary_tile(1, 2, 3)
         assert result == cached_bytes
+
+
+class TestIdentifyFeature:
+
+    def test_identifies_parcel_reference_and_location(self, service, fgb_dir):
+        result = service.identify_feature(41.03, 12.03, "ple")
+
+        assert result == {
+            "label": "194",
+            "reference": "E204_000400.194",
+            "comune": "GROTTAFERRATA",
+            "provincia": "RM",
+            "regione": "LAZIO",
+            "administrative_unit": None,
+        }
+
+    def test_identifies_foglio_from_map_layer(self, service, fgb_dir):
+        result = service.identify_feature(41.03, 12.03, "map")
+
+        assert result is not None
+        assert result["reference"] == "E204_000400"
+
+    def test_returns_none_outside_indexed_bounds(self, service, fgb_dir):
+        assert service.identify_feature(45.0, 9.0, "ple") is None
 
 
 class TestWarmupJit:

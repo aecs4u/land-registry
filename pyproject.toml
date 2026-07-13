@@ -138,7 +138,11 @@ exclude_lines = [
 ]
 
 [tool.setuptools.packages.find]
-where = ["land_registry"]
+where = ["."]
+include = ["land_registry*"]
+
+[tool.setuptools.package-data]
+land_registry = ["static/**/*", "templates/**/*", "locales/**/*", "*.html"]
 
 [tool.ruff]
 line-length = 120

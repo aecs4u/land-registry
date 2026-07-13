@@ -846,9 +846,19 @@ function toggleDarkMode() {
 
 /**
  * Enable dark mode
+ *
+ * Also sets data-bs-theme on <html>: aecs4u-theme's own dark-mode CSS (the
+ * navbar, in particular — see [data-bs-theme="dark"] .navbar-main in the
+ * theme package's layout.css) is keyed off that attribute, not off
+ * body.dark-mode. The theme package's own toggle button/ThemeManager looks
+ * for #themeToggle, but this page's button is #themeToggleBtn, so its click
+ * handler never attaches — this app's toggleDarkMode() is the only thing
+ * driving the state, so it needs to keep both systems' markers in sync
+ * itself (same pattern as initSidebarLeafletSync() above).
  */
 function enableDarkMode() {
     document.body.classList.add('dark-mode');
+    document.documentElement.setAttribute('data-bs-theme', 'dark');
     updateThemeIcon(true);
 }
 
@@ -857,16 +867,19 @@ function enableDarkMode() {
  */
 function disableDarkMode() {
     document.body.classList.remove('dark-mode');
+    document.documentElement.setAttribute('data-bs-theme', 'light');
     updateThemeIcon(false);
 }
 
 /**
- * Update the theme toggle icon
+ * Update the theme toggle icon (#themeIcon is a Font Awesome <i>, not a
+ * text glyph — toggle the fa-moon/fa-sun classes rather than textContent).
  */
 function updateThemeIcon(isDark) {
-    const icon = document.querySelector('.theme-icon');
+    const icon = document.getElementById('themeIcon');
     if (icon) {
-        icon.textContent = isDark ? '☀️' : '🌙';
+        icon.classList.toggle('fa-moon', !isDark);
+        icon.classList.toggle('fa-sun', isDark);
     }
 }
 
@@ -964,35 +977,44 @@ function showParcelInfo(feature, layer) {
     }
 
     // Build info HTML
-    const label = props.LABEL || props.label || 'N/A';
-    const comune = props.ADMINISTRATIVEUNIT || props.comune || '';
-    const area = props.area_display || props.area_ha ? `${props.area_ha} ha` : '';
-    const foglio = label.split('/')[0] || '';
-    const particella = label.split('/')[1] || '';
+    const foglio = props.sheet_number || props.foglio || '';
+    const particella = props.parcel_number || props.particella || '';
+    const label = props.LABEL || props.label
+        || [foglio, particella].filter(Boolean).join('/')
+        || props.NATIONALCADASTRALREFERENCE || props.national_cadastral_reference
+        || props.national_reference || 'N/A';
+    const comune = props.ADMINISTRATIVEUNIT || props.comune || props.municipality_name || props.municipality || '';
+    let area = props.area_display || '';
+    if (!area && props.area_sqm != null) area = `${Number(props.area_sqm).toLocaleString('it-IT', { maximumFractionDigits: 0 })} m²`;
+    if (!area && props.area_m2 != null) area = `${Number(props.area_m2).toLocaleString('it-IT', { maximumFractionDigits: 0 })} m²`;
+    if (!area && props.area_ha != null) area = `${props.area_ha} ha`;
+    const labelParts = String(label).split('/');
+    const displayFoglio = foglio || (labelParts.length > 1 ? labelParts[0] : '');
+    const displayParticella = particella || (labelParts.length > 1 ? labelParts[1] : label);
 
     let html = `
         <div class="parcel-info-header">
-            <h3>${label}</h3>
-            ${comune ? `<span class="parcel-comune">${comune}</span>` : ''}
+            <h3>${escapeHtml(label)}</h3>
+            ${comune ? `<span class="parcel-comune">${escapeHtml(comune)}</span>` : ''}
         </div>
         <div class="parcel-info-details">
             <div class="info-row">
                 <span class="info-label">Foglio</span>
-                <span class="info-value">${foglio || 'N/A'}</span>
+                <span class="info-value">${escapeHtml(displayFoglio || 'N/A')}</span>
             </div>
             <div class="info-row">
                 <span class="info-label">Particella</span>
-                <span class="info-value">${particella || 'N/A'}</span>
+                <span class="info-value">${escapeHtml(displayParticella || 'N/A')}</span>
             </div>
             ${area ? `
             <div class="info-row">
                 <span class="info-label">Superficie</span>
-                <span class="info-value">${area}</span>
+                <span class="info-value">${escapeHtml(area)}</span>
             </div>
             ` : ''}
             <div class="info-row">
                 <span class="info-label">File</span>
-                <span class="info-value">${props.layer_name || props.source_file || 'N/A'}</span>
+                <span class="info-value">${escapeHtml(props.layer_name || props.source_file || props.source || 'N/A')}</span>
             </div>
         </div>
     `;
@@ -1009,8 +1031,8 @@ function showParcelInfo(feature, layer) {
                 <div class="extra-props">
                     ${otherProps.map(([key, value]) => `
                         <div class="info-row">
-                            <span class="info-label">${key}</span>
-                            <span class="info-value">${value ?? 'null'}</span>
+                            <span class="info-label">${escapeHtml(key)}</span>
+                            <span class="info-value">${escapeHtml(value ?? 'null')}</span>
                         </div>
                     `).join('')}
                 </div>
@@ -1024,8 +1046,14 @@ function showParcelInfo(feature, layer) {
             <button onclick="zoomToParcel()" class="parcel-action-btn" title="Zoom to this parcel">
                 Zoom To
             </button>
-            <button onclick="copyParcelInfo()" class="parcel-action-btn" title="Copy info to clipboard">
+            <button id="copyParcelInfoBtn" onclick="copyParcelInfo()" class="parcel-action-btn" title="Copy info to clipboard">
                 Copy Info
+            </button>
+            <button id="copyParcelLinkBtn" onclick="copyParcelLink()" class="parcel-action-btn" title="Copy a link to this parcel">
+                Copy Link
+            </button>
+            <button id="parcelReportBtn" onclick="openParcelReport()" class="parcel-action-btn" title="Open a printable parcel dossier">
+                Report
             </button>
         </div>
     `;
@@ -1055,16 +1083,22 @@ function hideParcelInfo() {
     }
     window.currentParcelFeature = null;
     window.currentParcelLayer = null;
+    if (typeof window.clearCadastralParcelSelection === 'function') {
+        window.clearCadastralParcelSelection();
+    }
 }
 
 /**
  * Zoom to the currently selected parcel
  */
 window.zoomToParcel = function() {
-    if (window.currentParcelLayer && map) {
+    const parcelMap = window.currentParcelLayer && window.currentParcelLayer._map
+        ? window.currentParcelLayer._map
+        : (typeof map !== 'undefined' ? map : null);
+    if (window.currentParcelLayer && parcelMap) {
         const bounds = window.currentParcelLayer.getBounds();
         if (bounds.isValid()) {
-            map.fitBounds(bounds, { padding: [100, 100], maxZoom: 18 });
+            parcelMap.fitBounds(bounds, { padding: [100, 100], maxZoom: 18 });
         }
     }
 };
@@ -1083,13 +1117,28 @@ window.copyParcelInfo = function() {
 
     navigator.clipboard.writeText(text).then(() => {
         // Show brief feedback
-        const btn = document.querySelector('.parcel-actions button:last-child');
+        const btn = document.getElementById('copyParcelInfoBtn');
         if (btn) {
             const original = btn.textContent;
             btn.textContent = 'Copied!';
             setTimeout(() => { btn.textContent = original; }, 1500);
         }
     });
+};
+
+/** Copy the current map URL, including the selected parcel reference. */
+window.copyParcelLink = async function() {
+    const button = document.getElementById('copyParcelLinkBtn');
+    try {
+        await navigator.clipboard.writeText(window.location.href);
+        if (button) {
+            const original = button.textContent;
+            button.textContent = 'Link Copied!';
+            setTimeout(() => { button.textContent = original; }, 1500);
+        }
+    } catch (error) {
+        console.warn('Unable to copy parcel link', error);
+    }
 };
 
 // ==========================================

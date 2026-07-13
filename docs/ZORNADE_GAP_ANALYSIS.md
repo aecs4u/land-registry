@@ -1,6 +1,6 @@
 # Gap Analysis: land-registry vs. Zornade (app.zornade.com)
 
-*Date: 2026-07-10, updated 2026-07-11. Based on a live review of app.zornade.com
+*Date: 2026-07-10, updated 2026-07-13. Based on a live review of app.zornade.com
 (v2.4.0) and the current state of this repository.*
 
 > **2026-07-11 update:** most of the "data pipeline" work this document
@@ -39,7 +39,7 @@ development plan.
 | Panel/Bokeh attribute tables | `dashboard.py` | |
 | i18n scaffolding | `i18n.py` | |
 | Municipality flags (Wikidata) | `flags.py` | Fun extra, keep |
-| **aecs4u-stats consumer** (ISTAT municipalities/population, OSM POIs, OMI quotes, MEF/IRPEF income, DPC seismic zones, ISPRA IdroGEO flood/landslide, NASA FIRMS fires, DPC criticality bulletin) | `stats_service.py`, `routers/enrichment.py` | `/api/v1/enrichment/*`; join key = catasto comune code / ISTAT code |
+| **aecs4u-stats consumer** (ISTAT municipalities/population/census/demographics/BES/safety, OSM POIs, OMI quotes, MEF/IRPEF income, DPC seismic zones, ISPRA IdroGEO flood/landslide, NASA FIRMS fires, DPC criticality bulletin) | `stats_service.py`, `routers/enrichment.py` | `/api/v1/enrichment/*`; join key = catasto comune code / ISTAT code. Census, demographics, safety and quality-of-life cards are wired into the parcel detail panel. |
 | **aecs4u-domain `CadastralParcel` schema** | upstream, not yet consumed here | Shared SQLModel for the geospatial parcel (geometry, foglio/particella, soft FK to `PropertyKey`) — the schema Phase 0 (§4) needs for a real parcel store; not yet wired into this app |
 
 **Core architectural difference:** our viewer requires the user to pick and load
@@ -53,24 +53,24 @@ Legend: ✅ have · 🟡 partial (pipeline or stub exists, no product surface) �
 
 | # | Zornade feature | Ours | Gap detail |
 |---|---|---|---|
-| 1 | Nationwide always-on parcel map (zoom-gated vector tiles, labelled polygons) | 🟡 | ✅ Backend proven: `aecs4u_stats.cadastral` (per-region DuckDB stores, built from local INSPIRE extracts) via `/api/v1/enrichment/parcels/{comune_code}`, `/parcels/in-bbox/`, `/fogli/{comune_code}`, `/parcel/by-reference/{ref}` — verified with a real import (Civitavecchia: 18,212 particelle/45 fogli in 3s) returning correct GeoJSON with centroids. Missing: no frontend consumes this yet (still file-upload-then-render); no vector tiles/PMTiles, so bbox queries would need to hit the API per pan/zoom |
+| 1 | Nationwide always-on parcel map (zoom-gated vector tiles, labelled polygons) | 🟡 | ✅ Backend proven: `aecs4u_stats.cadastral` (per-region DuckDB stores, built from local INSPIRE extracts) via `/api/v1/enrichment/parcels/{comune_code}`, `/parcels/in-bbox/`, `/fogli/{comune_code}`, `/parcel/by-reference/{ref}`. ✅ The cadastral-boundary UI now resolves clicks at z≥16 through `/parcel/at-point`, highlights the returned geometry and opens the detail panel, with legacy identify fallback. Missing: no vector tiles/PMTiles or automatic viewport parcel loading, so the boundary overlay must still be enabled manually. |
 | 2 | Click parcel → detail panel (80+ fields, 17 sections) | 🟡 | ✅ Detail panel now exists (`#parcelInfoPanel`/`parcel-enrichment.js`, 2026-07-12): base attributes + 5 enrichment cards (Comune, OMI, IRPEF, Rischi, POI), wired into both parcel-rendering paths. Missing: only fires on already-loaded file-based parcels, not the new `aecs4u_stats.cadastral` store; fewer sections than Zornade's 17 |
-| 3 | URL state / deep links (`?lat&lng&zoom&parcel=`) + share | 🟡 | ✅ `?lat=&lng=&zoom=` read on `GET /map` (server-side, threads into `create_comprehensive_map`). Missing: `&parcel=` (no stable parcel IDs yet — needs Phase 0), and write-back (URL doesn't update as the user pans/zooms) |
+| 3 | URL state / deep links (`?lat&lng&zoom&parcel=`) + share | ✅ | `?lat=&lng=&zoom=` is restored on `GET /map` and updated after map movement. Selected boundary parcels now write `&parcel=<national-reference>`, restore through `/parcel/by-reference/{ref}`, and expose a Copy Link action in the detail panel. |
 | 4 | Hierarchical parcel finder that works without pre-loading | 🟡 | Hierarchy endpoints exist (file-tree based); search only works on loaded data |
 | 5 | Cadastral base data (particella, foglio, sezione, comune, area) | ✅/🟡 | Data present in FGB/WFS attributes; needs a per-parcel lookup keyed by stable ID |
-| 6 | OMI quotations (per zone, by type, yields) + 22-semester history + value estimator | 🟡 | ✅ Backend done: `aecs4u_stats.omi` (importer + queries) via `/api/v1/enrichment/omi/quotes`, `/omi/history` — comune/zone/typology quotes, full semester history. ✅ Zone-geometry polygons now also done (`aecs4u_stats.omi.boundaries`, KMZ→GeoJSON from the ondata mirror), not yet wired into a spatial join here. Missing: value-estimator endpoint/UI |
+| 6 | OMI quotations (per zone, by type, yields) + 22-semester history + value estimator | 🟡 | ✅ Quotes/history backend and parcel-panel UI are implemented: users select zone/typology/conservation state, edit the relevant m², see an explicitly non-appraisal value range, and inspect up to 24 semesters in a trend chart. ✅ `/omi/at-point` spatially matches the parcel centroid and `POST /omi/estimate` returns a versioned, report-ready server calculation from one exact quote; the UI retains instant local preview and manual selection fallbacks. Missing: build/mount all province boundary files in deployment. |
 | 7 | Environmental risks: seismic, flood (PGRA), landslide (PAI/IFFI), subsidence (InSAR), coastal erosion + composite risk score | 🟡 | ✅ Seismic zone (DPC, local store) + flood/landslide indicators (ISPRA IdroGEO, live API, verified against real Civitavecchia data) via `/api/v1/enrichment/risks/{istat_code}`. Missing: subsidence (InSAR), coastal erosion, and a composite 0–100 score |
-| 8 | Live overlays: satellite fire hotspots (FIRMS), Protezione Civile criticality bulletin | 🟡 | ✅ Backend done: `/api/v1/enrichment/fires` (NASA FIRMS, needs `FIRMS_MAP_KEY`) and `/api/v1/enrichment/bulletin` (DPC, verified live — returns today's real bulletin + zone TopoJSON). Missing: map-layer UI (markers/zone overlay + toggle) |
+| 8 | Live overlays: satellite fire hotspots (FIRMS), Protezione Civile criticality bulletin | ✅ | FIRMS detections have a marker-layer toggle (`FIRMS_MAP_KEY` required). DPC bulletin details appear in the parcel panel and its 187 national alert-zone polygons can be toggled on the map with red/orange/yellow/green severity styling, hover labels, detail popups, issue timestamp and legend. |
 | 9 | Solar PV potential per building (PVGIS-SARAH3, cash-flow, NPV, LCOE, payback) | ❌ | ✅ Client done and consolidated: `aecs4u_stats.pvgis` (v5_2 API client, local cache, CLI) is now the single PVGIS implementation org-wide — `aecs4u-energy` was rewritten to a thin shim over it (2026-07-12). Not yet consumed here; wire in via `aecs4u_stats.pvgis` directly (not via aecs4u-energy) plus the cash-flow/NPV/LCOE/payback computation, still missing everywhere |
 | 10 | Terrain: elevation, slope, aspect, roughness (Tinitaly DEM) | ❌ | Nothing — needs an `aecs4u_stats` raster-sampling subpackage (see §4 Phase 2) |
-| 11 | Demographics (ISTAT census sections: age, gender, indicators) | 🟡 | GHSL coarse pop/urbanization + aecs4u-stats municipality population history; no ISTAT sezioni yet |
+| 11 | Demographics (ISTAT census sections: age, gender, indicators) | ✅ | Parcel-centroid lookup now shows the containing 2021 census section with residents, households, dwellings, buildings, employment, education, foreign-resident share, vacancy and household size. Province-level demographic series are previewed separately with explicit resolution disclosure. |
 | 12 | Economy: MEF/IRPEF income distribution, VIIRS night lights | 🟡 | ✅ IRPEF done: `aecs4u_stats.mef` (comune-level income brackets, mean taxable income) via `/api/v1/enrichment/income/{cadastral_code}` — verified against real 2022 MEF data for Civitavecchia (25.5%/10.8%/26.4%/30.4% brackets, close to Zornade's reference-year figures). VIIRS night lights still missing |
 | 13 | Land cover (CORINE / Urban Atlas) | ❌ | Nothing |
 | 14 | Addresses (ANNCSU civic numbers) | ❌ | `docs/urban_address_requirements.md` suggests prior intent |
 | 15 | Buildings (footprint, count, coverage %) | ❌ | Nothing |
 | 16 | POI (Foursquare/OSM) & cultural constraints (MiBAC) | 🟡 | POI ✅ via aecs4u-stats (`/api/v1/enrichment/pois/`, needs the store built); MiBAC constraints missing |
 | 17 | Public REST API v2 (`/parcels/{id}?include=…`, API keys, 1K–10K req/h rate limits, data catalog docs) | ❌ | Internal API only, session-state-dependent |
-| 18 | PDF export of parcel report | ❌ | Nothing |
+| 18 | PDF export of parcel report | 🟡 | ✅ The parcel panel now opens an A4 dossier containing cadastral identity, a geometry sketch, the current enrichment cards, selected OMI inputs/results, source notes and legal disclaimer. Print mode is isolated and exposes the browser's Print / Save PDF flow. Missing: server-rendered downloadable PDF with durable report ID/signature. |
 | 19 | Favorites / saved parcels | 🟡 | `saved_maps` + zones tables exist; no parcel-level favorites UX |
 | 20 | Community: profiles, leaderboard, guest contributor mode | ❌ | Clerk auth exists; no community layer |
 | 21 | Onboarding tour, donation/sponsor prompts | ❌ | Cosmetic, low priority |
@@ -137,8 +137,9 @@ keep the Folium page for the legacy upload/analysis flows until parity.
   plus resident-population history
 - `GET /enrichment/pois/?lat&lng&radius_km&categories` — OSM POIs grouped by
   category, nearest-first
-- `GET /enrichment/omi/quotes`, `/enrichment/omi/history` — OMI sale/rent
-  €/m² quotes by comune/zone/typology + full semester history
+- `GET /enrichment/omi/quotes`, `/enrichment/omi/history`, `/enrichment/omi/at-point`
+  and `POST /enrichment/omi/estimate` — OMI sale/rent €/m² quotes, semester
+  history, spatial zone matching and a versioned indicative-value contract
   (`aecs4u_stats.omi`, ported from `scripts/omi_import.py`)
 - `GET /enrichment/income/{cadastral_code}` — MEF/IRPEF taxpayer count, mean
   taxable income, 8-bracket distribution (`aecs4u_stats.mef`)
@@ -200,19 +201,23 @@ get its cadastral data — no file loading step.
 ### Phase 2 — OMI + first enrichments (~1–2 weeks remaining) — *biggest bang for the buck*
 1. ~~OMI: migrate `scripts/omi_import.py` into `aecs4u_stats.omi`~~ ✅ done
    (importer + queries; `/api/v1/enrichment/omi/quotes`, `/omi/history`).
-   Remaining: zone polygons (AdE publishes OMI zone perimeters) for a real
-   spatial join instead of comune/zone-code lookup, and a value-estimator
-   endpoint (type × m² × quote range) matching Zornade's *Stima valore*.
+   The parcel panel now provides a zone/typology/state selector, editable-area
+   indicative value range and up-to-24-semester chart. The `/omi/at-point`
+   spatial lookup prioritizes the zone containing the parcel centroid when its
+   province GeoJSON is installed. `POST /omi/estimate` verifies the selected
+   quote and returns the versioned `omi-area-range-v1` calculation used by the
+   UI and future reports. Remaining: deploy all province boundary files.
 2. Wire the already-shipped enrichment endpoints into the parcel detail panel
    (municipality, POI, OMI, income sections); build the ISTAT/POI/OMI/MEF
    stores in the deploy image or a mounted volume.
 3. Terrain: Tinitaly 10m DEM (INGV) → `aecs4u_stats` raster-sampling subpackage
    → per-parcel elevation min/mean/max, slope, aspect, roughness.
 4. Land cover: CORINE 2018 vector → majority class per parcel at ingest.
-5. Demographics: ISTAT sezioni di censimento (Basi Territoriali + census data)
-   as an `aecs4u_stats.istat` extension → join parcel centroid → sezione;
-   expose density, gender, age structure, employment/vacancy indicators.
-   (Augments GHSL + the municipality population history already exposed.)
+5. ~~Demographics: ISTAT sezioni di censimento (Basi Territoriali + census data)
+   joined by parcel centroid, plus province-level demographic indicators~~ ✅
+   consumed through `/enrichment/census/at-point` and `/enrichment/demographics/*`;
+   the parcel panel exposes the derived employment, education, foreign-resident,
+   vacancy and household-size indicators and degrades cleanly without the stores.
 
 ### Phase 3 — Risks + live overlays (~1 week remaining, backend done)
 1. ~~Seismic: DPC municipal seismic classification (zona 1–4) by comune code~~
@@ -222,12 +227,12 @@ get its cadastral data — no file loading step.
    area/population % by hazard class, not yet per-parcel intersection).
 3. Composite 0–100 risk score + gauge in panel header (document the formula) —
    not yet built; combine seismic zone + IdroGEO P3/P4 % into one score.
-4. Live overlays — backend done, UI remaining:
+4. Live overlays — backend and core map UI done:
    - ~~NASA FIRMS active fires~~ ✅ `aecs4u_stats.hazards.firms` (needs
      `FIRMS_MAP_KEY`) → still needs a marker layer with age on the map.
    - ~~DPC bollettino di criticità~~ ✅ `aecs4u_stats.hazards.bulletins`,
-     verified live (returns today's real bulletin + zone TopoJSON) → still
-     needs the zone-polygon overlay + toggle on the map.
+     verified live; today's TopoJSON zones now render through a map toggle with
+     severity colors, legend, hover labels, risk-detail popups and refresh.
 
 ### Phase 4 — Advanced enrichment (~3–4 weeks, independently shippable items)
 1. ~~Solar PV client~~ ✅ done, in-process reusable — `aecs4u_stats.pvgis`
@@ -243,7 +248,9 @@ get its cadastral data — no file loading step.
 5. POI: ✅ already served by `aecs4u_stats.osm` via `/api/v1/enrichment/pois/`
    (build the store with the Overpass downloader or the `pbf` extra). Cultural
    constraints: MiBAC vincoli (Vincoli in Rete / Carta del Rischio) intersection.
-6. PDF export of the parcel report (server-side render, e.g. WeasyPrint).
+6. ~~Printable parcel dossier with browser Print / Save PDF~~ ✅ done. Remaining:
+   optional server-rendered download (e.g. WeasyPrint), durable report ID and
+   integrity signature.
 
 ### Phase 5 — Public API + community (~2–3 weeks)
 1. Formalize `/api/v2` as the public surface: OpenAPI descriptions, per-section
@@ -289,7 +296,7 @@ get its cadastral data — no file loading step.
 | Civic addresses | ANNCSU | open | 4 |
 | POI | OSM via **aecs4u-stats** | integrated | done |
 | Municipalities + population | ISTAT via **aecs4u-stats** | integrated | done |
-| OMI quotes (comune/zone/typology + history) | Agenzia delle Entrate via **aecs4u-stats** | integrated (`aecs4u_stats.omi`); zone polygons still missing | done* |
+| OMI quotes (comune/zone/typology + history) | Agenzia delle Entrate via **aecs4u-stats** | integrated (`aecs4u_stats.omi`); point-in-zone API/UI integrated, province GeoJSON files must be deployed | done* |
 | Seismic classification | Protezione Civile via **aecs4u-stats** | integrated (`aecs4u_stats.hazards.seismic`) | done |
 | Flood (PGRA) + landslide (PAI/IFFI) indicators | ISPRA IdroGEO via **aecs4u-stats** | integrated, live API (`aecs4u_stats.hazards.idrogeo`) | done |
 | Active fires | NASA FIRMS via **aecs4u-stats** | integrated, live API, needs `FIRMS_MAP_KEY` (`aecs4u_stats.hazards.firms`) | done |
@@ -309,7 +316,7 @@ P0 platform (PostGIS + PMTiles + MapLibre + /parcels/{id})   ██ 2w
    → CadastralParcel schema now exists in aecs4u-domain; P0 is "populate
      + query", not "design the schema"
 P1 detail panel + finder + permalinks + favorites            ██ 2w
-P2 OMI zones + terrain + CORINE + ISTAT demographics          ██ 2w (was 3w)
+P2 OMI zones + terrain + CORINE                               ██ 2w (was 3w)
    → OMI quotes/history, IRPEF income already served by the API
 P3 risk score + live-overlay UI + subsidence/erosion          ██ 2w (was 3w)
    → seismic, flood/landslide, fires, bulletin already served by the API

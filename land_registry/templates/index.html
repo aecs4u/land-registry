@@ -63,7 +63,7 @@
 </nav>
 <!-- ──────────────────────────────────────────────────────────────────── -->
 
-<div class="app-shell" style="margin-top: var(--header-height, 64px);">
+<div class="app-shell map-first-shell">
   <div class="sidebar" id="app-sidebar">
     <div class="sidebar-brand">{{ _('Cadastre') }}</div>
 
@@ -470,7 +470,14 @@
                 <button onclick="refreshFiresLayer()" class="tool-btn-ghost">{{ _('Refresh') }}</button>
               </div>
               <div class="tool-row">
-                <button id="toggleEnrichmentCadastral" onclick="toggleCadastralBoundaryLayer()" class="tool-btn-ghost" title="{{ _('Cadastral zone (foglio) boundaries, rasterized from the source data — zoom in to load them') }}">
+                <button id="toggleEnrichmentBulletin" onclick="toggleBulletinLayer()" class="tool-btn-ghost" title="{{ _('Civil Protection hydrogeological and hydraulic alert zones for today') }}">
+                  {{ _('Civil Protection Alerts') }} <span id="enrichmentBulletinCount"></span>
+                </button>
+                <button onclick="refreshBulletinLayer()" class="tool-btn-ghost">{{ _('Refresh') }}</button>
+              </div>
+              <div id="enrichmentBulletinLegend" class="enrichment-legend"></div>
+              <div class="tool-row">
+                <button id="toggleEnrichmentCadastral" onclick="toggleCadastralBoundaryLayer()" class="tool-btn-ghost" title="{{ _('Foglio (sheet) outlines from zoom 13, individual particella (parcel) outlines from zoom 16 — outline only, does not hide the base map') }}">
                   {{ _('Cadastral Boundaries') }}
                 </button>
               </div>
@@ -478,12 +485,11 @@
             <div class="tool-panel-section">
               <h5>{{ _('View Tools') }}</h5>
               <div class="tool-row">
-                <button onclick="resetMapView()" class="tool-btn-ghost">{{ _('Reset View') }}</button>
-                <button onclick="toggleCoordinates()" class="tool-btn-ghost">{{ _('Coordinates') }}</button>
+                <button id="btnResetView" onclick="resetMapView()" class="tool-btn-ghost" title="{{ _('Zoom back out to all of Italy') }}">{{ _('Reset View') }}</button>
+                <button id="btnCoordinates" onclick="toggleCoordinates(); this.classList.toggle('active')" class="tool-btn-ghost" title="{{ _('Show cursor coordinates (bottom-left of map)') }}">{{ _('Coordinates') }}</button>
               </div>
               <div class="tool-row">
-                <button onclick="toggleMiniMap()" class="tool-btn-ghost">{{ _('MiniMap') }}</button>
-                <button onclick="showPluginInfo()" class="tool-btn-ghost">{{ _('Plugin Info') }}</button>
+                <button id="btnMiniMap" onclick="toggleMiniMap(); this.classList.toggle('active')" class="tool-btn-ghost" title="{{ _('Overview mini-map (bottom-right of map)') }}">{{ _('MiniMap') }}</button>
               </div>
             </div>
           </div>
@@ -840,6 +846,22 @@
       <!-- Content populated by JavaScript -->
     </div>
   </div>
+
+  <!-- Printable parcel dossier; populated from the current parcel panel. -->
+  <div id="parcelReportOverlay" class="parcel-report-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="parcelReportTitle">
+    <div class="parcel-report-toolbar">
+      <strong id="parcelReportTitle"><i class="fa-solid fa-file-lines"></i> {{ _('Parcel report') }}</strong>
+      <div class="parcel-report-toolbar-actions">
+        <button type="button" class="parcel-report-toolbar-btn" onclick="printParcelReport()">
+          <i class="fa-solid fa-print"></i> {{ _('Print / Save PDF') }}
+        </button>
+        <button type="button" class="parcel-report-toolbar-btn secondary" onclick="closeParcelReport()">
+          <i class="fa-solid fa-xmark"></i> {{ _('Close') }}
+        </button>
+      </div>
+    </div>
+    <article id="parcelReportContent" class="parcel-report-sheet"></article>
+  </div>
 </div>
 
 
@@ -851,6 +873,7 @@
 {% endblock %} {% block app_js %}
 <script src="/static/folium-interface.js"></script>
 <script src="/static/parcel-enrichment.js"></script>
+<script src="/static/parcel-report.js"></script>
 <script src="/static/enrichment-layers.js"></script>
 <script src="/static/index-init.js"></script>
 {% endblock %}

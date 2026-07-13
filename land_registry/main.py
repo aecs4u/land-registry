@@ -431,7 +431,9 @@ async def _build_main_map_shell_context(request: Request) -> dict:
         zoom_param = request.query_params.get("zoom")
         if zoom_param is not None:
             zoom = int(float(zoom_param))
-            if 5 <= zoom <= 18:
+            # Keep permalink restoration aligned with the Leaflet map and
+            # cadastral overlays, which intentionally support overzoom to 22.
+            if 5 <= zoom <= 22:
                 map_zoom = zoom
     except (TypeError, ValueError):
         pass

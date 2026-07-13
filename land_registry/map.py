@@ -1144,11 +1144,18 @@ class IntegratedMapGenerator:
         m = folium.Map(
             location=map_center,
             zoom_start=map_zoom,
-            tiles=None,  # We'll add Google Satellite as the first tile layer
+            tiles=None,  # Base layers are added below; Satellite is the only visible default
             max_bounds=True,  # Enable boundary restrictions
             max_bounds_viscosity=1.0,  # How strongly to enforce the bounds
             min_zoom=5,  # Prevent zooming out too far
-            max_zoom=18,  # Standard max zoom for satellite imagery
+            # Raised from 18: cadastral cells are tiny, and 18 left no room to
+            # zoom in past the base imagery's native resolution. Each tile
+            # layer below sets its own max_native_zoom so Leaflet over-zooms
+            # (upscales the last real tile) past that point instead of the
+            # base map going blank — see /api/v1/tiles/cadastral-boundaries,
+            # which has no such ceiling since it rasterizes on demand from
+            # vector geometry rather than fetching from a fixed tile pyramid.
+            max_zoom=22,
         )
 
         # Only *fit the initial view* to all of Italy when the caller didn't
@@ -1158,71 +1165,88 @@ class IntegratedMapGenerator:
             m.fit_bounds(italy_bounds)
 
         # Add all tile layers from map.js mapProviders (Google Satellite last as default)
+        # max_native_zoom is each provider's real resolution ceiling; max_zoom (22, matching
+        # the map's own) lets Leaflet over-zoom past that by upscaling the last real tile
+        # instead of showing nothing once you zoom in further than the imagery supports.
         tile_layers = [
             {
                 'tiles': 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
                 'attr': '© Google',
-                'name': 'Google Maps'
+                'name': 'Google Maps',
+                'max_native_zoom': 20,
             },
             {
                 'tiles': 'https://mt1.google.com/vt/lyrs=p&x={x}&y={y}&z={z}',
                 'attr': '© Google',
-                'name': 'Google Terrain'
+                'name': 'Google Terrain',
+                'max_native_zoom': 20,
             },
             {
                 'tiles': 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
                 'attr': '© Google',
-                'name': 'Google Hybrid'
+                'name': 'Google Hybrid',
+                'max_native_zoom': 20,
             },
             {
                 'tiles': 'https://mt1.google.com/vt/lyrs=m,transit&x={x}&y={y}&z={z}',
                 'attr': '© Google',
-                'name': 'Google Maps with Transit'
+                'name': 'Google Maps with Transit',
+                'max_native_zoom': 20,
             },
             {
                 'tiles': 'https://mt1.google.com/vt/lyrs=m,traffic&x={x}&y={y}&z={z}',
                 'attr': '© Google',
-                'name': 'Google Maps with Traffic'
+                'name': 'Google Maps with Traffic',
+                'max_native_zoom': 20,
             },
             {
                 'tiles': 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
                 'attr': '© ESRI',
-                'name': 'ESRI World Imagery'
+                'name': 'ESRI World Imagery',
+                'max_native_zoom': 19,
             },
             {
                 'tiles': 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Terrain_Base/MapServer/tile/{z}/{y}/{x}',
                 'attr': '© ESRI',
-                'name': 'ESRI World Terrain'
+                'name': 'ESRI World Terrain',
+                'max_native_zoom': 13,
             },
             {
                 'tiles': 'https://cartodb-basemaps-{s}.global.ssl.fastly.net/light_all/{z}/{x}/{y}.png',
                 'attr': '© CartoDB',
-                'name': 'CartoDB Positron (Light)'
+                'name': 'CartoDB Positron (Light)',
+                'max_native_zoom': 20,
             },
             {
                 'tiles': 'https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png',
                 'attr': '© CartoDB',
-                'name': 'CartoDB Dark Matter'
+                'name': 'CartoDB Dark Matter',
+                'max_native_zoom': 20,
             },
             {
                 'tiles': 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
                 'attr': '© Google',
-                'name': 'Google Satellite'
+                'name': 'Google Satellite',
+                'max_native_zoom': 20,
             }
         ]
 
-        # Add all tile layers to the map, with Google Satellite as the last (default) layer
-        for i, layer_config in enumerate(tile_layers):
+        # Folium otherwise renders every base layer initially and merely adds
+        # radio buttons to the layer control. Keep exactly one visible so
+        # failed/slow tiles from another provider cannot checkerboard over the
+        # intended satellite default.
+        for layer_config in tile_layers:
             tile_layer = folium.TileLayer(
                 tiles=layer_config['tiles'],
                 attr=layer_config['attr'],
                 name=layer_config['name'],
                 overlay=False,
-                control=True
+                control=True,
+                max_zoom=22,
+                max_native_zoom=layer_config['max_native_zoom'],
+                show=layer_config['name'] == 'Google Satellite',
             )
             tile_layer.add_to(m)
-
-            # Note: Google Satellite is the last layer added, making it the default active base layer
 
         # Add weather overlays from map.js
         weather_overlays = [
@@ -1248,14 +1272,17 @@ class IntegratedMapGenerator:
             }
         ]
 
-        # Add weather overlays to the map
+        # Add weather overlays to the map (OpenWeatherMap's documented ceiling is z19)
         for overlay_config in weather_overlays:
             folium.TileLayer(
                 tiles=overlay_config['tiles'],
                 attr=overlay_config['attr'],
                 name=overlay_config['name'],
                 overlay=True,
-                control=True
+                control=True,
+                max_zoom=22,
+                max_native_zoom=19,
+                show=False,
             ).add_to(m)
 
         # Add Italy regional borders for visual reference

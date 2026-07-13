@@ -6,7 +6,7 @@ Centralizes all API endpoints for better organization and maintainability
 import boto3
 from botocore import UNSIGNED
 from botocore.config import Config
-from fastapi import APIRouter, Body, UploadFile, File, HTTPException, Depends
+from fastapi import APIRouter, Body, UploadFile, File, HTTPException, Depends, Query
 from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPBearer
 import geopandas as gpd
@@ -3350,15 +3350,27 @@ async def get_datashader_tile(
 
 
 @api_router.get("/tiles/cadastral-boundaries/{z}/{x}/{y}.png")
-async def get_cadastral_boundary_tile(z: int, x: int, y: int):
+async def get_cadastral_boundary_tile(
+    z: int,
+    x: int,
+    y: int,
+    layer: str = Query(
+        "map",
+        pattern="^(map|ple)$",
+        description="map=foglio (sheet) outlines, ple=particella (parcel) outlines",
+    ),
+):
     """
-    Generate a map tile of actual cadastral zone ("foglio") boundary polygons,
-    rasterized on demand from the per-region cadastral_map.*.fgb source files.
+    Generate a map tile of actual cadastral boundary polygons, rasterized on
+    demand from the per-region cadastral_<layer>.*.fgb source files —
+    "map" for foglio/sheet outlines, "ple" for individual particella/parcel
+    outlines.
 
     Unlike /tiles/datashader/{z}/{x}/{y}.png (a centroid density heatmap
     sourced from the cadastral DB), this reads real polygon geometry
-    filtered to the tile's bounding box and draws its fill/outline —
-    intended as a Leaflet TileLayer overlay showing zone shapes, not density.
+    filtered to the tile's bounding box and draws its outline only (no
+    fill) — intended as a Leaflet TileLayer overlay that sits on top of the
+    base map without hiding it.
 
     Returns:
         PNG tile image (transparent where there is no data for this tile)
@@ -3367,7 +3379,7 @@ async def get_cadastral_boundary_tile(z: int, x: int, y: int):
         service = get_datashader_service()
 
         tile_bytes = await asyncio.to_thread(
-            service.generate_boundary_tile, x, y, z
+            service.generate_boundary_tile, x, y, z, layer
         )
 
         return Response(
@@ -3383,6 +3395,36 @@ async def get_cadastral_boundary_tile(z: int, x: int, y: int):
         service = get_datashader_service()
         empty = service._empty_tile()
         return Response(content=empty, media_type="image/png")
+
+
+@api_router.get("/cadastral-identify")
+async def identify_cadastral_feature(
+    lat: float,
+    lng: float,
+    layer: str = Query(
+        "ple",
+        pattern="^(map|ple)$",
+        description="map=foglio (sheet), ple=particella (parcel)",
+    ),
+):
+    """
+    Find the foglio/particella polygon under a map click, for a popup —
+    the /tiles/cadastral-boundaries tiles are rasterized PNGs with no
+    per-feature tooltip of their own, so this does the lookup on demand
+    against the source FlatGeobuf files instead.
+
+    Returns:
+        {"found": false} or {"found": true, ...display fields}
+    """
+    try:
+        service = get_datashader_service()
+        result = await asyncio.to_thread(service.identify_feature, lat, lng, layer)
+        if result is None:
+            return {"found": False}
+        return {"found": True, **result}
+    except Exception as e:
+        logger.error(f"Cadastral identify error at ({lat}, {lng}): {e}", exc_info=True)
+        return {"found": False}
 
 
 @api_router.get("/datashader/heatmap/{region}")

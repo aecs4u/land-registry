@@ -2175,26 +2175,165 @@ function calculateGeoJsonBounds(geoJsonData) {
     };
 }
 
-// Plugin management functions (limited functionality for server maps)
+// Plugin management functions — these run on the Folium-generated map.
+// NOTE: same-named versions exist in map.js (loaded earlier) but they target
+// the client-side `map` global / #map div, which don't exist on this page;
+// these function declarations intentionally shadow them.
+function _pluginFoliumMap() {
+    const el = document.querySelector('.leaflet-container');
+    return el ? window[el.id] : null;
+}
+
+const ITALY_MAP_BOUNDS = [[35.0, 6.0], [48.0, 19.0]];
+
+// Hand-rolled overview mini-map. The obvious choice (L.Control.MiniMap) is
+// unusable here: the Folium map was created by Folium's bundled Leaflet
+// (1.9.3) while window.L and every plugin come from base.html's copy (1.9.4),
+// so the plugin's internal `instanceof LatLngBounds` checks reject the main
+// map's objects and crash. This version only ever passes primitive numbers
+// (lat/lng/zoom floats) between the two Leaflet instances, which is safe.
+let _miniMapControl = null;
 function toggleMiniMap() {
-    console.log('MiniMap toggle - controlled by Folium map configuration');
+    const map = _pluginFoliumMap();
+    if (!map) return;
+    if (_miniMapControl) {
+        map.removeControl(_miniMapControl);
+        _miniMapControl = null;
+        return;
+    }
+    _miniMapControl = L.control({ position: 'bottomright' });
+    _miniMapControl.onAdd = function () {
+        this._removed = false;
+        const div = L.DomUtil.create('div', 'overview-minimap');
+        div.style.cssText = 'width:170px;height:130px;border:2px solid rgba(0,0,0,0.3);border-radius:4px;overflow:hidden;';
+        L.DomEvent.disableClickPropagation(div);
+        L.DomEvent.disableScrollPropagation(div);
+
+        // Defer map construction until the div is in the DOM and has a size
+        this._createTimer = setTimeout(() => {
+            if (this._removed || !div.isConnected) return;
+            const mini = L.map(div, {
+                attributionControl: false,
+                zoomControl: false,
+                dragging: false,
+                scrollWheelZoom: false,
+                doubleClickZoom: false,
+                boxZoom: false,
+                keyboard: false,
+                touchZoom: false,
+            });
+            this._miniMap = mini;
+            L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(mini);
+            let rect = null;
+            const sync = () => {
+                const c = map.getCenter();
+                mini.setView([c.lat, c.lng], Math.max(map.getZoom() - 5, 0));
+                const b = map.getBounds();
+                const cornersOnly = [[b.getSouth(), b.getWest()], [b.getNorth(), b.getEast()]];
+                if (rect) {
+                    rect.setBounds(cornersOnly);
+                } else {
+                    rect = L.rectangle(cornersOnly, { color: '#e8442e', weight: 2, fill: false, interactive: false }).addTo(mini);
+                }
+            };
+            sync();
+            map.on('moveend', sync);
+            this._cleanup = () => {
+                map.off('moveend', sync);
+                if (this._miniMap) {
+                    this._miniMap.remove();
+                    this._miniMap = null;
+                }
+            };
+        }, 0);
+        return div;
+    };
+    _miniMapControl.onRemove = function () {
+        this._removed = true;
+        if (this._createTimer) clearTimeout(this._createTimer);
+        if (this._cleanup) {
+            this._cleanup();
+            this._cleanup = null;
+        }
+    };
+    _miniMapControl.addTo(map);
 }
 
 function showPluginInfo() {
-    alert('Server-generated map uses Folium plugins. Check the map controls for available functionality.');
+    const tools = [
+        `Overview MiniMap (built-in): ${_miniMapControl ? 'active' : 'available'}`,
+        `Cursor coordinates (built-in): ${_coordsControl ? 'active' : 'available'}`,
+        'Reset to Italy (built-in): available',
+        'Shareable map URL (built-in): active',
+    ];
+    const plugins = [
+        { name: 'Locate', loaded: typeof L.Control.Locate !== 'undefined' },
+        { name: 'Measure', loaded: typeof L.control.measure !== 'undefined' },
+        { name: 'Draw', loaded: typeof L.Control.Draw !== 'undefined' },
+        { name: 'Geocoder', loaded: typeof L.Control.Geocoder !== 'undefined' },
+    ];
+    const loaded = plugins.filter(p => p.loaded).map(p => p.name);
+    const missing = plugins.filter(p => !p.loaded).map(p => p.name);
+    let msg = `Map tools:\n${tools.join('\n')}\n\nLoaded plugins: ${loaded.join(', ') || 'none'}`;
+    if (missing.length) msg += `\nNot loaded: ${missing.join(', ')}`;
+    alert(msg);
 }
 
 function resetMapView() {
-    // First try to auto-zoom to fit all polygons
-    autoZoomToAllPolygons();
-
-    // If no polygons found or user wants complete reset, reload page
-    setTimeout(function() {
-        if (confirm('Reset to original view? This will reload the page.')) {
-            window.location.reload();
-        }
-    }, 1000);
+    const map = _pluginFoliumMap();
+    if (!map) return;
+    // Same Italy bounds the server fits on first load (app_settings.italy_bounds_*)
+    map.fitBounds(ITALY_MAP_BOUNDS);
 }
+
+let _coordsControl = null;
+function toggleCoordinates() {
+    const map = _pluginFoliumMap();
+    if (!map) return;
+    if (_coordsControl) {
+        map.removeControl(_coordsControl);
+        _coordsControl = null;
+        return;
+    }
+    _coordsControl = L.control({ position: 'bottomleft' });
+    _coordsControl.onAdd = function () {
+        const div = L.DomUtil.create('div', 'leaflet-control-attribution coords-readout');
+        div.style.cssText = 'font-size:12px;padding:2px 8px;font-variant-numeric:tabular-nums;';
+        div.textContent = '—';
+        this._onMove = function (e) {
+            div.textContent = e.latlng.lat.toFixed(5) + ', ' + e.latlng.lng.toFixed(5);
+        };
+        map.on('mousemove', this._onMove);
+        return div;
+    };
+    _coordsControl.onRemove = function () {
+        map.off('mousemove', this._onMove);
+    };
+    _coordsControl.addTo(map);
+}
+
+// Shareable permalinks (?lat=&lng=&zoom=) — the /map route already restores
+// these on load (see main.py), so keeping the URL in sync on every pan/zoom
+// makes the current view copy-pasteable.
+(function _initPermalink() {
+    function attach() {
+        const map = _pluginFoliumMap();
+        if (!map) { setTimeout(attach, 500); return; }
+        map.on('moveend', function () {
+            const c = map.getCenter();
+            const url = new URL(window.location);
+            url.searchParams.set('lat', c.lat.toFixed(6));
+            url.searchParams.set('lng', c.lng.toFixed(6));
+            url.searchParams.set('zoom', map.getZoom());
+            history.replaceState(null, '', url);
+        });
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', attach);
+    } else {
+        attach();
+    }
+})();
 
 // Function to remove all polygon layers from the map
 function removeAllPolygons() {
@@ -2256,10 +2395,6 @@ function removeAllPolygons() {
         console.error('Error removing polygon layers:', error);
         alert('Error removing polygons. Please try refreshing the page.');
     }
-}
-
-function toggleCoordinates() {
-    console.log('Coordinates toggle - controlled by Folium MousePosition plugin');
 }
 
 function toggleTreeLayers() {

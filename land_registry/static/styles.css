@@ -280,30 +280,38 @@ body.sidebar-collapsed .main-content {
 
 .map-header {
   position: relative !important;
-  z-index: 1000;
-  background: white;
-  padding: 10px 15px;
+  z-index: 1001;
+  background: #f8f9fa;
+  padding: 8px 15px;
   border-bottom: 1px solid #ddd;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   flex-shrink: 0 !important; /* Prevent header from shrinking */
   width: 100% !important;
   box-sizing: border-box;
   order: 1 !important; /* Ensure it appears first in flex order */
-  display: block !important;
+  /* Single compact row (title + status inline) so the map gets the space */
+  display: flex !important;
+  align-items: baseline;
+  gap: 12px;
   float: none !important;
   clear: both;
 }
 
 .map-header h2 {
   margin: 0;
-  font-size: 1.5em;
+  font-size: 1.15em;
   color: #333;
 }
 
 .map-header .table-info {
-  margin-top: 5px;
-  font-size: 0.9em;
+  margin-top: 0;
+  font-size: 0.85em;
   color: #666;
+}
+
+/* Keep the auth button on one line (it wraps at its narrow natural width) */
+#navSignInBtn {
+  white-space: nowrap;
 }
 
 #map {
@@ -1349,17 +1357,6 @@ button:hover {
   background: white;
   min-height: 400px;
   border: 1px solid #ddd;
-}
-
-.map-header {
-  padding: 20px;
-  background: #f8f9fa;
-  border-bottom: 1px solid #dee2e6;
-}
-
-.map-header h2 {
-  margin: 0 0 10px 0;
-  color: #333;
 }
 
 .table-header {
@@ -2870,26 +2867,6 @@ body.dark-mode .drawing-subsection-divider {
   margin-top: 10px !important;
 }
 
-/* Ensure map header stays visible and accessible */
-.map-header {
-  position: relative !important;
-  z-index: 1001 !important; /* Higher than Leaflet controls (z-index: 1000) */
-}
-
-/* Debug: Force map header to be above map */
-#mapView .map-header {
-  display: block !important;
-  width: 100% !important;
-  float: none !important;
-  clear: both !important;
-  position: relative !important;
-  top: 0 !important;
-  left: 0 !important;
-  right: 0 !important;
-  margin: 0 !important;
-  order: -1 !important; /* Ensure it comes first */
-}
-
 /* Debug: Force map to be below header */
 #mapView #map {
   display: block !important;
@@ -3815,6 +3792,84 @@ body.dark-mode .drawing-subsection-divider {
   margin-top: 2px;
 }
 
+.omi-controls {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 10px;
+}
+
+.omi-zone-match {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 9px;
+  padding: 7px 9px;
+  border: 1px solid #bbf7d0;
+  border-radius: 7px;
+  background: #f0fdf4;
+  color: #166534;
+  font-size: 11px;
+}
+
+.omi-zone-match strong { margin-left: auto; font-size: 13px; }
+
+.omi-zone-match.is-warning {
+  border-color: #fde68a;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.omi-controls label {
+  margin-top: 3px;
+  color: #5b6770;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.omi-selected-quote {
+  padding: 6px 0;
+  border-top: 1px solid #eef1f4;
+}
+
+.omi-estimate {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 6px 0;
+  padding: 10px;
+  border: 1px solid #b7e4dc;
+  border-radius: 7px;
+  background: #ecfdf8;
+  color: #0f766e;
+}
+
+.omi-estimate span { font-size: 11px; font-weight: 600; }
+.omi-estimate strong { font-size: 16px; }
+.omi-estimate-status {
+  margin-top: 2px;
+  color: currentColor;
+  font-size: 10px;
+  opacity: 0.8;
+}
+.omi-disclaimer { margin: 8px 0 10px; line-height: 1.4; }
+.omi-history { border-top: 1px solid #eef1f4; padding-top: 9px; }
+.omi-history-heading, .omi-history-axis {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+}
+.omi-history-heading span, .omi-history-axis { color: #7c8793; }
+.omi-history-chart {
+  display: block;
+  width: 100%;
+  height: 86px;
+  margin-top: 4px;
+  color: #0d9488;
+  background: linear-gradient(to bottom, rgba(13, 148, 136, 0.08), transparent);
+  border-radius: 5px;
+}
+
 .enrichment-brackets {
   margin-top: 8px;
 }
@@ -3903,7 +3958,8 @@ body.dark-mode .drawing-subsection-divider {
 
 .parcel-actions {
   margin-top: 24px;
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -3923,6 +3979,183 @@ body.dark-mode .drawing-subsection-divider {
 .parcel-action-btn:hover {
   background: #1a5490;
   color: white;
+}
+
+/* Printable parcel dossier (static/parcel-report.js) */
+.parcel-report-overlay[hidden] { display: none; }
+
+.parcel-report-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 12000;
+  overflow-y: auto;
+  padding: 76px 24px 40px;
+  background: rgba(15, 23, 42, 0.82);
+  color: #1f2937;
+}
+
+body.parcel-report-open { overflow: hidden; }
+
+.parcel-report-toolbar {
+  position: fixed;
+  z-index: 1;
+  top: 0;
+  left: 0;
+  right: 0;
+  min-height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 24px;
+  background: #153f72;
+  color: #fff;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}
+
+.parcel-report-toolbar-actions { display: flex; gap: 8px; }
+
+.parcel-report-toolbar-btn {
+  padding: 8px 12px;
+  border: 1px solid #fff;
+  border-radius: 6px;
+  background: #fff;
+  color: #153f72;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.parcel-report-toolbar-btn.secondary {
+  background: transparent;
+  color: #fff;
+}
+
+.parcel-report-sheet {
+  width: min(210mm, 100%);
+  min-height: 297mm;
+  margin: 0 auto;
+  padding: 17mm;
+  background: #fff;
+  color: #1f2937;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.parcel-report-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  padding-bottom: 14px;
+  border-bottom: 3px solid #1a5490;
+}
+
+.parcel-report-brand {
+  color: #16836f;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+}
+
+.parcel-report-heading h1 {
+  margin: 3px 0;
+  color: #153f72;
+  font-size: 28px;
+}
+
+.parcel-report-reference { margin: 0; font-size: 15px; font-weight: 700; }
+.parcel-report-meta { display: flex; flex-direction: column; gap: 3px; text-align: right; color: #64748b; font-size: 10px; }
+
+.parcel-report-notice {
+  margin: 14px 0;
+  padding: 9px 11px;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 11px;
+}
+
+.parcel-report-geometry { margin: 18px 0; }
+.parcel-report-geometry svg {
+  display: block;
+  width: 100%;
+  height: 150px;
+  border: 1px solid #dbe4ec;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+.parcel-report-geometry path { fill: rgba(13, 148, 136, 0.2); stroke: #0f766e; stroke-width: 3; vector-effect: non-scaling-stroke; }
+.parcel-report-geometry figcaption { margin-top: 4px; color: #64748b; text-align: right; font-size: 9px; }
+
+.parcel-report-data .parcel-info-header h3 { color: #153f72; }
+.parcel-report-data .parcel-actions { display: none; }
+.parcel-report-data .parcel-extra-info .extra-props { max-height: none; overflow: visible; }
+.parcel-report-data #parcelEnrichmentSections {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.parcel-report-data .enrichment-card { margin: 0 !important; break-inside: avoid; }
+.parcel-report-data .enrichment-card-body { overflow: visible; }
+.parcel-report-control-value {
+  padding: 7px 8px;
+  border: 1px solid #dbe4ec;
+  border-radius: 5px;
+  background: #f8fafc;
+  font-size: 11px;
+}
+
+.parcel-report-footer {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid #cbd5e1;
+  color: #64748b;
+  font-size: 9px;
+  line-height: 1.45;
+}
+.parcel-report-footer p { margin: 4px 0; }
+.parcel-report-footer a { color: #1a5490; overflow-wrap: anywhere; }
+
+@media (max-width: 700px) {
+  .parcel-report-overlay { padding: 68px 0 0; }
+  .parcel-report-toolbar { padding: 8px 12px; }
+  .parcel-report-toolbar strong { font-size: 12px; }
+  .parcel-report-toolbar-btn { padding: 7px 8px; font-size: 11px; }
+  .parcel-report-sheet { min-height: 100%; padding: 18px 14px; }
+  .parcel-report-heading { flex-direction: column; }
+  .parcel-report-meta { text-align: left; }
+  .parcel-report-data #parcelEnrichmentSections { grid-template-columns: 1fr; }
+}
+
+@page { size: A4; margin: 12mm; }
+
+@media print {
+  body.parcel-report-printing * { visibility: hidden !important; }
+  body.parcel-report-printing #parcelReportOverlay,
+  body.parcel-report-printing #parcelReportOverlay * { visibility: visible !important; }
+  body.parcel-report-printing #parcelReportOverlay {
+    position: absolute;
+    inset: 0;
+    display: block !important;
+    overflow: visible;
+    padding: 0;
+    background: #fff;
+  }
+  body.parcel-report-printing .parcel-report-toolbar { display: none !important; }
+  body.parcel-report-printing .parcel-report-sheet {
+    width: auto;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    box-shadow: none;
+  }
+  body.parcel-report-printing .parcel-report-data #parcelEnrichmentSections {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  body.parcel-report-printing .parcel-report-geometry svg { height: 42mm; }
+  body.parcel-report-printing .enrichment-card,
+  body.parcel-report-printing .parcel-info-details,
+  body.parcel-report-printing .parcel-report-geometry { break-inside: avoid; }
 }
 
 /* Override Folium default styles for better integration */
@@ -5646,11 +5879,6 @@ body.dark-mode .drawing-subsection-divider {
   padding-top: 60px; /* room for the floating view-toggle pill */
 }
 
-/* Map view header does not need extra padding (toggle sits over the map) */
-#mapView .map-header {
-  padding-top: 20px;
-}
-
 /* Adjacency: differentiate "Adjacent Polygons" section from "Selected" */
 .adjacency-section-neighbors h3 {
   background: #2e7d32;
@@ -5778,12 +6006,21 @@ body.dark-mode .control-btn:disabled {
   color: #475569;
 }
 
-body.dark-mode button:not(.leaflet-control *):not(.theme-toggle-btn) {
+body.dark-mode button:not(.leaflet-control *):not(.theme-toggle-btn):not(.tool-btn-ghost):not(.map-tool-btn):not(.btn-link) {
   background: #1a73e8;
+  border-color: #1a73e8;
+  color: #fff;
 }
 
-body.dark-mode button:hover:not(:disabled):not(.leaflet-control *):not(.theme-toggle-btn) {
+body.dark-mode button:hover:not(:disabled):not(.leaflet-control *):not(.theme-toggle-btn):not(.tool-btn-ghost):not(.map-tool-btn):not(.btn-link) {
   background: #1557b0;
+}
+
+/* Navbar icon buttons (.btn-link, excluded from the blanket rule above):
+   without an explicit color their Bootstrap link-blue icons vanish against
+   the dark navbar. */
+body.dark-mode .navbar-main .btn-link {
+  color: #e4e4e7 !important;
 }
 
 body.dark-mode .file-type-checkbox {
@@ -5919,6 +6156,29 @@ body.dark-mode .enrichment-source {
 
 body.dark-mode .enrichment-omi-row {
   border-color: #2d3a4f;
+}
+
+body.dark-mode .omi-controls label { color: #94a3b8; }
+body.dark-mode .omi-zone-match {
+  border-color: #166534;
+  background: rgba(22, 101, 52, 0.18);
+  color: #86efac;
+}
+body.dark-mode .omi-zone-match.is-warning {
+  border-color: #92400e;
+  background: rgba(146, 64, 14, 0.18);
+  color: #fcd34d;
+}
+body.dark-mode .omi-selected-quote,
+body.dark-mode .omi-history { border-color: #2d3a4f; }
+body.dark-mode .omi-estimate {
+  border-color: #115e59;
+  background: rgba(13, 148, 136, 0.12);
+  color: #5eead4;
+}
+body.dark-mode .omi-history-chart {
+  color: #2dd4bf;
+  background: linear-gradient(to bottom, rgba(45, 212, 191, 0.12), transparent);
 }
 
 body.dark-mode .enrichment-bracket-bar-track {
@@ -6279,41 +6539,41 @@ h4,
 }
 
 /* Dark mode support */
-[data-theme="dark"] #progressive-load-overlay {
+body.dark-mode #progressive-load-overlay {
   background: rgba(0, 0, 0, 0.6);
 }
 
-[data-theme="dark"] .progressive-load-panel {
+body.dark-mode .progressive-load-panel {
   background: #1e1e2e;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
 }
 
-[data-theme="dark"] .progressive-load-title {
+body.dark-mode .progressive-load-title {
   color: #e0e0e0;
 }
 
-[data-theme="dark"] .progressive-load-cancel:hover {
+body.dark-mode .progressive-load-cancel:hover {
   background: #333;
   color: #eee;
 }
 
-[data-theme="dark"] .progressive-load-bar-container {
+body.dark-mode .progressive-load-bar-container {
   background: #333;
 }
 
-[data-theme="dark"] .progressive-load-status {
+body.dark-mode .progressive-load-status {
   color: #aaa;
 }
 
-[data-theme="dark"] .progressive-load-details {
+body.dark-mode .progressive-load-details {
   color: #777;
 }
 
-[data-theme="dark"] .progressive-load-log {
+body.dark-mode .progressive-load-log {
   border-top-color: #333;
 }
 
-[data-theme="dark"] .progressive-load-log-info {
+body.dark-mode .progressive-load-log-info {
   color: #999;
 }
 
@@ -6362,19 +6622,19 @@ h4,
   background: #5a32a3;
 }
 
-[data-theme="dark"] .data-table tr.row-selected td {
+body.dark-mode .data-table tr.row-selected td {
   background: #1e3a5f !important;
 }
 
-[data-theme="dark"] .data-table tr.row-selected:hover td {
+body.dark-mode .data-table tr.row-selected:hover td {
   background: #1a3050 !important;
 }
 
-[data-theme="dark"] .table-selection-bar {
+body.dark-mode .table-selection-bar {
   border-top-color: #444;
 }
 
-[data-theme="dark"] .table-selection-info {
+body.dark-mode .table-selection-info {
   color: #ccc;
 }
 
@@ -6496,38 +6756,38 @@ h4,
   font-size: 11px;
 }
 
-[data-theme="dark"] .layer-panel {
+body.dark-mode .layer-panel {
   background: #2c2c2c;
   border-color: #444;
 }
 
-[data-theme="dark"] .layer-panel-header {
+body.dark-mode .layer-panel-header {
   background: #333;
   border-bottom-color: #444;
 }
 
-[data-theme="dark"] .layer-panel-title {
+body.dark-mode .layer-panel-title {
   color: #e0e0e0;
 }
 
-[data-theme="dark"] .layer-panel-row {
+body.dark-mode .layer-panel-row {
   border-bottom-color: #3a3a3a;
 }
 
-[data-theme="dark"] .layer-panel-toggle:hover {
+body.dark-mode .layer-panel-toggle:hover {
   background: #383838;
 }
 
-[data-theme="dark"] .layer-panel-name {
+body.dark-mode .layer-panel-name {
   color: #e0e0e0;
 }
 
-[data-theme="dark"] .layer-panel-badge-map {
+body.dark-mode .layer-panel-badge-map {
   background: #1c3a5c;
   color: #74c0fc;
 }
 
-[data-theme="dark"] .layer-panel-badge-ple {
+body.dark-mode .layer-panel-badge-ple {
   background: #4a2a00;
   color: #ffa94d;
 }
@@ -6565,9 +6825,9 @@ h4,
   font-size: 13px; color: #212529; cursor: pointer; text-align: left;
 }
 .nav-dropdown-item:hover { background: #f8f9fa; }
-[data-theme="dark"] .nav-user-dropdown { background: #2c2c2c; border-color: #444; }
-[data-theme="dark"] .nav-dropdown-item { color: #e0e0e0; }
-[data-theme="dark"] .nav-dropdown-item:hover { background: #383838; }
+body.dark-mode .nav-user-dropdown { background: #2c2c2c; border-color: #444; }
+body.dark-mode .nav-dropdown-item { color: #e0e0e0; }
+body.dark-mode .nav-dropdown-item:hover { background: #383838; }
 
 /* ── Map toolbar ─────────────────────────────────── */
 #folium-map-container { flex: 1; min-height: 0; }
@@ -6653,6 +6913,12 @@ h4,
 .enrichment-legend-dot {
   display: inline-block; width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
 }
+.enrichment-legend-meta {
+  flex-basis: 100%;
+  color: #868e96;
+  font-size: 10px;
+  line-height: 1.35;
+}
 .tool-btn-danger {
   flex: 1; background: #fa5252; color: #fff; border: none; border-radius: 5px;
   padding: 7px 10px; font-size: 12px; font-weight: 500; cursor: pointer;
@@ -6662,16 +6928,15 @@ h4,
 .tool-info-text { font-size: 12px; color: #868e96; margin-top: 4px; }
 
 /* Dark mode for panels and toolbar */
-[data-theme="dark"] .map-toolbar { background: #2c2c2c; border-color: #444; }
-[data-theme="dark"] .map-tool-btn { color: #ccc; }
-[data-theme="dark"] .map-tool-btn:hover { background: #383838; color: #fff; }
-[data-theme="dark"] .map-tool-btn.active { background: #1c3a5c; color: #74c0fc; }
-[data-theme="dark"] .tool-panel { background: #2c2c2c; border-color: #444; border-right-color: #444; }
-[data-theme="dark"] .tool-panel-header { background: #333; border-color: #444; }
-[data-theme="dark"] .tool-input, [data-theme="dark"] .tool-select { background: #1e1e1e; border-color: #555; color: #e0e0e0; }
-[data-theme="dark"] .tool-btn-ghost { background: #383838; border-color: #555; color: #ccc; }
-[data-theme="dark"] .tool-btn-ghost:hover:not(:disabled) { background: #444; }
-[data-theme="dark"] .tool-btn-ghost.active,
+body.dark-mode .map-toolbar { background: #2c2c2c; border-color: #444; }
+body.dark-mode .map-tool-btn { color: #ccc; }
+body.dark-mode .map-tool-btn:hover { background: #383838; color: #fff; }
+body.dark-mode .map-tool-btn.active { background: #1c3a5c; color: #74c0fc; }
+body.dark-mode .tool-panel { background: #2c2c2c; border-color: #444; border-right-color: #444; }
+body.dark-mode .tool-panel-header { background: #333; border-color: #444; }
+body.dark-mode .tool-input, body.dark-mode .tool-select { background: #1e1e1e; border-color: #555; color: #e0e0e0; }
+body.dark-mode .tool-btn-ghost { background: #383838; border-color: #555; color: #ccc; }
+body.dark-mode .tool-btn-ghost:hover:not(:disabled) { background: #444; }
 body.dark-mode .tool-btn-ghost.active { background: #1c3a5c; color: #74c0fc; border-color: #2a4d78; }
 body.dark-mode .enrichment-legend { color: #adb5bd; }
 
@@ -6704,5 +6969,124 @@ body.dark-mode .tool-toggle-switch input:checked + .tool-toggle-slider { backgro
   border-bottom: 1px solid #e9ecef;
   letter-spacing: 0.02em;
 }
-[data-theme="dark"] .sidebar-brand,
+body.dark-mode .sidebar-brand,
 body.dark-mode .sidebar-brand { color: #e0e0e0; border-color: #3a3a3a; }
+
+/* Map-first shell: keep the map as the canvas and float navigation above it. */
+.map-first-shell {
+  margin-top: var(--header-height, 64px);
+  background: #0b1114;
+}
+
+.map-first-shell #mapView .map-header {
+  position: absolute !important;
+  top: 16px;
+  left: 50%;
+  width: auto !important;
+  max-width: calc(100% - 420px);
+  transform: translateX(-50%);
+  padding: 7px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: rgba(15, 20, 23, 0.9);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(12px);
+  z-index: 1450;
+  pointer-events: none;
+}
+
+.map-first-shell .map-header h2 { color: #f8fafc; font-size: 13px; font-weight: 650; }
+.map-first-shell .map-header .table-info { color: #94a3b8; font-size: 12px; }
+.map-first-shell .map-container { height: 100%; }
+
+.map-first-shell .map-toolbar {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  padding: 5px;
+  gap: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: rgba(15, 20, 23, 0.9);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(12px);
+}
+
+.map-first-shell .map-tool-btn { padding: 8px 11px; color: #cbd5e1; border-radius: 8px; }
+.map-first-shell .map-tool-btn:hover { color: #fff; background: rgba(255, 255, 255, 0.1); }
+.map-first-shell .map-tool-btn.active { color: #5eead4; background: rgba(20, 184, 166, 0.16); }
+
+/* Leaflet's own top-left (zoom/measure/fit-to-data) and top-right (base
+   layer switcher) controls default to a 10px offset (see .leaflet-top
+   above), which sits directly underneath the floating map-toolbar (top-left,
+   ~63px tall incl. its own top offset) and view-toggle (top-right, ~75px)
+   pills in this shell — push them down below both. */
+.map-first-shell .leaflet-top.leaflet-left { top: 76px !important; }
+.map-first-shell .leaflet-top.leaflet-right { top: 88px !important; }
+
+.map-first-shell .tool-panel {
+  top: 64px;
+  left: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  overflow: hidden auto;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.3);
+}
+
+.map-first-shell .view-toggle {
+  top: 16px !important;
+  right: 16px !important;
+  left: auto !important;
+  transform: none !important;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: rgba(15, 20, 23, 0.9);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(12px);
+  overflow: hidden;
+}
+
+.map-first-shell .view-toggle button {
+  min-width: 0;
+  padding: 9px 13px;
+  color: #cbd5e1;
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.map-first-shell .view-toggle button:hover:not(.active) { color: #fff; background: rgba(255, 255, 255, 0.08); }
+.map-first-shell .view-toggle button.active { color: #5eead4; background: rgba(20, 184, 166, 0.16); }
+
+@media (max-width: 900px) {
+  .map-first-shell #mapView .map-header { display: none !important; }
+  .map-first-shell .map-toolbar { top: 10px; left: 10px; }
+  .map-first-shell .view-toggle {
+    top: 10px !important;
+    right: 10px !important;
+    max-width: calc(100vw - 82px);
+    overflow-x: auto;
+  }
+  .map-first-shell .view-toggle button { padding: 8px 10px; font-size: 11px; }
+  .map-first-shell .map-tool-btn span { display: none; }
+  .map-first-shell .map-tool-btn { padding: 9px 11px; }
+  .map-first-shell .tool-panel { top: 56px; left: 10px; width: min(300px, calc(100vw - 20px)); }
+}
+
+@media (max-width: 480px) {
+  .navbar-main .logo-text { display: none; }
+}
+
+/* Below ~560px the icon-only map-toolbar (left) and view-toggle (right)
+   no longer fit side by side on the same row — they visibly overlapped.
+   Drop the view-toggle to its own row under the toolbar, still right-
+   anchored so it doesn't also collide with Leaflet's left-side controls,
+   and push Leaflet's top-right control stack down to clear it in turn. */
+@media (max-width: 560px) {
+  .map-first-shell .view-toggle {
+    top: 62px !important;
+    right: 10px !important;
+    left: auto !important;
+    max-width: calc(100vw - 20px);
+  }
+  .map-first-shell .leaflet-top.leaflet-right { top: 122px !important; }
+}

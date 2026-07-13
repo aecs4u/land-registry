@@ -16,7 +16,7 @@ Covers:
 """
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import geopandas as gpd
 import pytest
@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient
 from shapely.geometry import Polygon
 
 from land_registry.main import app
+from land_registry.routers import api as api_module
 
 
 @pytest.fixture
@@ -506,27 +507,88 @@ class TestDatashaderEndpoints:
 class TestCadastralBoundaryTileEndpoint:
     """GET /api/v1/tiles/cadastral-boundaries/{z}/{x}/{y}.png"""
 
-    def test_tile_endpoint_success(self, client):
+    @pytest.mark.asyncio
+    async def test_tile_endpoint_success(self):
         mock_service = MagicMock()
         mock_service.generate_boundary_tile.return_value = b"\x89PNG\r\n\x1a\n"
 
-        with patch("land_registry.routers.api.get_datashader_service", return_value=mock_service):
-            response = client.get("/api/v1/tiles/cadastral-boundaries/13/4257/2923.png")
+        with patch("land_registry.routers.api.get_datashader_service", return_value=mock_service), \
+             patch("land_registry.routers.api.asyncio.to_thread", new=AsyncMock(
+                 side_effect=lambda func, *args, **kwargs: func(*args, **kwargs)
+             )):
+            response = await api_module.get_cadastral_boundary_tile(13, 4257, 2923, "map")
 
         assert response.status_code == 200
-        assert response.headers["content-type"] == "image/png"
+        assert response.media_type == "image/png"
         assert response.headers["access-control-allow-origin"] == "*"
-        mock_service.generate_boundary_tile.assert_called_once_with(4257, 2923, 13)
+        mock_service.generate_boundary_tile.assert_called_once_with(4257, 2923, 13, "map")
 
-    def test_tile_endpoint_error_returns_empty_tile(self, client):
+    @pytest.mark.asyncio
+    async def test_parcel_layer_is_forwarded_to_service(self):
+        mock_service = MagicMock()
+        mock_service.generate_boundary_tile.return_value = b"\x89PNG\r\n\x1a\n"
+
+        with patch("land_registry.routers.api.get_datashader_service", return_value=mock_service), \
+             patch("land_registry.routers.api.asyncio.to_thread", new=AsyncMock(
+                 side_effect=lambda func, *args, **kwargs: func(*args, **kwargs)
+             )):
+            response = await api_module.get_cadastral_boundary_tile(16, 34225, 23472, "ple")
+
+        assert response.status_code == 200
+        mock_service.generate_boundary_tile.assert_called_once_with(34225, 23472, 16, "ple")
+
+    @pytest.mark.asyncio
+    async def test_tile_endpoint_error_returns_empty_tile(self):
         """Errors degrade gracefully to an empty tile (200), not 500."""
         empty_png = b"\x89PNG\r\n\x1a\n"
         mock_service = MagicMock()
         mock_service.generate_boundary_tile.side_effect = Exception("fgb read failed")
         mock_service._empty_tile.return_value = empty_png
 
-        with patch("land_registry.routers.api.get_datashader_service", return_value=mock_service):
-            response = client.get("/api/v1/tiles/cadastral-boundaries/13/4257/2923.png")
+        with patch("land_registry.routers.api.get_datashader_service", return_value=mock_service), \
+             patch("land_registry.routers.api.asyncio.to_thread", new=AsyncMock(
+                 side_effect=lambda func, *args, **kwargs: func(*args, **kwargs)
+             )):
+            response = await api_module.get_cadastral_boundary_tile(13, 4257, 2923, "map")
 
         assert response.status_code == 200
-        assert response.headers["content-type"] == "image/png"
+        assert response.media_type == "image/png"
+
+
+class TestCadastralIdentifyEndpoint:
+    """GET /api/v1/cadastral-identify"""
+
+    @pytest.mark.asyncio
+    async def test_identify_returns_display_fields(self):
+        mock_service = MagicMock()
+        mock_service.identify_feature.return_value = {
+            "label": "194",
+            "reference": "E204_000400.194",
+            "comune": "GROTTAFERRATA",
+            "provincia": "RM",
+            "regione": "LAZIO",
+            "administrative_unit": "E204",
+        }
+
+        with patch("land_registry.routers.api.get_datashader_service", return_value=mock_service), \
+             patch("land_registry.routers.api.asyncio.to_thread", new=AsyncMock(
+                 side_effect=lambda func, *args, **kwargs: func(*args, **kwargs)
+             )):
+            response = await api_module.identify_cadastral_feature(41.79, 12.67, "ple")
+
+        assert response["reference"] == "E204_000400.194"
+        assert response["found"] is True
+        mock_service.identify_feature.assert_called_once_with(41.79, 12.67, "ple")
+
+    @pytest.mark.asyncio
+    async def test_identify_not_found_is_explicit(self):
+        mock_service = MagicMock()
+        mock_service.identify_feature.return_value = None
+
+        with patch("land_registry.routers.api.get_datashader_service", return_value=mock_service), \
+             patch("land_registry.routers.api.asyncio.to_thread", new=AsyncMock(
+                 side_effect=lambda func, *args, **kwargs: func(*args, **kwargs)
+             )):
+            response = await api_module.identify_cadastral_feature(41.79, 12.67, "map")
+
+        assert response == {"found": False}
