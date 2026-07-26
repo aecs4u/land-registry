@@ -2,6 +2,17 @@
 
 A web application for visualizing Italian cadastral (land registry) data with interactive mapping capabilities.
 
+## Architecture / scope
+
+This is the **map visualization** layer of the AECS4U real-estate data
+pipeline — it consumes `aecs4u-stats`'s query/enrichment layer
+(`land_registry/stats_service.py`) and never downloads or scrapes data
+itself. See
+[`../__architecture__/_docs/aecs4u_realestate_pipeline_architecture.md`](../__architecture__/_docs/aecs4u_realestate_pipeline_architecture.md)
+for the full pipeline and ownership boundaries — it supersedes the P4 rule in
+`docs/ZORNADE_GAP_ANALYSIS.md` (downloaders no longer live in `aecs4u-stats`;
+see that pipeline doc §3).
+
 ## Features
 
 - **File Upload Support**: Upload and process QPKG (QGIS project packages) or GPKG files

@@ -127,6 +127,13 @@ cleanly. Build `templates/map_v2.html` + `static/map-v2.js` as a parallel page;
 keep the Folium page for the legacy upload/analysis flows until parity.
 
 **P4 — Public-data ETL lives in `aecs4u-stats`; this app only consumes.**
+> **2026-07-26 — superseded (partially):** downloading now belongs to
+> `property-scraper`; `aecs4u-stats` keeps the merge/query/enrichment side
+> only. See
+> `../../__architecture__/_docs/aecs4u_realestate_pipeline_architecture.md`.
+> Nothing changes for `land-registry` itself — it never called the
+> downloaders directly.
+
 *(Implemented 2026-07-11, extended same day.)* The app depends on
 `aecs4u-stats` (git source in `pyproject.toml`), adapted by
 `land_registry/stats_service.py` and exposed at `/api/v1/enrichment/*`:
