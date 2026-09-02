@@ -17,6 +17,20 @@ import tempfile
 import threading
 from typing import Optional
 
+# Some Numba releases cannot locate the source file for cache-enabled kernels
+# when Datashader is installed in a virtualenv. Give Numba a writable cache
+# location before Datashader imports it; deployments can override this with
+# NUMBA_CACHE_DIR as usual.
+if not os.environ.get("NUMBA_CACHE_DIR"):
+    _numba_cache_dir = Path(tempfile.gettempdir()) / "land-registry-numba-cache"
+    try:
+        _numba_cache_dir.mkdir(parents=True, exist_ok=True)
+        os.environ["NUMBA_CACHE_DIR"] = str(_numba_cache_dir)
+    except OSError:
+        # Preserve the normal import path if the runtime disallows temporary
+        # directory creation; the configured environment remains authoritative.
+        pass
+
 import colorcet
 import datashader as ds
 import datashader.transfer_functions as tf
