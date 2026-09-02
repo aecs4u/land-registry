@@ -858,6 +858,8 @@
 <script>
   window.geoJsonData = {{ geojson_data | tojson }};
   window.hasData = {{ 'true' if has_data else 'false' }};
+  window.cartoEnabled = {{ 'true' if carto_enabled else 'false' }};
+  window.cartoApiKey = {{ carto_api_key | tojson }};
 </script>
 {% endblock %} {% block app_js %}
 <script src="/static/folium-interface.js"></script>

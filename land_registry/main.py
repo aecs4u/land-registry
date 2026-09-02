@@ -515,6 +515,8 @@ async def _build_main_map_shell_context(request: Request) -> dict:
         "total_provinces": stats['total_provinces'],
         "total_municipalities": stats['total_municipalities'],
         "total_files": stats['total_files'],
+        "carto_enabled": map_generator.controls_manager.settings.carto_enabled,
+        "carto_api_key": map_generator.controls_manager.settings.carto_api_key,
         "clerk_publishable_key": get_auth_config().clerk_publishable_key,
     }
 

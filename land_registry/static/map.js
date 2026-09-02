@@ -2673,13 +2673,19 @@ function initializeMap() {
         '🏔️ ESRI Terrain': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Terrain_Base/MapServer/tile/{z}/{y}/{x}', {
             attribution: '© ESRI'
         }),
-        '⚪ CartoDB Light': L.tileLayer('https://cartodb-basemaps-{s}.global.ssl.fastly.net/light_all/{z}/{x}/{y}.png', {
-            attribution: '© CartoDB'
-        }),
-        '⚫ CartoDB Dark': L.tileLayer('https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png', {
-            attribution: '© CartoDB'
-        })
     };
+
+    if (window.cartoEnabled && window.cartoApiKey) {
+        const cartoSuffix = `?api_key=${encodeURIComponent(window.cartoApiKey)}`;
+        mapProviders['⚪ CartoDB Light'] = L.tileLayer(
+            `https://cartodb-basemaps-{s}.global.ssl.fastly.net/light_all/{z}/{x}/{y}.png${cartoSuffix}`,
+            { attribution: '© CartoDB' }
+        );
+        mapProviders['⚫ CartoDB Dark'] = L.tileLayer(
+            `https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png${cartoSuffix}`,
+            { attribution: '© CartoDB' }
+        );
+    }
 
     // Add default layer - Google Maps
     mapProviders['📍 Google Maps'].addTo(map);

@@ -34,9 +34,21 @@ from aecs4u_stats.cadastral import (
     parcels_for_comune,
     parcels_in_bbox,
 )
-from aecs4u_stats.census import census_db_available as _census_db_available
-from aecs4u_stats.census import section_at_point as _census_section_at_point
-from aecs4u_stats.census import sections_for_comune as _census_sections_for_comune
+try:
+    from aecs4u_stats.census import census_db_available as _census_db_available
+    from aecs4u_stats.census import section_at_point as _census_section_at_point
+    from aecs4u_stats.census import sections_for_comune as _census_sections_for_comune
+except ImportError:
+    # Census sections are an optional aecs4u-stats dataset. Keep the adapter
+    # importable with older package releases that predate this subpackage.
+    def _census_db_available() -> bool:
+        return False
+
+    def _census_section_at_point(*args, **kwargs):
+        return None
+
+    def _census_sections_for_comune(*args, **kwargs):
+        return None
 from aecs4u_stats.hazards import (
     active_fires as _active_fires,
     get_comune_hazards,
@@ -53,7 +65,7 @@ from aecs4u_stats.omi import (
     quote_history,
     quotes_for_comune,
     zone_boundaries,
-    zone_boundaries_available,
+    zone_boundaries_available as _zone_boundaries_available,
 )
 from aecs4u_stats.osm.config import POI_CATEGORIES
 from aecs4u_stats.osm.pois import pois_within_radius, resolve_poi_db
@@ -75,6 +87,13 @@ def poi_db_available() -> bool:
 def omi_db_available_public() -> bool:
     """True when the OMI store exists on this host."""
     return omi_db_available()
+
+
+def zone_boundaries_available(province: Optional[str] = None) -> bool:
+    """Return whether OMI zone boundaries exist, nationally or by province."""
+    if province is not None:
+        return _zone_boundaries_available(province)
+    return OMI_ZONES_DIR.exists() and any(OMI_ZONES_DIR.glob("*.geojson"))
 
 
 def mef_db_available_public() -> bool:
@@ -533,6 +552,8 @@ def get_census_sections(cadastral_code: str, limit: int = 5000) -> Optional[Dict
     FeatureCollection — each Feature's properties carry the 119 raw ISTAT
     indicator counts plus a ``ratios`` sub-dict (education/employment/
     foreign-resident/vacancy rate, avg household size)."""
+    if not census_db_available():
+        return None
     muni = get_municipality_by_cadastral_code(cadastral_code)
     if muni is None or muni.get("procom") is None:
         return None
@@ -543,6 +564,8 @@ def get_census_sections(cadastral_code: str, limit: int = 5000) -> Optional[Dict
 
 def get_census_section_at_point(lat: float, lng: float) -> Optional[Dict[str, Any]]:
     """The census section containing a WGS84 point, or ``None``."""
+    if not census_db_available():
+        return None
     return _census_section_at_point(lat, lng)
 
 

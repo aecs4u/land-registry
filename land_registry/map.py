@@ -11,6 +11,7 @@ from pydantic_settings import BaseSettings
 from shapely.geometry import Point
 import tempfile
 from typing import List, Dict, Any, Optional, Union
+from urllib.parse import quote
 import zipfile
 
 from land_registry.config import map_controls_settings, app_settings
@@ -1109,18 +1110,6 @@ class IntegratedMapGenerator:
                 'max_native_zoom': 13,
             },
             {
-                'tiles': 'https://cartodb-basemaps-{s}.global.ssl.fastly.net/light_all/{z}/{x}/{y}.png',
-                'attr': '© CartoDB',
-                'name': 'CartoDB Positron (Light)',
-                'max_native_zoom': 20,
-            },
-            {
-                'tiles': 'https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png',
-                'attr': '© CartoDB',
-                'name': 'CartoDB Dark Matter',
-                'max_native_zoom': 20,
-            },
-            {
                 'tiles': 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
                 'attr': '© Google',
                 'name': 'Google Satellite',
@@ -1128,11 +1117,32 @@ class IntegratedMapGenerator:
             }
         ]
 
+        carto_key = self.controls_manager.settings.carto_api_key.strip()
+        carto_enabled = self.controls_manager.settings.carto_enabled
+        if carto_enabled:
+            encoded_key = quote(carto_key, safe='')
+            carto_suffix = f'?api_key={encoded_key}'
+            carto_layers = [
+                {
+                    'tiles': f'https://cartodb-basemaps-{{s}}.global.ssl.fastly.net/light_all/{{z}}/{{x}}/{{y}}.png{carto_suffix}',
+                    'attr': '© CartoDB',
+                    'name': 'CartoDB Positron (Light)',
+                    'max_native_zoom': 20,
+                },
+                {
+                    'tiles': f'https://cartodb-basemaps-{{s}}.global.ssl.fastly.net/dark_all/{{z}}/{{x}}/{{y}}.png{carto_suffix}',
+                    'attr': '© CartoDB',
+                    'name': 'CartoDB Dark Matter',
+                    'max_native_zoom': 20,
+                },
+            ]
+            tile_layers[7:7] = carto_layers
+
         # Folium otherwise renders every base layer initially and merely adds
         # radio buttons to the layer control. Keep exactly one visible so
         # failed/slow tiles from another provider cannot checkerboard over the
         # intended reference basemap.
-        default_basemap = 'CartoDB Positron (Light)'
+        default_basemap = 'CartoDB Positron (Light)' if carto_enabled else 'Google Maps'
         for layer_config in tile_layers:
             tile_layer = folium.TileLayer(
                 tiles=layer_config['tiles'],

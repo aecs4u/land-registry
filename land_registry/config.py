@@ -251,6 +251,14 @@ class MapControlsSettings(BaseSettings):
     enable_tag_filter: bool = True
     enable_overlapping_marker_spiderfier: bool = True
 
+    # CartoDB requires an API key for the raster basemap service. Keep it
+    # opt-in so an unconfigured deployment never renders a watermarked map.
+    carto_api_key: str = ""
+
+    @property
+    def carto_enabled(self) -> bool:
+        return bool(self.carto_api_key.strip())
+
     class Config:
         env_prefix = "MAP_CONTROLS_"
         case_sensitive = False
