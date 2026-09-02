@@ -8,7 +8,7 @@ This is the **map visualization** layer of the AECS4U real-estate data
 pipeline — it consumes `aecs4u-stats`'s query/enrichment layer
 (`land_registry/stats_service.py`) and never downloads or scrapes data
 itself. See
-[`../__architecture__/_docs/aecs4u_realestate_pipeline_architecture.md`](../__architecture__/_docs/aecs4u_realestate_pipeline_architecture.md)
+[`../__architecture__/README.md`](../__architecture__/README.md#detailed-real-estate-repository-boundaries)
 for the full pipeline and ownership boundaries — it supersedes the P4 rule in
 `docs/ZORNADE_GAP_ANALYSIS.md` (downloaders no longer live in `aecs4u-stats`;
 see that pipeline doc §3).
@@ -260,14 +260,14 @@ land_registry/
 │   ├── cadastral_data.html        # Cadastral data browser
 │   └── tabulator.html             # Standalone Panel table view
 └── static/
-    ├── map.js                     # Client-side map logic, WebGL, zone management
+    ├── map.js                     # Client-side map logic, Canvas fallback, zone management
     ├── folium-interface.js        # Folium iframe interaction, progressive loading
-    ├── webgl-renderer.js          # GPU rendering via Leaflet.glify with SVG fallback
+    ├── webgl-renderer.js          # Optional legacy GPU renderer
     ├── progressive-loader.js      # NDJSON stream consumer
     ├── table-manager.js           # Tabulator table management
     ├── styles.css                 # All styles including dark mode
     └── vendor/
-        └── glify-browser.js       # Bundled Leaflet.glify (local, not CDN)
+        └── glify-browser.js       # Bundled legacy renderer dependency
 
 data/
 ├── cadastral_structure.json       # Italian administrative boundaries (optional)

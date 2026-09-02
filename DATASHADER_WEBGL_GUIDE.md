@@ -4,14 +4,18 @@
 
 The Land Registry application now features a **hybrid high-performance visualization system** combining:
 1. **Python Datashader** (server-side) - For massive datasets (100K+ parcels)
-2. **WebGL via Leaflet.glify** (client-side) - For interactive vectors (1K-50K parcels)
-3. **SVG Leaflet** (fallback) - For small datasets and compatibility
+2. **PostGIS MVT + Leaflet.VectorGrid** - For crisp, streamed cadastral boundaries
+3. **Leaflet Canvas/SVG** (fallback) - For client-side parcel interaction and compatibility
+
+The canonical Folium workflow uses Canvas for cadastral layers with 750 or
+more features and SVG below that threshold. The legacy WebGL modules remain
+available for explicit host integrations but are not loaded by the main map.
 
 This system provides Zornade-like professional visualization capabilities while preserving existing functionality including Folium support.
 
 ## Architecture
 
-### Three Rendering Modes
+### Rendering Modes
 
 1. **Datashader Tiles** (Server-Side Rasterization)
    - Best for: Overview maps, density heatmaps, 100K+ parcels
@@ -19,24 +23,24 @@ This system provides Zornade-like professional visualization capabilities while 
    - Performance: 60 FPS even with millions of parcels
    - Usage: See Datashader API below
 
-2. **WebGL Vectors** (Client-Side GPU)
-   - Best for: Interactive maps, 1K-50K parcels, user selection
-   - How it works: GPU-accelerated polygon rendering
-   - Performance: 30-60 FPS with 10K+ parcels
-   - Usage: Automatic when loading >1000 features
+2. **PostGIS MVT** (Client-Side Vector Tiles)
+   - Best for: Interactive cadastral boundaries backed by aecs4u-stats
+   - How it works: PostgreSQL clips compact vector tiles per viewport
+   - Usage: Preferred automatically, with PNG fallback on unavailable DBs
 
-3. **SVG Fallback** (Traditional)
-   - Best for: Small datasets (<1K parcels), complex features, legacy browsers
+3. **Leaflet Canvas/SVG** (Interactive client-side vectors)
+   - Best for: Loaded parcel selection and compatibility
    - How it works: DOM-based vector rendering
-   - Performance: Best quality, slower with large datasets
-   - Usage: Automatic for <1000 features or no WebGL
+   - Performance: Canvas avoids one SVG node per parcel for 750+ features
+   - Usage: Automatic through the canonical cadastral layer factory
 
 ### Auto-Switching Logic
 
 ```
-Feature Count < 1,000          → SVG (high fidelity)
-Feature Count 1,000 - 50,000   → WebGL (GPU accelerated)
-Feature Count > 50,000         → Recommend Datashader tiles
+Feature Count < 750            → SVG (high fidelity)
+Feature Count 750+             → Canvas (interactive parcel workflow)
+Boundary overlay               → PostGIS MVT, PNG fallback
+Massive density view           → Datashader tiles
 ```
 
 ## Datashader API

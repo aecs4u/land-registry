@@ -61,6 +61,9 @@
             { pane: 'cadastralPane', opacity: 0.85, minZoom: 16, maxZoom: 22, maxNativeZoom: 19, tileSize: 512 }
         );
         var cadastral = L.layerGroup([sheets, parcels]);
+        // Keep the boundary group attached to the map; the child layers are
+        // zoom-gated and therefore do not request detail at overview zoom.
+        cadastral.addTo(map);
 
         var baseLayers = {};
         baseLayers[labels.streets || 'Streets'] = streets;

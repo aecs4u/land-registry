@@ -3337,7 +3337,7 @@ async def get_datashader_tile(
             content=tile_bytes,
             media_type="image/png",
             headers={
-                "Cache-Control": "public, max-age=3600",  # Cache tiles for 1 hour
+                "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800",
                 "Access-Control-Allow-Origin": "*",
             },
         )
@@ -3388,7 +3388,7 @@ async def get_cadastral_boundary_tile(
             content=tile_bytes,
             media_type="image/png",
             headers={
-                "Cache-Control": "public, max-age=3600",  # Cache tiles for 1 hour
+                "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800",
                 "Access-Control-Allow-Origin": "*",
             },
         )
@@ -3422,7 +3422,7 @@ async def get_cadastral_boundary_mvt(
             content=tile_bytes,
             media_type="application/vnd.mapbox-vector-tile",
             headers={
-                "Cache-Control": "public, max-age=3600",
+                "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800",
                 "Access-Control-Allow-Origin": "*",
             },
         )

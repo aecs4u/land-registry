@@ -22,13 +22,16 @@ def test_boundary_tiles_are_layer_aware_outline_only_and_capped() -> None:
     boundary_body = SERVICE.split("def generate_boundary_tile", 1)[1].split(
         "def identify_feature", 1
     )[0]
+    render_body = SERVICE.split("def _render_boundary_frame", 1)[1].split(
+        "def generate_boundary_mvt", 1
+    )[0]
 
     assert '"map": "cadastral_map"' in SERVICE
     assert '"ple": "cadastral_ple"' in SERVICE
     assert '("boundary", layer_type, x, y, z)' in SERVICE
     assert 'frame = frame.iloc[:remaining].copy()' in boundary_body
-    assert 'boundary["geometry"] = boundary.boundary' in boundary_body
-    assert "canvas.line(" in boundary_body
+    assert 'boundary["geometry"] = boundary.boundary' in render_body
+    assert "canvas.line(" in render_body
     assert "canvas.polygons(" not in boundary_body
     assert 'for layer_type in ("map", "ple")' in SERVICE
 

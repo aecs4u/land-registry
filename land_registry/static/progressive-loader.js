@@ -74,11 +74,19 @@ const ProgressiveLoader = {
             let buffer = '';
             let summary = null;
 
+            const handleLine = (line) => {
+                if (!line.trim()) return;
+                try {
+                    const event = JSON.parse(line);
+                    summary = this._handleEvent(event, { onLayer, onProgress, onComplete, onError });
+                } catch (parseError) {
+                    console.warn('[ProgressiveLoader] Failed to parse event:', line, parseError);
+                }
+            };
+
             while (true) {
                 const { done, value } = await reader.read();
-                if (done) break;
-
-                buffer += decoder.decode(value, { stream: true });
+                buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
 
                 // Process complete NDJSON lines. A stream chunk is not a line
                 // boundary, so retain the tail until a newline arrives.
@@ -86,25 +94,14 @@ const ProgressiveLoader = {
                 while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
                     const line = buffer.slice(0, newlineIndex);
                     buffer = buffer.slice(newlineIndex + 1);
-                    if (!line.trim()) continue;
-
-                    try {
-                        const event = JSON.parse(line);
-                        summary = this._handleEvent(event, { onLayer, onProgress, onComplete, onError });
-                    } catch (parseError) {
-                        console.warn('[ProgressiveLoader] Failed to parse event:', line, parseError);
-                    }
+                    handleLine(line);
                 }
+                if (done) break;
             }
 
             // Process any remaining buffer
             if (buffer.trim()) {
-                try {
-                    const event = JSON.parse(buffer);
-                    summary = this._handleEvent(event, { onLayer, onProgress, onComplete, onError });
-                } catch (e) {
-                    // ignore incomplete data
-                }
+                handleLine(buffer);
             }
 
             return summary;

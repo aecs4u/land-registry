@@ -23,13 +23,13 @@ Land Registry Viewer for Italian cadastral (land registry) data. Supports file u
 
 - **land_registry/templates/base.html** - Base template with all JS/CSS dependencies
 - **land_registry/templates/index.html** - Main map page (extends base.html)
-- **land_registry/static/map.js** - Client-side map logic, WebGL integration, zone management
+- **land_registry/static/map.js** - Client-side map logic, Canvas fallback, zone management
 - **land_registry/static/folium-interface.js** - Folium iframe map interaction, cadastral selection, progressive loading
-- **land_registry/static/webgl-renderer.js** - GPU-accelerated rendering via Leaflet.glify with SVG fallback
+- **land_registry/static/webgl-renderer.js** - Optional legacy GPU renderer for explicit integrations
 - **land_registry/static/progressive-loader.js** - NDJSON stream consumer for incremental layer rendering
 - **land_registry/static/table-manager.js** - Tabulator table management
 - **land_registry/static/styles.css** - All application styles including dark mode
-- **land_registry/static/vendor/glify-browser.js** - Bundled Leaflet.glify (local, not CDN)
+- **land_registry/static/vendor/glify-browser.js** - Bundled legacy renderer dependency
 
 ### Map Architecture (Important)
 
@@ -48,7 +48,7 @@ The map uses a **Folium iframe** pattern, not a direct Leaflet instance:
 - **colorcet** (>=3.0.1) - Professional color palettes for datashader
 - **panel** / **bokeh** - Dashboard tables
 - **Leaflet.js** - Frontend mapping (loaded in Folium iframe)
-- **Leaflet.glify** - WebGL polygon rendering (bundled locally)
+- **Leaflet VectorGrid** - Optional MVT rendering for the PostGIS-backed cadastral overlay
 
 ## Development Commands
 
@@ -104,7 +104,7 @@ The dev server runs on **port 8000**. Panel/Bokeh dashboard runs on **port 5006*
 ### Classic Loading (page reload)
 1. User selects files in sidebar → `loadCadastralSelection()` → POST `/api/v1/load-cadastral-files`
 2. Backend loads files in parallel (ThreadPoolExecutor, max 8 workers) → stores in global state
-3. Page reloads → server embeds GeoJSON in template → `loadGeoJsonData()` renders via WebGLRenderer
+3. Page reloads → server embeds GeoJSON in template → `loadGeoJsonData()` renders via Leaflet Canvas/SVG
 
 ### Progressive Loading (no reload)
 1. User selects files → `_loadCadastralProgressive()` → POST `/api/v1/load-cadastral-files-stream/`
@@ -112,9 +112,9 @@ The dev server runs on **port 8000**. Panel/Bokeh dashboard runs on **port 5006*
 3. Frontend renders each layer on the Folium map as it arrives, shows progress overlay
 
 ### Rendering Pipeline
-- **<1000 features**: SVG rendering (L.geoJSON with stripe patterns)
-- **1000-50K features**: WebGL rendering (Leaflet.glify GPU acceleration)
-- **100K+ features**: Datashader server-side tiles (rasterized density/categorical maps)
+- **<750 features**: SVG rendering (L.geoJSON with feature interaction)
+- **750+ features**: Leaflet Canvas rendering (preserves feature interaction without one SVG node per parcel)
+- **100K+ features**: Datashader server-side tiles and PostGIS MVT boundaries
 
 ## Important Technical Notes
 
@@ -122,7 +122,7 @@ The dev server runs on **port 8000**. Panel/Bokeh dashboard runs on **port 5006*
 - **Dual Map Architecture**: Folium iframe vs client-side Leaflet — see Map Architecture section above
 - **Local Cadastral Data**: `/data/catasto/ITALIA/` (auto-detected in development)
 - **S3 Support**: Production mode uses unsigned S3 client for cadastral data
-- **WebGL Bundling**: Leaflet.glify is bundled locally (`static/vendor/`) — CDN was blocked by ORB
+- **WebGL**: The legacy renderer is optional and not loaded by the canonical map templates
 
 ## Deployment
 

@@ -36,7 +36,9 @@ async def cadastral_boundary_tile(
     return Response(
         content=content,
         media_type="image/png",
-        headers={"Cache-Control": "public, max-age=3600"},
+        headers={
+            "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800"
+        },
     )
 
 
@@ -73,4 +75,3 @@ def install_land_registry_consumer(
         prefix=f"{normalized}/api",
         tags=["land-registry"],
     )
-

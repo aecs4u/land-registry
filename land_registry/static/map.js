@@ -1137,6 +1137,20 @@ function togglePolygonSelection(layer) {
     updateSelectionCounter();
 }
 
+// Folium/progressive layers keep selected objects in window.selectedPolygons,
+// while the legacy controls use the stamped layer ID set. Keep both paths in
+// sync so adjacency and export work regardless of how data was loaded.
+window.syncMapPolygonSelection = function(layer, isSelected) {
+    if (!layer || typeof L === 'undefined' || typeof L.Util?.stamp !== 'function') return;
+    const layerId = L.Util.stamp(layer);
+    if (isSelected) {
+        selectedPolygons.add(layerId);
+    } else {
+        selectedPolygons.delete(layerId);
+    }
+    updateSelectionCounter();
+};
+
 function applySelectedStyle(layer) {
     const pathElement = layer.getElement();
     if (pathElement) {
@@ -1590,6 +1604,9 @@ function clearAllData() {
         map.removeLayer(currentGeoJsonLayer);
     }
     currentGeoJsonLayer = null;
+    window.progressiveGeoJsonData = null;
+    window.geoJsonData = null;
+    window.hasData = false;
 
     // Clear selections
     selectedPolygons.clear();
@@ -2219,7 +2236,8 @@ window.findAdjacencyForSelected = async function() {
         return;
     }
 
-    if (!currentGeoJsonLayer) {
+    const featureLayers = getCadastralFeatureLayers();
+    if (featureLayers.length === 0) {
         alert('No data loaded');
         return;
     }
@@ -2232,18 +2250,10 @@ window.findAdjacencyForSelected = async function() {
         const selectedLayerId = Array.from(selectedPolygons)[0];
         
         // Find the actual layer and its feature data
-        let selectedLayer = null;
-        let featureIndex = 0;
-        let foundIndex = 0;
-        
-        currentGeoJsonLayer.eachLayer(function(layer) {
-            const layerId = L.Util.stamp(layer);
-            if (layerId === selectedLayerId) {
-                selectedLayer = layer;
-                featureIndex = foundIndex;
-            }
-            foundIndex++;
-        });
+        const featureIndex = featureLayers.findIndex(
+            layer => L.Util.stamp(layer) === selectedLayerId
+        );
+        const selectedLayer = featureIndex >= 0 ? featureLayers[featureIndex] : null;
 
         if (!selectedLayer || !selectedLayer.feature) {
             alert('Could not find the selected polygon data');
@@ -2528,21 +2538,30 @@ function renderGeoJsonLayer(geojson, options = {}) {
     }
 
     const featureCount = Array.isArray(geojson?.features) ? geojson.features.length : 0;
-    const leafletOptions = {
-        style: {
+    const renderer = featureCount >= 750 && typeof L.canvas === 'function'
+        ? L.canvas({ padding: 0.5 }) : undefined;
+    return L.geoJSON(geojson, {
+        ...(renderer ? { renderer } : {}),
+        style: () => ({
             color: options.color || '#3388ff',
-            weight: options.weight || 1.5,
+            weight: options.weight || 2,
+            opacity: 1,
             fillColor: options.color || '#3388ff',
             fillOpacity: options.fillOpacity ?? 0.4,
+        }),
+        onEachFeature: (feature, layer) => {
+            if (typeof options.onClick === 'function') {
+                layer.on('click', event => options.onClick(feature, layer, event));
+            }
+            if (options.onHover) {
+                layer.on('mouseover', event => options.onHover(feature, layer, event));
+            }
+            if (options.enablePopups !== false && feature.properties &&
+                typeof formatCadastralPopup === 'function') {
+                layer.bindPopup(formatCadastralPopup(feature.properties), { maxWidth: 350 });
+            }
         },
-    };
-    if (featureCount >= 750) leafletOptions.renderer = L.canvas({ padding: 0.5 });
-    leafletOptions.onEachFeature = (feature, layer) => {
-        if (typeof options.onClick === 'function') {
-            layer.on('click', event => options.onClick(feature, layer, event));
-        }
-    };
-    return L.geoJSON(geojson, leafletOptions);
+    });
 }
 
 // Load GeoJSON data from injected window variable
@@ -2554,7 +2573,6 @@ function loadGeoJsonData() {
                 urbanContourSources = [];
                 clearUrbanContourLayers();
 
-                // Use WebGL renderer for high performance
                 const featureCount = geoJsonData.features.length;
                 console.log(`[loadGeoJsonData] Loading ${featureCount} features`);
 
@@ -4244,46 +4262,42 @@ function getSelectedFileTypes() {
 }
 
 function getCadastralFeatureLayers() {
-    const layers = [];
-    const seen = new Set();
-    const add = layer => {
-        if (!layer || seen.has(layer)) return;
-        seen.add(layer);
-        if (layer instanceof L.GeoJSON) {
-            layer.eachLayer(child => { if (child.feature) layers.push(child); });
-        }
-    };
-    if (currentGeoJsonLayer) add(currentGeoJsonLayer);
-    if (window.dbLayers) window.dbLayers.forEach(add);
-    return layers;
-}
+    const featureLayers = [];
+    const visited = new Set();
 
-window.syncMapPolygonSelection = function(featureId, selected = true) {
-    const featureLayers = getCadastralFeatureLayers();
-    const target = featureLayers.find(layer => {
-        const properties = layer.feature?.properties || {};
-        return properties.feature_id === featureId || properties.id === featureId;
-    });
-    if (target && selected && !selectedPolygons.has(target)) togglePolygonSelection(target);
-    if (target && !selected && selectedPolygons.has(target)) togglePolygonSelection(target);
-    return target || null;
-};
+    function visit(container) {
+        if (!container || typeof container.eachLayer !== 'function' || visited.has(container)) return;
+        visited.add(container);
+        container.eachLayer(layer => {
+            if (layer?.feature) {
+                featureLayers.push(layer);
+            } else {
+                visit(layer);
+            }
+        });
+    }
+
+    visit(currentGeoJsonLayer);
+    if (Array.isArray(window.dbLayers)) window.dbLayers.forEach(visit);
+    return featureLayers;
+}
 
 // Load attribute table data
 function loadAttributeTable() {
     const tableContainer = document.getElementById('attributeTable');
     const tableInfo = document.getElementById('tableInfo');
 
-    // Get features from currentGeoJsonLayer or window.geoJsonData
+    // Progressive loading creates one Leaflet layer per file. Its shared
+    // collection is the authoritative source for table/analysis views.
     let features = null;
-    if (currentGeoJsonLayer) {
+    if (window.progressiveGeoJsonData?.features?.length) {
+        features = window.progressiveGeoJsonData.features;
+    } else if (currentGeoJsonLayer) {
         // Extract features from the Leaflet layer
         const geoJsonData = currentGeoJsonLayer.toGeoJSON();
         features = geoJsonData.features;
     } else if (window.geoJsonData) {
         features = window.geoJsonData.features;
-    } else if (window.progressiveGeoJsonData?.features?.length) {
-        features = window.progressiveGeoJsonData.features;
     }
 
     if (features && features.length > 0) {

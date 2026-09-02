@@ -56,6 +56,9 @@ class _UnavailableDatashaderService:
     def boundary_mvt_available(self) -> bool:
         return False
 
+    def identify_feature(self, *args, **kwargs):
+        return None
+
     def close(self) -> None:
         return None
 
@@ -245,19 +248,36 @@ class DatashaderRegistry:
         with self._lock:
             if self._service is None:
                 try:
-                    from land_registry.cadastral_db import CadastralDatabase
                     from land_registry.datashader_service import DatashaderTileService
+                except Exception as e:
+                    logger.error("Datashader dependencies unavailable: %s", e)
+                    self._service = _UnavailableDatashaderService()
+                    return self._service
+
+                db = None
+                try:
+                    from land_registry.cadastral_db import CadastralDatabase
                     from land_registry.config import db_settings
                     db = CadastralDatabase(Path(db_settings.sqlite_path))
+                except Exception as e:
+                    # Boundary tiles can still use the canonical PostGIS
+                    # source when the local SQLite database is unavailable.
+                    logger.warning("Local cadastral DB unavailable: %s", e)
+
+                try:
                     self._service = DatashaderTileService(db)
                     logger.info("DatashaderTileService initialized")
                 except Exception as e:
-                    logger.error(f"Failed to initialize DatashaderTileService: {e}")
-                    # Do not re-import the module that just failed: missing
-                    # optional dependencies would otherwise turn every tile
-                    # request into another 500 and import traceback.
+                    logger.error("Failed to initialize DatashaderTileService: %s", e)
                     self._service = _UnavailableDatashaderService()
             return self._service
+
+    def close(self) -> None:
+        """Close an initialized service without creating one at shutdown."""
+        with self._lock:
+            if self._service is not None:
+                self._service.close()
+                self._service = None
 
 
 # ============================================================================

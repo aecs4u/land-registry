@@ -280,6 +280,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Error closing database: {e}", exc_info=True)
 
+    try:
+        from land_registry.dependencies import get_datashader_registry
+
+        get_datashader_registry().close()
+        logger.info("Datashader resources closed")
+    except Exception as e:
+        logger.error(f"Error closing datashader resources: {e}", exc_info=True)
+
     # Clear S3 client cache
     try:
         s3_storage = get_s3_storage()
