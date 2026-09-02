@@ -54,11 +54,11 @@
 
         var sheets = L.tileLayer(
             joinUrl(apiBase, '/tiles/cadastral-boundaries/{z}/{x}/{y}.png?layer=map'),
-            { pane: 'cadastralPane', opacity: 0.75, minZoom: 13, maxZoom: 22, attribution: labels.cadastral || 'Cadastral data' }
+            { pane: 'cadastralPane', opacity: 0.75, minZoom: 13, maxZoom: 22, maxNativeZoom: 19, tileSize: 512, attribution: labels.cadastral || 'Cadastral data' }
         );
         var parcels = L.tileLayer(
             joinUrl(apiBase, '/tiles/cadastral-boundaries/{z}/{x}/{y}.png?layer=ple'),
-            { pane: 'cadastralPane', opacity: 0.85, minZoom: 16, maxZoom: 22 }
+            { pane: 'cadastralPane', opacity: 0.85, minZoom: 16, maxZoom: 22, maxNativeZoom: 19, tileSize: 512 }
         );
         var cadastral = L.layerGroup([sheets, parcels]);
 

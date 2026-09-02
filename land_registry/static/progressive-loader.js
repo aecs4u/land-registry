@@ -80,11 +80,12 @@ const ProgressiveLoader = {
 
                 buffer += decoder.decode(value, { stream: true });
 
-                // Process complete NDJSON lines
-                const lines = buffer.split('\n');
-                buffer = lines.pop(); // Keep incomplete line in buffer
-
-                for (const line of lines) {
+                // Process complete NDJSON lines. A stream chunk is not a line
+                // boundary, so retain the tail until a newline arrives.
+                let newlineIndex;
+                while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
+                    const line = buffer.slice(0, newlineIndex);
+                    buffer = buffer.slice(newlineIndex + 1);
                     if (!line.trim()) continue;
 
                     try {

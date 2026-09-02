@@ -4,6 +4,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.gzip import GZipMiddleware
 import json
 import logging
 import os
@@ -19,7 +20,7 @@ from land_registry.cadastral_utils import load_cadastral_structure, get_cadastra
 from land_registry.dashboard import TEMPLATE
 from land_registry.file_availability_db import file_availability_db
 from land_registry.i18n import LocaleMiddleware, detect_locale, make_gettext, contextvar_gettext
-from land_registry.map import get_current_gdf, get_current_layers, map_generator
+from land_registry.map import get_current_gdf, map_generator
 from land_registry.dependencies import _map_state
 from land_registry.routers.api import api_router
 from land_registry.routers.auth_pages import router as auth_pages_router
@@ -328,6 +329,7 @@ class _CadastralTileCorpMiddleware:
 
 
 app.add_middleware(_CadastralTileCorpMiddleware)
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
 
 # Setup authentication using aecs4u-auth (if available)
 if _AUTH_AVAILABLE:
@@ -415,7 +417,7 @@ async def health_check():
 async def _build_main_map_shell_context(request: Request) -> dict:
     """Build shared template context for the canonical map shell.
 
-    This is async to prevent blocking the event loop when calling server_document().
+    This is async so expensive map/data preparation can run off the event loop.
     """
     # Optional ?lat=&lng=&zoom= permalink state (e.g. shared/bookmarked links).
     # Falls back to the default Rome view when absent or malformed.
@@ -445,21 +447,23 @@ async def _build_main_map_shell_context(request: Request) -> dict:
     # blocking the async event loop when self.version += 1 triggers Panel recompute.
     # Data sync happens via API endpoints instead.
 
-    # Convert current data to GeoJSON if available
+    # Convert current data to GeoJSON if available. GeoPandas serialization is
+    # CPU-heavy for large selections, so keep it off the async event loop.
     geojson_data = None
     if current_gdf is not None and not current_gdf.empty:
-        geojson_data = json.loads(current_gdf.to_json())
+        geojson_data = await asyncio.to_thread(
+            lambda: json.loads(current_gdf.to_json())
+        )
 
-    # Get current layers data
-    current_layers = get_current_layers()
-
-    # Generate comprehensive Folium map using IntegratedMapGenerator
-    folium_map = map_generator.create_comprehensive_map(
-        cadastral_geojson=geojson_data if not current_layers else None,
-        cadastral_layers=current_layers if current_layers else None,
+    # Cadastral features are rendered by the client from window.geoJsonData.
+    # Embedding them in Folium as well duplicates the payload and parse cost.
+    folium_map = await asyncio.to_thread(
+        map_generator.create_comprehensive_map,
+        cadastral_geojson=None,
+        cadastral_layers=None,
         auction_geojson=None,  # Could add auction data here
         center=map_center,  # Rome, Italy by default; overridable via ?lat=&lng=
-        zoom=map_zoom
+        zoom=map_zoom,
     )
 
     # Inject Folium HTML directly into the page (not as srcdoc iframe).
@@ -471,19 +475,8 @@ async def _build_main_map_shell_context(request: Request) -> dict:
     # so Leaflet initialises in the parent window where all JS expects it.
     folium_map_html = folium_map.get_root().render()
 
-    # Load cadastral statistics using utility
-    stats = get_cadastral_stats()
-
-    # Get Panel table documents (use configured routes from settings)
-    # NOTE: Currently all routes point to the same Panel dashboard
-    # Future work: Create separate Panel apps for unique table content
-    # IMPORTANT: server_document() is a blocking HTTP call, so run it in a thread pool
-    # to avoid blocking the async event loop
-    map_table, adjacency_table, mapping_table = await asyncio.gather(
-        asyncio.to_thread(server_document, PANEL_MAP_TABLE_URL),
-        asyncio.to_thread(server_document, PANEL_ADJACENCY_TABLE_URL),
-        asyncio.to_thread(server_document, PANEL_MAPPING_TABLE_URL),
-    )
+    # Load cadastral statistics without blocking concurrent map/API requests.
+    stats = await asyncio.to_thread(get_cadastral_stats)
 
     locale = detect_locale(request)
     gt = make_gettext(locale)
@@ -516,10 +509,7 @@ async def _build_main_map_shell_context(request: Request) -> dict:
         "locale": locale,
         "i18n_strings": i18n_strings,
         "folium_map_html": folium_map_html,
-        "map_table": map_table,
-        "adjacency_table": adjacency_table,
-        "mapping_table": mapping_table,
-        "geojson_data": json.dumps(geojson_data) if geojson_data else None,
+        "geojson_data": geojson_data,
         "has_data": has_data,
         "total_regions": stats['total_regions'],
         "total_provinces": stats['total_provinces'],
@@ -538,36 +528,36 @@ async def serve_map_shell(request: Request):
 
 
 @app.get("/map_table")
-def show_map_table(request: Request):
+async def show_map_table(request: Request):
     """
     Display map table using Panel.
     Uses configured Panel route from settings (currently points to main dashboard).
     """
-    tabulator = server_document(PANEL_MAP_TABLE_URL)
+    tabulator = await asyncio.to_thread(server_document, PANEL_MAP_TABLE_URL)
     return templates.TemplateResponse(request, "tabulator.html", {
         "tabulator": tabulator
     })
 
 
 @app.get("/adjacency_table")
-def show_adjacency_table(request: Request):
+async def show_adjacency_table(request: Request):
     """
     Display adjacency analysis table using Panel.
     Uses configured Panel route from settings (currently points to main dashboard).
     """
-    tabulator = server_document(PANEL_ADJACENCY_TABLE_URL)
+    tabulator = await asyncio.to_thread(server_document, PANEL_ADJACENCY_TABLE_URL)
     return templates.TemplateResponse(request, "tabulator.html", {
         "tabulator": tabulator
     })
 
 
 @app.get("/mapping_table")
-def show_mapping_table(request: Request):
+async def show_mapping_table(request: Request):
     """
     Display mapping/drawing table using Panel.
     Uses configured Panel route from settings (currently points to main dashboard).
     """
-    tabulator = server_document(PANEL_MAPPING_TABLE_URL)
+    tabulator = await asyncio.to_thread(server_document, PANEL_MAPPING_TABLE_URL)
     return templates.TemplateResponse(request, "tabulator.html", {
         "tabulator": tabulator
     })

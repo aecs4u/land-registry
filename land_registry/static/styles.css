@@ -2923,138 +2923,6 @@ body.dark-mode .drawing-subsection-divider {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
-/* Enhanced TreeLayers Control */
-.leaflet-control-treelayers {
-  background: rgba(255, 255, 255, 0.98) !important;
-  border: 2px solid #007cba !important;
-  border-radius: 8px !important;
-  box-shadow: 0 4px 12px rgba(0, 124, 186, 0.3) !important;
-  max-width: 320px !important;
-  min-width: 280px !important;
-  max-height: 500px !important;
-  overflow-y: auto !important;
-  font-family: Arial, sans-serif !important;
-  z-index: 1001 !important;
-}
-
-/* TreeLayers header styling */
-.leaflet-control-treelayers .leaflet-control-treelayers-header {
-  background: linear-gradient(135deg, #007cba, #005a8b) !important;
-  color: white !important;
-  padding: 12px 15px !important;
-  margin: -1px -1px 10px -1px !important;
-  border-radius: 6px 6px 0 0 !important;
-  font-weight: bold !important;
-  font-size: 14px !important;
-  text-align: center !important;
-  border-bottom: 1px solid #005a8b !important;
-}
-
-/* TreeLayers sections */
-.leaflet-control-treelayers .leaflet-control-treelayers-section {
-  margin-bottom: 8px !important;
-  border: 1px solid #dee2e6 !important;
-  border-radius: 6px !important;
-  overflow: hidden !important;
-}
-
-/* TreeLayers section headers */
-.leaflet-control-treelayers .leaflet-control-treelayers-section-header {
-  background: linear-gradient(135deg, #f8f9fa, #e9ecef) !important;
-  color: #495057 !important;
-  padding: 8px 12px !important;
-  font-weight: bold !important;
-  font-size: 13px !important;
-  border-bottom: 1px solid #dee2e6 !important;
-  cursor: pointer !important;
-  transition: all 0.2s ease !important;
-}
-
-.leaflet-control-treelayers .leaflet-control-treelayers-section-header:hover {
-  background: linear-gradient(135deg, #e9ecef, #dee2e6) !important;
-  color: #007cba !important;
-}
-
-/* TreeLayers items */
-.leaflet-control-treelayers .leaflet-control-treelayers-item {
-  padding: 6px 12px !important;
-  border-bottom: 1px solid #f8f9fa !important;
-  transition: all 0.2s ease !important;
-}
-
-.leaflet-control-treelayers .leaflet-control-treelayers-item:hover {
-  background: #e7f3ff !important;
-  color: #007cba !important;
-}
-
-.leaflet-control-treelayers .leaflet-control-treelayers-item:last-child {
-  border-bottom: none !important;
-}
-
-/* TreeLayers checkboxes and radio buttons */
-.leaflet-control-treelayers input[type="checkbox"],
-.leaflet-control-treelayers input[type="radio"] {
-  margin-right: 8px !important;
-  transform: scale(1.1) !important;
-}
-
-/* TreeLayers labels */
-.leaflet-control-treelayers label {
-  cursor: pointer !important;
-  display: flex !important;
-  align-items: center !important;
-  font-size: 12px !important;
-  color: #495057 !important;
-  padding: 4px 0 !important;
-  transition: color 0.2s ease !important;
-}
-
-.leaflet-control-treelayers label:hover {
-  color: #007cba !important;
-}
-
-/* TreeLayers collapse/expand controls */
-.leaflet-control-treelayers .leaflet-control-treelayers-toggle {
-  background: #007cba !important;
-  color: white !important;
-  border: none !important;
-  padding: 4px 8px !important;
-  border-radius: 4px !important;
-  font-size: 11px !important;
-  cursor: pointer !important;
-  margin: 5px !important;
-  transition: all 0.2s ease !important;
-}
-
-.leaflet-control-treelayers .leaflet-control-treelayers-toggle:hover {
-  background: #005a8b !important;
-  transform: translateY(-1px) !important;
-  box-shadow: 0 2px 4px rgba(0, 124, 186, 0.3) !important;
-}
-
-.leaflet-control-treelayers-header {
-  background: #f5f5f5;
-  border-bottom: 1px solid #ddd;
-  padding: 8px;
-  font-weight: bold;
-}
-
-.leaflet-control-treelayers label {
-  display: flex;
-  align-items: center;
-  padding: 3px 8px;
-  cursor: pointer;
-}
-
-.leaflet-control-treelayers label:hover {
-  background: #f0f0f0;
-}
-
-.leaflet-control-treelayers input[type="checkbox"],
-.leaflet-control-treelayers input[type="radio"] {
-  margin-right: 8px;
-}
-
 /* Attribute selection row */
 .attr-select-row {
   display: flex;
@@ -3428,36 +3296,6 @@ body.dark-mode .drawing-subsection-divider {
   color: #721c24;
 }
 
-/* TreeLayers Control Management */
-.treelayers-controls {
-  background: linear-gradient(135deg, #e8f5e8, #f0f8f0);
-  border: 2px solid #28a745;
-  border-radius: 8px;
-  padding: 15px;
-  margin-bottom: 15px;
-  box-shadow: 0 2px 8px rgba(40, 167, 69, 0.15);
-}
-
-.treelayers-controls h4 {
-  margin: 0 0 10px 0;
-  color: #155724;
-  font-size: 14px;
-  font-weight: bold;
-}
-
-.treelayers-info {
-  margin-top: 10px;
-  padding: 8px;
-  background: rgba(40, 167, 69, 0.1);
-  border-radius: 4px;
-  text-align: center;
-}
-
-.treelayers-info small {
-  color: #155724;
-  font-weight: 500;
-}
-
 /* Auction Controls, Drawing Controls, and Layer Controls */
 .auction-controls,
 .auctionControls,
@@ -3672,6 +3510,9 @@ body.dark-mode .drawing-subsection-divider {
   font-size: 24px;
   cursor: pointer;
   padding: 0 8px;
+  width: auto;
+  min-width: 0;
+  margin: 0;
   line-height: 1;
   opacity: 0.8;
   transition: opacity 0.2s;
@@ -6216,7 +6057,6 @@ body.dark-mode h4 {
 /* Section headers in config sections */
 body.dark-mode .config-section h4,
 body.dark-mode .controls h4,
-body.dark-mode .treelayers-controls h4,
 body.dark-mode .advanced-controls h4 {
   color: #e4e4e7 !important;
 }

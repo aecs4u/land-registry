@@ -19,12 +19,45 @@ For testing, override via app.dependency_overrides::
 
 import logging
 import threading
+import base64
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+
+def empty_datashader_tile() -> bytes:
+    """Return a valid transparent PNG without importing optional Datashader."""
+    return base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/"
+        "eKJx6QAAAABJRU5ErkJggg=="
+    )
+
+
+class _UnavailableDatashaderService:
+    """Stable no-op service used when optional raster dependencies are absent."""
+
+    available = False
+
+    def _empty_tile(self) -> bytes:
+        return empty_datashader_tile()
+
+    def generate_tile(self, *args, **kwargs) -> bytes:
+        return empty_datashader_tile()
+
+    def generate_boundary_tile(self, *args, **kwargs) -> bytes:
+        return empty_datashader_tile()
+
+    def generate_boundary_mvt(self, *args, **kwargs) -> bytes:
+        return b""
+
+    def boundary_mvt_available(self) -> bool:
+        return False
+
+    def close(self) -> None:
+        return None
 
 
 # ============================================================================
@@ -219,9 +252,11 @@ class DatashaderRegistry:
                     self._service = DatashaderTileService(db)
                     logger.info("DatashaderTileService initialized")
                 except Exception as e:
-                    from land_registry.datashader_service import DatashaderTileService
                     logger.error(f"Failed to initialize DatashaderTileService: {e}")
-                    self._service = DatashaderTileService(None)
+                    # Do not re-import the module that just failed: missing
+                    # optional dependencies would otherwise turn every tile
+                    # request into another 500 and import traceback.
+                    self._service = _UnavailableDatashaderService()
             return self._service
 
 

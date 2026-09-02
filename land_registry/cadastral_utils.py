@@ -5,6 +5,7 @@ Provides centralized loading, caching, and statistics computation.
 
 import json
 import logging
+import threading
 from typing import Optional, Dict, Any, Tuple
 from pathlib import Path
 import time
@@ -85,6 +86,7 @@ class CadastralData:
 # Global cache for cadastral data
 _cadastral_cache: Optional[CadastralData] = None
 _cache_ttl_seconds = 300  # 5 minutes
+_cadastral_cache_lock = threading.Lock()
 
 
 def _calculate_statistics(cadastral_data: Dict[str, Any]) -> Dict[str, int]:
@@ -242,41 +244,44 @@ def load_cadastral_structure(use_cache: bool = True) -> Optional[CadastralData]:
     """
     global _cadastral_cache
 
-    # Check cache
-    if use_cache and _cadastral_cache:
-        age = time.time() - _cadastral_cache.loaded_at
-        if age < _cache_ttl_seconds:
-            logger.debug(f"Using cached cadastral data (age: {age:.1f}s)")
+    # The first /map request may scan local storage or contact S3. Serialize
+    # cache misses so concurrent requests do not repeat that expensive work.
+    with _cadastral_cache_lock:
+        if use_cache and _cadastral_cache:
+            age = time.time() - _cadastral_cache.loaded_at
+            if age < _cache_ttl_seconds:
+                logger.debug(f"Using cached cadastral data (age: {age:.1f}s)")
+                return _cadastral_cache
+
+        # Load fresh data
+        try:
+            cadastral_data, source = _load_cadastral_data_internal()
+            if not cadastral_data:
+                logger.warning("Could not load cadastral structure data")
+                return None
+
+            # Calculate statistics
+            stats = _calculate_statistics(cadastral_data)
+
+            # Update cache
+            _cadastral_cache = CadastralData(cadastral_data, stats, source)
+            logger.info(f"Loaded cadastral data from {source}: {stats['total_regions']} regions, "
+                       f"{stats['total_provinces']} provinces, "
+                       f"{stats['total_municipalities']} municipalities, "
+                       f"{stats['total_files']} files")
+
             return _cadastral_cache
 
-    # Load fresh data
-    try:
-        cadastral_data, source = _load_cadastral_data_internal()
-        if not cadastral_data:
-            logger.warning("Could not load cadastral structure data")
+        except Exception as e:
+            logger.error(f"Error loading cadastral structure: {e}", exc_info=True)
             return None
-
-        # Calculate statistics
-        stats = _calculate_statistics(cadastral_data)
-
-        # Update cache
-        _cadastral_cache = CadastralData(cadastral_data, stats, source)
-        logger.info(f"Loaded cadastral data from {source}: {stats['total_regions']} regions, "
-                   f"{stats['total_provinces']} provinces, "
-                   f"{stats['total_municipalities']} municipalities, "
-                   f"{stats['total_files']} files")
-
-        return _cadastral_cache
-
-    except Exception as e:
-        logger.error(f"Error loading cadastral structure: {e}", exc_info=True)
-        return None
 
 
 def clear_cache():
     """Clear the cadastral data cache"""
     global _cadastral_cache
-    _cadastral_cache = None
+    with _cadastral_cache_lock:
+        _cadastral_cache = None
     logger.info("Cadastral data cache cleared")
 
 

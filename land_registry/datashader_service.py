@@ -6,9 +6,13 @@ enabling visualization of millions of cadastral parcels without client-side perf
 """
 
 import logging
+import hashlib
+import os
 from collections import OrderedDict
 from io import BytesIO
 from pathlib import Path
+import tempfile
+import threading
 from typing import Optional
 
 import colorcet
@@ -22,6 +26,116 @@ from PIL import Image
 from shapely.geometry import Point
 
 log = logging.getLogger(__name__)
+
+
+class PostgresCadastralBoundarySource:
+    """Small read-only adapter over the canonical aecs4u-stats PostGIS DB."""
+
+    TABLES = {
+        "map": "spatial.cadastral_sheet",
+        "ple": "spatial.cadastral_parcel",
+    }
+
+    def __init__(self, dsn: str):
+        import psycopg2
+        from psycopg2.pool import ThreadedConnectionPool
+
+        self._pool = ThreadedConnectionPool(1, 8, dsn)
+
+    @classmethod
+    def from_environment(cls):
+        dsn = (
+            os.getenv("AECS4U_STATS_POSTGRES_DSN")
+            or os.getenv("AECS4U_STATS_DATABASE_URL")
+            or os.getenv("DATABASE_URL")
+        )
+        if not dsn or not dsn.startswith(("postgres://", "postgresql://")):
+            return None
+        try:
+            return cls(dsn)
+        except Exception as exc:
+            log.warning("PostGIS cadastral boundary source unavailable: %s", exc)
+            return None
+
+    def read_mvt(self, layer_type: str, z: int, x: int, y: int) -> bytes:
+        table = self.TABLES[layer_type]
+        sql = f"""
+            WITH bounds AS (
+                SELECT ST_Transform(ST_TileEnvelope(%s, %s, %s), 4326) AS geom
+            ), mvtgeom AS (
+                SELECT ST_AsMVTGeom(
+                    ST_Transform(ST_Intersection(t.geom, bounds.geom), 3857),
+                    ST_TileEnvelope(%s, %s, %s), 4096, 64, true
+                ) AS geom
+                FROM {table} AS t CROSS JOIN bounds
+                WHERE t.geom && bounds.geom
+                  AND ST_Intersects(t.geom, bounds.geom)
+            )
+            SELECT ST_AsMVT(mvtgeom, 'cadastral', 4096, 'geom')
+            FROM mvtgeom
+            WHERE geom IS NOT NULL
+        """
+        conn = self._pool.getconn()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(sql, (z, x, y, z, x, y))
+                return (cursor.fetchone() or (b"",))[0] or b""
+        finally:
+            self._pool.putconn(conn)
+
+    def read_geometries(self, layer_type: str, bbox: tuple) -> gpd.GeoDataFrame:
+        """Read only the clipped boundary geometries needed by one raster tile."""
+        table = self.TABLES[layer_type]
+        west, south, east, north = bbox
+        sql = f"""
+            WITH bounds AS (
+                SELECT ST_MakeEnvelope(%s, %s, %s, %s, 4326) AS geom
+            )
+            SELECT ST_AsBinary(ST_Intersection(ST_Transform(t.geom, 4326), bounds.geom))
+            FROM {table} AS t CROSS JOIN bounds
+            WHERE ST_Intersects(ST_Transform(t.geom, 4326), bounds.geom)
+        """
+        conn = self._pool.getconn()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(sql, (west, south, east, north))
+                from shapely import wkb
+
+                geometries = [wkb.loads(row[0]) for row in cursor.fetchall() if row[0]]
+                return gpd.GeoDataFrame({"geometry": geometries}, geometry="geometry", crs=4326)
+        finally:
+            self._pool.putconn(conn)
+
+    def identify(self, layer_type: str, lat: float, lng: float) -> Optional[dict]:
+        table = self.TABLES[layer_type]
+        sql = f"""
+            WITH click AS (
+                SELECT ST_SetSRID(ST_Point(%s, %s), 4326) AS geom
+            )
+            SELECT t.* FROM {table} AS t CROSS JOIN click
+            WHERE ST_Covers(t.geom, click.geom)
+            LIMIT 1
+        """
+        conn = self._pool.getconn()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(sql, (lng, lat))
+                row = cursor.fetchone()
+                if not row:
+                    return None
+                columns = [column.name for column in cursor.description]
+                values = dict(zip(columns, row))
+                return {
+                    "label": values.get("label"),
+                    "reference": values.get("nationalcadastralreference")
+                    or values.get("nationalcadastralzoningreference"),
+                    "comune": values.get("comune_name") or values.get("administrativeunit"),
+                    "provincia": values.get("provincia"),
+                    "regione": values.get("regione"),
+                    "administrative_unit": values.get("administrativeunit"),
+                }
+        finally:
+            self._pool.putconn(conn)
 
 
 class DatashaderTileService:
@@ -40,12 +154,26 @@ class DatashaderTileService:
             cadastral_db: CadastralDatabase instance for querying parcel data
         """
         self.db = cadastral_db
-        self.tile_size = 256  # Standard map tile size (256x256 pixels)
+        self.postgres_source = PostgresCadastralBoundarySource.from_environment()
+        self.tile_size = 512  # Retina-sized tiles reduce requests at high zoom
 
         # LRU tile cache: keys are (x, y, z, region, agg_type, colormap) or
         # ("boundary", layer_type, x, y, z) for generate_boundary_tile.
         self._tile_cache: OrderedDict = OrderedDict()
-        self._tile_cache_max = 100  # max cached tiles (~25 MB at ~256 KB/tile)
+        self._tile_cache_max = 2048  # roughly two viewport loads, bounded memory
+        self._tile_cache_lock = threading.RLock()
+        cache_dir = os.getenv("DATASHADER_TILE_CACHE_DIR", "/tmp/aecs4u-datashader-tiles")
+        self._disk_cache_dir = Path(cache_dir) if cache_dir else None
+        try:
+            self._disk_cache_max = int(os.getenv("DATASHADER_TILE_DISK_CACHE_MAX", "2048"))
+        except ValueError:
+            self._disk_cache_max = 2048
+        if self._disk_cache_dir:
+            try:
+                self._disk_cache_dir.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                log.warning("Unable to create Datashader disk cache: %s", exc)
+                self._disk_cache_dir = None
 
         # layer_type ("map"/"ple") -> {region_slug: (minx, miny, maxx, maxy)} in the
         # source fgb CRS (EPSG:6706), lazily populated by _region_fgb_bounds() from
@@ -54,6 +182,75 @@ class DatashaderTileService:
         self._fgb_bounds: dict[str, dict[str, tuple]] = {}
 
         log.info("DatashaderTileService initialized with tile_size=%d", self.tile_size)
+
+    def _get_cached_tile(self, cache_key):
+        """Read a tile from the synchronized memory/disk cache."""
+        with self._tile_cache_lock:
+            tile = self._tile_cache.get(cache_key)
+            if tile is not None:
+                self._tile_cache.move_to_end(cache_key)
+                return tile
+
+        path = self._disk_cache_path(cache_key)
+        if path is None:
+            return None
+        try:
+            tile = path.read_bytes()
+        except OSError:
+            return None
+        with self._tile_cache_lock:
+            self._tile_cache[cache_key] = tile
+            self._tile_cache.move_to_end(cache_key)
+            while len(self._tile_cache) > self._tile_cache_max:
+                self._tile_cache.popitem(last=False)
+        return tile
+
+    def _cache_tile(self, cache_key, tile: bytes) -> bytes:
+        with self._tile_cache_lock:
+            self._tile_cache[cache_key] = tile
+            self._tile_cache.move_to_end(cache_key)
+            while len(self._tile_cache) > self._tile_cache_max:
+                self._tile_cache.popitem(last=False)
+        path = self._disk_cache_path(cache_key)
+        if path is not None:
+            try:
+                fd, temporary_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+                with os.fdopen(fd, "wb") as stream:
+                    stream.write(tile)
+                os.replace(temporary_path, path)
+                self._prune_disk_cache()
+            except OSError:
+                try:
+                    os.unlink(temporary_path)
+                except (OSError, UnboundLocalError):
+                    pass
+        return tile
+
+    def _disk_cache_path(self, cache_key):
+        if self._disk_cache_dir is None or self._disk_cache_max <= 0:
+            return None
+        digest = hashlib.sha256(repr(cache_key).encode("utf-8")).hexdigest()
+        return self._disk_cache_dir / f"{digest}.png"
+
+    def _prune_disk_cache(self) -> None:
+        if self._disk_cache_dir is None or self._disk_cache_max <= 0:
+            return
+        try:
+            files = sorted(
+                self._disk_cache_dir.glob("*.png"),
+                key=lambda path: path.stat().st_mtime,
+                reverse=True,
+            )
+            for path in files[self._disk_cache_max:]:
+                path.unlink(missing_ok=True)
+        except OSError:
+            log.debug("Unable to prune Datashader disk cache", exc_info=True)
+
+    def _empty_cached_tile(self, cache_key):
+        cached = self._get_cached_tile(cache_key)
+        if cached is not None:
+            return cached
+        return self._cache_tile(cache_key, self._empty_tile())
 
     def generate_tile(
         self,
@@ -81,10 +278,10 @@ class DatashaderTileService:
         cache_key = (x, y, z, region, agg_type, colormap)
 
         # Check LRU cache first
-        if cache_key in self._tile_cache:
-            self._tile_cache.move_to_end(cache_key)
+        cached = self._get_cached_tile(cache_key)
+        if cached is not None:
             log.debug("Tile cache hit: %d/%d/%d", z, x, y)
-            return self._tile_cache[cache_key]
+            return cached
 
         try:
             # Convert tile coordinates to lat/lon bounding box
@@ -93,7 +290,7 @@ class DatashaderTileService:
             # Query cadastral data within tile bounds
             if not self.db:
                 log.warning("No database configured, returning empty tile")
-                return self._empty_tile()
+                return self._empty_cached_tile(cache_key)
 
             from land_registry.cadastral_db import CadastralFilter
 
@@ -106,7 +303,7 @@ class DatashaderTileService:
 
             if gdf is None or len(gdf) == 0:
                 # Return transparent tile for empty areas
-                return self._empty_tile()
+                return self._empty_cached_tile(cache_key)
 
             log.debug(
                 "Tile %d/%d/%d: Loaded %d parcels for bounds %s",
@@ -121,7 +318,7 @@ class DatashaderTileService:
             points_df = self._polygons_to_points(gdf)
 
             if len(points_df) == 0:
-                return self._empty_tile()
+                return self._empty_cached_tile(cache_key)
 
             # Create datashader canvas for this tile
             canvas = ds.Canvas(
@@ -155,15 +352,11 @@ class DatashaderTileService:
             result = self._image_to_bytes(img)
 
             # Store in LRU cache, evicting oldest entry if at capacity
-            self._tile_cache[cache_key] = result
-            if len(self._tile_cache) > self._tile_cache_max:
-                self._tile_cache.popitem(last=False)
-
-            return result
+            return self._cache_tile(cache_key, result)
 
         except Exception as e:
             log.error(f"Error generating datashader tile {z}/{x}/{y}: {e}", exc_info=True)
-            return self._empty_tile()
+            return self._empty_cached_tile(cache_key)
 
     def generate_density_heatmap(
         self,
@@ -316,6 +509,39 @@ class DatashaderTileService:
     # Distinct outline color per layer so both can be told apart when stacked.
     _LAYER_LINE_COLOR = {"map": "#cc5500", "ple": "#1f7a8c"}
 
+    def _read_postgres_boundaries(self, bbox: tuple, layer_type: str):
+        """Read the canonical PostGIS geometry for the PNG fallback path."""
+        if self.postgres_source is None:
+            return None
+        try:
+            return self.postgres_source.read_geometries(layer_type, bbox)
+        except Exception:
+            log.warning("PostGIS raster boundary read failed; using FlatGeobuf", exc_info=True)
+            return None
+
+    def boundary_mvt_available(self) -> bool:
+        return self.postgres_source is not None
+
+    def generate_boundary_mvt(self, x: int, y: int, z: int, layer_type: str = "map") -> bytes:
+        """Return a PostGIS-generated vector tile when the stats DB is configured."""
+        if self.postgres_source is None:
+            return b""
+        cache_key = ("boundary-mvt", layer_type, x, y, z)
+        cached = self._get_cached_tile(cache_key)
+        if cached is not None:
+            return cached
+        try:
+            return self._cache_tile(
+                cache_key,
+                self.postgres_source.read_mvt(layer_type, z, x, y),
+            )
+        except Exception:
+            log.warning("PostGIS MVT generation failed for %s/%d/%d/%d", layer_type, z, x, y, exc_info=True)
+            # Let the API return 503 so Leaflet.VectorGrid can activate its
+            # raster fallback. An empty MVT is a valid response and would
+            # otherwise hide a broken database connection from the browser.
+            raise
+
     def generate_boundary_tile(self, x: int, y: int, z: int, layer_type: str = "map") -> bytes:
         """
         Generate a map tile showing actual cadastral boundary polygons —
@@ -339,18 +565,19 @@ class DatashaderTileService:
             PNG tile image as bytes (transparent where there is no data)
         """
         cache_key = ("boundary", layer_type, x, y, z)
-        if cache_key in self._tile_cache:
-            self._tile_cache.move_to_end(cache_key)
+        cached = self._get_cached_tile(cache_key)
+        if cached is not None:
             log.debug("Boundary tile cache hit: %s %d/%d/%d", layer_type, z, x, y)
-            return self._tile_cache[cache_key]
+            return cached
 
         try:
             bounds = self._tile_to_bbox(x, y, z)
             bbox = (bounds["west"], bounds["south"], bounds["east"], bounds["north"])
 
-            fgb_files = self._candidate_fgb_files(bbox, layer_type)
+            postgres_frame = self._read_postgres_boundaries(bbox, layer_type)
+            fgb_files = self._candidate_fgb_files(bbox, layer_type) if postgres_frame is None else []
             if not fgb_files:
-                return self._empty_tile()
+                return self._empty_cached_tile(cache_key)
 
             # Defensive cap: this is a public, unauthenticated endpoint, and a
             # low-zoom bbox can span several hundred-MB (or, for "ple",
@@ -360,7 +587,7 @@ class DatashaderTileService:
             # expensive to rasterize; partial coverage at that point is fine
             # since the tile isn't meant to be viewed here.
             max_features = 3000
-            frames = []
+            frames = [postgres_frame] if postgres_frame is not None else []
             total = 0
             for fgb_path in fgb_files:
                 try:
@@ -382,7 +609,7 @@ class DatashaderTileService:
                     break
 
             if not frames:
-                return self._empty_tile()
+                return self._empty_cached_tile(cache_key)
 
             gdf = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
             gdf = gdf.to_crs(4326)
@@ -396,20 +623,16 @@ class DatashaderTileService:
 
             boundary = gdf.copy()
             boundary["geometry"] = boundary.boundary
-            line_agg = canvas.line(boundary, geometry="geometry", agg=ds.any())
+            line_agg = canvas.line(boundary, geometry="geometry", agg=ds.any(), line_width=1)
             img = tf.shade(line_agg, cmap=[self._LAYER_LINE_COLOR.get(layer_type, "#cc5500")])
 
             result = self._image_to_bytes(img)
 
-            self._tile_cache[cache_key] = result
-            if len(self._tile_cache) > self._tile_cache_max:
-                self._tile_cache.popitem(last=False)
-
-            return result
+            return self._cache_tile(cache_key, result)
 
         except Exception as e:
             log.error(f"Error generating boundary tile {z}/{x}/{y} ({layer_type}): {e}", exc_info=True)
-            return self._empty_tile()
+            return self._empty_cached_tile(cache_key)
 
     # layer_type -> the field holding the human-readable foglio/particella
     # reference on that layer's source schema (they're named differently).
@@ -433,6 +656,16 @@ class DatashaderTileService:
             A plain dict of display fields, or None if no polygon contains
             the point (e.g. sea, or outside all indexed regions).
         """
+        try:
+            if self.postgres_source is not None:
+                result = self.postgres_source.identify(layer_type, lat, lng)
+                if result is not None:
+                    return result
+        except Exception:
+            # Keep click-identify available on installations where the
+            # optional PostGIS connection is configured but temporarily down.
+            log.warning("PostGIS identify failed; falling back to FlatGeobuf", exc_info=True)
+
         try:
             from shapely.geometry import Point as ShapelyPoint
 
@@ -569,8 +802,14 @@ class DatashaderTileService:
         if gdf is None or len(gdf) == 0:
             return pd.DataFrame()
 
-        # Calculate centroids
-        centroids = gdf.geometry.centroid
+        # Centroids in geographic CRS are distorted and trigger GeoPandas
+        # warnings. Project to a local metric CRS for the calculation, then
+        # return longitude/latitude values for Datashader.
+        if gdf.crs and gdf.crs.is_geographic:
+            metric_crs = gdf.estimate_utm_crs()
+            centroids = gdf.to_crs(metric_crs).geometry.centroid.to_crs(gdf.crs)
+        else:
+            centroids = gdf.geometry.centroid
 
         # Build DataFrame with centroids and select attributes
         data = {

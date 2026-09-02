@@ -445,17 +445,6 @@
               </div>
             </div>
             <div class="tool-panel-section">
-              <h5>{{ _('Layer Manager') }}</h5>
-              <div class="tool-row">
-                <button onclick="toggleTreeLayers()" class="tool-btn-ghost">{{ _('Toggle Layers') }}</button>
-                <button onclick="refreshTreeLayers()" class="tool-btn-ghost">{{ _('Refresh') }}</button>
-              </div>
-              <div class="tool-row">
-                <button onclick="expandAllTreeLayers()" class="tool-btn-ghost">{{ _('Expand All') }}</button>
-                <button onclick="collapseAllTreeLayers()" class="tool-btn-ghost">{{ _('Collapse All') }}</button>
-              </div>
-            </div>
-            <div class="tool-panel-section">
               <h5>{{ _('Enrichment Layers') }}</h5>
               <div class="tool-row">
                 <button id="toggleEnrichmentPois" onclick="togglePoiLayer()" class="tool-btn-ghost" title="{{ _('Points of interest near the map center (schools, shops, hospitals…)') }}">
@@ -867,7 +856,7 @@
 
 {% endblock %} {% block data_scripts %}
 <script>
-  window.geoJsonData = {% if geojson_data %}JSON.parse({{ geojson_data|safe }}){% else %}null{% endif %};
+  window.geoJsonData = {{ geojson_data | tojson }};
   window.hasData = {{ 'true' if has_data else 'false' }};
 </script>
 {% endblock %} {% block app_js %}

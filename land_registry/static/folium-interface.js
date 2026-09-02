@@ -10,6 +10,11 @@ window.geoJsonData = null;
 window.hasData = false;
 window.cadastralDataCache = null;
 window.currentFileSelection = [];
+window.progressiveGeoJsonData = { type: 'FeatureCollection', features: [] };
+const CADASTRAL_LABEL_ZOOM = 17;
+const CADASTRAL_LABEL_LIMIT = 1000;
+window._cadastralLabelLayers = new Set();
+let cadastralInteractionBound = false;
 
 // ============================================================
 // Display helpers — region title-case + province full names
@@ -119,11 +124,86 @@ function _makeFeatureHandler(baseColor, popupPriorityKeys) {
  * @param {string} color - base colour
  * @param {string[]} [popupPriorityKeys]
  */
+const CADASTRAL_CANVAS_THRESHOLD = 750;
+
+function _handleCadastralClick(feature, layer, event, baseColor) {
+    if (event) L.DomEvent.stopPropagation(event);
+    if (layer._selected) {
+        layer._selected = false;
+        layer.setStyle({ fillColor: baseColor, fillOpacity: 0.3 });
+        const idx = (window.selectedPolygons || []).indexOf(layer);
+        if (idx > -1) window.selectedPolygons.splice(idx, 1);
+    } else {
+        layer._selected = true;
+        layer.setStyle({ fillColor: '#e74c3c', fillOpacity: 0.7 });
+        if (!window.selectedPolygons) window.selectedPolygons = [];
+        window.selectedPolygons.push(layer);
+    }
+    if (typeof updateAdjacencyButtonState === 'function') updateAdjacencyButtonState();
+    if (typeof showParcelInfo === 'function') showParcelInfo(feature, layer);
+}
+
 function _createCadastralLayer(geojson, color, popupPriorityKeys) {
-    return L.geoJSON(geojson, {
-        style: () => _cadStyle(color),
-        onEachFeature: _makeFeatureHandler(color, popupPriorityKeys),
+    const features = Array.isArray(geojson?.features) ? geojson.features : [];
+    const options = { style: () => _cadStyle(color) };
+    if (features.length >= CADASTRAL_CANVAS_THRESHOLD) {
+        options.renderer = L.canvas({ padding: 0.5 });
+    }
+    const layer = L.geoJSON(geojson, options);
+    // One delegated listener handles all child features and avoids allocating
+    // a per-parcel event closure in large result sets.
+    layer.on('click', event => {
+        const featureLayer = event.layer;
+        const feature = featureLayer && featureLayer.feature;
+        if (!featureLayer || !feature) return;
+        const popupHtml = _buildPopupContent(feature.properties, popupPriorityKeys);
+        if (popupHtml && !featureLayer.getPopup()) {
+            featureLayer.bindPopup(popupHtml, { maxWidth: 350 });
+        }
+        _handleCadastralClick(feature, featureLayer, event.originalEvent || event, color);
     });
+    window._cadastralLabelLayers.add(layer);
+    _installCadastralLabelUpdates(layer);
+    return layer;
+}
+
+function _cadastralLabel(feature) {
+    const properties = feature?.properties || {};
+    return properties.LABEL || properties.label || properties.particella || properties.foglio || '';
+}
+
+function _updateCadastralLabels(map) {
+    // Only inspect cadastral layers; unrelated GeoJSON overlays must not get
+    // parcel labels or pay the traversal cost on every map movement.
+    if (!window._cadastralLabelLayers) {
+        return;
+    }
+    const labelsVisible = map.getZoom() >= CADASTRAL_LABEL_ZOOM;
+    let shown = 0;
+    window._cadastralLabelLayers.forEach(layer => {
+        layer.eachLayer(child => {
+            const label = _cadastralLabel(child.feature);
+            if (labelsVisible && shown < CADASTRAL_LABEL_LIMIT && label) {
+                if (!child.getTooltip()) {
+                    child.bindTooltip(String(label), {
+                        permanent: true,
+                        direction: 'center',
+                        className: 'cadastral-label'
+                    }).openTooltip();
+                }
+                shown += 1;
+            } else if (child.getTooltip()) {
+                child.unbindTooltip();
+            }
+        });
+    });
+}
+
+function _installCadastralLabelUpdates(layer) {
+    const map = layer?._map;
+    if (!map || cadastralInteractionBound) return;
+    cadastralInteractionBound = true;
+    map.on('zoomend moveend', () => _updateCadastralLabels(map));
 }
 
 // Priority property order for cadastral feature popups (DB-tab layer)
@@ -2397,22 +2477,6 @@ function removeAllPolygons() {
     }
 }
 
-function toggleTreeLayers() {
-    console.log('TreeLayers toggle - controlled by Folium LayerControl');
-}
-
-function refreshTreeLayers() {
-    console.log('TreeLayers refresh - controlled by Folium LayerControl');
-}
-
-function expandAllTreeLayers() {
-    console.log('TreeLayers expand - controlled by Folium LayerControl');
-}
-
-function collapseAllTreeLayers() {
-    console.log('TreeLayers collapse - controlled by Folium LayerControl');
-}
-
 // Cadastral data loading functionality
 async function loadCadastralSelection() {
     const loadButton = document.getElementById('loadCadastralBtn');
@@ -2450,6 +2514,7 @@ async function _loadCadastralProgressive(filePaths, loadButton, originalText) {
 
     const totalFiles = filePaths.length;
     let totalFeatures = 0;
+    window.progressiveGeoJsonData = { type: 'FeatureCollection', features: [] };
     const layerGroup = L.layerGroup();  // Group all new layers together
 
     // Show progress UI
@@ -2463,6 +2528,9 @@ async function _loadCadastralProgressive(filePaths, loadButton, originalText) {
 
             onLayer(layerName, geojson, featureCount, fileIndex, layerType) {
                 totalFeatures += featureCount;
+                if (geojson?.features?.length) {
+                    window.progressiveGeoJsonData.features.push(...geojson.features);
+                }
                 ProgressUI.updateFeatureCount(totalFeatures);
                 ProgressUI.addLog(`${layerName}: ${featureCount} features`, 'success');
 
@@ -2475,6 +2543,7 @@ async function _loadCadastralProgressive(filePaths, loadButton, originalText) {
                 if (foliumMap && geojson && geojson.features && geojson.features.length > 0) {
                     const geoJsonLayer = _createCadastralLayer(geojson, baseColor);
                     geoJsonLayer.addTo(foliumMap);
+                    _installCadastralLabelUpdates(geoJsonLayer);
                     layerGroup.addLayer(geoJsonLayer);
 
                     // Register in the layer panel

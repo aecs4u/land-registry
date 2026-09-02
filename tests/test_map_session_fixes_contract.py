@@ -46,17 +46,28 @@ def test_boundary_api_and_frontend_expose_both_zoom_tiers_and_identify() -> None
     assert "/api/v1/enrichment/parcel/at-point" in LAYERS
 
 
+def test_viewport_parcel_loader_is_zoom_gated_and_cancels_stale_requests() -> None:
+    assert "VIEWPORT_PARCEL_MIN_ZOOM = 16" in LAYERS
+    assert "/api/v1/enrichment/parcels/in-bbox/?${params}" in LAYERS
+    assert "new AbortController()" in LAYERS
+    assert "viewportParcelAbortController.abort()" in LAYERS
+    assert "map.on('moveend', _refreshViewportParcelLayerDebounced)" in LAYERS
+    assert "token !== viewportParcelRequestToken" in LAYERS
+    assert "_clearViewportParcelLayer(map)" in LAYERS
+    assert "window.refreshViewportParcelLayer" in LAYERS
+
+
 def test_map_and_every_remote_tile_layer_support_overzoom() -> None:
     assert "max_zoom=22" in MAP
-    assert MAP.count("max_zoom=22") >= 3  # map, basemaps, weather overlays
+    assert MAP.count("max_zoom=22") >= 2  # map and basemaps
     assert "'max_native_zoom': 20" in MAP
     assert "'max_native_zoom': 19" in MAP
     assert "'max_native_zoom': 13" in MAP
     assert "max_native_zoom=layer_config['max_native_zoom']" in MAP
-    assert "max_native_zoom=19" in MAP
     assert "if 5 <= zoom <= 22:" in MAIN
-    assert "show=layer_config['name'] == 'Google Satellite'" in MAP
-    assert "max_native_zoom=19,\n                show=False," in MAP
+    assert "default_basemap = 'CartoDB Positron (Light)'" in MAP
+    assert "show=layer_config['name'] == default_basemap" in MAP
+    assert "openweathermap.org" not in MAP
 
 
 def test_dark_mode_synchronizes_theme_icon_and_live_css_selectors() -> None:

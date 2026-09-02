@@ -264,23 +264,6 @@ function ensureUrbanContourPane() {
     }
 }
 
-function clearUrbanContourEntriesFromTree() {
-    if (!window.treeLayersControl) return;
-    try {
-        const overlays = window.treeLayersControl.getOverlayLayers();
-        const dataLayers = overlays?.['📊 Data Layers'];
-        if (!dataLayers) return;
-        Object.keys(dataLayers).forEach(label => {
-            if (label.startsWith('🌆 ')) {
-                delete dataLayers[label];
-            }
-        });
-        window.treeLayersControl.refresh();
-    } catch (error) {
-        console.warn('Could not clear urban contour entries from TreeLayers:', error);
-    }
-}
-
 function removeUrbanContourLayerByName(sourceName) {
     urbanContourLayers = urbanContourLayers.filter(entry => {
         if (entry.name !== sourceName) return true;
@@ -302,7 +285,6 @@ function clearUrbanContourLayers() {
         } catch (_) {}
     });
     urbanContourLayers = [];
-    clearUrbanContourEntriesFromTree();
 }
 
 function registerUrbanContourSource(sourceName, sourceGeoJson) {
@@ -310,21 +292,6 @@ function registerUrbanContourSource(sourceName, sourceGeoJson) {
     const name = sourceName || `Layer ${urbanContourSources.length + 1}`;
     urbanContourSources = urbanContourSources.filter(src => src.name !== name);
     urbanContourSources.push({ name, geojson: sourceGeoJson });
-}
-
-function registerUrbanContourLayerInTree(sourceName, contourLayer, mode) {
-    if (!window.treeLayersControl || !contourLayer) return;
-    try {
-        const overlays = window.treeLayersControl.getOverlayLayers();
-        if (!overlays['📊 Data Layers']) {
-            overlays['📊 Data Layers'] = {};
-        }
-        const label = `🌆 ${sourceName} Urban Contour (${mode})`;
-        overlays['📊 Data Layers'][label] = contourLayer;
-        window.treeLayersControl.refresh();
-    } catch (error) {
-        console.warn('Could not register urban contour layer in TreeLayers:', error);
-    }
 }
 
 function applyUrbanContourLayerForSource(sourceGeoJson, sourceName) {
@@ -356,7 +323,6 @@ function applyUrbanContourLayerForSource(sourceGeoJson, sourceName) {
     }
 
     urbanContourLayers.push({ name: sourceName, layer: contourLayer, stats, mode });
-    registerUrbanContourLayerInTree(sourceName, contourLayer, mode);
     return contourLayer;
 }
 
@@ -2177,7 +2143,6 @@ window.showPluginInfo = function() {
         { name: 'MousePosition', status: typeof L.Control.MousePosition !== 'undefined' },
         { name: 'Measure', status: typeof L.control.measure !== 'undefined' },
         { name: 'Fullscreen', status: typeof L.control.fullscreen !== 'undefined' },
-        { name: 'TreeLayers', status: typeof L.Control.TreeLayers !== 'undefined' },
         { name: 'Draw', status: typeof L.Control.Draw !== 'undefined' }
     ];
 
@@ -2221,7 +2186,6 @@ function updatePluginStatusIndicators() {
         { name: 'Coordinates', check: () => typeof L.Control.MousePosition !== 'undefined' },
         { name: 'Measure', check: () => typeof L.control.measure !== 'undefined' },
         { name: 'Fullscreen', check: () => typeof L.control.fullscreen !== 'undefined' },
-        { name: 'Layers', check: () => typeof L.Control.TreeLayers !== 'undefined' },
         { name: 'Drawing', check: () => typeof L.Control.Draw !== 'undefined' }
     ];
 
@@ -2242,37 +2206,6 @@ function updatePluginStatusIndicators() {
 
     debugLog('Plugin status indicators updated');
 }
-
-// TreeLayers management functions
-window.toggleTreeLayers = function() {
-    const treeControl = document.querySelector('.leaflet-control-treelayers');
-    if (treeControl) {
-        const isHidden = treeControl.style.display === 'none';
-        treeControl.style.display = isHidden ? 'block' : 'none';
-        debugLog('TreeLayers control toggled:', !isHidden ? 'visible' : 'hidden');
-    }
-};
-
-window.expandAllTreeLayers = function() {
-    if (window.treeLayersControl && typeof window.treeLayersControl.expandAll === 'function') {
-        window.treeLayersControl.expandAll();
-        debugLog('All TreeLayers expanded');
-    }
-};
-
-window.collapseAllTreeLayers = function() {
-    if (window.treeLayersControl && typeof window.treeLayersControl.collapseAll === 'function') {
-        window.treeLayersControl.collapseAll();
-        debugLog('All TreeLayers collapsed');
-    }
-};
-
-window.refreshTreeLayers = function() {
-    if (window.treeLayersControl) {
-        window.treeLayersControl.refresh();
-        debugLog('TreeLayers control refreshed');
-    }
-};
 
 // Selection control functions
 window.changeSelectionMode = function() {
@@ -2587,6 +2520,31 @@ function addDataControls(map) {
     map.addControl(new DataControl());
 }
 
+// Use the optional legacy WebGL renderer when explicitly loaded by a host;
+// otherwise keep the canonical map functional with Leaflet's Canvas renderer.
+function renderGeoJsonLayer(geojson, options = {}) {
+    if (window.WebGLRenderer && typeof window.WebGLRenderer.renderGeoJSON === 'function') {
+        return window.WebGLRenderer.renderGeoJSON(geojson, options);
+    }
+
+    const featureCount = Array.isArray(geojson?.features) ? geojson.features.length : 0;
+    const leafletOptions = {
+        style: {
+            color: options.color || '#3388ff',
+            weight: options.weight || 1.5,
+            fillColor: options.color || '#3388ff',
+            fillOpacity: options.fillOpacity ?? 0.4,
+        },
+    };
+    if (featureCount >= 750) leafletOptions.renderer = L.canvas({ padding: 0.5 });
+    leafletOptions.onEachFeature = (feature, layer) => {
+        if (typeof options.onClick === 'function') {
+            layer.on('click', event => options.onClick(feature, layer, event));
+        }
+    };
+    return L.geoJSON(geojson, leafletOptions);
+}
+
 // Load GeoJSON data from injected window variable
 function loadGeoJsonData() {
     if (window.geoJsonData) {
@@ -2600,7 +2558,7 @@ function loadGeoJsonData() {
                 const featureCount = geoJsonData.features.length;
                 console.log(`[loadGeoJsonData] Loading ${featureCount} features`);
 
-                currentGeoJsonLayer = WebGLRenderer.renderGeoJSON(geoJsonData, {
+                currentGeoJsonLayer = renderGeoJsonLayer(geoJsonData, {
                     color: '#3388ff',
                     weight: 2,
                     fillOpacity: 0.4,
@@ -2637,21 +2595,6 @@ function loadGeoJsonData() {
                 adjacentPolygonIndices = [];
                 updateSelectionCounter();
                 updateDataDependentButtons();
-
-                // Update tree layers control with loaded data
-                if (window.treeLayersControl && currentGeoJsonLayer) {
-                    try {
-                        // Update the TreeLayers control with current data
-                        const overlayLayers = window.treeLayersControl.getOverlayLayers();
-                        if (overlayLayers['📊 Data Layers']) {
-                            overlayLayers['📊 Data Layers']['🏛️ Current Cadastral Data'] = currentGeoJsonLayer;
-                            window.treeLayersControl.refresh();
-                            debugLog('TreeLayers control updated with cadastral data');
-                        }
-                    } catch (e) {
-                        console.warn('Could not update TreeLayers control:', e);
-                    }
-                }
 
                 registerUrbanContourSource('Current Cadastral Data', geoJsonData);
                 rebuildUrbanContourLayers();
@@ -2735,22 +2678,6 @@ function initializeMap() {
         }),
         '⚫ CartoDB Dark': L.tileLayer('https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png', {
             attribution: '© CartoDB'
-        })
-    };
-
-    // Weather overlays
-    const weatherOverlays = {
-        '🌡️ Temperature': L.tileLayer('https://tile.openweathermap.org/map/temp_new/{z}/{x}/{y}.png?appid=b6907d289e10d714a6e88b30761fae22', {
-            attribution: '© OpenWeatherMap'
-        }),
-        '🌧️ Precipitation': L.tileLayer('https://tile.openweathermap.org/map/precipitation_new/{z}/{x}/{y}.png?appid=b6907d289e10d714a6e88b30761fae22', {
-            attribution: '© OpenWeatherMap'
-        }),
-        '💨 Wind Speed': L.tileLayer('https://tile.openweathermap.org/map/wind_new/{z}/{x}/{y}.png?appid=b6907d289e10d714a6e88b30761fae22', {
-            attribution: '© OpenWeatherMap'
-        }),
-        '☁️ Cloud Coverage': L.tileLayer('https://tile.openweathermap.org/map/clouds_new/{z}/{x}/{y}.png?appid=b6907d289e10d714a6e88b30761fae22', {
-            attribution: '© OpenWeatherMap'
         })
     };
 
@@ -3265,60 +3192,6 @@ function initializeMap() {
                 return 'Lat: ' + L.Util.formatNum(num, 5);
             }
         }).addTo(map);
-    }
-
-    // Add TreeLayers Control (on the right side) - Enhanced Version
-    if (typeof L.Control.TreeLayers !== 'undefined') {
-        // Initialize with comprehensive base layers and overlay structure
-        const baseLayers = {
-            '🗺️ Base Maps': {
-                '🌍 OpenStreetMap': mapProviders['OpenStreetMap'],
-                '📍 Google Maps': mapProviders['📍 Google Maps'],
-                '🛰️ Google Satellite': mapProviders['🛰️ Google Satellite'],
-                '⛰️ Google Terrain': mapProviders['⛰️ Google Terrain'],
-                '🌍 Google Hybrid': mapProviders['🌍 Google Hybrid'],
-                '🌐 ESRI World Imagery': mapProviders['🌐 ESRI World Imagery'],
-                '🏔️ ESRI Terrain': mapProviders['🏔️ ESRI Terrain'],
-                '⚪ CartoDB Light': mapProviders['⚪ CartoDB Light'],
-                '⚫ CartoDB Dark': mapProviders['⚫ CartoDB Dark']
-            }
-        };
-
-        const overlayLayers = {
-            '📊 Data Layers': {
-                '🏛️ Current Cadastral Data': null, // Will be populated when data is loaded
-                '✏️ Drawn Features': drawnItems,
-                '🏠 Auction Properties': auctionMarkersGroup
-            },
-            '🌤️ Weather Overlays': {
-                '🌡️ Temperature': weatherOverlays['🌡️ Temperature'],
-                '🌧️ Precipitation': weatherOverlays['🌧️ Precipitation'],
-                '💨 Wind Speed': weatherOverlays['💨 Wind Speed'],
-                '☁️ Cloud Coverage': weatherOverlays['☁️ Cloud Coverage']
-            }
-        };
-
-        const treeLayersControl = L.control.treeLayers(baseLayers, overlayLayers, {
-            position: 'topright',
-            collapsed: true
-        }).addTo(map);
-
-        // Store reference for later updates
-        window.treeLayersControl = treeLayersControl;
-
-        // Make TreeLayers more prominent with custom styling
-        setTimeout(() => {
-            const treeControl = document.querySelector('.leaflet-control-treelayers');
-            if (treeControl) {
-                treeControl.style.maxWidth = '300px';
-                treeControl.style.minWidth = '250px';
-                treeControl.style.background = 'rgba(255, 255, 255, 0.95)';
-                treeControl.style.border = '2px solid #007cba';
-                treeControl.style.borderRadius = '8px';
-                treeControl.style.boxShadow = '0 4px 12px rgba(0,124,186,0.3)';
-                debugLog('TreeLayers control enhanced and made more visible');
-            }
-        }, 500);
     }
 
     // Add custom navigation controls
@@ -3969,7 +3842,7 @@ function addGeoJsonToMap(geojson, options = {}) {
     const layerName = options.name || 'New Cadastral Layer';
 
     // Use WebGL renderer for high performance
-    const layer = WebGLRenderer.renderGeoJSON(geojson, {
+    const layer = renderGeoJsonLayer(geojson, {
         color: options.color || '#3388ff',
         weight: 2,
         fillOpacity: 0.4,
@@ -4007,22 +3880,6 @@ function addGeoJsonToMap(geojson, options = {}) {
     adjacentPolygonIndices = [];
     updateSelectionCounter();
     updateDataDependentButtons();
-
-    // Update tree layers control with new layer
-    if (window.treeLayersControl) {
-        // Add layer to tree control
-        try {
-            const overlayLayers = window.treeLayersControl.getOverlayLayers();
-            if (!overlayLayers['📊 Data Layers']) {
-                overlayLayers['📊 Data Layers'] = {};
-            }
-            overlayLayers['📊 Data Layers'][`🏛️ ${layerName}`] = layer;
-            window.treeLayersControl.refresh();
-            debugLog(`TreeLayers control updated with new layer: ${layerName}`);
-        } catch (e) {
-            console.warn('Could not update tree layers control:', e);
-        }
-    }
 
     registerUrbanContourSource(layerName, geojson);
     applyUrbanContourLayerForSource(geojson, layerName);
@@ -4309,7 +4166,7 @@ function updateSelectionSummary() {
                 selectedFileTypes.forEach(fileType => {
                     // Case-insensitive match for file type (MAP/map, PLE/ple)
                     const fileTypeLower = fileType.toLowerCase();
-                    const typeFiles = files.filter(file => file.toLowerCase().includes(fileTypeLower));
+                    const typeFiles = files.filter(file => file.toLowerCase().endsWith(`_${fileTypeLower}.fgb`));
                     if (!fileBreakdown[fileType]) fileBreakdown[fileType] = 0;
                     fileBreakdown[fileType] += typeFiles.length;
                     totalFiles += typeFiles.length;
@@ -4380,6 +4237,32 @@ function getSelectedFileTypes() {
     return selectedTypes;
 }
 
+function getCadastralFeatureLayers() {
+    const layers = [];
+    const seen = new Set();
+    const add = layer => {
+        if (!layer || seen.has(layer)) return;
+        seen.add(layer);
+        if (layer instanceof L.GeoJSON) {
+            layer.eachLayer(child => { if (child.feature) layers.push(child); });
+        }
+    };
+    if (currentGeoJsonLayer) add(currentGeoJsonLayer);
+    if (window.dbLayers) window.dbLayers.forEach(add);
+    return layers;
+}
+
+window.syncMapPolygonSelection = function(featureId, selected = true) {
+    const featureLayers = getCadastralFeatureLayers();
+    const target = featureLayers.find(layer => {
+        const properties = layer.feature?.properties || {};
+        return properties.feature_id === featureId || properties.id === featureId;
+    });
+    if (target && selected && !selectedPolygons.has(target)) togglePolygonSelection(target);
+    if (target && !selected && selectedPolygons.has(target)) togglePolygonSelection(target);
+    return target || null;
+};
+
 // Load attribute table data
 function loadAttributeTable() {
     const tableContainer = document.getElementById('attributeTable');
@@ -4393,6 +4276,8 @@ function loadAttributeTable() {
         features = geoJsonData.features;
     } else if (window.geoJsonData) {
         features = window.geoJsonData.features;
+    } else if (window.progressiveGeoJsonData?.features?.length) {
+        features = window.progressiveGeoJsonData.features;
     }
 
     if (features && features.length > 0) {

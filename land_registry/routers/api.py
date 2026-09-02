@@ -36,7 +36,7 @@ from land_registry.models import (
     CadastralCacheInfoResponse
 )
 from land_registry.cadastral_db import CadastralDatabase, CadastralFilter
-from land_registry.dependencies import _cadastral_registry, _datashader_registry, _discover_ple_databases
+from land_registry.dependencies import _cadastral_registry, _datashader_registry, _discover_ple_databases, empty_datashader_tile
 # Import proper JWT verification from aecs4u-auth
 from land_registry.routers.auth import (
     get_current_user,
@@ -3343,10 +3343,13 @@ async def get_datashader_tile(
         )
     except Exception as e:
         logger.error(f"Datashader tile error {z}/{x}/{y}: {e}", exc_info=True)
-        # Return empty tile on error
-        service = get_datashader_service()
-        empty = service._empty_tile()
-        return Response(content=empty, media_type="image/png")
+        # The service factory itself may have failed because Datashader is an
+        # optional dependency. Do not call it again from the fallback path.
+        return Response(
+            content=empty_datashader_tile(),
+            media_type="image/png",
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
 
 
 @api_router.get("/tiles/cadastral-boundaries/{z}/{x}/{y}.png")
@@ -3361,10 +3364,9 @@ async def get_cadastral_boundary_tile(
     ),
 ):
     """
-    Generate a map tile of actual cadastral boundary polygons, rasterized on
-    demand from the per-region cadastral_<layer>.*.fgb source files —
-    "map" for foglio/sheet outlines, "ple" for individual particella/parcel
-    outlines.
+    Generate a map tile of actual cadastral boundary polygons. The canonical
+    source is the aecs4u-stats PostGIS database; FlatGeobuf files remain the
+    raster fallback when that source is unavailable.
 
     Unlike /tiles/datashader/{z}/{x}/{y}.png (a centroid density heatmap
     sourced from the cadastral DB), this reads real polygon geometry
@@ -3392,9 +3394,41 @@ async def get_cadastral_boundary_tile(
         )
     except Exception as e:
         logger.error(f"Cadastral boundary tile error {z}/{x}/{y}: {e}", exc_info=True)
-        service = get_datashader_service()
-        empty = service._empty_tile()
-        return Response(content=empty, media_type="image/png")
+        return Response(
+            content=empty_datashader_tile(),
+            media_type="image/png",
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+
+
+@api_router.get("/tiles/cadastral-boundaries/{z}/{x}/{y}.pbf")
+async def get_cadastral_boundary_mvt(
+    z: int,
+    x: int,
+    y: int,
+    layer: str = Query(
+        "map",
+        pattern="^(map|ple)$",
+        description="map=foglio (sheet) outlines, ple=particella (parcel) outlines",
+    ),
+):
+    """Serve compact PostGIS vector tiles, with the browser using PNG fallback."""
+    service = get_datashader_service()
+    if not getattr(service, "boundary_mvt_available", lambda: False)():
+        raise HTTPException(status_code=503, detail="PostGIS cadastral vector tiles unavailable")
+    try:
+        tile_bytes = await asyncio.to_thread(service.generate_boundary_mvt, x, y, z, layer)
+        return Response(
+            content=tile_bytes,
+            media_type="application/vnd.mapbox-vector-tile",
+            headers={
+                "Cache-Control": "public, max-age=3600",
+                "Access-Control-Allow-Origin": "*",
+            },
+        )
+    except Exception as e:
+        logger.warning("Cadastral boundary MVT error %s/%s/%s: %s", z, x, y, e)
+        raise HTTPException(status_code=503, detail="PostGIS cadastral vector tiles unavailable") from e
 
 
 @api_router.get("/cadastral-identify")
@@ -3781,6 +3815,7 @@ async def load_cadastral_files_stream(request: CadastralFileRequest):
         start_time = time.time()
         all_gdfs = []
         total_features = 0
+        feature_offset = len(original_existing_gdf) if original_existing_gdf is not None else 0
         layers_data = {}
 
         for i, file_path in enumerate(file_paths):
@@ -3824,6 +3859,8 @@ async def load_cadastral_files_stream(request: CadastralFileRequest):
 
                     # Tag each feature with the layer_type so the frontend can colour by type
                     gdf["layer_type"] = layer_type
+                    gdf["feature_id"] = range(feature_offset, feature_offset + len(gdf))
+                    feature_offset += len(gdf)
                     layer_geojson = json.loads(gdf.to_json())
 
                     layers_data[layer_name] = {

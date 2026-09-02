@@ -258,22 +258,6 @@
 
         <!-- 3. Map Configuration (Layers & View) -->
         <div class="config-section">
-            <!-- TreeLayers Control Management -->
-            <div class="treelayers-controls">
-                <h4>🌳 Layer Manager</h4>
-                <div class="control-row">
-                    <button onclick="toggleTreeLayers()" class="control-btn" title="Show/hide the layers panel">Toggle Layers</button>
-                    <button onclick="refreshTreeLayers()" class="control-btn" title="Refresh layers panel">Refresh</button>
-                </div>
-                <div class="control-row">
-                    <button onclick="expandAllTreeLayers()" class="control-btn" title="Expand all layer groups">Expand All</button>
-                    <button onclick="collapseAllTreeLayers()" class="control-btn" title="Collapse all layer groups">Collapse All</button>
-                </div>
-                <div class="treelayers-info">
-                    <small>🗺️ Base maps, 📊 Data layers, 🌤️ Weather overlays</small>
-                </div>
-            </div>
-
             <!-- Advanced Tools -->
             <div class="advanced-controls">
                 <h4>🚀 View Tools</h4>
@@ -736,11 +720,7 @@
 {% block data_scripts %}
 <script>
     // Inject GeoJSON data into window for external JS to use
-    {% if geojson_data %}
-    window.geoJsonData = JSON.parse('{{ geojson_data|tojson|safe }}');
-    {% else %}
-    window.geoJsonData = null;
-    {% endif %}
+    window.geoJsonData = {{ geojson_data | tojson }};
 
     // Inject data availability status
     window.hasData = {% if has_data %}true{% else %}false{% endif %};

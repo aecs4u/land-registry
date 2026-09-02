@@ -329,9 +329,25 @@
 
     let cadastralMapLayer = null;
     let cadastralPleLayer = null;
+    let cadastralVectorMapLayer = null;
+    let cadastralVectorPleLayer = null;
+    let cadastralVectorTilesFailed = false;
     let cadastralBoundaryActive = false;
     let cadastralSelectionLayer = null;
     let cadastralLookupToken = 0;
+
+    // Viewport parcels are loaded as real GeoJSON only once individual
+    // particelle are meaningful.  The boundary tiles remain responsible for
+    // the lightweight map-wide outlines; this layer supplies the parcel
+    // features for hover/click details in the current viewport.
+    const VIEWPORT_PARCEL_MIN_ZOOM = 16;
+    const VIEWPORT_PARCEL_LIMIT = 5000;
+    let viewportParcelMap = null;
+    let viewportParcelLayer = null;
+    let viewportParcelRefreshTimer = null;
+    let viewportParcelAbortController = null;
+    let viewportParcelRequestToken = 0;
+    let viewportParcelLastBoundsKey = '';
 
     function _escapeHtml(value) {
         return String(value ?? '').replace(/[&<>'"]/g, (char) => ({
@@ -347,6 +363,135 @@
             || props.national_reference
             || props.reference
             || null;
+    }
+
+    function _ensureViewportParcelPane(map) {
+        if (!map || !map.createPane || map.getPane('cadastralViewportPane')) return;
+        const pane = map.createPane('cadastralViewportPane');
+        // Keep the loaded features above the base map, while the dedicated
+        // boundary tile pane remains available for the crisp outlines.
+        pane.style.zIndex = '435';
+    }
+
+    function _clearViewportParcelLayer(map) {
+        if (map && viewportParcelLayer && map.hasLayer(viewportParcelLayer)) {
+            map.removeLayer(viewportParcelLayer);
+        }
+        viewportParcelLayer = null;
+    }
+
+    function _viewportParcelBoundsKey(map, bounds) {
+        return [
+            map.getZoom(),
+            bounds.getWest().toFixed(5),
+            bounds.getSouth().toFixed(5),
+            bounds.getEast().toFixed(5),
+            bounds.getNorth().toFixed(5),
+        ].join(':');
+    }
+
+    function _createViewportParcelLayer(featureCollection, map) {
+        _ensureViewportParcelPane(map);
+        const pane = map.getPane('cadastralViewportPane') ? 'cadastralViewportPane' : undefined;
+        const layer = L.geoJSON(featureCollection, {
+            pane,
+            interactive: true,
+            style: {
+                color: '#0f766e',
+                weight: 1,
+                opacity: 0.5,
+                fillColor: '#2dd4bf',
+                fillOpacity: 0.035,
+            },
+            onEachFeature(feature, featureLayer) {
+                featureLayer.on('click', event => {
+                    L.DomEvent.stopPropagation(event);
+                    _selectParcelFeature(feature, map);
+                });
+                const reference = _parcelReference(feature);
+                if (reference) {
+                    featureLayer.bindTooltip(`Particella ${_escapeHtml(reference)}`, {
+                        sticky: true,
+                        direction: 'top',
+                        opacity: 0.9,
+                    });
+                }
+            },
+        });
+        layer.options = layer.options || {};
+        layer.options.cadastralViewportLayer = true;
+        return layer;
+    }
+
+    async function _refreshViewportParcelLayer() {
+        const map = viewportParcelMap || _getFoliumMap();
+        if (!map) return;
+        if (!cadastralBoundaryActive) return;
+
+        const token = ++viewportParcelRequestToken;
+        if (viewportParcelAbortController) viewportParcelAbortController.abort();
+        viewportParcelAbortController = null;
+
+        if (map.getZoom() < VIEWPORT_PARCEL_MIN_ZOOM) {
+            viewportParcelLastBoundsKey = '';
+            _clearViewportParcelLayer(map);
+            return;
+        }
+
+        const bounds = map.getBounds();
+        if (!bounds || !bounds.isValid()) return;
+        const boundsKey = _viewportParcelBoundsKey(map, bounds);
+        if (boundsKey === viewportParcelLastBoundsKey && viewportParcelLayer) return;
+        viewportParcelLastBoundsKey = boundsKey;
+
+        const controller = new AbortController();
+        viewportParcelAbortController = controller;
+        const params = new URLSearchParams({
+            min_lng: bounds.getWest().toFixed(6),
+            min_lat: bounds.getSouth().toFixed(6),
+            max_lng: bounds.getEast().toFixed(6),
+            max_lat: bounds.getNorth().toFixed(6),
+            limit: String(VIEWPORT_PARCEL_LIMIT),
+            include_geometry: 'true',
+        });
+
+        try {
+            const response = await fetch(`/api/v1/enrichment/parcels/in-bbox/?${params}`, {
+                signal: controller.signal,
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const featureCollection = await response.json();
+            if (token !== viewportParcelRequestToken || map !== _getFoliumMap()) return;
+
+            const nextLayer = _createViewportParcelLayer(featureCollection, map);
+            _clearViewportParcelLayer(map);
+            viewportParcelLayer = nextLayer;
+            nextLayer.addTo(map);
+        } catch (error) {
+            if (error.name !== 'AbortError') {
+                // Keep the last successful viewport visible and allow a later
+                // move/refresh to retry the failed request.
+                viewportParcelLastBoundsKey = '';
+                console.warn('[EnrichmentLayers] Viewport parcel load failed', error);
+            }
+        } finally {
+            if (viewportParcelAbortController === controller) {
+                viewportParcelAbortController = null;
+            }
+        }
+    }
+
+    function _refreshViewportParcelLayerDebounced() {
+        clearTimeout(viewportParcelRefreshTimer);
+        viewportParcelRefreshTimer = setTimeout(_refreshViewportParcelLayer, 250);
+    }
+
+    function _attachViewportParcelLoader(map) {
+        if (!map || viewportParcelMap === map) return;
+        if (viewportParcelMap) viewportParcelMap.off('moveend', _refreshViewportParcelLayerDebounced);
+        viewportParcelMap = map;
+        map.on('moveend', _refreshViewportParcelLayerDebounced);
+        _refreshViewportParcelLayer();
     }
 
     function _setParcelUrl(feature) {
@@ -426,6 +571,26 @@
         }
     }
 
+    function switchToRasterFallback(map) {
+        if (cadastralVectorTilesFailed) return;
+        cadastralVectorTilesFailed = true;
+        [cadastralVectorMapLayer, cadastralVectorPleLayer].forEach(layer => {
+            if (layer && map.hasLayer(layer)) map.removeLayer(layer);
+        });
+        cadastralMapLayer = L.tileLayer(
+            '/api/v1/tiles/cadastral-boundaries/{z}/{x}/{y}.png?layer=map',
+            { pane: 'cadastralBoundaryPane', minZoom: 13, maxZoom: 22, maxNativeZoom: 19, tileSize: 512, attribution: 'Cadastral data' }
+        );
+        cadastralPleLayer = L.tileLayer(
+            '/api/v1/tiles/cadastral-boundaries/{z}/{x}/{y}.png?layer=ple',
+            { pane: 'cadastralBoundaryPane', minZoom: 16, maxZoom: 22, maxNativeZoom: 19, tileSize: 512 }
+        );
+        if (cadastralBoundaryActive) {
+            cadastralMapLayer.addTo(map);
+            cadastralPleLayer.addTo(map);
+        }
+    }
+
     function toggleCadastralBoundaryLayer() {
         const map = _getFoliumMap();
         const btn = document.getElementById('toggleEnrichmentCadastral');
@@ -442,25 +607,50 @@
             // dead base map. Unlike the base imagery, this endpoint has no
             // native-resolution ceiling of its own — it rasterizes on demand
             // from vector geometry, so it stays crisp at any zoom.
-            cadastralMapLayer = L.tileLayer(
-                '/api/v1/tiles/cadastral-boundaries/{z}/{x}/{y}.png?layer=map',
-                { pane, minZoom: 13, maxZoom: 22, attribution: 'Cadastral data' }
-            );
-            cadastralPleLayer = L.tileLayer(
-                '/api/v1/tiles/cadastral-boundaries/{z}/{x}/{y}.png?layer=ple',
-                { pane, minZoom: 16, maxZoom: 22 }
-            );
+            if (!cadastralVectorTilesFailed && L.vectorGrid && typeof L.vectorGrid.protobuf === 'function') {
+                const vectorOptions = {
+                    pane,
+                    minZoom: 13,
+                    maxZoom: 22,
+                    vectorTileLayerStyles: {
+                        cadastral: { weight: 1, color: '#cc5500', opacity: 0.85, fill: false }
+                    },
+                    interactive: false,
+                    getFeatureId: feature => feature.properties?.id || feature.properties?.feature_id
+                };
+                const vectorTileUrl = layerType => `/api/v1/tiles/cadastral-boundaries/{z}/{x}/{y}.pbf?layer=${layerType}`;
+                cadastralVectorMapLayer = L.vectorGrid.protobuf(
+                    vectorTileUrl('map'),
+                    vectorOptions
+                );
+                cadastralVectorPleLayer = L.vectorGrid.protobuf(
+                    vectorTileUrl('ple'),
+                    { ...vectorOptions, minZoom: 16, vectorTileLayerStyles: {
+                        cadastral: { weight: 1, color: '#1f7a8c', opacity: 0.9, fill: false }
+                    }}
+                );
+                cadastralVectorMapLayer.on('tileerror', () => switchToRasterFallback(map));
+                cadastralVectorPleLayer.on('tileerror', () => switchToRasterFallback(map));
+            } else {
+                switchToRasterFallback(map);
+            }
         }
 
         cadastralBoundaryActive = !cadastralBoundaryActive;
         if (cadastralBoundaryActive) {
-            cadastralMapLayer.addTo(map);
-            cadastralPleLayer.addTo(map);
+            (cadastralVectorMapLayer || cadastralMapLayer).addTo(map);
+            (cadastralVectorPleLayer || cadastralPleLayer).addTo(map);
             map.on('click', _onCadastralBoundaryClick);
+            _refreshViewportParcelLayer();
         } else {
-            map.removeLayer(cadastralMapLayer);
-            map.removeLayer(cadastralPleLayer);
+            [cadastralVectorMapLayer, cadastralVectorPleLayer, cadastralMapLayer, cadastralPleLayer]
+                .forEach(layer => { if (layer && map.hasLayer(layer)) map.removeLayer(layer); });
             map.off('click', _onCadastralBoundaryClick);
+            viewportParcelRequestToken += 1;
+            if (viewportParcelAbortController) viewportParcelAbortController.abort();
+            viewportParcelAbortController = null;
+            viewportParcelLastBoundsKey = '';
+            _clearViewportParcelLayer(map);
         }
         if (btn) btn.classList.toggle('active', cadastralBoundaryActive);
     }
@@ -480,6 +670,30 @@
         if (layer === 'ple' && await _lookupParcelAtPoint(lat, lng, map)) return;
         await _showLegacyCadastralPopup(lat, lng, layer, map);
     }
+
+    // The map object and deferred Leaflet plugins are registered by separate
+    // scripts.  Attach the viewport listener as soon as the map exists, and
+    // wait briefly for VectorGrid so the default boundary layer can use MVT
+    // before falling back to PNG tiles.
+    function _initializeCadastralOverlays(attempt = 0) {
+        const map = _getFoliumMap();
+        if (!map) {
+            if (attempt < 40) setTimeout(() => _initializeCadastralOverlays(attempt + 1), 250);
+            return;
+        }
+
+        _attachViewportParcelLoader(map);
+        const vectorGridReady = L.vectorGrid && typeof L.vectorGrid.protobuf === 'function';
+        if (!cadastralBoundaryActive && (vectorGridReady || attempt >= 40)) {
+            toggleCadastralBoundaryLayer();
+            return;
+        }
+        if (!cadastralBoundaryActive) {
+            setTimeout(() => _initializeCadastralOverlays(attempt + 1), 100);
+        }
+    }
+
+    _initializeCadastralOverlays();
 
     // Restore a shared parcel URL after the Folium map has registered itself.
     (function _restoreParcelFromUrl() {
@@ -513,5 +727,6 @@
     window.toggleBulletinLayer = toggleBulletinLayer;
     window.refreshBulletinLayer = function () { if (bulletinActive) _refreshBulletinLayer(); };
     window.toggleCadastralBoundaryLayer = toggleCadastralBoundaryLayer;
+    window.refreshViewportParcelLayer = _refreshViewportParcelLayer;
     window.clearCadastralParcelSelection = _clearCadastralParcelSelection;
 })();

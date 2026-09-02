@@ -1,19 +1,13 @@
 
 from branca.element import Template, MacroElement
-import colorsys
 import folium
 import folium.folium as _folium_mod
-from folium.plugins import (
-    LocateControl,
-    MeasureControl
-)
-from folium.plugins.treelayercontrol import TreeLayerControl
 import geopandas as gpd
+import hashlib
 import logging
 import pandas as pd
 from pathlib import Path
 from pydantic_settings import BaseSettings
-import random
 from shapely.geometry import Point
 import tempfile
 from typing import List, Dict, Any, Optional, Union
@@ -274,6 +268,20 @@ class CadastralPopupStyle(MacroElement):
     def __init__(self):
         super(CadastralPopupStyle, self).__init__()
         self._name = 'CadastralPopupStyle'
+
+
+class ScaleControl(MacroElement):
+    """Add one lightweight metric scale to the Folium map."""
+
+    _template = Template("""
+        {% macro script(this, kwargs) %}
+            L.control.scale({metric: true, imperial: false, position: 'bottomleft'}).addTo({{ this._parent.get_name() }});
+        {% endmacro %}
+    """)
+
+    def __init__(self):
+        super(ScaleControl, self).__init__()
+        self._name = 'ScaleControl'
 
 
 class CustomZoomControl(MacroElement):
@@ -983,14 +991,10 @@ class MapControlsManager:
             export_control = ExportControl()
             map_instance.add_child(export_control)
 
-        if self.settings.enable_measure_tools:
-            measure = MeasureControl(
-                position=self.settings.measure_position,
-                primary_length_unit='kilometers',
-                secondary_length_unit='meters',
-                primary_area_unit='hectares'
-            )
-            measure.add_to(map_instance)
+        # Measure/locate plugins execute inline in Folium's generated HTML.
+        # They are intentionally omitted here because /map loads Folium's
+        # Leaflet runtime before the deferred optional plugin bundle; adding
+        # them server-side would produce startup errors and block map init.
 
         # Add custom zoom controls (Fit All, Fit Selected, Box Zoom, Reset, Fullscreen)
         custom_zoom_control = CustomZoomControl()
@@ -1005,118 +1009,10 @@ class MapControlsManager:
         basic_layer_control = folium.LayerControl(position='topright')
         basic_layer_control.add_to(map_instance)
 
-        # Add TreeLayerControl for geo data files only
-        overlay_tree = self._prepare_geo_data_tree(map_instance)
-        if overlay_tree:
-            tree_control = TreeLayerControl(overlay_tree=overlay_tree, position='topright')
-            tree_control.add_to(map_instance)
-
-    def _prepare_geo_data_tree(self, map_instance: folium.Map):
-        """Prepare TreeLayerControl structure for geo data files only"""
-
-        # Get current layers data to organize by geographic hierarchy
-        current_layers_data = get_current_layers()
-
-        if not current_layers_data:
-            # Fallback: Find all GeoJson layers if no structured cadastral data
-            geo_layers = []
-            for child in map_instance._children.values():
-                if hasattr(child, '_name') and 'GeoJson' in str(type(child)):
-                    layer_name = getattr(child, '_name', 'Data Layer')
-                    geo_layers.append({
-                        "label": layer_name,
-                        "layer": child
-                    })
-
-            if geo_layers:
-                return {
-                    "label": "Geo Data Layers",
-                    "selectAllCheckbox": "Un/select all",
-                    "children": geo_layers
-                }
-            return None
-
-        # Organize layers by Region > Province > Municipality structure
-        regions = {}
-
-        # Parse each layer's source_file path to extract hierarchy
-        for layer_name, layer_data in current_layers_data.items():
-            if 'geojson' in layer_data and 'source_file' in layer_data:
-                source_file = layer_data['source_file']
-
-                # Extract path components: ITALIA/Region/Province/Municipality/filename
-                path_parts = source_file.split('/')
-                if len(path_parts) >= 5 and path_parts[0] == 'ITALIA':
-                    region_name = path_parts[1]
-                    province_code = path_parts[2]
-                    municipality_code = path_parts[3]
-                    filename = path_parts[4]
-
-                    # Create hierarchical structure
-                    if region_name not in regions:
-                        regions[region_name] = {
-                            "label": region_name,
-                            "selectAllCheckbox": True,
-                            "children": []
-                        }
-
-                    # Find or create province
-                    region_node = regions[region_name]
-                    province_node = None
-                    for child in region_node["children"]:
-                        if child["label"] == f"Province {province_code}":
-                            province_node = child
-                            break
-
-                    if not province_node:
-                        province_node = {
-                            "label": f"Province {province_code}",
-                            "selectAllCheckbox": True,
-                            "children": []
-                        }
-                        region_node["children"].append(province_node)
-
-                    # Find or create municipality
-                    municipality_node = None
-                    for child in province_node["children"]:
-                        if child["label"] == f"Municipality {municipality_code}":
-                            municipality_node = child
-                            break
-
-                    if not municipality_node:
-                        municipality_node = {
-                            "label": f"Municipality {municipality_code}",
-                            "selectAllCheckbox": True,
-                            "children": []
-                        }
-                        province_node["children"].append(municipality_node)
-
-                    # Add the file layer to municipality
-                    # Find the actual layer object in the map
-                    for child in map_instance._children.values():
-                        if hasattr(child, '_name') and 'GeoJson' in str(type(child)):
-                            child_layer_name = getattr(child, '_name', '')
-                            if layer_name in child_layer_name:
-                                municipality_node["children"].append({
-                                    "label": filename,
-                                    "layer": child
-                                })
-                                break
-
-        # Convert regions dict to children list
-        cadastral_children = []
-        for region_name in sorted(regions.keys()):
-            cadastral_children.append(regions[region_name])
-
-        if cadastral_children:
-            return {
-                "label": "ITALIA - Cadastral Data",
-                "selectAllCheckbox": "Un/select all",
-                "children": cadastral_children
-            }
-
-        return None
-
+        # Keep the control stack small: cadastral files are managed by the
+        # client-side progressive loader, so a second server-side tree control
+        # only duplicates state and can intercept map clicks.
+        map_instance.add_child(ScaleControl())
 
 class IntegratedMapGenerator:
     """Generates maps with auction properties and cadastral data"""
@@ -1140,11 +1036,12 @@ class IntegratedMapGenerator:
             app_settings.italy_bounds_ne   # North-east corner (Alps)
         ]
 
-        # Create base map with Google Satellite as default, restricted to Italy
+        # Create a quiet reference map with Positron as default, restricted to Italy.
+        # Satellite remains available through the single LayerControl.
         m = folium.Map(
             location=map_center,
             zoom_start=map_zoom,
-            tiles=None,  # Base layers are added below; Satellite is the only visible default
+            tiles=None,  # Base layers are added below; only the default is visible
             max_bounds=True,  # Enable boundary restrictions
             max_bounds_viscosity=1.0,  # How strongly to enforce the bounds
             min_zoom=5,  # Prevent zooming out too far
@@ -1164,7 +1061,7 @@ class IntegratedMapGenerator:
         if center is None:
             m.fit_bounds(italy_bounds)
 
-        # Add all tile layers from map.js mapProviders (Google Satellite last as default)
+        # Add all tile layers from map.js mapProviders.
         # max_native_zoom is each provider's real resolution ceiling; max_zoom (22, matching
         # the map's own) lets Leaflet over-zoom past that by upscaling the last real tile
         # instead of showing nothing once you zoom in further than the imagery supports.
@@ -1234,7 +1131,8 @@ class IntegratedMapGenerator:
         # Folium otherwise renders every base layer initially and merely adds
         # radio buttons to the layer control. Keep exactly one visible so
         # failed/slow tiles from another provider cannot checkerboard over the
-        # intended satellite default.
+        # intended reference basemap.
+        default_basemap = 'CartoDB Positron (Light)'
         for layer_config in tile_layers:
             tile_layer = folium.TileLayer(
                 tiles=layer_config['tiles'],
@@ -1244,70 +1142,12 @@ class IntegratedMapGenerator:
                 control=True,
                 max_zoom=22,
                 max_native_zoom=layer_config['max_native_zoom'],
-                show=layer_config['name'] == 'Google Satellite',
+                show=layer_config['name'] == default_basemap,
             )
             tile_layer.add_to(m)
 
-        # Add weather overlays from map.js
-        weather_overlays = [
-            {
-                'tiles': 'https://tile.openweathermap.org/map/temp_new/{z}/{x}/{y}.png?appid=b6907d289e10d714a6e88b30761fae22',
-                'attr': '© OpenWeatherMap',
-                'name': 'Temperature Layer'
-            },
-            {
-                'tiles': 'https://tile.openweathermap.org/map/precipitation_new/{z}/{x}/{y}.png?appid=b6907d289e10d714a6e88b30761fae22',
-                'attr': '© OpenWeatherMap',
-                'name': 'Precipitation Layer'
-            },
-            {
-                'tiles': 'https://tile.openweathermap.org/map/wind_new/{z}/{x}/{y}.png?appid=b6907d289e10d714a6e88b30761fae22',
-                'attr': '© OpenWeatherMap',
-                'name': 'Wind Speed Layer'
-            },
-            {
-                'tiles': 'https://tile.openweathermap.org/map/clouds_new/{z}/{x}/{y}.png?appid=b6907d289e10d714a6e88b30761fae22',
-                'attr': '© OpenWeatherMap',
-                'name': 'Cloud Coverage Layer'
-            }
-        ]
-
-        # Add weather overlays to the map (OpenWeatherMap's documented ceiling is z19)
-        for overlay_config in weather_overlays:
-            folium.TileLayer(
-                tiles=overlay_config['tiles'],
-                attr=overlay_config['attr'],
-                name=overlay_config['name'],
-                overlay=True,
-                control=True,
-                max_zoom=22,
-                max_native_zoom=19,
-                show=False,
-            ).add_to(m)
-
-        # Add Italy regional borders for visual reference
-        # Color chosen to contrast with sea (blue basemap): amber/orange border + light warm fill
-        try:
-            italy_regions_url = "https://raw.githubusercontent.com/openpolis/geojson-italy/master/geojson/limits_IT_regions.geojson"
-            folium.GeoJson(
-                italy_regions_url,
-                name="Italy Regions",
-                style_function=lambda feature: {
-                    'fillColor': '#f59e0b',
-                    'color': '#b45309',
-                    'weight': 2,
-                    'fillOpacity': 0.08,
-                    'opacity': 0.85,
-                    'className': 'italy-region-layer',
-                },
-                tooltip=folium.GeoJsonTooltip(
-                    fields=['reg_name'],
-                    aliases=['Region:'],
-                    labels=True
-                )
-            ).add_to(m)
-        except Exception as e:
-            logger.warning(f"Failed to load Italy regional borders: {e}")
+        # Administrative/cadastral boundaries come from the aecs4u-stats
+        # database and the tile endpoint, not synchronous remote downloads.
 
         # Add markers for Italian regional capitals
         regional_capitals = [
@@ -1371,15 +1211,16 @@ class IntegratedMapGenerator:
 
         # Add cadastral data layers
         if cadastral_layers:
-            # Multiple layers mode - add each layer separately with random colors
+            # Multiple layers mode - use a stable, colourblind-safe palette so
+            # the same file remains recognisable across reloads.
+            layer_palette = (
+                '#0072B2', '#D55E00', '#009E73', '#CC79A7',
+                '#E69F00', '#56B4E9', '#F0E442', '#332288',
+            )
 
-            def generate_random_color():
-                """Generate a random color in hex format"""
-                hue = random.random()
-                saturation = 0.7 + random.random() * 0.3  # 70-100% saturation
-                lightness = 0.4 + random.random() * 0.3   # 40-70% lightness
-                rgb = colorsys.hsv_to_rgb(hue, saturation, lightness)
-                return '#{:02x}{:02x}{:02x}'.format(int(rgb[0]*255), int(rgb[1]*255), int(rgb[2]*255))
+            def generate_layer_color(layer_name):
+                digest = hashlib.sha256(str(layer_name).encode('utf-8')).digest()
+                return layer_palette[digest[0] % len(layer_palette)]
 
             def generate_darker_color(hex_color):
                 """Generate a darker version of the given hex color"""
@@ -1390,8 +1231,7 @@ class IntegratedMapGenerator:
 
             for layer_name, layer_data in cadastral_layers.items():
                 if 'geojson' in layer_data:
-                    # Generate random color for this layer
-                    fill_color = generate_random_color()
+                    fill_color = generate_layer_color(layer_name)
                     border_color = generate_darker_color(fill_color)
 
                     folium.GeoJson(
@@ -1465,20 +1305,6 @@ class IntegratedMapGenerator:
 
         # Add all folium controls
         self.controls_manager.generate_folium_controls(m)
-
-        # Only TreeLayerControl is used (added within generate_folium_controls)
-        # Basic LayerControl has been removed as requested
-
-        # "Find my location" button (Leaflet.locatecontrol, already loaded in
-        # base.html). Added server-side so it attaches to the real Folium map
-        # instance regardless of the client-side dead-code path in map.js's
-        # initializeMap(), which targets a #map div that doesn't exist on the
-        # injected-HTML /map page.
-        LocateControl(
-            position="topleft",
-            strings={"title": "Trova la mia posizione"},
-            flyTo=True,
-        ).add_to(m)
 
         return m
 
