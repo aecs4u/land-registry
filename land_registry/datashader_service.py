@@ -179,7 +179,7 @@ class DatashaderTileService:
     supporting density heatmaps, categorical visualizations, and aggregated statistics.
     """
 
-    def __init__(self, cadastral_db=None):
+    def __init__(self, cadastral_db=None, boundary_source=None):
         """
         Initialize the datashader tile service.
 
@@ -187,7 +187,11 @@ class DatashaderTileService:
             cadastral_db: CadastralDatabase instance for querying parcel data
         """
         self.db = cadastral_db
-        self.postgres_source = PostgresCadastralBoundarySource.from_environment()
+        self.postgres_source = (
+            boundary_source
+            if boundary_source is not None
+            else PostgresCadastralBoundarySource.from_environment()
+        )
         # Private name documents that this is the canonical boundary source;
         # retain the public alias for compatibility with existing callers.
         self._postgres_boundary_source = self.postgres_source

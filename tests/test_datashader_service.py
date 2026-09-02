@@ -261,6 +261,28 @@ class TestGenerateTileNoDb:
 
         assert len(svc._tile_cache) <= 3
 
+    def test_disk_cache_round_trip(self, tmp_path, monkeypatch):
+        """Tiles survive an in-memory cache miss through the disk cache."""
+        monkeypatch.setenv("DATASHADER_TILE_CACHE_DIR", str(tmp_path))
+        monkeypatch.setenv("DATASHADER_TILE_DISK_CACHE_MAX", "4")
+        cache_key = (1, 2, 3, None, "count", "fire")
+        tile = b"cached_png_data"
+
+        writer = DatashaderTileService(cadastral_db=None)
+        writer._cache_tile(cache_key, tile)
+        writer._tile_cache.clear()
+
+        assert writer._get_cached_tile(cache_key) == tile
+
+    def test_mvt_tile_uses_injected_postgres_boundary_source(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("DATASHADER_TILE_CACHE_DIR", str(tmp_path))
+        source = MagicMock()
+        source.read_mvt.return_value = b"mvt"
+        svc = DatashaderTileService(cadastral_db=None, boundary_source=source)
+
+        assert svc.generate_boundary_mvt(1, 2, 13, "ple") == b"mvt"
+        source.read_mvt.assert_called_once_with("ple", 13, 1, 2)
+
 
 # ---------------------------------------------------------------------------
 # generate_tile with mocked db
