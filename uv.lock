@@ -42,7 +42,7 @@ dependencies = [
 [[package]]
 name = "aecs4u-domain"
 version = "0.6.2"
-source = { git = "https://github.com/aecs4u/aecs4u-domain.git?branch=main#8152fa86bdac82754fcf3dc09ea83956f80b80f8" }
+source = { git = "https://github.com/aecs4u/aecs4u-domain.git?branch=main#6228bfa685d4f28ede358204ec2b7033eebea493" }
 dependencies = [
     { name = "pydantic" },
     { name = "sqlalchemy" },

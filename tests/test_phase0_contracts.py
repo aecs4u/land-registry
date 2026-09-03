@@ -42,6 +42,17 @@ def test_canonical_cadastral_sqlmodel_is_owned_by_domain_package():
     assert CadastralParcel.__tablename__ == "cadastral_parcels"
 
 
+def test_shared_parcel_persistence_models_are_owned_by_domain_package():
+    from aecs4u_domain.real_estate.models import ParcelIdentity, ParcelVersion, SavedParcel
+
+    assert ParcelIdentity.__module__ == "aecs4u_domain.real_estate.models.parcel_reference"
+    assert ParcelVersion.__module__ == "aecs4u_domain.real_estate.models.parcel_reference"
+    assert SavedParcel.__module__ == "aecs4u_domain.real_estate.models.parcel_reference"
+    assert ParcelIdentity.__tablename__ == "parcel_identities"
+    assert ParcelVersion.__tablename__ == "parcel_versions"
+    assert SavedParcel.__tablename__ == "saved_parcels"
+
+
 def test_openapi_exposes_the_authoritative_health_schema():
     document = app.openapi()
 
