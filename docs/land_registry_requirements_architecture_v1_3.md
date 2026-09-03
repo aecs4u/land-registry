@@ -423,10 +423,10 @@ For schema ownership, `aecs4u-domain` is an additional shared boundary:
 | Parcel identity/version entities introduced for cross-package use | **Primary** | Consumer | API DTO consumer |
 | User/application-only records not promoted to the shared domain | - | - | **Primary**, via existing backend abstractions |
 
-At the current installed dependency version, `aecs4u-domain` exposes the canonical
-`CadastralParcel` SQLModel but does not yet expose shared `ParcelIdentity`,
-`ParcelVersion` or `SavedParcel` SQLModels. Those additions are an upstream domain
-change; the Pydantic classes in `land_registry.models` are transport DTOs only.
+The installed `aecs4u-domain` dependency exposes the canonical `CadastralParcel`,
+`ParcelIdentity`, `ParcelVersion` and `SavedParcel` SQLModels. The Pydantic classes in
+`land_registry.models` remain transport DTOs only; the domain package owns the
+persistent schema and its migrations.
 
 
 # 6. Navigation and Information Architecture
@@ -2137,8 +2137,8 @@ status
 
 The records below describe the application contract. They are not permission to define
 local SQLModel classes: persistent/domain SQLModels belong to `aecs4u-domain` under
-ARCH-016. Until the corresponding upstream models/migrations exist, the current app
-continues to use its compatibility SQL tables and Pydantic DTOs.
+ARCH-016. The current app continues to use its compatibility SQL tables and Pydantic
+DTOs while deployments adopt the shared domain migration.
 
 ### `SavedParcel`
 
