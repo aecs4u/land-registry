@@ -1270,6 +1270,7 @@ version = "0.1.4"
 source = { virtual = "." }
 dependencies = [
     { name = "aecs4u-auth" },
+    { name = "aecs4u-domain" },
     { name = "aecs4u-stats" },
     { name = "aecs4u-storage" },
     { name = "aecs4u-theme" },
@@ -1326,6 +1327,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "aecs4u-auth", git = "https://github.com/aecs4u/aecs4u-auth.git?branch=main" },
+    { name = "aecs4u-domain", git = "https://github.com/aecs4u/aecs4u-domain.git?branch=main" },
     { name = "aecs4u-stats", git = "https://github.com/aecs4u/aecs4u-stats.git?branch=main" },
     { name = "aecs4u-storage", git = "https://github.com/aecs4u/aecs4u-storage.git?branch=main" },
     { name = "aecs4u-theme", git = "https://github.com/aecs4u/aecs4u-theme.git?branch=main" },

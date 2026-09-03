@@ -3,6 +3,7 @@ API Router for Land Registry Application
 Centralizes all API endpoints for better organization and maintainability
 """
 
+import asyncio
 import boto3
 from botocore import UNSIGNED
 from botocore.config import Config
@@ -16,10 +17,13 @@ import logging
 import os
 import pandas as pd
 from pathlib import Path
+from datetime import datetime, timezone
 from pydantic import BaseModel
 import tempfile
 from typing import Dict, Any, List, Literal, Optional
 import hashlib
+import sqlite3
+from uuid import UUID
 
 from land_registry.dashboard import STATE
 from land_registry.map import (
@@ -29,11 +33,28 @@ from land_registry.map import (
 from land_registry.s3_storage import get_s3_storage, S3Settings, configure_s3_storage
 from land_registry.file_availability_db import file_availability_db
 from land_registry.config import (
-    s3_settings, get_cadastral_structure_path, cadastral_settings, get_cadastral_data_root
+    s3_settings, get_cadastral_structure_path, cadastral_settings, get_cadastral_data_root, db_settings as app_db_settings
 )
+from land_registry.database import get_async_db
 from land_registry.spatialite import load_layer as load_spatialite_layer
 from land_registry.models import (
-    CadastralCacheInfoResponse
+    CadastralLookupItem,
+    CadastralLookupResponse,
+    CadastralCacheInfoResponse,
+    ComuniSearchResponse,
+    ErrorResponse,
+    GeoJSONFeatureCollection,
+    LineageMetadata,
+    SavedParcelCollectionResponse,
+    SavedParcelCreateRequest,
+    SavedParcelUpdateRequest,
+    SavedParcelResponse,
+)
+from land_registry.parcel_identity import (
+    build_source_key,
+    canonical_source_key,
+    parcel_identity_id,
+    parcel_version_id,
 )
 from land_registry.cadastral_db import CadastralDatabase, CadastralFilter
 from land_registry.dependencies import _cadastral_registry, _datashader_registry, _discover_ple_databases, empty_datashader_tile
@@ -47,6 +68,22 @@ from land_registry.routers.auth import (
 
 # Configure logger
 logger = logging.getLogger(__name__)
+
+
+def _geojson_lineage(source: str, dataset: str, method: Optional[str] = None) -> Dict[str, Any]:
+    """Return conservative lineage metadata for an EPSG:4326 GeoJSON response.
+
+    Version and source CRS are intentionally omitted when the current backend
+    cannot prove them. This keeps the contract explicit without inventing
+    provenance values for legacy/local datasets.
+    """
+    return {
+        "source": source,
+        "dataset": dataset,
+        "output_crs": "EPSG:4326",
+        "units": {},
+        "method": method,
+    }
 
 
 # ============================================================================
@@ -282,31 +319,6 @@ class ZoneOverlayLookupRequest(BaseModel):
         return value
 
 
-class CadastralLookupItem(BaseModel):
-    """Normalized lookup item for point/overlay responses."""
-
-    feature_id: int
-    regione: str
-    provincia: str
-    comune_code: str
-    comune_name: Optional[str] = None
-    foglio: Optional[int] = None
-    particella: Optional[int] = None
-    layer_type: str
-    label: Optional[str] = None
-    national_reference: Optional[str] = None
-    relation: Optional[Literal["within", "intersects"]] = None
-    geometry: Optional[Dict[str, Any]] = None
-
-
-class CadastralLookupResponse(BaseModel):
-    """Response for point/overlay lookups."""
-
-    success: bool = True
-    total: int
-    items: List[CadastralLookupItem]
-
-
 # ============================================================================
 # API Router Setup
 # ============================================================================
@@ -540,7 +552,7 @@ async def get_attributes():
         raise HTTPException(status_code=500, detail=f"Error getting attributes: {str(e)}")
 
 
-@api_router.get("/search/comuni")
+@api_router.get("/search/comuni", response_model=ComuniSearchResponse)
 async def search_comuni():
     """Return the sorted list of unique ADMINISTRATIVEUNIT values in the current dataset."""
     current_gdf = get_current_gdf()
@@ -559,7 +571,11 @@ async def search_comuni():
     return {"comuni": comuni}
 
 
-@api_router.get("/search/parcels")
+@api_router.get(
+    "/search/parcels",
+    response_model=GeoJSONFeatureCollection,
+    response_model_exclude_none=True,
+)
 async def search_parcels(
     comune: str,
     foglio: Optional[str] = None,
@@ -629,10 +645,21 @@ async def search_parcels(
 
     count = len(matches)
     if count == 0:
-        return {"type": "FeatureCollection", "features": [], "count": 0}
+        return {
+            "type": "FeatureCollection",
+            "features": [],
+            "count": 0,
+            "metadata": _geojson_lineage(
+                "land-registry.loaded-dataset", "loaded-cadastral", "active in-memory dataset"
+            ),
+        }
 
     geojson = json.loads(matches.to_json())
+    geojson["features"] = [_attach_parcel_identity(feature) for feature in geojson.get("features", [])]
     geojson["count"] = count
+    geojson["metadata"] = _geojson_lineage(
+        "land-registry.loaded-dataset", "loaded-cadastral", "active in-memory dataset"
+    )
     return geojson
 
 
@@ -650,9 +677,12 @@ async def get_cadastral_structure(include_metadata: bool = False):
     """
     try:
         # Use the centralized cadastral utils to load data
+        import asyncio
         from land_registry.cadastral_utils import load_cadastral_structure
 
-        cadastral = load_cadastral_structure()
+        # Offloaded — a cold cache triggers a full local-directory scan that
+        # must not block the event loop (see main.py's /map route).
+        cadastral = await asyncio.to_thread(load_cadastral_structure)
 
         if not cadastral:
             raise HTTPException(status_code=404, detail="Cadastral structure data not available")
@@ -688,9 +718,10 @@ async def get_cadastral_cache_info():
     Returns cache age, source (local/S3/JSON), statistics, and file availability.
     """
     try:
+        import asyncio
         from land_registry.cadastral_utils import load_cadastral_structure
 
-        cadastral = load_cadastral_structure()
+        cadastral = await asyncio.to_thread(load_cadastral_structure)
 
         if not cadastral:
             raise HTTPException(status_code=404, detail="Cadastral structure data not available")
@@ -737,6 +768,14 @@ def _load_cadastral_json() -> dict:
 @api_router.get("/get-regions/")
 async def get_regions():
     """Get list of all regions."""
+    # Explore only needs the first cascade level. Listing the region
+    # directories avoids scanning every municipality/file before the select
+    # can render; the deeper endpoints remain lazy.
+    from land_registry.cadastral_utils import list_local_cadastral_regions
+
+    local_regions = list_local_cadastral_regions()
+    if local_regions:
+        return {"regions": local_regions}
     data = _load_cadastral_json()
     return {"regions": sorted(data.keys())}
 
@@ -744,6 +783,15 @@ async def get_regions():
 @api_router.get("/get-provinces/")
 async def get_provinces(regions: str = None):
     """Get provinces, optionally filtered by comma-separated region names."""
+    from land_registry.cadastral_utils import (
+        list_local_cadastral_provinces,
+        list_local_cadastral_regions,
+    )
+
+    region_list = [r.strip() for r in regions.split(',')] if regions else list_local_cadastral_regions()
+    local_provinces = list_local_cadastral_provinces(region_list)
+    if local_provinces:
+        return {"provinces": local_provinces}
     data = _load_cadastral_json()
     region_list = [r.strip() for r in regions.split(',')] if regions else list(data.keys())
     provinces: set[str] = set()
@@ -756,6 +804,17 @@ async def get_provinces(regions: str = None):
 @api_router.get("/get-municipalities/")
 async def get_municipalities(regions: str = None, provinces: str = None):
     """Get municipalities, optionally filtered by region and/or province."""
+    from land_registry.cadastral_utils import (
+        list_local_cadastral_municipalities,
+        list_local_cadastral_regions,
+        list_local_cadastral_provinces,
+    )
+
+    region_list = [r.strip() for r in regions.split(',')] if regions else list_local_cadastral_regions()
+    province_list = [p.strip() for p in provinces.split(',')] if provinces else list_local_cadastral_provinces(region_list)
+    local_municipalities = list_local_cadastral_municipalities(region_list, province_list)
+    if local_municipalities:
+        return {"municipalities": local_municipalities}
     data = _load_cadastral_json()
     region_list = [r.strip() for r in regions.split(',')] if regions else list(data.keys())
     province_list = [p.strip() for p in provinces.split(',')] if provinces else None
@@ -1861,8 +1920,14 @@ async def get_drawn_polygons():
 async def get_drawn_polygon_file(filename: str):
     """Get a specific drawn polygon file"""
     try:
+        # The route reads a server-side file by name; reject path components
+        # before joining it to the drawings directory.
+        requested_name = Path(filename)
+        if requested_name.name != filename or requested_name.suffix.lower() not in {".json", ".geojson"}:
+            raise HTTPException(status_code=400, detail="Invalid drawing filename")
+
         drawings_dir = "drawn_polygons"
-        filepath = os.path.join(drawings_dir, filename)
+        filepath = os.path.join(drawings_dir, requested_name.name)
 
         if not os.path.exists(filepath):
             raise HTTPException(status_code=404, detail=f"Drawing file {filename} not found")
@@ -2201,6 +2266,241 @@ from land_registry.zone_rules import (
     geometry_metrics_from_geojson,
     is_large_microzone,
 )
+
+
+def _saved_parcel_row_to_response(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert a persistence row into the stable saved-parcel contract."""
+    geometry = row.get("geometry")
+    if isinstance(geometry, str):
+        try:
+            geometry = json.loads(geometry)
+        except json.JSONDecodeError:
+            geometry = None
+
+    def _contract_timestamp(value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        try:
+            if isinstance(value, datetime):
+                parsed = value
+            else:
+                parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00").replace(" ", "T"))
+            if parsed.tzinfo is None or parsed.utcoffset() is None:
+                # SQLite CURRENT_TIMESTAMP is UTC but has no offset.
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        except (TypeError, ValueError):
+            return str(value)
+
+    return {
+        "id": row["id"],
+        "source": row.get("source", "cadastral"),
+        "source_key": row.get("source_key"),
+        "national_reference": row.get("national_reference"),
+        "parcel_identity_id": row.get("parcel_identity_id"),
+        "parcel_version_id": row.get("parcel_version_id"),
+        "dataset_version": row.get("dataset_version"),
+        "label": row.get("label"),
+        "notes": row.get("notes"),
+        "geometry": geometry,
+        "created_at": _contract_timestamp(row.get("created_at")),
+        "updated_at": _contract_timestamp(row.get("updated_at")),
+    }
+
+
+def _saved_parcel_payload(request: SavedParcelCreateRequest) -> Dict[str, Any]:
+    """Resolve stable IDs while retaining the original cadastral reference."""
+    source_key = request.source_key
+    if source_key is not None:
+        try:
+            source_key = canonical_source_key(request.source, source_key)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if source_key is None and request.national_reference is not None:
+        source_key = build_source_key(request.source, request.national_reference)
+
+    identity_id = request.parcel_identity_id
+    if identity_id is None:
+        # The request validator permits a pre-resolved identity without a
+        # source reference. For new identities, the source-qualified key is
+        # mandatory and is derived from the opaque national reference.
+        if source_key is None:
+            raise HTTPException(status_code=422, detail="source_key or national_reference is required for a new parcel")
+        identity_id = parcel_identity_id(source_key)
+    elif source_key is not None and parcel_identity_id(source_key) != identity_id:
+        raise HTTPException(
+            status_code=422,
+            detail="parcel_identity_id does not match source_key",
+        )
+    if source_key is None:
+        source_key = f"{request.source.strip().upper()}|IDENTITY={identity_id}"
+    version_id = request.parcel_version_id
+    if request.dataset_version:
+        expected_version_id = parcel_version_id(identity_id, request.dataset_version)
+        if version_id is not None and version_id != expected_version_id:
+            raise HTTPException(
+                status_code=422,
+                detail="parcel_version_id does not match parcel_identity_id and dataset_version",
+            )
+        version_id = expected_version_id
+
+    return {
+        "source": request.source,
+        "source_key": source_key,
+        "national_reference": request.national_reference,
+        "parcel_identity_id": str(identity_id),
+        "parcel_version_id": str(version_id) if version_id else None,
+        "dataset_version": request.dataset_version,
+        "label": request.label,
+        "notes": request.notes,
+        "geometry": request.geometry,
+    }
+
+
+def _saved_parcels_use_postgres() -> bool:
+    """Use PostgreSQL only when the existing deployment explicitly enables it."""
+    return bool(app_db_settings.use_neon and app_db_settings.database_url)
+
+
+def _saved_parcel_store_unavailable(exc: Exception) -> HTTPException:
+    logger.error("Saved-parcel store unavailable", exc_info=True)
+    return HTTPException(
+        status_code=503,
+        detail={"code": "saved_parcel_store_unavailable", "message": "Saved parcel storage is unavailable"},
+    )
+
+
+async def _saved_parcel_rows(user_id: str) -> list[Dict[str, Any]]:
+    try:
+        if _saved_parcels_use_postgres():
+            return await get_async_db().get_saved_parcels(user_id)
+        return await asyncio.to_thread(get_sqlite_db().get_saved_parcels, user_id)
+    except Exception as exc:
+        raise _saved_parcel_store_unavailable(exc) from exc
+
+
+async def _saved_parcel_row(saved_parcel_id: int, user_id: str) -> Optional[Dict[str, Any]]:
+    try:
+        if _saved_parcels_use_postgres():
+            return await get_async_db().get_saved_parcel(saved_parcel_id, user_id)
+        return await asyncio.to_thread(get_sqlite_db().get_saved_parcel, saved_parcel_id, user_id)
+    except Exception as exc:
+        raise _saved_parcel_store_unavailable(exc) from exc
+
+
+@api_router.get(
+    "/saved-parcels",
+    response_model=SavedParcelCollectionResponse,
+    responses={401: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+)
+async def list_saved_parcels(user: ClerkUser = Depends(get_current_user)):
+    """List the authenticated user's parcel references and observed versions."""
+    rows = await _saved_parcel_rows(user.id)
+    items = [_saved_parcel_row_to_response(row) for row in rows]
+    return {"success": True, "total": len(items), "items": items}
+
+
+@api_router.post(
+    "/saved-parcels",
+    response_model=SavedParcelResponse,
+    status_code=201,
+    responses={
+        401: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+        422: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+    },
+)
+async def create_saved_parcel(
+    request: SavedParcelCreateRequest,
+    user: ClerkUser = Depends(get_current_user),
+):
+    """Save a parcel using stable identity/version fields, never a feature ID."""
+    payload = _saved_parcel_payload(request)
+    try:
+        if _saved_parcels_use_postgres():
+            saved_id = await get_async_db().save_parcel(user.id, payload)
+        else:
+            saved_id = await asyncio.to_thread(get_sqlite_db().save_parcel, user.id, payload)
+    except Exception as exc:
+        if isinstance(exc, sqlite3.IntegrityError) or exc.__class__.__name__ == "UniqueViolationError":
+            raise HTTPException(status_code=409, detail="Parcel is already saved for this dataset version") from exc
+        raise _saved_parcel_store_unavailable(exc) from exc
+
+    saved = await _saved_parcel_row(saved_id, user.id)
+    return _saved_parcel_row_to_response(saved)
+
+
+@api_router.get(
+    "/saved-parcels/{saved_parcel_id}",
+    response_model=SavedParcelResponse,
+    responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+)
+async def get_saved_parcel(saved_parcel_id: int, user: ClerkUser = Depends(get_current_user)):
+    """Get one saved parcel while enforcing ownership."""
+    saved = await _saved_parcel_row(saved_parcel_id, user.id)
+    if not saved:
+        raise HTTPException(status_code=404, detail="Saved parcel not found")
+    return _saved_parcel_row_to_response(saved)
+
+
+@api_router.patch(
+    "/saved-parcels/{saved_parcel_id}",
+    response_model=SavedParcelResponse,
+    responses={
+        401: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        422: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+    },
+)
+async def update_saved_parcel(
+    saved_parcel_id: int,
+    request: SavedParcelUpdateRequest,
+    user: ClerkUser = Depends(get_current_user),
+):
+    """Update user metadata or the last observed dataset version."""
+    saved = await _saved_parcel_row(saved_parcel_id, user.id)
+    if not saved:
+        raise HTTPException(status_code=404, detail="Saved parcel not found")
+
+    fields = request.model_dump(exclude_none=True)
+    if request.dataset_version and saved.get("parcel_identity_id"):
+        try:
+            fields["parcel_version_id"] = str(
+                parcel_version_id(UUID(saved["parcel_identity_id"]), request.dataset_version)
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="Saved parcel has an invalid identity") from exc
+
+    try:
+        if _saved_parcels_use_postgres():
+            updated = await get_async_db().update_saved_parcel(saved_parcel_id, user.id, **fields)
+        else:
+            updated = await asyncio.to_thread(get_sqlite_db().update_saved_parcel, saved_parcel_id, user.id, **fields)
+    except Exception as exc:
+        raise _saved_parcel_store_unavailable(exc) from exc
+    if not updated:
+        raise HTTPException(status_code=400, detail="No saved-parcel fields to update")
+    return _saved_parcel_row_to_response(await _saved_parcel_row(saved_parcel_id, user.id))
+
+
+@api_router.delete(
+    "/saved-parcels/{saved_parcel_id}",
+    responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+)
+async def delete_saved_parcel(saved_parcel_id: int, user: ClerkUser = Depends(get_current_user)):
+    """Delete one saved parcel while enforcing ownership."""
+    try:
+        if _saved_parcels_use_postgres():
+            deleted = await get_async_db().delete_saved_parcel(saved_parcel_id, user.id)
+        else:
+            deleted = await asyncio.to_thread(get_sqlite_db().delete_saved_parcel, saved_parcel_id, user.id)
+    except Exception as exc:
+        raise _saved_parcel_store_unavailable(exc) from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Saved parcel not found")
+    return {"success": True, "id": saved_parcel_id}
 
 
 def _zone_row_to_response(row: dict, include_geojson: bool = False) -> dict:
@@ -2779,11 +3079,57 @@ def get_cadastral_db(layer_type: Optional[str] = None, region: Optional[str] = N
     return _cadastral_registry.get_db(layer_type, region)
 
 
+def _attach_parcel_identity(feature: Dict[str, Any], source: str = "cadastral") -> Dict[str, Any]:
+    """Add stable identity fields to a GeoJSON feature when its reference allows it."""
+    props = feature.setdefault("properties", {}) or {}
+    feature["properties"] = props
+    source = str(props.get("source") or source)
+    national_reference = props.get("national_reference")
+    identity_value = props.get("parcel_identity_id")
+    identity_id: Optional[UUID] = None
+
+    if identity_value:
+        try:
+            identity_id = UUID(str(identity_value))
+        except (ValueError, TypeError):
+            logger.debug("Ignoring invalid parcel_identity_id in feature: %r", identity_value)
+    elif national_reference:
+        try:
+            identity_id = parcel_identity_id(build_source_key(source, str(national_reference)))
+            props["parcel_identity_id"] = str(identity_id)
+        except ValueError:
+            logger.debug("Could not derive parcel identity for feature reference: %r", national_reference)
+
+    dataset_version = props.get("dataset_version")
+    version_value = props.get("parcel_version_id")
+    if not version_value and identity_id and dataset_version:
+        try:
+            version_value = str(parcel_version_id(identity_id, str(dataset_version)))
+            props["parcel_version_id"] = version_value
+        except ValueError:
+            logger.debug("Could not derive parcel version for feature")
+
+    return feature
+
+
 def _feature_to_lookup_item(
     feature: Dict[str, Any],
     relation: Optional[Literal["within", "intersects"]] = None,
 ) -> CadastralLookupItem:
     props = feature.get("properties", {}) or {}
+    feature = _attach_parcel_identity(feature, str(props.get("source") or "cadastral"))
+    props = feature.get("properties", {}) or {}
+    national_reference = props.get("national_reference")
+    dataset_version = props.get("dataset_version")
+    identity_id: Optional[UUID] = None
+    version_id: Optional[UUID] = None
+    try:
+        if props.get("parcel_identity_id"):
+            identity_id = UUID(str(props["parcel_identity_id"]))
+        if props.get("parcel_version_id"):
+            version_id = UUID(str(props["parcel_version_id"]))
+    except (ValueError, TypeError):
+        logger.debug("Ignoring invalid derived parcel identity fields in lookup feature")
     return CadastralLookupItem(
         feature_id=int(feature.get("id") or 0),
         regione=str(props.get("regione", "")),
@@ -2794,15 +3140,19 @@ def _feature_to_lookup_item(
         particella=props.get("particella"),
         layer_type=str(props.get("layer_type", "")),
         label=props.get("label"),
-        national_reference=props.get("national_reference"),
+        national_reference=national_reference,
         relation=relation,
         geometry=feature.get("geometry"),
+        parcel_identity_id=identity_id,
+        parcel_version_id=version_id,
+        dataset_version=dataset_version,
     )
 
 
 @api_router.post(
     "/cadastral/point-lookup",
     response_model=CadastralLookupResponse,
+    response_model_exclude_none=True,
 )
 async def point_lookup(
     request: PointLookupRequest = Body(
@@ -2844,7 +3194,14 @@ async def point_lookup(
         result = db.query(cadastral_filter, as_geojson=True)
         features = result.get("features", [])
         items = [_feature_to_lookup_item(feature) for feature in features]
-        return {"success": True, "total": len(items), "items": items}
+        return {
+            "success": True,
+            "total": len(items),
+            "items": items,
+            "metadata": _geojson_lineage(
+                "land-registry.cadastral", request.layer_type, "point-in-polygon lookup"
+            ),
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -2855,6 +3212,7 @@ async def point_lookup(
 @api_router.post(
     "/cadastral/zone-overlay-lookup",
     response_model=CadastralLookupResponse,
+    response_model_exclude_none=True,
 )
 async def zone_overlay_lookup(
     request: ZoneOverlayLookupRequest = Body(
@@ -2936,7 +3294,14 @@ async def zone_overlay_lookup(
             if is_match:
                 filtered_items.append(_feature_to_lookup_item(feature, relation=request.relation))
 
-        return {"success": True, "total": len(filtered_items), "items": filtered_items}
+        return {
+            "success": True,
+            "total": len(filtered_items),
+            "items": filtered_items,
+            "metadata": _geojson_lineage(
+                "land-registry.cadastral", request.layer_type, "zone geometry overlay lookup"
+            ),
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -2944,7 +3309,11 @@ async def zone_overlay_lookup(
         raise HTTPException(status_code=500, detail=f"Zone overlay lookup failed: {str(e)}")
 
 
-@api_router.post("/cadastral/query")
+@api_router.post(
+    "/cadastral/query",
+    response_model=GeoJSONFeatureCollection,
+    response_model_exclude_none=True,
+)
 async def query_cadastral_parcels(request: CadastralQueryRequest):
     """
     Query cadastral parcels with exhaustive filtering.
@@ -2983,6 +3352,11 @@ async def query_cadastral_parcels(request: CadastralQueryRequest):
 
         cadastral_filter = request.to_cadastral_filter()
         result = db.query(cadastral_filter, as_geojson=True)
+        if isinstance(result, dict) and result.get("type") == "FeatureCollection":
+            result["features"] = [_attach_parcel_identity(feature) for feature in result.get("features", [])]
+            result["metadata"] = _geojson_lineage(
+                "land-registry.cadastral", request.layer_type, "cadastral database query"
+            )
         return result
 
     except HTTPException:
@@ -3179,7 +3553,11 @@ async def list_cadastral_databases():
         raise HTTPException(status_code=500, detail=f"Failed to list databases: {str(e)}")
 
 
-@api_router.get("/cadastral/search/{reference}")
+@api_router.get(
+    "/cadastral/search/{reference}",
+    response_model=GeoJSONFeatureCollection,
+    response_model_exclude_none=True,
+)
 async def search_by_reference(reference: str, regione: Optional[str] = None):
     """
     Search for a parcel by its national cadastral reference.
@@ -3245,7 +3623,10 @@ async def search_by_reference(reference: str, regione: Optional[str] = None):
 
         return {
             "type": "FeatureCollection",
-            "features": features
+            "features": features,
+            "metadata": _geojson_lineage(
+                "land-registry.cadastral", layer_type, "national reference lookup"
+            ),
         }
 
     except HTTPException:
@@ -3278,7 +3659,7 @@ def _rows_to_features(rows) -> list:
         # Remove WKT from properties
         if 'geometry_wkt' in feature['properties']:
             del feature['properties']['geometry_wkt']
-        features.append(feature)
+        features.append(_attach_parcel_identity(feature))
 
     return features
 
@@ -3287,7 +3668,6 @@ def _rows_to_features(rows) -> list:
 # ============================================================================
 
 from fastapi.responses import Response, StreamingResponse
-import asyncio
 
 # Datashader service accessor — delegates to DatashaderRegistry in dependencies.py
 
@@ -3559,7 +3939,11 @@ async def ghsl_status():
     return service.status_info()
 
 
-@api_router.get("/ghsl/ucdb")
+@api_router.get(
+    "/ghsl/ucdb",
+    response_model=GeoJSONFeatureCollection,
+    response_model_exclude_none=True,
+)
 async def ghsl_ucdb():
     """Return Italian urban centres from UCDB (GeoJSON FeatureCollection)."""
     from land_registry.dependencies import _ghsl_registry
@@ -3568,9 +3952,15 @@ async def ghsl_ucdb():
         raise HTTPException(status_code=503, detail="GHSL service not available")
     ucdb = service.get_ucdb_italy()
     if ucdb is None or ucdb.empty:
-        return {"type": "FeatureCollection", "features": [], "count": 0}
+        return {
+            "type": "FeatureCollection",
+            "features": [],
+            "count": 0,
+            "metadata": _geojson_lineage("GHSL", "UCDB", "UCDB Italy filter"),
+        }
     geojson = json.loads(ucdb.to_json())
     geojson["count"] = len(ucdb)
+    geojson["metadata"] = _geojson_lineage("GHSL", "UCDB", "UCDB Italy filter")
     return geojson
 
 

@@ -44,6 +44,7 @@ dependencies = [
     "rich>=14.1.0",
     # AECS4U packages
     "aecs4u-auth",
+    "aecs4u-domain",
     "aecs4u-stats",
     "aecs4u-storage",
     "aecs4u-theme",

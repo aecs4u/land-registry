@@ -97,6 +97,25 @@ class SQLiteDatabase:
             """)
 
             cursor.execute("""
+                CREATE TABLE IF NOT EXISTS saved_parcels (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    source_key TEXT,
+                    national_reference TEXT,
+                    parcel_identity_id TEXT,
+                    parcel_version_id TEXT,
+                    dataset_version TEXT,
+                    label TEXT,
+                    notes TEXT,
+                    geometry TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, parcel_identity_id, dataset_version)
+                )
+            """)
+
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS cadastral_queries (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id TEXT,
@@ -144,6 +163,17 @@ class SQLiteDatabase:
             """)
 
             cursor.execute("""
+                CREATE TABLE IF NOT EXISTS parcel_enrichment_read_model (
+                    parcel_key TEXT PRIMARY KEY,
+                    payload TEXT NOT NULL,
+                    source_fingerprint TEXT,
+                    refreshed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS app_settings (
                     key TEXT PRIMARY KEY,
                     value TEXT,
@@ -154,9 +184,19 @@ class SQLiteDatabase:
 
             # Create indexes
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_saved_maps_user_id ON saved_maps(user_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_saved_parcels_user_id ON saved_parcels(user_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_saved_parcels_identity ON saved_parcels(parcel_identity_id)")
+            cursor.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_saved_parcels_identity_dataset
+                ON saved_parcels(user_id, parcel_identity_id, COALESCE(dataset_version, ''))
+                WHERE parcel_identity_id IS NOT NULL
+                """
+            )
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_cadastral_queries_user_id ON cadastral_queries(user_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_drawn_polygons_user_id ON drawn_polygons(user_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_cadastral_cache_comune ON cadastral_cache(regione, provincia, comune)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_parcel_enrichment_refreshed ON parcel_enrichment_read_model(refreshed_at)")
 
             conn.commit()
             logger.info(f"SQLite database initialized at {self.db_path}")
@@ -270,6 +310,44 @@ class SQLiteDatabase:
 
                 self._ensure_zone_tables(cursor)
                 self._migrate_drawn_polygons_to_zones(cursor)
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS saved_parcels (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id TEXT NOT NULL,
+                        source TEXT NOT NULL,
+                        source_key TEXT,
+                        national_reference TEXT,
+                        parcel_identity_id TEXT,
+                        parcel_version_id TEXT,
+                        dataset_version TEXT,
+                        label TEXT,
+                        notes TEXT,
+                        geometry TEXT,
+                        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(user_id, parcel_identity_id, dataset_version)
+                    )
+                """)
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_saved_parcels_user_id ON saved_parcels(user_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_saved_parcels_identity ON saved_parcels(parcel_identity_id)")
+                cursor.execute(
+                    """
+                    CREATE UNIQUE INDEX IF NOT EXISTS uq_saved_parcels_identity_dataset
+                    ON saved_parcels(user_id, parcel_identity_id, COALESCE(dataset_version, ''))
+                    WHERE parcel_identity_id IS NOT NULL
+                    """
+                )
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS parcel_enrichment_read_model (
+                        parcel_key TEXT PRIMARY KEY,
+                        payload TEXT NOT NULL,
+                        source_fingerprint TEXT,
+                        refreshed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_parcel_enrichment_refreshed ON parcel_enrichment_read_model(refreshed_at)")
 
                 conn.commit()
         except Exception as e:
@@ -308,6 +386,57 @@ class SQLiteDatabase:
             cursor = conn.cursor()
             cursor.execute(query, params)
             return cursor.lastrowid
+
+    # -------------------------------------------------------------------------
+    # Parcel enrichment read model
+    # -------------------------------------------------------------------------
+
+    def get_parcel_enrichment(self, parcel_key: str) -> Optional[Dict[str, Any]]:
+        """Return one materialized parcel-enrichment payload, if present."""
+        row = self.execute_one(
+            "SELECT parcel_key, payload, source_fingerprint, refreshed_at "
+            "FROM parcel_enrichment_read_model WHERE parcel_key = ?",
+            (parcel_key,),
+        )
+        if not row:
+            return None
+        try:
+            payload = json.loads(row["payload"])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            logger.warning("Invalid parcel enrichment payload for %s", parcel_key)
+            return None
+        if not isinstance(payload, dict):
+            return None
+        payload["read_model"] = {
+            "key": row["parcel_key"],
+            "source_fingerprint": row["source_fingerprint"],
+            "refreshed_at": row["refreshed_at"],
+            "cached": True,
+        }
+        return payload
+
+    def upsert_parcel_enrichment(
+        self,
+        parcel_key: str,
+        payload: Dict[str, Any],
+        source_fingerprint: Optional[str] = None,
+    ) -> None:
+        """Atomically replace one parcel-enrichment read-model row."""
+        serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
+        with self.get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO parcel_enrichment_read_model
+                    (parcel_key, payload, source_fingerprint, refreshed_at, updated_at)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT(parcel_key) DO UPDATE SET
+                    payload = excluded.payload,
+                    source_fingerprint = excluded.source_fingerprint,
+                    refreshed_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (parcel_key, serialized, source_fingerprint),
+            )
 
     # -------------------------------------------------------------------------
     # User Preferences
@@ -407,6 +536,76 @@ class SQLiteDatabase:
     def delete_saved_map(self, map_id: int) -> None:
         """Delete a saved map."""
         self.execute("DELETE FROM saved_maps WHERE id = ?", (map_id,))
+
+    # -------------------------------------------------------------------------
+    # Saved Parcels
+    # -------------------------------------------------------------------------
+
+    def get_saved_parcels(self, user_id: str) -> List[Dict[str, Any]]:
+        """Get saved parcels for one user, newest first."""
+        rows = self.execute(
+            "SELECT * FROM saved_parcels WHERE user_id = ? ORDER BY updated_at DESC, id DESC",
+            (user_id,),
+        )
+        return [dict(row) for row in rows]
+
+    def get_saved_parcel(self, parcel_id: int, user_id: str) -> Optional[Dict[str, Any]]:
+        """Get a saved parcel only when it belongs to the requesting user."""
+        row = self.execute_one(
+            "SELECT * FROM saved_parcels WHERE id = ? AND user_id = ?",
+            (parcel_id, user_id),
+        )
+        return dict(row) if row else None
+
+    def save_parcel(self, user_id: str, parcel: Dict[str, Any]) -> int:
+        """Persist a user-owned parcel reference and its observed snapshot."""
+        return self.execute_insert(
+            """
+            INSERT INTO saved_parcels (
+                user_id, source, source_key, national_reference,
+                parcel_identity_id, parcel_version_id, dataset_version,
+                label, notes, geometry
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                parcel["source"],
+                parcel.get("source_key"),
+                parcel.get("national_reference"),
+                parcel.get("parcel_identity_id"),
+                parcel.get("parcel_version_id"),
+                parcel.get("dataset_version"),
+                parcel.get("label"),
+                parcel.get("notes"),
+                json.dumps(parcel["geometry"]) if parcel.get("geometry") is not None else None,
+            ),
+        )
+
+    def delete_saved_parcel(self, parcel_id: int, user_id: str) -> bool:
+        """Delete a saved parcel only when it belongs to the requesting user."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM saved_parcels WHERE id = ? AND user_id = ?", (parcel_id, user_id))
+            return cursor.rowcount > 0
+
+    def update_saved_parcel(self, parcel_id: int, user_id: str, **fields: Any) -> bool:
+        """Update allowed saved-parcel fields while enforcing ownership."""
+        allowed = {"parcel_version_id", "dataset_version", "label", "notes"}
+        updates = [(name, value) for name, value in fields.items() if name in allowed and value is not None]
+        if not updates:
+            return False
+
+        assignments = [f"{name} = ?" for name, _ in updates]
+        params = [value for _, value in updates]
+        assignments.append("updated_at = CURRENT_TIMESTAMP")
+        params.extend([parcel_id, user_id])
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"UPDATE saved_parcels SET {', '.join(assignments)} WHERE id = ? AND user_id = ?",
+                tuple(params),
+            )
+            return cursor.rowcount > 0
 
     # -------------------------------------------------------------------------
     # Drawn Polygons

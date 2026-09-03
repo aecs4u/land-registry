@@ -7,12 +7,18 @@ Uses Neon serverless PostgreSQL for persistent storage of:
 - Saved map configurations
 - Cadastral query history
 - Application metadata
+
+The canonical shared SQLModel/Alembic definitions belong to ``aecs4u-domain``.
+The DDL in this module is the existing application-store compatibility
+initializer; it is not a replacement domain model layer.
 """
 
 import logging
+import json
 from contextlib import asynccontextmanager, contextmanager
 from typing import Optional, Any, AsyncGenerator, Generator
 from urllib.parse import urlparse
+from uuid import UUID
 
 from pydantic_settings import BaseSettings
 
@@ -237,6 +243,89 @@ class AsyncDatabaseConnection:
         async with self.get_connection() as conn:
             return await conn.fetchval(query, *args)
 
+    async def get_saved_parcels(self, user_id: str) -> list[dict[str, Any]]:
+        """Get saved parcels for one authenticated user from PostgreSQL."""
+        rows = await self.fetch(
+            "SELECT * FROM saved_parcels WHERE user_id = $1 ORDER BY updated_at DESC, id DESC",
+            user_id,
+        )
+        return [dict(row) for row in rows]
+
+    async def get_saved_parcel(self, parcel_id: int, user_id: str) -> Optional[dict[str, Any]]:
+        """Get one saved parcel only when it belongs to the authenticated user."""
+        row = await self.fetchrow(
+            "SELECT * FROM saved_parcels WHERE id = $1 AND user_id = $2",
+            parcel_id,
+            user_id,
+        )
+        return dict(row) if row else None
+
+    async def save_parcel(self, user_id: str, parcel: dict[str, Any]) -> int:
+        """Persist a version-aware saved parcel in PostgreSQL."""
+        identity_id = parcel.get("parcel_identity_id")
+        version_id = parcel.get("parcel_version_id")
+        identity_id = UUID(str(identity_id)) if identity_id else None
+        version_id = UUID(str(version_id)) if version_id else None
+        row = await self.fetchrow(
+            """
+            INSERT INTO saved_parcels (
+                user_id, source, source_key, national_reference,
+                parcel_identity_id, parcel_version_id, dataset_version,
+                label, notes, geometry
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CAST($10 AS jsonb))
+            RETURNING id
+            """,
+            user_id,
+            parcel["source"],
+            parcel.get("source_key"),
+            parcel.get("national_reference"),
+            identity_id,
+            version_id,
+            parcel.get("dataset_version"),
+            parcel.get("label"),
+            parcel.get("notes"),
+            json.dumps(parcel["geometry"]) if parcel.get("geometry") is not None else None,
+        )
+        return int(row["id"])
+
+    async def update_saved_parcel(self, parcel_id: int, user_id: str, **fields: Any) -> bool:
+        """Update allowed saved-parcel fields while enforcing ownership."""
+        allowed = {"parcel_version_id", "dataset_version", "label", "notes"}
+        updates = [(name, value) for name, value in fields.items() if name in allowed and value is not None]
+        if not updates:
+            return False
+
+        params: list[Any] = []
+        assignments: list[str] = []
+        for name, value in updates:
+            if name == "parcel_version_id":
+                value = UUID(str(value))
+            params.append(value)
+            assignments.append(f"{name} = ${len(params)}")
+
+        id_position = len(params) + 1
+        user_position = id_position + 1
+        params.extend([parcel_id, user_id])
+        row = await self.fetchrow(
+            f"""
+            UPDATE saved_parcels
+            SET {', '.join(assignments)}, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ${id_position} AND user_id = ${user_position}
+            RETURNING id
+            """,
+            *params,
+        )
+        return row is not None
+
+    async def delete_saved_parcel(self, parcel_id: int, user_id: str) -> bool:
+        """Delete one saved parcel only when it belongs to the user."""
+        row = await self.fetchrow(
+            "DELETE FROM saved_parcels WHERE id = $1 AND user_id = $2 RETURNING id",
+            parcel_id,
+            user_id,
+        )
+        return row is not None
+
     async def close(self):
         """Close the async connection pool."""
         if self._pool:
@@ -298,6 +387,25 @@ async def init_database():
     """)
 
     await async_db.execute("""
+        CREATE TABLE IF NOT EXISTS saved_parcels (
+            id SERIAL PRIMARY KEY,
+            user_id VARCHAR(255) NOT NULL,
+            source VARCHAR(100) NOT NULL,
+            source_key VARCHAR(512),
+            national_reference VARCHAR(512),
+            parcel_identity_id UUID,
+            parcel_version_id UUID,
+            dataset_version VARCHAR(128),
+            label VARCHAR(255),
+            notes TEXT,
+            geometry JSONB,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, parcel_identity_id, dataset_version)
+        )
+    """)
+
+    await async_db.execute("""
         CREATE TABLE IF NOT EXISTS cadastral_queries (
             id SERIAL PRIMARY KEY,
             user_id VARCHAR(255),
@@ -309,6 +417,20 @@ async def init_database():
 
     await async_db.execute("""
         CREATE INDEX IF NOT EXISTS idx_saved_maps_user_id ON saved_maps(user_id)
+    """)
+
+    await async_db.execute("""
+        CREATE INDEX IF NOT EXISTS idx_saved_parcels_user_id ON saved_parcels(user_id)
+    """)
+
+    await async_db.execute("""
+        CREATE INDEX IF NOT EXISTS idx_saved_parcels_identity ON saved_parcels(parcel_identity_id)
+    """)
+
+    await async_db.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_saved_parcels_identity_dataset
+        ON saved_parcels(user_id, parcel_identity_id, COALESCE(dataset_version, ''))
+        WHERE parcel_identity_id IS NOT NULL
     """)
 
     await async_db.execute("""

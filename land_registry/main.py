@@ -26,8 +26,8 @@ from land_registry.routers.api import api_router
 from land_registry.routers.auth_pages import router as auth_pages_router
 from land_registry.routers.enrichment import enrichment_router
 from land_registry.s3_storage import get_s3_storage
-from land_registry.config import app_settings, panel_settings, get_panel_url
-from land_registry.models import TableDataResponse, ServiceUnavailableResponse
+from land_registry.config import app_settings, panel_settings, get_panel_url, db_settings
+from land_registry.models import HealthResponse, TableDataResponse, ServiceUnavailableResponse
 
 # Import aecs4u-auth for authentication setup (optional)
 from land_registry.core.clerk import _AUTH_AVAILABLE
@@ -207,6 +207,21 @@ async def lifespan(app: FastAPI):
     # ========== STARTUP ==========
     logger.info(f"Starting {app_settings.app_name} v{app_settings.app_version}")
 
+    # Initialize the repository-owned PostgreSQL application tables only when
+    # the existing deployment explicitly enables Neon. SQLite remains the
+    # default compatibility path for local/offline operation.
+    if db_settings.use_neon and db_settings.database_url:
+        try:
+            from land_registry.database import init_database
+
+            await init_database()
+            logger.info("PostgreSQL application schema initialized")
+        except Exception as e:
+            logger.error("PostgreSQL application schema initialization failed", exc_info=True)
+            # Keep public/read-only routes available; protected PostgreSQL
+            # writes will fail rather than silently falling back to SQLite.
+            logger.warning(f"PostgreSQL-backed application writes may be unavailable: {e}")
+
     # Check if Panel server is already running (e.g., from a previous hot-reload)
     if _is_port_in_use(PANEL_HOST, PANEL_PORT):
         logger.info(f"Panel port {PANEL_PORT} already in use - checking if it's accessible...")
@@ -280,6 +295,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Error closing database: {e}", exc_info=True)
 
+    if db_settings.use_neon and db_settings.database_url:
+        try:
+            from land_registry.database import get_async_db
+
+            await get_async_db().close()
+            logger.info("PostgreSQL application connection pool closed")
+        except Exception as e:
+            logger.error(f"Error closing PostgreSQL application pool: {e}", exc_info=True)
+
     try:
         from land_registry.dependencies import get_datashader_registry
 
@@ -341,11 +365,16 @@ app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
 
 # Setup authentication using aecs4u-auth (if available)
 if _AUTH_AVAILABLE:
-    # This automatically:
-    # - Adds session middleware
-    # - Includes auth routes at /auth prefix
-    # - Sets up exception handlers for RedirectToLogin
-    # - Mounts static files for frontend auth integration
+    # The embedded Panel/Bokeh dashboard (map_table, adjacency_table,
+    # mapping_table, and the map's Attribute Table) bootstraps itself by
+    # XHR-ing autoload.js from the local Panel server, which then injects
+    # <script src="http://127.0.0.1:5006/...bokeh...js"> tags and opens a
+    # WebSocket back to it. aecs4u_auth's default CSP has no entry for that
+    # loopback origin under connect-src *or* script-src, so the browser
+    # silently blocks first the XHR and then the Bokeh/Panel script tags,
+    # and every one of those pages renders blank. Extend both directives for
+    # just that origin rather than loosening the policy generally.
+    _panel_origin = f"127.0.0.1:{PANEL_PORT}"
     setup_auth(
         app,
         config=AuthConfig(
@@ -358,6 +387,10 @@ if _AUTH_AVAILABLE:
         include_routes=True,
         mount_static=True,
         setup_exception_handlers=True,
+        security_headers_csp_extend={
+            "connect-src": [f"http://{_panel_origin}", f"ws://{_panel_origin}"],
+            "script-src": [f"http://{_panel_origin}"],
+        },
     )
 else:
     logger.warning("aecs4u-auth not installed - running without authentication")
@@ -399,6 +432,22 @@ if not os.path.exists(static_dir):
 if not os.path.exists(templates_dir):
     logger.warning(f"Templates directory not found at {templates_dir}")
 
+# Panel/Bokeh's embedded HTML (map_table, adjacency_table, mapping_table,
+# and the map's Attribute Table) references its extension bundles — the
+# Tabulator widget's JS/CSS, es-module-shims, etc. — via relative URLs like
+# /static/extensions/panel/bundled/..., resolved against this app's origin
+# rather than the Panel server's. Those files are real, already-installed
+# assets in the panel package itself; mount them at the same path Panel
+# expects, *before* the general /static mount below (Starlette matches
+# mounts in registration order, and /static would otherwise shadow this
+# more specific one). Without this, those requests 404 into a JSON error
+# response, which the browser then refuses to run/apply as script/CSS.
+_panel_dist_dir = os.path.join(os.path.dirname(pn.__file__), "dist")
+if os.path.exists(_panel_dist_dir):
+    app.mount("/static/extensions/panel", StaticFiles(directory=_panel_dist_dir), name="panel-extensions")
+else:
+    logger.warning(f"Panel dist directory not found at {_panel_dist_dir} - embedded Panel tables may be missing styling/widgets")
+
 # Serve static files (HTML, CSS, JS) with absolute path
 if os.path.exists(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
@@ -413,10 +462,13 @@ templates.env.globals["_"] = contextvar_gettext
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
     from fastapi.responses import RedirectResponse
-    return RedirectResponse(url="/static/aecs4u-theme/icons/favicon.png", status_code=301)
+    # aecs4u-theme's icons/favicon.png 404s in this environment; the app's
+    # own cadastral-icon SVG (already used as tabulator.html's inline
+    # favicon) is a real, always-available asset in this repo.
+    return RedirectResponse(url="/static/favicon.svg", status_code=301)
 
 
-@app.get("/health")
+@app.get("/health", response_model=HealthResponse)
 async def health_check():
     """Health check endpoint for Cloud Run"""
     return {"status": "healthy", "service": "land-registry"}
@@ -509,6 +561,35 @@ async def _build_main_map_shell_context(request: Request) -> dict:
         "Select municipality…": gt("Select municipality…"),
         "Select a municipality before searching.": gt("Select a municipality before searching."),
         "No results": gt("No results"),
+        # Sidebar selection summary (map.js updateSelectionSummary)
+        "Selected:": gt("Selected:"),
+        "region": gt("region"),
+        "regions": gt("regions"),
+        "province": gt("province"),
+        "provinces": gt("provinces"),
+        "municipality": gt("municipality"),
+        "municipalities": gt("municipalities"),
+        "file type": gt("file type"),
+        "file types": gt("file types"),
+        "Total files:": gt("Total files:"),
+        "Files breakdown:": gt("Files breakdown:"),
+        "files": gt("files"),
+        "No files found for this selection": gt("No files found for this selection"),
+        # Adiacenza panel (folium-interface.js)
+        "Method:": gt("Method:"),
+        "0 polygons found": gt("0 polygons found"),
+        "1 polygon found": gt("1 polygon found"),
+        "{n} polygons found": gt("{n} polygons found"),
+        "{n} features in {m} layers loaded": gt("{n} features in {m} layers loaded"),
+        "{n} polygon layers loaded": gt("{n} polygon layers loaded"),
+        # Progressive load overlay (progressive-loader.js)
+        "Loading Cadastral Data": gt("Loading Cadastral Data"),
+        "Loading: {file}": gt("Loading: {file}"),
+        "{n} / {m} files": gt("{n} / {m} files"),
+        # Vista Tabella toolbar/pagination (table-manager.js)
+        "Filter by column...": gt("Filter by column..."),
+        "Sort by column...": gt("Sort by column..."),
+        "Showing {start} to {end} of {total} entries": gt("Showing {start} to {end} of {total} entries"),
     }
 
     return {
@@ -545,7 +626,8 @@ async def show_map_table(request: Request):
     """
     tabulator = await asyncio.to_thread(server_document, PANEL_MAP_TABLE_URL)
     return templates.TemplateResponse(request, "tabulator.html", {
-        "tabulator": tabulator
+        "tabulator": tabulator,
+        "title": f"{contextvar_gettext('Map Table')} - {contextvar_gettext('Land Registry Viewer')}",
     })
 
 
@@ -557,7 +639,8 @@ async def show_adjacency_table(request: Request):
     """
     tabulator = await asyncio.to_thread(server_document, PANEL_ADJACENCY_TABLE_URL)
     return templates.TemplateResponse(request, "tabulator.html", {
-        "tabulator": tabulator
+        "tabulator": tabulator,
+        "title": f"{contextvar_gettext('Adjacency Table')} - {contextvar_gettext('Land Registry Viewer')}",
     })
 
 
@@ -569,7 +652,8 @@ async def show_mapping_table(request: Request):
     """
     tabulator = await asyncio.to_thread(server_document, PANEL_MAPPING_TABLE_URL)
     return templates.TemplateResponse(request, "tabulator.html", {
-        "tabulator": tabulator
+        "tabulator": tabulator,
+        "title": f"{contextvar_gettext('Mapping Table')} - {contextvar_gettext('Land Registry Viewer')}",
     })
 
 
@@ -582,7 +666,9 @@ async def redirect_root_to_map():
 @app.get("/landing", response_class=HTMLResponse)
 async def landing_page(request: Request):
     """Landing page summarizing all application features"""
-    stats = get_cadastral_stats()
+    # Offloaded like the /map route (see comment there) — a cold cache
+    # triggers a full local-directory scan that must not block the event loop.
+    stats = await asyncio.to_thread(get_cadastral_stats)
     locale = detect_locale(request)
     return templates.TemplateResponse(request, "landing.html", {
         "_": make_gettext(locale),
@@ -600,8 +686,8 @@ async def landing_page(request: Request):
 async def show_cadastral_data(request: Request):
     """Display the Italian cadastral data structure in a readable HTML format"""
     try:
-        # Load cadastral data using utility
-        cadastral = load_cadastral_structure()
+        # Load cadastral data using utility (offloaded — see /map route comment)
+        cadastral = await asyncio.to_thread(load_cadastral_structure)
         if not cadastral:
             raise HTTPException(
                 status_code=404,
@@ -671,9 +757,20 @@ async def show_cadastral_data(request: Request):
 
         # Render template with cadastral data and flags
         locale = detect_locale(request)
+        gt = make_gettext(locale)
         return templates.TemplateResponse(request, "cadastral_data.html", {
-            "_": make_gettext(locale),
+            "_": gt,
             "locale": locale,
+            # cadastral_data.js rebuilds the stats line client-side after
+            # filtering — window._i18n lets it use the same translations as
+            # the server-rendered version instead of hardcoded English.
+            "i18n_strings": {
+                "Statistics:": gt("Statistics:"),
+                "Regions": gt("Regions"),
+                "Provinces": gt("Provinces"),
+                "Municipalities": gt("Municipalities"),
+                "Files": gt("Files"),
+            },
             "cadastral_data": cadastral_data,
             "municipality_flags": municipality_flags,
             "total_regions": stats['total_regions'],

@@ -7,12 +7,14 @@ Mounted under ``/api/v1/enrichment``. Every endpoint degrades gracefully when
 the aecs4u-stats data stores are absent — check ``GET /enrichment/status``.
 """
 
-from typing import List, Optional
+import asyncio
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from land_registry import stats_service
+from land_registry.models import EnrichmentDatasetStatus
 
 enrichment_router = APIRouter()
 
@@ -27,7 +29,7 @@ class OmiEstimateRequest(BaseModel):
     area_sqm: float = Field(..., gt=0, le=10_000_000)
 
 
-@enrichment_router.get("/status")
+@enrichment_router.get("/status", response_model=Dict[str, EnrichmentDatasetStatus])
 async def get_enrichment_status():
     """Report which aecs4u-stats datasets are available on this host."""
     return stats_service.enrichment_status()
@@ -59,12 +61,31 @@ async def get_pois(
     lat: float = Query(..., ge=-90, le=90),
     lng: float = Query(..., ge=-180, le=180),
     radius_km: float = Query(1.0, gt=0, le=25),
-    categories: Optional[List[str]] = Query(
-        None, description="POI categories (default: all); see /enrichment/status"
-    ),
+    categories: Optional[List[str]] = Query(None, description="POI categories (default: all); see /enrichment/status"),
 ):
     """OSM points of interest around a point, grouped by category, nearest-first."""
-    return stats_service.get_pois_near(lat, lng, radius_km=radius_km, categories=categories)
+    try:
+        # Outer backstop on top of stats_service's own internal Postgres
+        # timeout: on this host a blocking psycopg2 call has been observed to
+        # hang in a way that even a thread-level join(timeout) doesn't escape
+        # (consistent with the call never releasing the GIL) — asyncio.wait_for
+        # bounds the *response*, at the cost of leaking the stuck worker
+        # thread, rather than the request hanging indefinitely.
+        return await asyncio.wait_for(
+            asyncio.to_thread(stats_service.get_pois_near, lat, lng, radius_km=radius_km, categories=categories),
+            timeout=8,
+        )
+    except asyncio.TimeoutError:
+        grouped = await asyncio.to_thread(
+            stats_service.pois_within_radius, lat, lng, radius_km=radius_km, categories=categories
+        )
+        return {
+            "center": {"lat": lat, "lng": lng},
+            "radius_km": radius_km,
+            "total": sum(len(v) for v in grouped.values()),
+            "categories": grouped,
+            "source": "OpenStreetMap via aecs4u-stats",
+        }
 
 
 @enrichment_router.get("/omi/quotes")
@@ -199,7 +220,12 @@ async def get_parcels_in_bbox(
     if not stats_service.cadastral_store_available():
         raise HTTPException(status_code=503, detail=_CADASTRAL_BUILD_HINT)
     return stats_service.get_parcels_in_bbox(
-        min_lng, min_lat, max_lng, max_lat, limit=limit, include_geometry=include_geometry,
+        min_lng,
+        min_lat,
+        max_lng,
+        max_lat,
+        limit=limit,
+        include_geometry=include_geometry,
     )
 
 
@@ -217,8 +243,12 @@ async def get_parcels(
     if not stats_service.cadastral_store_available():
         raise HTTPException(status_code=503, detail=_CADASTRAL_BUILD_HINT)
     return stats_service.get_parcels(
-        comune_code, foglio=foglio, particella=particella,
-        limit=limit, offset=offset, include_geometry=include_geometry,
+        comune_code,
+        foglio=foglio,
+        particella=particella,
+        limit=limit,
+        offset=offset,
+        include_geometry=include_geometry,
     )
 
 
@@ -241,6 +271,27 @@ async def get_parcel_by_reference(national_reference: str):
     return result
 
 
+@enrichment_router.get("/parcel/details/{national_reference}")
+async def get_parcel_details(
+    national_reference: str,
+    refresh: bool = Query(False, description="Rebuild the parcel read-model row from source stores"),
+):
+    """Read the parcel-keyed, materialized enrichment profile.
+
+    The first request builds the row from the cadastral, ISTAT census, and OMI
+    stores. Later requests use one indexed SQLite lookup, keeping the parcel
+    details panel independent of the latency of the source databases.
+    """
+    result = await asyncio.to_thread(
+        stats_service.get_parcel_enrichment,
+        national_reference,
+        refresh,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"No enrichment data found for '{national_reference}'")
+    return result
+
+
 @enrichment_router.get("/parcel/at-point")
 async def get_parcel_at_point(
     lat: float = Query(..., ge=-90, le=90),
@@ -256,8 +307,7 @@ async def get_parcel_at_point(
 
 
 _CENSUS_BUILD_HINT = (
-    "Census-sections store not built. Run: "
-    "python -m aecs4u_stats.census.scripts.import_census_sections --all"
+    "Census-sections store not built. Run: python -m aecs4u_stats.census.scripts.import_census_sections --all"
 )
 
 
