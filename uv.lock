@@ -15,8 +15,8 @@ resolution-markers = [
 
 [[package]]
 name = "aecs4u-auth"
-version = "1.22.0"
-source = { git = "https://github.com/aecs4u/aecs4u-auth.git?branch=main#4cf371e0a1f1df29ab6a65332f1310188d2195ca" }
+version = "1.24.0"
+source = { git = "https://github.com/aecs4u/aecs4u-auth.git?branch=main#a67032cf009b38f691c7303d63d23090e6ba8c3d" }
 dependencies = [
     { name = "bcrypt" },
     { name = "clerk-backend-api" },
@@ -32,6 +32,7 @@ dependencies = [
     { name = "pyjwt" },
     { name = "python-dotenv" },
     { name = "python-jose", extra = ["cryptography"] },
+    { name = "python-multipart" },
     { name = "sqlalchemy" },
     { name = "sqlmodel" },
     { name = "starlette" },
@@ -41,7 +42,7 @@ dependencies = [
 
 [[package]]
 name = "aecs4u-domain"
-version = "0.6.2"
+version = "0.10.0"
 source = { git = "https://github.com/aecs4u/aecs4u-domain.git?branch=main#6228bfa685d4f28ede358204ec2b7033eebea493" }
 dependencies = [
     { name = "pydantic" },
