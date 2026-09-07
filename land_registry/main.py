@@ -8,6 +8,7 @@ from starlette.middleware.gzip import GZipMiddleware
 import json
 import logging
 import os
+from pathlib import Path
 import duckdb
 import pandas as pd
 import panel as pn
@@ -33,7 +34,16 @@ from land_registry.models import HealthResponse, TableDataResponse, ServiceUnava
 from land_registry.core.clerk import _AUTH_AVAILABLE
 
 if _AUTH_AVAILABLE:
-    from aecs4u_auth import setup_auth, AuthConfig, get_auth_config, create_clerk_router
+    from aecs4u_auth import (
+        setup_auth,
+        AuthConfig,
+        get_auth_config,
+        create_clerk_router,
+        create_local_auth_router,
+        configure_user_integration,
+        set_password_verify_callback,
+    )
+    from land_registry import local_auth
 else:
     from types import SimpleNamespace
 
@@ -222,6 +232,18 @@ async def lifespan(app: FastAPI):
             # writes will fail rather than silently falling back to SQLite.
             logger.warning(f"PostgreSQL-backed application writes may be unavailable: {e}")
 
+    # Local email/password auth (AUTH_MODE=clerk_and_local) shares the same
+    # Neon database as the app; skip it entirely when no Postgres is
+    # configured (local mode then has no accounts to sign in with).
+    if _AUTH_AVAILABLE and db_settings.use_neon and db_settings.database_url:
+        try:
+            local_auth.init_engine(local_auth.to_asyncpg_url(db_settings.database_url))
+            await local_auth.ensure_user_table()
+            logger.info("Local auth user table ready")
+        except Exception as e:
+            logger.error("Local auth database initialization failed", exc_info=True)
+            logger.warning(f"Local (non-Clerk) sign-in will be unavailable: {e}")
+
     # Check if Panel server is already running (e.g., from a previous hot-reload)
     if _is_port_in_use(PANEL_HOST, PANEL_PORT):
         logger.info(f"Panel port {PANEL_PORT} already in use - checking if it's accessible...")
@@ -304,6 +326,13 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Error closing PostgreSQL application pool: {e}", exc_info=True)
 
+    if _AUTH_AVAILABLE:
+        try:
+            await local_auth.dispose_engine()
+            logger.info("Local auth database connection closed")
+        except Exception as e:
+            logger.error(f"Error closing local auth database connection: {e}", exc_info=True)
+
     try:
         from land_registry.dependencies import get_datashader_registry
 
@@ -375,15 +404,23 @@ if _AUTH_AVAILABLE:
     # and every one of those pages renders blank. Extend both directives for
     # just that origin rather than loosening the policy generally.
     _panel_origin = f"127.0.0.1:{PANEL_PORT}"
+    _auth_config_kwargs = dict(
+        site_id="land-registry",
+        site_name=app_settings.app_name,
+        # Override default redirect URLs for this app
+        clerk_after_sign_in_url="/map",
+        clerk_after_sign_up_url="/map",
+    )
+    # Local (non-Clerk) accounts live in aecs4u-auth's shared users table in
+    # this app's own Neon database — see land_registry/local_auth.py. Without
+    # Postgres configured, aecs4u-auth falls back to its packaged SQLite
+    # default, which is fine for pure-Clerk local/offline runs.
+    _auth_db_url = local_auth.to_asyncpg_url(db_settings.database_url)
+    if _auth_db_url:
+        _auth_config_kwargs["database_url"] = _auth_db_url
     setup_auth(
         app,
-        config=AuthConfig(
-            site_id="land-registry",
-            site_name=app_settings.app_name,
-            # Override default redirect URLs for this app
-            clerk_after_sign_in_url="/map",
-            clerk_after_sign_up_url="/map",
-        ),
+        config=AuthConfig(**_auth_config_kwargs),
         include_routes=True,
         mount_static=True,
         setup_exception_handlers=True,
@@ -392,12 +429,31 @@ if _AUTH_AVAILABLE:
             "script-src": [f"http://{_panel_origin}"],
         },
     )
+    # AUTH_MODE=clerk_and_local: accept either a Clerk session or a local
+    # password (get_current_user tries Clerk first, then falls back to the
+    # local session/JWT only when these callbacks are registered).
+    configure_user_integration(
+        lookup_by_clerk_id=local_auth.lookup_by_clerk_id,
+        create_from_clerk=local_auth.create_from_clerk,
+        lookup_by_username=local_auth.lookup_by_username,
+        lookup_by_id=local_auth.lookup_by_id,
+    )
+    set_password_verify_callback(local_auth.verify_local_password)
 else:
     logger.warning("aecs4u-auth not installed - running without authentication")
 
 # Setup theme using aecs4u-theme — reads AECS4U_SITE_NAME, THEME_PRIMARY_COLOR etc. from env
 if _THEME_AVAILABLE:
-    setup_theme_from_env(app, static_url_path="/static/aecs4u-theme")
+    # templates_dir points at a directory containing ONLY the theme templates we
+    # deliberately override, never at land_registry/templates itself: the theme
+    # ships its own base.html and landing.html, and putting our templates first
+    # in the search path would silently shadow them for theme-rendered pages.
+    _theme_overrides_dir = Path(__file__).parent / "templates" / "theme_overrides"
+    setup_theme_from_env(
+        app,
+        static_url_path="/static/aecs4u-theme",
+        templates_dir=_theme_overrides_dir,
+    )
 else:
     logger.warning("aecs4u-theme not installed - running without theme package")
 
@@ -413,6 +469,11 @@ app.include_router(auth_pages_router, prefix="/auth", tags=["auth"])
 if _AUTH_AVAILABLE:
     _clerk_pair = create_clerk_router()
     app.include_router(_clerk_pair.api_router, tags=["auth"])
+
+    # POST /auth/login + /auth/logout for local (non-Clerk) accounts — the
+    # theme's login form falls back to these when Clerk isn't shown, and
+    # they back AUTH_MODE=clerk_and_local's local-session path.
+    app.include_router(create_local_auth_router(prefix="/auth"), tags=["auth"])
 
 # Include the API router with /api/v1 prefix
 app.include_router(api_router, prefix="/api/v1")
