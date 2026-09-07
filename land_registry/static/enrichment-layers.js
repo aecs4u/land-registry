@@ -565,7 +565,17 @@
             if (data.comune) rows.push(`<b>Comune:</b> ${_escapeHtml(data.comune)}`);
             if (data.provincia) rows.push(`<b>Provincia:</b> ${_escapeHtml(data.provincia)}`);
             if (data.regione) rows.push(`<b>Regione:</b> ${_escapeHtml(data.regione)}`);
-            if (rows.length) L.popup().setLatLng([lat, lng]).setContent(rows.join('<br>')).openOn(map);
+            if (rows.length) {
+                // The click that opens this popup also opens the docked-right
+                // "Dettagli Particella" panel; without accounting for it,
+                // Leaflet's own auto-pan only clears the viewport edge, so a
+                // popup near the right side rendered partly underneath the
+                // panel that just appeared over it.
+                const panelEl = document.getElementById('parcelInfoPanel');
+                const panelWidth = (panelEl && panelEl.offsetWidth > 0) ? panelEl.offsetWidth : 0;
+                L.popup({ autoPanPaddingBottomRight: L.point(panelWidth + 20, 20) })
+                    .setLatLng([lat, lng]).setContent(rows.join('<br>')).openOn(map);
+            }
         } catch (error) {
             console.warn('[EnrichmentLayers] Cadastral identify failed', error);
         }
@@ -585,6 +595,30 @@
             '/api/v1/tiles/cadastral-boundaries/{z}/{x}/{y}.png?layer=ple',
             { pane: 'cadastralBoundaryPane', minZoom: 16, maxZoom: 22, maxNativeZoom: 19, tileSize: 512 }
         );
+        // The raster fallback hits the same backend as the vector tiles it's
+        // falling back from, so when that backend is simply unavailable
+        // (e.g. PostGIS not configured in this environment), it fails too —
+        // and without a guard here, Leaflet just kept requesting the full
+        // tile grid on every pan/zoom (28+ failed requests per load).
+        // One failure means the service is down for this session; stop
+        // asking rather than retry per-tile.
+        let rasterTilesFailed = false;
+        const giveUpOnRasterTiles = () => {
+            if (rasterTilesFailed) return;
+            rasterTilesFailed = true;
+            [cadastralMapLayer, cadastralPleLayer].forEach(layer => {
+                if (layer && map.hasLayer(layer)) map.removeLayer(layer);
+            });
+            cadastralBoundaryActive = false;
+            const btn = document.getElementById('toggleEnrichmentCadastral');
+            if (btn) btn.classList.remove('active');
+            if (typeof showToastNotification === 'function') {
+                const t = window.t || (key => key);
+                showToastNotification(t('Cadastral boundaries are unavailable right now'), 'warning');
+            }
+        };
+        cadastralMapLayer.on('tileerror', giveUpOnRasterTiles);
+        cadastralPleLayer.on('tileerror', giveUpOnRasterTiles);
         if (cadastralBoundaryActive) {
             cadastralMapLayer.addTo(map);
             cadastralPleLayer.addTo(map);

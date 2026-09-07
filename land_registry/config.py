@@ -7,6 +7,14 @@ from pydantic_settings import BaseSettings
 from typing import Optional, List
 import os
 
+from dotenv import load_dotenv
+
+# pydantic-settings' env_file= only feeds its own Settings subclasses — plain
+# os.getenv() calls elsewhere in the app (DSN resolution in stats_service.py,
+# datashader_service.py, etc.) never see .env values without this. A shell
+# export always wins (override=False), so this only fills gaps.
+load_dotenv(override=False)
+
 
 class AppSettings(BaseSettings):
     """Main application settings"""

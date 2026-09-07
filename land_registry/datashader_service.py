@@ -45,6 +45,32 @@ from shapely.geometry import Point
 log = logging.getLogger(__name__)
 
 
+def _call_with_hard_timeout(func, timeout, *args, **kwargs):
+    """Run ``func`` in a worker thread with a wall-clock timeout a blocking C
+    call can't defeat by ignoring its own timeout parameter — observed here
+    with psycopg2 connection setup hanging past connect_timeout on this host.
+    Raises ``TimeoutError`` and abandons the (daemon) worker thread if ``func``
+    hasn't returned in time.
+    """
+    box: list = []
+
+    def _target():
+        try:
+            box.append(("ok", func(*args, **kwargs)))
+        except Exception as exc:  # noqa: BLE001 - re-raised on the caller's thread
+            box.append(("error", exc))
+
+    thread = threading.Thread(target=_target, daemon=True)
+    thread.start()
+    thread.join(timeout)
+    if thread.is_alive():
+        raise TimeoutError(f"{getattr(func, '__qualname__', func)} did not return within {timeout}s")
+    status, payload = box[0]
+    if status == "error":
+        raise payload
+    return payload
+
+
 class PostgresCadastralBoundarySource:
     """Small read-only adapter over the canonical aecs4u-stats PostGIS DB."""
 
@@ -65,6 +91,18 @@ class PostgresCadastralBoundarySource:
 
     @classmethod
     def from_environment(cls):
+        # Deliberately opt-in, DSN presence alone is NOT enough: a blocking
+        # psycopg2 call has been reproduced on this host freezing the *entire*
+        # process (even /health stops responding), immune to
+        # connect_timeout/statement_timeout, thread-join timeouts, and
+        # asyncio.wait_for alike (consistent with the call never releasing
+        # the GIL). Treating a configured DSN as authoritative silently
+        # reintroduces that freeze the moment AECS4U_STATS_POSTGRES_DSN is
+        # set (e.g. via .env) — require explicit AECS4U_STATS_POSTGRES_ENABLE=1
+        # until that's diagnosed/fixed, or Postgres access is moved behind
+        # real process isolation (a subprocess that can be SIGKILLed).
+        if os.getenv("AECS4U_STATS_POSTGRES_ENABLE", "").strip().lower() not in ("1", "true", "yes", "on"):
+            return None
         dsn = (
             os.getenv("AECS4U_STATS_POSTGRES_DSN")
             or os.getenv("AECS4U_STATS_DATABASE_URL")
@@ -92,8 +130,8 @@ class PostgresCadastralBoundarySource:
                 if self._pool is None:
                     import psycopg2.pool
 
-                    self._pool = psycopg2.pool.ThreadedConnectionPool(
-                        1, self.max_connections, self.dsn
+                    self._pool = _call_with_hard_timeout(
+                        psycopg2.pool.ThreadedConnectionPool, 5, 1, self.max_connections, self.dsn
                     )
         return self._pool
 
@@ -102,6 +140,16 @@ class PostgresCadastralBoundarySource:
         pool = self._get_pool()
         connection = pool.getconn()
         try:
+            with connection.cursor() as cursor:
+                # spatial.cadastral_sheet/cadastral_parcel's GiST-indexed
+                # queries trigger the same PostGIS JIT bitcode-version crash
+                # seen on facts.poi — disable JIT per-connection, and bound
+                # query time so a crashing/slow backend degrades to the
+                # FlatGeobuf fallback quickly instead of hanging the caller
+                # (these tables are also empty on this host as of 2026-09,
+                # so failing fast costs nothing).
+                cursor.execute("SET jit = off")
+                cursor.execute("SET statement_timeout = 5000")
             yield connection
         except Exception:
             connection.rollback()

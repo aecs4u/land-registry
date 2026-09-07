@@ -138,11 +138,27 @@ const ProgressiveLoader = {
             case 'layer':
                 console.log(`[ProgressiveLoader] Loaded ${event.layer_name} (${event.feature_count} features)`);
                 this.loadedLayers.push(event.layer_name);
+                if (event.total_files && event.completed_files) {
+                    callbacks.onProgress(
+                        event.completed_files - 1,
+                        event.total_files,
+                        event.layer_name,
+                        'loaded'
+                    );
+                }
                 callbacks.onLayer(event.layer_name, event.geojson, event.feature_count, event.file_index, event.layer_type || 'map');
                 break;
 
             case 'error':
                 console.warn(`[ProgressiveLoader] Error loading ${event.file_path}: ${event.error}`);
+                if (event.total_files && event.completed_files) {
+                    callbacks.onProgress(
+                        event.completed_files - 1,
+                        event.total_files,
+                        event.file_path,
+                        'error'
+                    );
+                }
                 callbacks.onError(event.file_index, event.file_path, event.error);
                 break;
 
@@ -187,21 +203,22 @@ const ProgressUI = {
     show(totalFiles) {
         this.hide(); // Remove any existing overlay
 
+        const t = window.t || (key => key);
         const overlay = document.createElement('div');
         overlay.id = 'progressive-load-overlay';
         overlay.innerHTML = `
             <div class="progressive-load-panel">
                 <div class="progressive-load-header">
-                    <span class="progressive-load-title">Loading Cadastral Data</span>
+                    <span class="progressive-load-title">${t('Loading Cadastral Data')}</span>
                     <button class="progressive-load-cancel" title="Cancel">&#x2715;</button>
                 </div>
                 <div class="progressive-load-bar-container">
                     <div class="progressive-load-bar" style="width: 0%"></div>
                 </div>
-                <div class="progressive-load-status">Preparing...</div>
+                <div class="progressive-load-status">${t('Preparing...')}</div>
                 <div class="progressive-load-details">
-                    <span class="progressive-load-files">0 / ${totalFiles} files</span>
-                    <span class="progressive-load-features">0 features</span>
+                    <span class="progressive-load-files">${t('{n} / {m} files').replace('{n}', 0).replace('{m}', totalFiles)}</span>
+                    <span class="progressive-load-features">${t('0 features')}</span>
                 </div>
                 <div class="progressive-load-log"></div>
             </div>
@@ -227,18 +244,20 @@ const ProgressUI = {
     updateProgress(current, total, fileName, status) {
         if (!this._overlay) return;
 
+        const t = window.t || (key => key);
         if (total) {
-            const pct = Math.round(((current + 1) / total) * 100);
+            const currentCount = status === 'starting' ? 0 : current + 1;
+            const pct = Math.round((currentCount / total) * 100);
             const bar = this._overlay.querySelector('.progressive-load-bar');
             if (bar) bar.style.width = `${pct}%`;
 
             const files = this._overlay.querySelector('.progressive-load-files');
-            if (files) files.textContent = `${current + 1} / ${total} files`;
+            if (files) files.textContent = t('{n} / {m} files').replace('{n}', currentCount).replace('{m}', total);
         }
 
         if (fileName) {
             const statusEl = this._overlay.querySelector('.progressive-load-status');
-            if (statusEl) statusEl.textContent = `Loading: ${fileName}`;
+            if (statusEl) statusEl.textContent = t('Loading: {file}').replace('{file}', fileName);
         }
     },
 

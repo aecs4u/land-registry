@@ -25,9 +25,9 @@
       <div class="d-flex align-items-center gap-2">
         <!-- Language selector -->
         <div class="nav-lang-selector">
-          <select id="langSelect" onchange="changeLang(this.value)" title="{{ _('Language') }}">
-            <option value="it" {% if request.state.locale == 'it' %}selected{% endif %}>🇮🇹 IT</option>
-            <option value="en" {% if request.state.locale == 'en' %}selected{% endif %}>🇬🇧 EN</option>
+          <select id="langSelect" onchange="changeLang(this.value)" title="{{ _('Language') }}" autocomplete="off">
+            <option value="it" {% if request.state.lr_locale == 'it' %}selected{% endif %}>🇮🇹 IT</option>
+            <option value="en" {% if request.state.lr_locale == 'en' %}selected{% endif %}>🇬🇧 EN</option>
           </select>
         </div>
 
@@ -246,14 +246,14 @@
 
           <div class="cadastral-step">
             <label for="cadastralRegions">{{ _('Select Region(s):') }}</label>
-            <select id="cadastralRegions" multiple size="4">
+            <select id="cadastralRegions" multiple size="6">
               <option value="" disabled>{{ _('Loading regions...') }}</option>
             </select>
           </div>
 
           <div class="cadastral-step">
             <label for="cadastralProvinces">{{ _('Select Province(s):') }}</label>
-            <select id="cadastralProvinces" multiple size="3" disabled>
+            <select id="cadastralProvinces" multiple size="6" disabled>
               <option value="" disabled>{{ _('Select a region first') }}</option>
             </select>
           </div>
@@ -265,7 +265,7 @@
             <select
               id="cadastralMunicipalities"
               multiple
-              size="3"
+              size="6"
               disabled
             >
               <option value="" disabled>{{ _('Select a province first') }}</option>
@@ -401,7 +401,7 @@
         <div class="tool-panel" id="panelExplore">
           <div class="tool-panel-header">
             <span>{{ _('Explore') }}</span>
-            <button class="tool-panel-close" onclick="closeToolPanel('panelExplore')">&times;</button>
+            <button class="tool-panel-close" onclick="closeToolPanel('panelExplore')" aria-label="{{ _('Close') }}">&times;</button>
           </div>
           <div class="tool-panel-body">
             <div class="tool-panel-section">
@@ -487,7 +487,7 @@
         <div class="tool-panel" id="panelAnalyse">
           <div class="tool-panel-header">
             <span>{{ _('Analyse') }}</span>
-            <button class="tool-panel-close" onclick="closeToolPanel('panelAnalyse')">&times;</button>
+            <button class="tool-panel-close" onclick="closeToolPanel('panelAnalyse')" aria-label="{{ _('Close') }}">&times;</button>
           </div>
           <div class="tool-panel-body">
             <div class="tool-panel-section">
@@ -552,7 +552,7 @@
         <div class="tool-panel" id="panelZones">
           <div class="tool-panel-header">
             <span>{{ _('Zones') }}</span>
-            <button class="tool-panel-close" onclick="closeToolPanel('panelZones')">&times;</button>
+            <button class="tool-panel-close" onclick="closeToolPanel('panelZones')" aria-label="{{ _('Close') }}">&times;</button>
           </div>
           <div class="tool-panel-body">
             <div class="tool-panel-section">
@@ -608,7 +608,7 @@
         <div class="tool-panel" id="panelActions">
           <div class="tool-panel-header">
             <span>{{ _('Actions') }}</span>
-            <button class="tool-panel-close" onclick="closeToolPanel('panelActions')">&times;</button>
+            <button class="tool-panel-close" onclick="closeToolPanel('panelActions')" aria-label="{{ _('Close') }}">&times;</button>
           </div>
           <div class="tool-panel-body">
             <div class="tool-panel-section">
@@ -829,7 +829,7 @@
   <div id="parcelInfoPanel" class="parcel-info-panel">
     <div class="parcel-info-header-bar">
       <span>{{ _('Parcel Details') }}</span>
-      <button onclick="hideParcelInfo()" class="close-panel-btn" title="Close panel">&times;</button>
+      <button onclick="hideParcelInfo()" class="close-panel-btn" title="{{ _('Close panel') }}" aria-label="{{ _('Close panel') }}">&times;</button>
     </div>
     <div id="parcelInfoContent" class="parcel-info-body">
       <!-- Content populated by JavaScript -->

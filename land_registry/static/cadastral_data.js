@@ -8,19 +8,42 @@ let originalStats = {
     files: 0
 };
 
+// Regions render collapsed by default (see cadastral_data.css) since opening
+// all ~7,600 municipalities at once produces an unusably tall, slow page.
+function toggleRegion(header) {
+    const region = header.closest('.region');
+    if (!region) return;
+    const expanded = region.classList.toggle('expanded');
+    header.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+}
+
 // Initialize when page loads
 document.addEventListener('DOMContentLoaded', function() {
-    // Store original statistics
+    // Native keyboard activation (Enter/Space) for the region header's
+    // role="button", to match what a real <button> would give for free.
+    document.querySelectorAll('.region > h2[role="button"]').forEach(header => {
+        header.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                toggleRegion(header);
+            }
+        });
+    });
+
+    // Store original statistics. Matched positionally (the four counts
+    // always appear in Regions/Provinces/Municipalities/Files order) rather
+    // than by the English words themselves, since this text is translated
+    // and the words won't match in other locales.
     const statsElement = document.getElementById('statsDisplay');
     if (statsElement) {
         const statsText = statsElement.textContent;
-        const match = statsText.match(/(\d+)\s+Regions.*?(\d+)\s+Provinces.*?(\d+)\s+Municipalities.*?(\d+)\s+Files/);
-        if (match) {
+        const numbers = statsText.match(/\d+/g);
+        if (numbers && numbers.length >= 4) {
             originalStats = {
-                regions: parseInt(match[1]),
-                provinces: parseInt(match[2]),
-                municipalities: parseInt(match[3]),
-                files: parseInt(match[4])
+                regions: parseInt(numbers[0]),
+                provinces: parseInt(numbers[1]),
+                municipalities: parseInt(numbers[2]),
+                files: parseInt(numbers[3])
             };
         }
     }
@@ -47,6 +70,12 @@ function applyFilters() {
     const noResultsMsg = document.getElementById('noResultsMessage');
     const cadastralContainer = document.getElementById('cadastralDataContainer');
     const resultsInfo = document.getElementById('filterResultsInfo');
+
+    // Regions are collapsed by default (see toggleRegion). When a filter is
+    // actually narrowing the results, auto-expand the regions it matches so
+    // the filtered content is visible without an extra click; leave manual
+    // expand/collapse state alone when there's no active filter.
+    const filtersActive = !!(regionFilter || provinceFilter || municipalityFilter);
 
     let visibleRegions = 0;
     let visibleProvinces = 0;
@@ -121,6 +150,11 @@ function applyFilters() {
             regionHasVisibleContent = true;
             visibleRegions++;
             hasAnyResults = true;
+            if (filtersActive) {
+                region.classList.add('expanded');
+                const header = region.querySelector(':scope > h2');
+                if (header) header.setAttribute('aria-expanded', 'true');
+            }
         } else {
             region.style.display = 'none';
         }
@@ -158,7 +192,12 @@ function clearFilters() {
     const provinces = document.querySelectorAll('.province');
     const municipalities = document.querySelectorAll('.municipality');
 
-    regions.forEach(region => region.style.display = 'block');
+    regions.forEach(region => {
+        region.style.display = 'block';
+        region.classList.remove('expanded');
+        const header = region.querySelector(':scope > h2');
+        if (header) header.setAttribute('aria-expanded', 'false');
+    });
     provinces.forEach(province => province.style.display = 'block');
     municipalities.forEach(municipality => municipality.style.display = 'block');
 
@@ -174,7 +213,8 @@ function clearFilters() {
 function updateStats(regions, provinces, municipalities, files) {
     const statsElement = document.getElementById('statsDisplay');
     if (statsElement) {
-        statsElement.textContent = `📊 Statistics: ${regions} Regions | ${provinces} Provinces | ${municipalities} Municipalities | ${files} Files`;
+        const t = window.t || (key => key);
+        statsElement.textContent = `📊 ${t('Statistics:')} ${regions} ${t('Regions')} | ${provinces} ${t('Provinces')} | ${municipalities} ${t('Municipalities')} | ${files} ${t('Files')}`;
     }
 }
 

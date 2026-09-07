@@ -25,6 +25,46 @@ body {
   line-height: 1.6;
 }
 
+/* Everything on this page reads its color from the tokens above, so toggling
+   dark mode on /map and coming back here previously left it stuck in light
+   mode (the page had no dark-mode styling to switch into, and never even
+   checked the setting on load — see theme-sync.js). Re-pointing the same
+   tokens covers nearly the whole page; only the few hardcoded colors below
+   need their own override. */
+body.dark-mode {
+  --clr-bg: #0f172a;
+  --clr-surface: #1e293b;
+  --clr-text: #e2e8f0;
+  --clr-text-muted: #94a3b8;
+  --clr-border: #334155;
+  --clr-accent-light: rgba(59, 130, 246, 0.18);
+}
+
+/* ── Top nav ────────────────────────────────── */
+.landing-nav {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: .75rem 1.5rem;
+  background: var(--clr-surface);
+  border-bottom: 1px solid var(--clr-border);
+}
+.landing-nav .brand {
+  display: inline-flex; align-items: center; gap: .5rem;
+  font-weight: 700; color: var(--clr-text); text-decoration: none;
+  font-size: 1rem;
+}
+.landing-nav .nav-actions { display: flex; align-items: center; gap: .5rem; }
+.landing-nav select {
+  background: var(--clr-surface); color: var(--clr-text);
+  border: 1px solid var(--clr-border); border-radius: 6px;
+  padding: .3rem .5rem; font-size: .85rem;
+}
+.landing-nav button {
+  background: none; border: 1px solid var(--clr-border); border-radius: 6px;
+  color: var(--clr-text); width: 2rem; height: 2rem; cursor: pointer;
+  font-size: .95rem; line-height: 1;
+}
+.landing-nav button:hover { background: var(--clr-accent-light); }
+
 /* ── Hero ────────────────────────────────────── */
 .hero {
   background: linear-gradient(135deg, var(--clr-primary) 0%, #2563eb 100%);
@@ -74,7 +114,7 @@ section + section { border-top: 1px solid var(--clr-border); }
   font-size: 1.375rem; font-weight: 700; margin-bottom: 1.5rem;
   display: flex; align-items: center; gap: .5rem;
 }
-.section-title .icon { font-size: 1.5rem; }
+.section-title .icon { font-size: 1.25rem; color: var(--clr-accent); width: 1.5rem; text-align: center; }
 
 /* ── Feature grid ───────────────────────────── */
 .feature-grid {
@@ -113,6 +153,9 @@ section + section { border-top: 1px solid var(--clr-border); }
 .method-post   { background: var(--clr-accent-light); color: var(--clr-accent); }
 .method-delete { background: #fee2e2; color: var(--clr-red); }
 .method-patch  { background: #fef3c7; color: var(--clr-amber); }
+body.dark-mode .method-get    { background: rgba(22, 163, 74, 0.2); }
+body.dark-mode .method-delete { background: rgba(220, 38, 38, 0.2); }
+body.dark-mode .method-patch  { background: rgba(217, 119, 6, 0.2); }
 .path { font-family: 'SF Mono', 'Fira Code', monospace; color: var(--clr-text); }
 .desc { color: var(--clr-text-muted); }
 
@@ -147,6 +190,29 @@ section + section { border-top: 1px solid var(--clr-border); }
   padding: .375rem .75rem;
   border-radius: 999px;
 }
+body.dark-mode .tech-tag { color: #93c5fd; }
+
+/* ── API reference (collapsed developer section) ─ */
+.api-reference-details {
+  max-width: 960px;
+  margin: 0 auto 2.5rem;
+  padding: 0 1.5rem;
+}
+.api-reference-details summary {
+  cursor: pointer;
+  font-size: .9375rem; font-weight: 600;
+  color: var(--clr-text-muted);
+  padding: .75rem 0;
+  border-top: 1px solid var(--clr-border);
+  list-style: none;
+}
+.api-reference-details summary::-webkit-details-marker { display: none; }
+.api-reference-details summary::before {
+  content: '▸'; display: inline-block; margin-right: .5rem;
+  transition: transform .15s;
+}
+.api-reference-details[open] summary::before { transform: rotate(90deg); }
+.api-reference-details[open] summary { color: var(--clr-text); }
 
 /* ── Footer ─────────────────────────────────── */
 footer {

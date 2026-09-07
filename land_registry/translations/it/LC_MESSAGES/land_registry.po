@@ -596,9 +596,6 @@ msgstr "Conteggi in tempo reale di regioni, province, comuni e file. Stato della
 msgid "Data Sources"
 msgstr "Fonti Dati"
 
-msgid "Adjacency Analysis"
-msgstr "Analisi Adiacenza"
-
 msgid "Select a polygon and find all adjacent parcels using spatial predicates: touches, intersects, or overlaps."
 msgstr "Seleziona un poligono e trova tutte le particelle adiacenti usando predicati spaziali: tocca, interseca o si sovrappone."
 
@@ -684,17 +681,11 @@ msgstr "Il file di struttura catastale non è stato trovato o caricato."
 msgid "Please ensure the cadastral data is properly configured."
 msgstr "Assicurati che i dati catastali siano correttamente configurati."
 
-msgid "0 polygons selected"
-msgstr "0 poligoni selezionati"
-
 msgid "1 polygon selected"
 msgstr "1 poligono selezionato"
 
 msgid "{n} polygons selected"
 msgstr "{n} poligoni selezionati"
-
-msgid "No polygons loaded"
-msgstr "Nessun poligono caricato"
 
 msgid "{n} polygons on map"
 msgstr "{n} poligoni sulla mappa"
@@ -746,3 +737,166 @@ msgstr "Seleziona comune…"
 
 msgid "Select a municipality before searching."
 msgstr "Seleziona un comune prima di cercare."
+
+# --- Design/quality audit fixes (H1 localization) ---
+msgid "Enrichment Layers"
+msgstr "Livelli di Arricchimento"
+
+msgid "Points of Interest"
+msgstr "Punti di Interesse"
+
+msgid "Active Fires"
+msgstr "Incendi Attivi"
+
+msgid "Civil Protection Alerts"
+msgstr "Allerte Protezione Civile"
+
+msgid "Cadastral Boundaries"
+msgstr "Confini Catastali"
+
+msgid "Drawn Shapes"
+msgstr "Forme Disegnate"
+
+msgid "Polygons"
+msgstr "Poligoni"
+
+msgid "Polylines"
+msgstr "Polilinee"
+
+msgid "Save"
+msgstr "Salva"
+
+msgid "Show regions"
+msgstr "Mostra regioni"
+
+msgid "Border color"
+msgstr "Colore bordo"
+
+msgid "Region Layer"
+msgstr "Livello Regioni"
+
+msgid "Parcel report"
+msgstr "Report Particella"
+
+msgid "Print / Save PDF"
+msgstr "Stampa / Salva PDF"
+
+msgid "Close"
+msgstr "Chiudi"
+
+msgid "region"
+msgstr "regione"
+
+msgid "regions"
+msgstr "regioni"
+
+msgid "province"
+msgstr "provincia"
+
+msgid "provinces"
+msgstr "province"
+
+msgid "municipality"
+msgstr "comune"
+
+msgid "municipalities"
+msgstr "comuni"
+
+msgid "file type"
+msgstr "tipo di file"
+
+msgid "file types"
+msgstr "tipi di file"
+
+msgid "Total files:"
+msgstr "File totali:"
+
+msgid "Files breakdown:"
+msgstr "Dettaglio file:"
+
+msgid "files"
+msgstr "file"
+
+msgid "No files found for this selection"
+msgstr "Nessun file trovato per questa selezione"
+
+msgid "Method:"
+msgstr "Metodo:"
+
+msgid "0 polygons found"
+msgstr "0 poligoni trovati"
+
+msgid "1 polygon found"
+msgstr "1 poligono trovato"
+
+msgid "{n} polygons found"
+msgstr "{n} poligoni trovati"
+
+msgid "{n} features in {m} layers loaded"
+msgstr "{n} elementi in {m} livelli caricati"
+
+msgid "{n} polygon layers loaded"
+msgstr "{n} livelli di poligoni caricati"
+
+msgid "Loading Cadastral Data"
+msgstr "Caricamento Dati Catastali"
+
+msgid "Loading: {file}"
+msgstr "Caricamento: {file}"
+
+msgid "{n} / {m} files"
+msgstr "{n} di {m} file"
+
+msgid "Filter by column..."
+msgstr "Filtra per colonna..."
+
+msgid "Sort by column..."
+msgstr "Ordina per colonna..."
+
+msgid "Showing {start} to {end} of {total} entries"
+msgstr "Da {start} a {end} di {total} risultati"
+
+msgid "Statistics:"
+msgstr "Statistiche:"
+
+msgid "Code:"
+msgstr "Codice:"
+
+msgid "Files"
+msgstr "File"
+
+msgid "Civil Protection hydrogeological and hydraulic alert zones for today"
+msgstr "Zone di allerta idrogeologica e idraulica della Protezione Civile per oggi"
+
+
+# --- Design/quality audit fixes, round 2 ---
+msgid "Sign in to save and view your zones"
+msgstr "Accedi per salvare e visualizzare le tue zone"
+
+msgid "{n} features loaded"
+msgstr "{n} elementi caricati"
+
+msgid "Cadastral boundaries are unavailable right now"
+msgstr "I confini catastali non sono disponibili al momento"
+
+msgid "Info copied to clipboard"
+msgstr "Informazioni copiate negli appunti"
+
+msgid "Link copied to clipboard"
+msgstr "Link copiato negli appunti"
+
+msgid "Close panel"
+msgstr "Chiudi pannello"
+
+msgid "For developers: full API reference"
+msgstr "Per sviluppatori: riferimento API completo"
+
+msgid "Map Table"
+msgstr "Tabella Mappa"
+
+msgid "Adjacency Table"
+msgstr "Tabella Adiacenza"
+
+msgid "Mapping Table"
+msgstr "Tabella Disegno"
+

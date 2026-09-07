@@ -4,6 +4,21 @@ body {
     margin: 20px;
     line-height: 1.6;
     color: #333;
+    /* Confirmed 10px horizontal overflow at 375px width (mobile audit
+       finding M6): several elements on this page combine an explicit
+       padding with a browser-default content-box, so their rendered width
+       adds up to more than their container. border-box makes padding count
+       toward the element's own width instead of stacking outside it, and
+       the safety-net overflow-x below hides whatever this doesn't catch —
+       this page has no wide tables that legitimately need horizontal
+       scroll, unlike /map. */
+    overflow-x: hidden;
+}
+
+#cadastralDataContainer, #cadastralDataContainer *,
+.stats, .stats *,
+.filter-section, .filter-section * {
+    box-sizing: border-box;
 }
 
 /* Filter Section */
@@ -55,6 +70,9 @@ body {
     display: flex;
     gap: 10px;
     align-items: end;
+    /* Keep the button pair at its natural width; .filter-row wraps it onto its
+       own line when space runs out, rather than squeezing the labels. */
+    flex-shrink: 0;
 }
 
 .filter-btn {
@@ -66,6 +84,9 @@ body {
     cursor: pointer;
     font-size: 14px;
     transition: background-color 0.2s;
+    /* Translated labels run longer than the English source ("Clear All" →
+       "Cancella Tutto") and were wrapping onto two lines inside the flex row. */
+    white-space: nowrap;
 }
 
 .filter-btn:hover {
@@ -159,10 +180,37 @@ body {
     padding: 15px 20px;
     font-size: 1.5em;
     border-bottom: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    user-select: none;
 }
 
+.region h2:hover {
+    background: linear-gradient(135deg, #0088d1, #006aa3);
+}
+
+.region-toggle-icon {
+    font-size: 0.7em;
+    transition: transform 0.15s ease;
+}
+
+.region.expanded .region-toggle-icon {
+    transform: rotate(90deg);
+}
+
+/* Collapsed by default: a region's provinces/municipalities render lazily
+   in the DOM but stay hidden until expanded, since rendering all ~7,600
+   municipalities open at once produces a page hundreds of thousands of
+   pixels tall (see cadastral-data audit finding C2). */
 .region-content {
     padding: 20px;
+    display: none;
+}
+
+.region.expanded .region-content {
+    display: block;
 }
 
 .province {

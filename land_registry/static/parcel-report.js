@@ -81,6 +81,126 @@
             </figure>`;
     }
 
+    /** Web Mercator lat/lng -> world pixel at a given zoom (Leaflet/Google tile scheme). */
+    function _project(lat, lng, zoom, tileSize) {
+        const sinLat = Math.sin(lat * Math.PI / 180);
+        const x = (lng + 180) / 360;
+        const y = 0.5 - Math.log((1 + sinLat) / (1 - sinLat)) / (4 * Math.PI);
+        const mapSize = tileSize * Math.pow(2, zoom);
+        return { x: x * mapSize, y: y * mapSize };
+    }
+
+    /** The base tile layer currently visible on the live Folium/Leaflet map, if any. */
+    function _activeBaseTileLayer() {
+        try {
+            const els = document.querySelectorAll('.leaflet-container');
+            for (const el of els) {
+                const map = window[el.id];
+                if (!map || typeof map.eachLayer !== 'function') continue;
+                let found = null;
+                map.eachLayer(layer => {
+                    if (!found && layer instanceof L.TileLayer && map.hasLayer(layer) && layer._url) found = layer;
+                });
+                if (found) return found;
+            }
+        } catch (error) { /* fall through to no map figure */ }
+        return null;
+    }
+
+    /**
+     * A static basemap "screenshot" of where the parcel actually is, built from
+     * the same tile provider the live map uses — no canvas/html2canvas, just an
+     * absolutely-positioned mosaic of <img> tiles (prints fine) plus an SVG
+     * outline on top. _geometrySvg() alone only draws an unscaled abstract
+     * shape with no location context, which is what "no map in the report" meant.
+     */
+    function _staticMapHtml(feature) {
+        const tileLayer = _activeBaseTileLayer();
+        if (!tileLayer) return '';
+
+        const points = _geometryRings(feature)
+            .filter(ring => Array.isArray(ring) && ring.length >= 3)
+            .flat()
+            .map(point => [Number(point[1]), Number(point[0])]) // [lng,lat] -> [lat,lng]
+            .filter(point => point.every(Number.isFinite));
+        if (!points.length) return '';
+
+        const lats = points.map(p => p[0]), lngs = points.map(p => p[1]);
+        const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+        const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
+        const centerLat = (minLat + maxLat) / 2, centerLng = (minLng + maxLng) / 2;
+
+        const tileSize = 256;
+        const width = 560, height = 320;
+        const maxZoom = Math.min(
+            tileLayer.options && tileLayer.options.maxNativeZoom || 19,
+            tileLayer.options && tileLayer.options.maxZoom || 19,
+            19
+        );
+
+        // Pick the deepest zoom where the parcel still fits comfortably inside
+        // the frame (with surrounding context), so a tiny urban lot and a large
+        // rural field both render at a sensible scale.
+        let zoom = maxZoom;
+        for (let candidate = maxZoom; candidate >= 10; candidate--) {
+            const p1 = _project(minLat, minLng, candidate, tileSize);
+            const p2 = _project(maxLat, maxLng, candidate, tileSize);
+            const spanX = Math.abs(p2.x - p1.x), spanY = Math.abs(p1.y - p2.y);
+            zoom = candidate;
+            if (spanX <= width * 0.5 && spanY <= height * 0.5) break;
+        }
+
+        const center = _project(centerLat, centerLng, zoom, tileSize);
+        const windowMinX = center.x - width / 2;
+        const windowMinY = center.y - height / 2;
+        const tileMinX = Math.floor(windowMinX / tileSize);
+        const tileMaxX = Math.floor((windowMinX + width) / tileSize);
+        const tileMinY = Math.floor(windowMinY / tileSize);
+        const tileMaxY = Math.floor((windowMinY + height) / tileSize);
+        const tileCount = 2 ** zoom;
+
+        const subdomains = (tileLayer.options && tileLayer.options.subdomains) || 'abc';
+        const subdomain = Array.isArray(subdomains) ? subdomains[0] : subdomains[0];
+
+        const tiles = [];
+        for (let tx = tileMinX; tx <= tileMaxX; tx++) {
+            for (let ty = tileMinY; ty <= tileMaxY; ty++) {
+                const wrappedX = ((tx % tileCount) + tileCount) % tileCount;
+                if (ty < 0 || ty >= tileCount) continue;
+                const url = tileLayer._url
+                    .replace('{s}', subdomain)
+                    .replace('{z}', zoom)
+                    .replace('{x}', wrappedX)
+                    .replace('{y}', ty);
+                const left = (tx * tileSize - windowMinX).toFixed(1);
+                const top = (ty * tileSize - windowMinY).toFixed(1);
+                tiles.push(
+                    `<img src="${_escapeHtml(url)}" style="position:absolute;left:${left}px;top:${top}px;width:${tileSize}px;height:${tileSize}px;" loading="eager" crossorigin="anonymous">`
+                );
+            }
+        }
+
+        const outlinePoints = _geometryRings(feature)
+            .filter(ring => Array.isArray(ring) && ring.length >= 3)
+            .map(ring => ring
+                .map(point => {
+                    const projected = _project(Number(point[1]), Number(point[0]), zoom, tileSize);
+                    return `${(projected.x - windowMinX).toFixed(1)},${(projected.y - windowMinY).toFixed(1)}`;
+                }).join(' '));
+        const outlinePath = outlinePoints.map(pointsAttr => `<polygon points="${pointsAttr}"></polygon>`).join('');
+
+        return `
+            <figure class="parcel-report-map">
+                <div class="parcel-report-map-frame" style="width:${width}px;height:${height}px;">
+                    ${tiles.join('')}
+                    <svg class="parcel-report-map-overlay" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+                        ${outlinePath}
+                    </svg>
+                </div>
+                <figcaption>${_escapeHtml(tileLayer.options && tileLayer.options.attribution || '')} · zoom ${zoom}</figcaption>
+            </figure>`;
+    }
+
     function _snapshotPanel(source) {
         const clone = source.cloneNode(true);
         clone.querySelectorAll('.parcel-actions, button, script').forEach(node => node.remove());
@@ -118,10 +238,15 @@
         const geometry = feature.geometry && feature.geometry.type;
         const loading = panel.querySelectorAll('.enrichment-loading').length;
         const link = window.location.href;
+        // .omi-controls only renders when an OMI quote was actually found for
+        // this comune (see parcel-enrichment.js) — the disclaimer about OMI
+        // estimates was showing even on reports with no OMI section at all.
+        const hasOmiData = !!panel.querySelector('.omi-controls');
+        const t = window.t || (key => key);
         report.innerHTML = `
             <header class="parcel-report-heading">
                 <div>
-                    <div class="parcel-report-brand">LAND REGISTRY</div>
+                    <div class="parcel-report-brand">${_escapeHtml(t('Land Registry').toUpperCase())}</div>
                     <h1>Dossier particella</h1>
                     <p class="parcel-report-reference">${_escapeHtml(reference)}</p>
                 </div>
@@ -132,11 +257,12 @@
                 </div>
             </header>
             ${loading ? `<div class="parcel-report-notice"><i class="fa-solid fa-clock"></i> Alcune fonti sono ancora in caricamento; il dossier fotografa i dati attualmente disponibili.</div>` : ''}
+            ${_staticMapHtml(feature)}
             ${_geometrySvg(feature)}
             <section class="parcel-report-data">${_snapshotPanel(panel)}</section>
             <footer class="parcel-report-footer">
                 <strong>Avvertenza</strong>
-                <p>I dati hanno finalità informative. Le stime OMI non costituiscono una perizia o una valutazione immobiliare; verificare sempre gli atti e le fonti ufficiali.</p>
+                <p>I dati hanno finalità informative.${hasOmiData ? ' Le stime OMI non costituiscono una perizia o una valutazione immobiliare;' : ''} verificare sempre gli atti e le fonti ufficiali.</p>
                 <p>Collegamento alla vista originale: <a href="${_escapeHtml(link)}">${_escapeHtml(link)}</a></p>
             </footer>`;
         overlay.hidden = false;

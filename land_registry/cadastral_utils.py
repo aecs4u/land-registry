@@ -178,14 +178,93 @@ def _scan_local_cadastral_directory(root_path: str) -> Dict[str, Any]:
                 ]
 
                 if files:  # Only add municipalities that have loadable files
+                    # Folder names use a backtick in place of an apostrophe
+                    # (e.g. "CITTA`_SANT`ANGELO") — display-only fix, `code`
+                    # and `files` below still reference the real folder name.
+                    display_name = name.replace('_', ' ').replace('`', "'")
                     cadastral_data[region_name][province_code][municipality_key] = {
                         'code': code,
-                        'name': name.replace('_', ' '),
+                        'name': display_name,
                         'files': files
                     }
 
     logger.info(f"Scanned local cadastral directory: {root_path}")
     return cadastral_data
+
+
+def list_local_cadastral_regions() -> list[str]:
+    """List local region directories without walking the national tree."""
+    root_path = get_cadastral_data_root()
+    if not root_path:
+        return []
+    try:
+        return sorted(
+            path.name for path in Path(root_path).iterdir()
+            if path.is_dir()
+        )
+    except OSError:
+        return []
+
+
+def list_local_cadastral_provinces(regions: list[str]) -> list[str]:
+    """List provinces for selected local regions with bounded directory reads."""
+    root_path = get_cadastral_data_root()
+    if not root_path:
+        return []
+    root = Path(root_path)
+    provinces = set()
+    try:
+        for region in regions:
+            region_path = root / region
+            if region_path.is_dir():
+                provinces.update(
+                    path.name for path in region_path.iterdir()
+                    if path.is_dir()
+                )
+    except OSError:
+        return sorted(provinces)
+    return sorted(provinces)
+
+
+def list_local_cadastral_municipalities(
+    regions: list[str],
+    provinces: list[str],
+) -> list[Dict[str, Any]]:
+    """List municipalities/files for selected local region/province pairs."""
+    root_path = get_cadastral_data_root()
+    if not root_path:
+        return []
+    root = Path(root_path)
+    result = []
+    try:
+        for region in regions:
+            for province in provinces:
+                province_path = root / region / province
+                if not province_path.is_dir():
+                    continue
+                for municipality_path in province_path.iterdir():
+                    if not municipality_path.is_dir():
+                        continue
+                    files = [
+                        item.name for item in municipality_path.iterdir()
+                        if item.is_file() and item.suffix.lower() in ('.gpkg', '.fgb', '.geojson', '.shp')
+                    ]
+                    if not files:
+                        continue
+                    parts = municipality_path.name.split('_', 1)
+                    code = parts[0]
+                    name = parts[1].replace('_', ' ').replace('`', "'") if len(parts) == 2 else parts[0]
+                    result.append({
+                        "key": f"{region}|{province}|{municipality_path.name}",
+                        "name": name,
+                        "code": code,
+                        "region": region,
+                        "province": province,
+                        "files_count": len(files),
+                    })
+    except OSError:
+        return result
+    return sorted(result, key=lambda item: item["name"].casefold())
 
 
 def _load_cadastral_data_internal() -> Tuple[Optional[Dict[str, Any]], str]:

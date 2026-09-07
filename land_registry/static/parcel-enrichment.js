@@ -13,6 +13,17 @@
     let activeRenderToken = 0;
     let omiHistoryToken = 0;
 
+    const _detailBlockLabels = {
+        basic: 'Identità particella', cadastral: 'Catasto e CAP', address: 'Indirizzo principale', addresses: 'Indirizzi associati',
+        risk: 'Rischi', subsidence: 'Subsidenza', terrain: 'Terreno',
+        population: 'Popolazione modellata', buildings: 'Edifici', economics: 'Economia',
+        demographics: 'Demografia ISTAT', land_cover: 'Uso del suolo CORINE',
+        land_use: 'Uso urbano', valuation: 'Valutazione OMI',
+        valuation_history: 'Storico OMI', coastal_erosion: 'Erosione costiera',
+        cultural_heritage: 'Patrimonio culturale', solar: 'Potenziale solare',
+        poi: 'Punti di interesse', nightlights: 'Luminosità notturna',
+    };
+
     function _escapeHtml(value) {
         return String(value ?? '').replace(/[&<>'"]/g, (char) => ({
             '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;',
@@ -57,6 +68,15 @@
             return ref.split('_')[0].trim().toUpperCase();
         }
         return null;
+    }
+
+    function _nationalReferenceFromFeature(feature) {
+        const props = (feature && feature.properties) || {};
+        return props.NATIONALCADASTRALREFERENCE
+            || props.nationalcadastralreference
+            || props.national_cadastral_reference
+            || props.national_reference
+            || null;
     }
 
     /** Best-effort centroid for a clicked layer, for POI/fires radius queries. */
@@ -126,14 +146,46 @@
     function _renderMunicipality(data) {
         if (!data) return _emptyState('Nessun dato comunale disponibile.');
         const pop = data.population;
+        const history = Array.isArray(data.population_history) ? data.population_history : [];
+        const link = (url, label) => url
+            ? `<a href="${_escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${label}</a>`
+            : '';
         return `
-            <div class="enrichment-row"><span>Comune</span><strong>${data.name || '—'}</strong></div>
-            <div class="enrichment-row"><span>Provincia</span><strong>${data.province || '—'} (${data.province_sigla || '—'})</strong></div>
-            <div class="enrichment-row"><span>Regione</span><strong>${data.region || '—'}</strong></div>
-            <div class="enrichment-row"><span>CAP</span><strong>${data.postal_code || '—'}</strong></div>
-            ${pop ? `<div class="enrichment-row"><span>Popolazione (${pop.year})</span><strong>${(pop.resident_population || 0).toLocaleString('it-IT')}</strong></div>` : ''}
+            <div class="enrichment-row"><span>Comune</span><strong>${_escapeHtml(data.name || '—')}</strong></div>
+            ${data.official_name && data.official_name !== data.name ? `<div class="enrichment-row"><span>Denominazione ufficiale</span><strong>${_escapeHtml(data.official_name)}</strong></div>` : ''}
+            <div class="enrichment-row"><span>Provincia</span><strong>${_escapeHtml(data.province || '—')} (${_escapeHtml(data.province_sigla || '—')})</strong></div>
+            <div class="enrichment-row"><span>Regione</span><strong>${_escapeHtml(data.region || '—')}</strong></div>
+            <div class="enrichment-row"><span>Codice catastale</span><strong>${_escapeHtml(data.cadastral_code || '—')}</strong></div>
+            <div class="enrichment-row"><span>Codice ISTAT</span><strong>${_escapeHtml(data.istat_code || '—')}</strong></div>
+            <div class="enrichment-row"><span>Codice NUTS3</span><strong>${_escapeHtml(data.nuts3 || data.nuts3_2021 || '—')}</strong></div>
+            <div class="enrichment-row"><span>CAP</span><strong>${_escapeHtml(data.postal_code || '—')}</strong></div>
+            ${data.is_provincial_capital ? '<div class="enrichment-row"><span>Status</span><strong>Capoluogo di provincia</strong></div>' : ''}
+            ${pop ? `<div class="enrichment-row"><span>Popolazione (${_escapeHtml(pop.year)})</span><strong>${_formatNumber(pop.resident_population)}</strong></div>` : ''}
+            ${history.length > 1 ? `
+                <details class="enrichment-history">
+                    <summary>Storico popolazione (${history.length} anni)</summary>
+                    ${history.slice().reverse().map(item => `<div class="enrichment-row"><span>${_escapeHtml(item.year)}</span><strong>${_formatNumber(item.resident_population)}</strong></div>`).join('')}
+                </details>` : ''}
+            ${data.latitude != null && data.longitude != null ? `<div class="enrichment-row"><span>Coordinate comune</span><strong>${Number(data.latitude).toFixed(5)}, ${Number(data.longitude).toFixed(5)}</strong></div>` : ''}
+            ${data.tax_code ? `<div class="enrichment-row"><span>Codice fiscale ente</span><strong>${_escapeHtml(data.tax_code)}</strong></div>` : ''}
+            ${data.email ? `<div class="enrichment-row"><span>Email</span><strong><a href="mailto:${_escapeHtml(data.email)}">${_escapeHtml(data.email)}</a></strong></div>` : ''}
+            ${data.pec_email ? `<div class="enrichment-row"><span>PEC</span><strong><a href="mailto:${_escapeHtml(data.pec_email)}">${_escapeHtml(data.pec_email)}</a></strong></div>` : ''}
+            ${data.website ? `<div class="enrichment-row"><span>Sito web</span><strong>${link(data.website, 'Apri sito')}</strong></div>` : ''}
+            ${data.wikipedia_url ? `<div class="enrichment-row"><span>Wikipedia</span><strong>${link(data.wikipedia_url, 'Apri pagina')}</strong></div>` : ''}
             ${_sourceFootnote(data.source)}
         `;
+    }
+
+    function _renderBlockCoverage(readModel) {
+        const blocks = (readModel && readModel.blocks) || {};
+        const names = Object.keys(_detailBlockLabels);
+        if (!names.length) return _emptyState('Profilo di copertura non disponibile.');
+        const rows = names.map((name) => {
+            const block = blocks[name] || {};
+            const available = block.available === true;
+            return `<div class="enrichment-row"><span>${_escapeHtml(_detailBlockLabels[name])}</span><strong class="${available ? 'text-success' : 'text-muted'}">${available ? 'Disponibile' : 'Non disponibile'}</strong></div>`;
+        }).join('');
+        return `${rows}<div class="enrichment-source">Struttura allineata al catalogo zornade-cadastral-parcel-reference.md; i blocchi non presenti nei dataset locali restano esplicitamente non disponibili.</div>`;
     }
 
     function _parcelAreaSqm(feature) {
@@ -529,6 +581,7 @@
         if (!content) return;
 
         const cadastralCode = _cadastralCodeFromFeature(feature);
+        const nationalReference = _nationalReferenceFromFeature(feature);
         const centroid = _layerCentroid(layer);
 
         let container = document.getElementById(SECTIONS_CONTAINER_ID);
@@ -556,13 +609,26 @@
             _loadingCard('bullhorn', 'Bollettino di criticità'),
             centroid ? _loadingCard('map-pin', 'Punti di interesse') : '',
             centroid ? _loadingCard('fire', 'Incendi attivi') : '',
+            _loadingCard('layer-group', 'Copertura dati'),
         ].join('');
         const [muniEl, omiEl, incomeEl, censusEl, crimeEl, demographicsEl, qualityEl,
             riskEl, bulletinEl, poiEl, firesEl] = container.querySelectorAll('.enrichment-card');
+        const cards = container.querySelectorAll('.enrichment-card');
+        const coverageEl = cards[cards.length - 1];
 
-        // Municipality first — we need its istat_code for the risks lookup and
-        // its name for the bulletin's comune-to-zone lookup.
-        const muniResult = await _fetchJson(`/api/v1/enrichment/municipality/${encodeURIComponent(cadastralCode)}`);
+        // Resolve the parcel-keyed read model first. It combines the stable
+        // parcel, municipality, census, and OMI lookups into one indexed read
+        // after the first request. Keep the old municipality endpoint as a
+        // compatibility fallback for features without a canonical reference.
+        const readModelResult = nationalReference
+            ? await _fetchJson(`/api/v1/enrichment/parcel/details/${encodeURIComponent(nationalReference)}`)
+            : { ok: false, data: null };
+        if (renderToken !== activeRenderToken) return;
+        const readModel = readModelResult.ok ? readModelResult.data : null;
+        if (coverageEl) coverageEl.querySelector('.enrichment-card-body').innerHTML = _renderBlockCoverage(readModel);
+        const muniResult = readModel && readModel.municipality
+            ? { ok: true, data: readModel.municipality }
+            : await _fetchJson(`/api/v1/enrichment/municipality/${encodeURIComponent(cadastralCode)}`);
         if (renderToken !== activeRenderToken) return;
         const muniData = muniResult.ok ? muniResult.data : null;
         if (muniEl) muniEl.querySelector('.enrichment-card-body').innerHTML = _renderMunicipality(muniData);
@@ -571,8 +637,12 @@
 
         const tasks = [
             Promise.all([
-                _fetchJson(`/api/v1/enrichment/omi/quotes?comune=${encodeURIComponent(cadastralCode)}`),
-                centroid && muniData && muniData.province
+                readModel && readModel.omi
+                    ? Promise.resolve({ ok: true, data: readModel.omi })
+                    : _fetchJson(`/api/v1/enrichment/omi/quotes?comune=${encodeURIComponent(cadastralCode)}`),
+                readModel && readModel.omi_zone
+                    ? Promise.resolve({ ok: true, data: readModel.omi_zone })
+                    : centroid && muniData && muniData.province
                     ? _fetchJson(`/api/v1/enrichment/omi/at-point?${new URLSearchParams({
                         province: muniData.province,
                         lat: centroid.lat,
@@ -616,7 +686,9 @@
         ];
         if (centroid && censusEl) {
             tasks.push(
-                _fetchJson(`/api/v1/enrichment/census/at-point?lat=${centroid.lat}&lng=${centroid.lng}`)
+                (readModel && readModel.census
+                    ? Promise.resolve({ ok: true, data: readModel.census })
+                    : _fetchJson(`/api/v1/enrichment/census/at-point?lat=${centroid.lat}&lng=${centroid.lng}`))
                     .then(r => {
                         if (renderToken === activeRenderToken) censusEl.querySelector('.enrichment-card-body').innerHTML = _renderCensus(r.ok ? r.data : null);
                     })

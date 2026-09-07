@@ -103,6 +103,12 @@ class LocaleMiddleware(BaseHTTPMiddleware):
         token = _current_locale.set(locale)
         try:
             request.state.locale = locale
+            # aecs4u_theme's setup_i18n installs a second locale middleware that
+            # runs after this one and overwrites request.state.locale, reading a
+            # "language" cookie instead of our "lang". Templates must read this
+            # uncontested key so the <html lang> and language picker can't
+            # disagree with the strings gettext actually rendered.
+            request.state.lr_locale = locale
             request.state.gettext = make_gettext(locale)
             response = await call_next(request)
         finally:

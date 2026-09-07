@@ -1,5 +1,9 @@
 <!doctype html>
-<html>
+<html lang="{{ request.state.lr_locale | default('it') }}">
+  <head>
+    <meta charset="utf-8" />
+    <title>{{ title }}</title>
+  </head>
   <body>
     {{ tabulator|safe }}
   </body>

@@ -940,6 +940,34 @@ body.sidebar-collapsed .main-content {
   font-weight: bold;
 }
 
+/* Dark mode never restyled this card, so its hardcoded white background
+   was left showing through the page's light inherited text color — a
+   measured 1.27:1 contrast. */
+body.dark-mode .files-list {
+  background: #1e293b;
+  border-color: #334155;
+  color: #e2e8f0;
+}
+
+body.dark-mode .files-list h5 {
+  background: #0f172a;
+  border-color: #334155;
+  color: #cbd5e1;
+}
+
+body.dark-mode .file-item {
+  color: #e2e8f0;
+  border-bottom-color: #334155;
+}
+
+body.dark-mode .file-item.map-file {
+  background: #14532d;
+}
+
+body.dark-mode .file-item.ple-file {
+  background: #4a3b0a;
+}
+
 .file-item {
   padding: 4px 10px;
   font-size: 11px;
@@ -2150,18 +2178,28 @@ button:hover {
     flex-direction: column;
   }
 
+  /* A 35vh split-screen sidebar left no usable room for its own tabs and
+     selectors (measured ~284px on a 812px-tall phone) before the map showed
+     through beneath it. An off-canvas overlay gives the sidebar the full
+     viewport height it needs, and the existing collapse toggle already
+     provides the "close it to see the map" affordance. */
   .sidebar:not(.collapsed) {
+    position: fixed;
+    top: var(--header-height, 64px);
+    left: 0;
+    right: 0;
     width: 100%;
     min-width: 0;
-    height: auto;
-    max-height: 35vh;
+    height: calc(100dvh - var(--header-height, 64px));
+    max-height: none;
     order: 1;
     overflow-y: auto;
+    z-index: 1200;
   }
 
   .map-container {
     order: 2;
-    height: 65vh;
+    height: calc(100dvh - var(--header-height, 64px));
   }
 
   .map-controls {
@@ -2513,6 +2551,32 @@ button:hover {
 .data-table tr:hover {
   background-color: #e3f2fd;
   cursor: pointer;
+}
+
+/* Dark mode never restyled the table itself, so cells kept a hardcoded
+   white background under the page's light inherited text color — a
+   measured 1.48:1 contrast on the attribute grid (WCAG AA needs 4.5:1). */
+body.dark-mode .data-table {
+  background: #1e293b;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+body.dark-mode .data-table td {
+  color: #e2e8f0;
+  border-bottom-color: #334155;
+}
+
+body.dark-mode .data-table tr:nth-child(even) {
+  background-color: #172033;
+}
+
+body.dark-mode .data-table tr:hover {
+  background-color: #24344d;
+}
+
+body.dark-mode .no-data-message {
+  background: #1e293b;
+  color: #94a3b8;
 }
 
 .no-data-message {
@@ -3477,8 +3541,11 @@ body.dark-mode .drawing-subsection-divider {
 .parcel-info-panel {
   position: fixed;
   top: 0;
-  right: -360px;
-  width: 350px;
+  /* Width is a variable so the closed offset can track it: a fixed 350px panel
+     on a 375px phone left a useless 25px sliver of map behind it. */
+  --parcel-panel-w: 350px;
+  right: calc((var(--parcel-panel-w) + 10px) * -1);
+  width: var(--parcel-panel-w);
   height: 100vh;
   background: #fff;
   box-shadow: -4px 0 20px rgba(0,0,0,0.15);
@@ -3490,6 +3557,11 @@ body.dark-mode .drawing-subsection-divider {
 
 .parcel-info-panel.open {
   right: 0;
+}
+
+@media (max-width: 480px) {
+  /* Take the full screen rather than leaving an unusable strip of map. */
+  .parcel-info-panel { --parcel-panel-w: 100vw; }
 }
 
 .parcel-info-header-bar {
@@ -3933,6 +4005,26 @@ body.parcel-report-open { overflow: hidden; }
   font-size: 11px;
 }
 
+.parcel-report-map { margin: 18px 0; }
+.parcel-report-map-frame {
+  position: relative;
+  overflow: hidden;
+  margin: 0 auto;
+  max-width: 100%;
+  border: 1px solid #dbe4ec;
+  border-radius: 8px;
+  background: #eef2f6;
+}
+.parcel-report-map-frame img { display: block; }
+.parcel-report-map-overlay { position: absolute; top: 0; left: 0; pointer-events: none; }
+.parcel-report-map-overlay polygon {
+  fill: rgba(20, 184, 166, 0.28);
+  stroke: #0f766e;
+  stroke-width: 2.5;
+  vector-effect: non-scaling-stroke;
+}
+.parcel-report-map figcaption { margin-top: 4px; color: #64748b; text-align: right; font-size: 9px; }
+
 .parcel-report-geometry { margin: 18px 0; }
 .parcel-report-geometry svg {
   display: block;
@@ -4011,6 +4103,8 @@ body.parcel-report-open { overflow: hidden; }
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   body.parcel-report-printing .parcel-report-geometry svg { height: 42mm; }
+  body.parcel-report-printing .parcel-report-map-frame { max-width: 100%; height: auto !important; aspect-ratio: 560 / 320; }
+  body.parcel-report-printing .parcel-report-map,
   body.parcel-report-printing .enrichment-card,
   body.parcel-report-printing .parcel-info-details,
   body.parcel-report-printing .parcel-report-geometry { break-inside: avoid; }
@@ -5864,14 +5958,32 @@ body.dark-mode .control-btn:disabled {
   color: #475569;
 }
 
-body.dark-mode button:not(.leaflet-control *):not(.theme-toggle-btn):not(.tool-btn-ghost):not(.map-tool-btn):not(.btn-link) {
+body.dark-mode button:not(.leaflet-control *):not(.theme-toggle-btn):not(.tool-btn-ghost):not(.map-tool-btn):not(.btn-link):not(.tool-panel-close):not(.layer-panel-clear) {
   background: #1a73e8;
   border-color: #1a73e8;
   color: #fff;
 }
 
-body.dark-mode button:hover:not(:disabled):not(.leaflet-control *):not(.theme-toggle-btn):not(.tool-btn-ghost):not(.map-tool-btn):not(.btn-link) {
+body.dark-mode button:hover:not(:disabled):not(.leaflet-control *):not(.theme-toggle-btn):not(.tool-btn-ghost):not(.map-tool-btn):not(.btn-link):not(.tool-panel-close):not(.layer-panel-clear) {
   background: #1557b0;
+}
+
+/* .tool-panel-close / .layer-panel-clear are small icon buttons (a bare "x"),
+   not action buttons — excluded above from the blanket dark-mode button
+   fill, which was rendering them as full-width solid-blue bars. */
+body.dark-mode .tool-panel-close,
+body.dark-mode .layer-panel-clear {
+  color: #adb5bd;
+}
+
+body.dark-mode .tool-panel-close:hover {
+  background: #3a3f44;
+  color: #f1f3f5;
+}
+
+body.dark-mode .layer-panel-clear:hover {
+  background: #3a2a2a;
+  color: #ff8787;
 }
 
 /* Navbar icon buttons (.btn-link, excluded from the blanket rule above):
@@ -6525,6 +6637,7 @@ body.dark-mode .table-selection-info {
 }
 
 .layer-panel-clear {
+  width: auto;
   background: none;
   border: none;
   color: #868e96;
@@ -6651,6 +6764,12 @@ body.dark-mode .layer-panel-badge-ple {
 
 /* ── Navbar enhancements ─────────────────────────── */
 .nav-lang-selector select {
+  /* The global `select, input[type=file], button { width: 100% }` reset above
+     resolves against this shrink-to-fit parent and collapses the control to
+     ~26px, clipping the selected value and leaving only the dropdown arrow
+     (design audit finding B1). Nav controls size to their content. */
+  width: auto;
+  min-width: max-content;
   background: transparent;
   border: 1px solid rgba(255,255,255,0.3);
   border-radius: 4px;
@@ -6727,6 +6846,7 @@ body.dark-mode .nav-dropdown-item:hover { background: #383838; }
   font-weight: 600; font-size: 14px; position: sticky; top: 0; z-index: 1;
 }
 .tool-panel-close {
+  width: auto;
   background: none; border: none; font-size: 18px; cursor: pointer;
   color: #868e96; line-height: 1; padding: 0 4px; border-radius: 4px;
 }
@@ -6914,6 +7034,26 @@ body.dark-mode .sidebar-brand { color: #e0e0e0; border-color: #3a3a3a; }
 .map-first-shell .view-toggle button:hover:not(.active) { color: #fff; background: rgba(255, 255, 255, 0.08); }
 .map-first-shell .view-toggle button.active { color: #5eead4; background: rgba(20, 184, 166, 0.16); }
 
+/* The parcel details panel is fixed to the right edge at 350px wide and
+   z-index 10000. The view switcher and Leaflet's top-right control stack are
+   right-anchored on the same edge, so opening the panel used to bury all four
+   view tabs entirely — leaving no way to reach Table/Adjacency/Drawing without
+   first closing the panel (design audit finding B2). Slide that chrome clear
+   of the panel for as long as it is open. 366px = 350 panel + 16 gutter. */
+body.parcel-panel-open .map-first-shell .view-toggle {
+  right: 366px !important;
+}
+body.parcel-panel-open .map-first-shell .leaflet-top.leaflet-right {
+  right: 350px;
+}
+
+@media (max-width: 900px) {
+  /* Below the panel's own full-width breakpoint there is nowhere to slide to,
+     so the panel takes the screen and the map chrome simply steps out of the
+     way rather than fighting it for the same pixels. */
+  body.parcel-panel-open .map-first-shell .view-toggle { display: none; }
+}
+
 @media (max-width: 900px) {
   .map-first-shell #mapView .map-header { display: none !important; }
   .map-first-shell .map-toolbar { top: 10px; left: 10px; }
@@ -6940,10 +7080,18 @@ body.dark-mode .sidebar-brand { color: #e0e0e0; border-color: #3a3a3a; }
    and push Leaflet's top-right control stack down to clear it in turn. */
 @media (max-width: 560px) {
   .map-first-shell .view-toggle {
-    top: 62px !important;
+    top: 56px !important;
     right: 10px !important;
     left: auto !important;
     max-width: calc(100vw - 20px);
   }
-  .map-first-shell .leaflet-top.leaflet-right { top: 122px !important; }
+  .map-first-shell .leaflet-top.leaflet-right { top: 104px !important; }
+
+  /* Two stacked pills plus Leaflet's own control stack were taking ~19% of
+     the viewport height on a 390px-wide phone before any map was visible.
+     Tighten both rows and pull the left-hand stack up to match. */
+  .map-first-shell .map-toolbar { top: 8px; left: 8px; }
+  .map-first-shell .map-tool-btn { padding: 7px 9px; }
+  .map-first-shell .view-toggle button { padding: 6px 9px; font-size: 10px; }
+  .map-first-shell .leaflet-top.leaflet-left { top: 56px !important; }
 }

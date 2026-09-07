@@ -1,9 +1,40 @@
-{% extends "base.html" %} {% block title %}Cadastral Data Structure - Land
-Registry Viewer{% endblock %} {% block external_css %}
+{% extends "base.html" %} {% block title %}{{ _('Italian Cadastral Data Structure') }} - {{ _('Land Registry Viewer') }}{% endblock %} {% block external_css %}
 <!-- No external CSS libraries needed for this page -->
 {% endblock %} {% block extra_css %}
 <link rel="stylesheet" href="/static/cadastral_data.css" />
 {% endblock %} {% block content %}
+
+<!-- Same navbar as /map (minus the sidebar toggle, which doesn't apply
+     here), so this page doesn't read as a different, unstyled product. -->
+<nav class="navbar-main">
+  <div class="container-fluid">
+    <div class="d-flex align-items-center justify-content-between w-100">
+      <div class="d-flex align-items-center gap-2">
+        <a class="navbar-brand" href="/">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" height="28" style="margin-right:6px">
+            <rect fill="#1a5490" width="32" height="32" rx="4"/>
+            <path fill="#fff" d="M6 8h8v6H6zM16 8h10v6H16zM6 16h10v8H6zM18 16h8v8h-8z"/>
+            <path fill="#28a745" d="M7 9h6v4H7zM17 9h8v4h-8zM7 17h8v6H7zM19 17h6v6h-6z"/>
+          </svg>
+          <h1 class="logo-text">{{ _('Land Registry') }}</h1>
+        </a>
+      </div>
+      <div class="d-flex align-items-center gap-2">
+        <div class="nav-lang-selector">
+          <select id="langSelect" onchange="changeLang(this.value)" title="{{ _('Language') }}" autocomplete="off">
+            <option value="it" {% if request.state.lr_locale == 'it' %}selected{% endif %}>🇮🇹 IT</option>
+            <option value="en" {% if request.state.lr_locale == 'en' %}selected{% endif %}>🇬🇧 EN</option>
+          </select>
+        </div>
+        <button onclick="toggleDarkMode()" class="btn btn-link theme-toggle p-1" id="themeToggleBtn"
+                title="{{ _('Toggle dark mode') }}" aria-label="{{ _('Toggle dark mode') }}">
+          <i class="fas fa-moon" id="themeIcon"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+</nav>
+
 <a href="/" class="back-link">← {{ _('Back to Map') }}</a>
 
 <div class="header">
@@ -50,9 +81,9 @@ Registry Viewer{% endblock %} {% block external_css %}
 {% if cadastral_data %}
 <div class="stats">
   <strong id="statsDisplay"
-    >📊 Statistics: {{ total_regions }} Regions | {{ total_provinces }}
-    Provinces | {{ total_municipalities }} Municipalities | {{ total_files }}
-    Files</strong
+    >📊 {{ _('Statistics:') }} {{ total_regions }} {{ _('Regions') }} | {{ total_provinces }}
+    {{ _('Provinces') }} | {{ total_municipalities }} {{ _('Municipalities') }} | {{ total_files }}
+    {{ _('Files') }}</strong
   >
   {% if available_files is defined and missing_files is defined %}
   <div class="file-availability">
@@ -90,7 +121,10 @@ Registry Viewer{% endblock %} {% block external_css %}
 <div id="cadastralDataContainer">
   {% for region_name, region_data in cadastral_data.items() %}
   <div class="region" data-region="{{ region_name|lower }}">
-    <h2>🏛️ {{ region_name }}</h2>
+    <h2 onclick="toggleRegion(this)" role="button" tabindex="0" aria-expanded="false">
+      <span>🏛️ {{ region_name }}</span>
+      <span class="region-toggle-icon">&#9654;</span>
+    </h2>
     <div class="region-content">
       {% for province_code, province_data in region_data.items() %}
       <div class="province" data-province="{{ province_code|lower }}">
@@ -134,12 +168,12 @@ Registry Viewer{% endblock %} {% block external_css %}
               {% endif %}
             </div>
             <div class="municipality-code">
-              🏷️ Code: {{ municipality_data.get('code', 'N/A') }}
+              🏷️ {{ _('Code:') }} {{ municipality_data.get('code', 'N/A') }}
             </div>
             <div class="files">
               📁
               <strong
-                >Files ({{ municipality_data.get('files', [])|length
+                >{{ _('Files') }} ({{ municipality_data.get('files', [])|length
                 }}):</strong
               ><br />
               {% if municipality_data.get('files', []) %} {% for file in
@@ -183,7 +217,16 @@ Registry Viewer{% endblock %} {% block external_css %}
 {% endif %} {% endblock %} {% block external_js %}
 <!-- Minimal external JavaScript - Clerk SDK is loaded from base.html -->
 {% endblock %} {% block map_js %}
-<!-- Map.js not needed on cadastral data page -->
-{% endblock %} {% block app_js %}
+<!-- Map.js (and index-init.js, which depends on it) isn't needed on this
+     page; theme-sync.js covers just the navbar's dark-mode toggle, and
+     changeLang() below is small enough to not need its own file. -->
+<script src="/static/theme-sync.js"></script>
+<script>
+  function changeLang(lang) {
+    document.cookie = 'lang=' + lang + '; path=/; max-age=31536000; SameSite=Lax';
+    window.location.reload();
+  }
+</script>
+{% endblock %} {% block i18n_data %}<script>window._i18n = {{ i18n_strings | tojson }};</script>{% endblock %} {% block app_js %}
 <script src="/static/cadastral_data.js"></script>
 {% endblock %}

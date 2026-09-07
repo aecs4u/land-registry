@@ -333,10 +333,12 @@ function populateColumnSelects(tableType, columns) {
     const filterSelect = document.getElementById(config.filterField);
     const sortSelect = document.getElementById(config.sortField);
 
+    const t = window.t || (key => key);
+
     // Clear and populate filter select
     if (filterSelect) {
         const currentFilter = filterSelect.value;
-        filterSelect.innerHTML = '<option value="">Filter by column...</option>';
+        filterSelect.innerHTML = `<option value="">${t('Filter by column...')}</option>`;
         columns.forEach(column => {
             const option = document.createElement('option');
             option.value = column;
@@ -349,7 +351,7 @@ function populateColumnSelects(tableType, columns) {
     // Clear and populate sort select
     if (sortSelect) {
         const currentSort = sortSelect.value;
-        sortSelect.innerHTML = '<option value="">Sort by column...</option>';
+        sortSelect.innerHTML = `<option value="">${t('Sort by column...')}</option>`;
         columns.forEach(column => {
             const option = document.createElement('option');
             option.value = column;
@@ -369,7 +371,9 @@ function updatePagination(tableType, data) {
     if (recordInfo) {
         const start = (data.page - 1) * data.size + 1;
         const end = Math.min(data.page * data.size, data.total);
-        recordInfo.textContent = `Showing ${start} to ${end} of ${data.total} entries`;
+        const t = window.t || (key => key);
+        recordInfo.textContent = t('Showing {start} to {end} of {total} entries')
+            .replace('{start}', start).replace('{end}', end).replace('{total}', data.total);
     }
 
     // Update page numbers

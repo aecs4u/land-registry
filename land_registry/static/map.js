@@ -380,8 +380,11 @@ function saveSelectionToUrl() {
     }
 
     if (municipalities.length > 0) {
-        // Encode municipality keys (they contain | characters)
-        params.set('municipalities', municipalities.map(m => encodeURIComponent(m)).join(','));
+        // URLSearchParams.set() already percent-encodes the value (including
+        // the | characters municipality keys contain) when it serializes to
+        // the query string, so encoding it here too was double-encoding
+        // every reload (%7C -> %257C), matching the `provinces` case above.
+        params.set('municipalities', municipalities.join(','));
     } else {
         params.delete('municipalities');
     }
@@ -460,10 +463,21 @@ function restoreSelectionFromUrl() {
                             });
                         }
 
-                        // Update summary
+                        // Update summary — this also (re)computes window.currentFileSelection
+                        // from the DOM selection state set above, since setting
+                        // option.selected/checkbox.checked directly doesn't fire 'change'.
                         updateSelectionSummary();
 
                         debugLog('Selection restored from URL');
+
+                        // A deep link that fully specifies region+province+municipality+
+                        // fileTypes is expected to load data automatically — restoring the
+                        // dropdowns alone (previous behavior) left the map empty until the
+                        // user manually clicked "Load Selected Files".
+                        if (window.currentFileSelection && window.currentFileSelection.length > 0
+                            && typeof loadCadastralSelection === 'function') {
+                            loadCadastralSelection();
+                        }
                     }, 100);
                 }
             }
@@ -826,6 +840,7 @@ function enableDarkMode() {
     document.body.classList.add('dark-mode');
     document.documentElement.setAttribute('data-bs-theme', 'dark');
     updateThemeIcon(true);
+    syncBasemapToTheme(true);
 }
 
 /**
@@ -835,6 +850,97 @@ function disableDarkMode() {
     document.body.classList.remove('dark-mode');
     document.documentElement.setAttribute('data-bs-theme', 'light');
     updateThemeIcon(false);
+    syncBasemapToTheme(false);
+}
+
+// Holds the basemap that was active when dark mode was switched on, so light
+// mode can put back exactly what the user had rather than a hardcoded default.
+let _basemapBeforeDark = null;
+let _darkBasemapLayer = null;
+
+/**
+ * Swap the Folium map's basemap between the user's own choice and CartoDB Dark.
+ *
+ * Dark mode previously only restyled the surrounding chrome, leaving a bright
+ * basemap inside a dark interface. Only the base tile layer is touched:
+ * overlays (datashader tiles, cadastral layers) are left alone, and if the user
+ * picks a different basemap from the layer control while dark, we stop managing
+ * it rather than overriding their choice on the next toggle.
+ */
+let _basemapSyncGeneration = 0;
+
+function syncBasemapToTheme(isDark) {
+    // initDarkMode() runs at DOMContentLoaded, before the Folium map has
+    // initialised, so a stored dark preference has nothing to apply to yet.
+    // Each call invalidates any pending retry from a previous toggle.
+    const generation = ++_basemapSyncGeneration;
+
+    const map = typeof window.getFoliumMapInstance === 'function'
+        ? window.getFoliumMapInstance()
+        : null;
+
+    if (!map) {
+        let attempts = 0;
+        const retry = setInterval(() => {
+            if (generation !== _basemapSyncGeneration || ++attempts > 30) {
+                clearInterval(retry);
+                return;
+            }
+            const ready = typeof window.getFoliumMapInstance === 'function'
+                ? window.getFoliumMapInstance()
+                : null;
+            if (ready) {
+                clearInterval(retry);
+                syncBasemapToTheme(isDark);
+            }
+        }, 400);
+        return;
+    }
+
+    if (isDark) {
+        if (_darkBasemapLayer && map.hasLayer(_darkBasemapLayer)) return;
+
+        let current = null;
+        map.eachLayer(layer => {
+            if (current) return;
+            const isTiles = layer instanceof L.TileLayer;
+            const isOverlay = layer === window.datashaderLayer || layer.options?.isOverlay;
+            if (isTiles && !isOverlay) current = layer;
+        });
+        if (!current) return;
+
+        _basemapBeforeDark = current;
+        // CartoDB serves "API KEY REQUIRED" watermarked tiles unless a key is
+        // configured, so only use it behind the same gate as the basemap picker
+        // above; otherwise fall back to Esri's key-free dark canvas (Esri tiles
+        // are already used for the imagery/terrain options).
+        _darkBasemapLayer = (window.cartoEnabled && window.cartoApiKey)
+            ? L.tileLayer(
+                `https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png?api_key=${encodeURIComponent(window.cartoApiKey)}`,
+                { attribution: '© CartoDB', maxZoom: 19 }
+            )
+            : L.tileLayer(
+                'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+                { attribution: '© ESRI', maxZoom: 19 }
+            );
+        map.removeLayer(current);
+        _darkBasemapLayer.addTo(map);
+        _darkBasemapLayer.bringToBack();
+    } else {
+        // Only restore if our dark layer is still the active basemap.
+        if (!_darkBasemapLayer || !map.hasLayer(_darkBasemapLayer)) {
+            _darkBasemapLayer = null;
+            _basemapBeforeDark = null;
+            return;
+        }
+        map.removeLayer(_darkBasemapLayer);
+        if (_basemapBeforeDark) {
+            _basemapBeforeDark.addTo(map);
+            _basemapBeforeDark.bringToBack();
+        }
+        _darkBasemapLayer = null;
+        _basemapBeforeDark = null;
+    }
 }
 
 /**
@@ -954,9 +1060,28 @@ function showParcelInfo(feature, layer) {
     if (!area && props.area_sqm != null) area = `${Number(props.area_sqm).toLocaleString('it-IT', { maximumFractionDigits: 0 })} m²`;
     if (!area && props.area_m2 != null) area = `${Number(props.area_m2).toLocaleString('it-IT', { maximumFractionDigits: 0 })} m²`;
     if (!area && props.area_ha != null) area = `${props.area_ha} ha`;
-    const labelParts = String(label).split('/');
-    const displayFoglio = foglio || (labelParts.length > 1 ? labelParts[0] : '');
-    const displayParticella = particella || (labelParts.length > 1 ? labelParts[1] : label);
+
+    // A MAP-layer feature (INSPIRE CadastralZoning — a foglio boundary, not
+    // an individual parcel) carries a bare sheet code as LABEL (e.g. "44"),
+    // with no "/" to split into foglio+particella. That made this fall
+    // through to showing the foglio's own reference as the *particella*
+    // while Foglio itself showed "N/A" — inconsistent with the map popup,
+    // which already special-cases MAP vs PLE layers for the same feature.
+    // The source layer filename (also shown in the File row below) reliably
+    // says which one this is: cadastral files are always named ..._map.*
+    // or ..._ple.* (see the local cadastral data layout in CLAUDE.md).
+    const sourceFile = String(props.layer_name || props.source_file || props.source || '').toLowerCase();
+    const isZoningLayer = sourceFile.includes('_map');
+
+    let displayFoglio, displayParticella;
+    if (isZoningLayer) {
+        displayFoglio = props.NATIONALCADASTRALREFERENCE || props.national_cadastral_reference || label;
+        displayParticella = 'N/A';
+    } else {
+        const labelParts = String(label).split('/');
+        displayFoglio = foglio || (labelParts.length > 1 ? labelParts[0] : '');
+        displayParticella = particella || (labelParts.length > 1 ? labelParts[1] : label);
+    }
 
     let html = `
         <div class="parcel-info-header">
@@ -966,7 +1091,7 @@ function showParcelInfo(feature, layer) {
         <div class="parcel-info-details">
             <div class="info-row">
                 <span class="info-label">Foglio</span>
-                <span class="info-value">${escapeHtml(displayFoglio || 'N/A')}</span>
+                <span class="info-value" id="parcelInfoFoglio">${escapeHtml(displayFoglio || 'N/A')}</span>
             </div>
             <div class="info-row">
                 <span class="info-label">Particella</span>
@@ -1026,16 +1151,55 @@ function showParcelInfo(feature, layer) {
 
     content.innerHTML = html;
     panel.classList.add('open');
+    // The panel is fixed to the right edge at z-index 10000; the view-switcher
+    // and Leaflet's top-right control stack are right-anchored too, so without
+    // this the panel completely covers them (design audit finding B2). The
+    // class lets CSS slide that chrome clear of the panel while it is open.
+    document.body.classList.add('parcel-panel-open');
 
     // Store current parcel for actions
     window.currentParcelFeature = feature;
     window.currentParcelLayer = layer;
+
+    // A particella (ple) feature from the classic FGB loader has no
+    // sheet_number of its own — the aecs4u-stats importer deliberately
+    // avoids parsing it out of NATIONALCADASTRALREFERENCE (unreliable format
+    // across comuni), it's spatially derived instead. Reuse the existing
+    // map-layer lookup (foglio boundaries containing this parcel's centroid)
+    // to fill Foglio in asynchronously rather than leaving it blank/N/A.
+    if (!isZoningLayer && !displayFoglio) {
+        _fillFoglioFromMapLayer(feature, layer);
+    }
 
     // Fetch and append enrichment sections (ISTAT, OMI, IRPEF income, risks,
     // POI) — see static/parcel-enrichment.js. Async and non-blocking: the
     // base parcel info above renders immediately regardless of this.
     if (typeof window.renderParcelEnrichment === 'function') {
         window.renderParcelEnrichment(feature, layer);
+    }
+}
+
+async function _fillFoglioFromMapLayer(feature, layer) {
+    let lat, lng;
+    try {
+        const bounds = layer && layer.getBounds && layer.getBounds();
+        if (!bounds || !bounds.isValid()) return;
+        const center = bounds.getCenter();
+        lat = center.lat;
+        lng = center.lng;
+    } catch (error) {
+        return;
+    }
+    try {
+        const response = await fetch(`/api/v1/cadastral-identify?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}&layer=map`);
+        if (!response.ok) return;
+        const result = await response.json();
+        // The panel may have moved to a different parcel while this was in flight.
+        if (!result.found || window.currentParcelFeature !== feature) return;
+        const foglioEl = document.getElementById('parcelInfoFoglio');
+        if (foglioEl && result.label) foglioEl.textContent = result.label;
+    } catch (error) {
+        debugLog('Foglio lookup failed', error);
     }
 }
 
@@ -1047,6 +1211,7 @@ function hideParcelInfo() {
     if (panel) {
         panel.classList.remove('open');
     }
+    document.body.classList.remove('parcel-panel-open');
     window.currentParcelFeature = null;
     window.currentParcelLayer = null;
     if (typeof window.clearCadastralParcelSelection === 'function') {
@@ -1082,13 +1247,18 @@ window.copyParcelInfo = function() {
         .join('\n');
 
     navigator.clipboard.writeText(text).then(() => {
-        // Show brief feedback
+        // Show brief feedback. The button-text swap alone was easy to miss
+        // (small icon-only button, no color/icon change) — pair it with the
+        // same toast used elsewhere in the app for a confirmation that's
+        // actually hard to miss.
         const btn = document.getElementById('copyParcelInfoBtn');
         if (btn) {
             const original = btn.textContent;
             btn.textContent = 'Copied!';
             setTimeout(() => { btn.textContent = original; }, 1500);
         }
+        const t = window.t || (key => key);
+        showToastNotification(t('Info copied to clipboard'), 'success');
     });
 };
 
@@ -1102,6 +1272,8 @@ window.copyParcelLink = async function() {
             button.textContent = 'Link Copied!';
             setTimeout(() => { button.textContent = original; }, 1500);
         }
+        const t = window.t || (key => key);
+        showToastNotification(t('Link copied to clipboard'), 'success');
     } catch (error) {
         console.warn('Unable to copy parcel link', error);
     }
@@ -3460,70 +3632,75 @@ window.loadCadastralSelection = async function() {
         // Clear existing map layers
         clearMap();
 
-        // Load files sequentially from S3
+        // Load files through the streaming endpoint.  It performs bounded
+        // concurrent reads on the server and emits each layer as soon as it is
+        // ready.  The old implementation made one request per file and
+        // awaited each request before starting the next one.
         const loadedLayers = [];
         let successfulLoads = 0;
         let totalFeaturesLoaded = 0;
+        let completedFiles = 0;
 
-        for (let i = 0; i < filePaths.length; i++) {
-            const filePath = filePaths[i];
-            const filename = filePath.split('/').pop();
-            loadBtn.textContent = `Loading... (${i + 1}/${filePaths.length})`;
-            updateProgress(i + 1, filePaths.length, filename, successfulLoads, totalFeaturesLoaded);
+        const handleLayer = (layerName, geojsonData, featureCount, fileIndex) => {
+            const layerData = {
+                filename: layerName || filePaths[fileIndex]?.split('/').pop(),
+                feature_count: featureCount || (geojsonData.features ? geojsonData.features.length : 0),
+                geojson: geojsonData
+            };
 
-            try {
-                debugLog(`Loading file ${i + 1}/${filePaths.length} via backend API: ${filePath}`);
+            loadedLayers.push(layerData);
+            successfulLoads++;
+            totalFeaturesLoaded += layerData.feature_count;
+            completedFiles++;
+            updateProgress(completedFiles, filePaths.length, layerData.filename, successfulLoads, totalFeaturesLoaded);
 
-                // Use backend API endpoint to load and process GPKG file
-                const apiUrl = `/api/v1/load-cadastral-files/${encodeURIComponent(filePath)}`;
-                debugLog(`Fetching from backend API: ${apiUrl}`);
+            addGeoJsonToMap(geojsonData, {
+                name: layerData.filename || `Layer ${fileIndex + 1}`,
+                style: getLayerStyle(fileIndex)
+            });
+            debugLog(`Successfully loaded ${layerData.filename} with ${layerData.feature_count} features`);
+        };
 
-                const response = await fetch(apiUrl, {
-                    method: 'GET',
-                    headers: {
-                        'Accept': 'application/json'
+        if (typeof ProgressiveLoader !== 'undefined') {
+            await ProgressiveLoader.load(filePaths, {
+                clearExisting: true,
+                onProgress(fileIndex, total, filename) {
+                    loadBtn.textContent = `Loading... (${completedFiles}/${filePaths.length})`;
+                    if (filename) {
+                        updateProgress(Math.max(completedFiles, fileIndex + 1), total || filePaths.length,
+                            filename, successfulLoads, totalFeaturesLoaded);
                     }
-                });
-
-                if (!response.ok) {
-                    console.warn(`Failed to load ${filePath} via API: HTTP ${response.status}`);
-                    continue; // Skip this file and continue with next
+                },
+                onLayer: handleLayer,
+                onError(fileIndex, filename, error) {
+                    completedFiles++;
+                    console.warn(`Error loading ${filename}: ${error}`);
+                    updateProgress(completedFiles, filePaths.length, filename,
+                        successfulLoads, totalFeaturesLoaded);
                 }
-
-                // Get the response data from the API
-                const responseData = await response.json();
-
-                if (responseData && responseData.success && responseData.geojson) {
-                    const geojsonData = responseData.geojson;
-                    const layerData = {
-                        filename: responseData.filename || filePath.split('/').pop(),
-                        feature_count: responseData.feature_count || (geojsonData.features ? geojsonData.features.length : 0),
-                        geojson: geojsonData
-                    };
-
-                    // Add the layer to our collection
-                    loadedLayers.push(layerData);
-                    successfulLoads++;
-                    totalFeaturesLoaded += layerData.feature_count;
-
-                    // Update progress with new totals
-                    updateProgress(i + 1, filePaths.length, filename, successfulLoads, totalFeaturesLoaded);
-
-                    // Add to map immediately
-                    addGeoJsonToMap(geojsonData, {
-                        name: layerData.filename || `Layer ${i + 1}`,
-                        style: getLayerStyle(i)
-                    });
-
-                    debugLog(`Successfully loaded ${layerData.filename} with ${layerData.feature_count} features`);
-                } else {
-                    console.warn(`Failed to load GPKG file via API: ${filePath}`, responseData);
-                }
-
-            } catch (fileError) {
-                console.warn(`Error loading file ${filePath} via API: ${fileError.message}`);
-                continue; // Skip this file and continue with next
+            });
+        } else {
+            // Keep a non-streaming fallback for deployments that omit the
+            // progressive-loader script.  This still uses the server's bulk
+            // parallel endpoint instead of issuing serial per-file requests.
+            const response = await fetch('/api/v1/load-cadastral-files/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                body: JSON.stringify({ file_paths: filePaths, clear_existing: true })
+            });
+            if (!response.ok) {
+                const detail = await response.json().catch(() => ({}));
+                throw new Error(detail.detail || `HTTP ${response.status}`);
             }
+            const responseData = await response.json();
+            Object.entries(responseData.layers || {}).forEach(([layerName, layer]) => {
+                if (layer.error) {
+                    completedFiles++;
+                    console.warn(`Error loading ${layerName}: ${layer.error}`);
+                    return;
+                }
+                handleLayer(layerName, layer.geojson, layer.feature_count, completedFiles);
+            });
         }
 
         // Final processing after all files
@@ -3617,6 +3794,7 @@ function _parseCadastralRef(ref) {
 
 // Cached cadastral structure for cascading Region → Province → Municipality selects
 let _cadastralStructure = null;
+let _searchRegionNames = [];
 
 function _mkOpt(value, label, disabled = false) {
     const o = document.createElement('option');
@@ -3643,13 +3821,22 @@ window.refreshSearchComuneList = async function() {
     const regionSel = document.getElementById('searchRegion');
     if (!regionSel) return;
 
-    if (!_cadastralStructure) {
+    // Reuse the main selector's data when it has already loaded. Otherwise
+    // request only the region list: loading the complete national hierarchy
+    // here used to block the Explore panel while every municipality/file was
+    // scanned.
+    if (!_cadastralStructure && window.cadastralData && typeof window.cadastralData === 'object') {
+        _cadastralStructure = window.cadastralData;
+    }
+
+    if (!_cadastralStructure && !_searchRegionNames.length) {
         try {
-            const resp = await fetch('/api/v1/get-cadastral-structure/');
+            const resp = await fetch('/api/v1/get-regions/');
             if (!resp.ok) return;
-            _cadastralStructure = await resp.json();
+            const payload = await resp.json();
+            _searchRegionNames = Array.isArray(payload.regions) ? payload.regions : [];
         } catch (e) {
-            console.warn('[Search] Could not load cadastral structure:', e);
+            console.warn('[Search] Could not load cadastral regions:', e);
             return;
         }
     }
@@ -3658,11 +3845,14 @@ window.refreshSearchComuneList = async function() {
     const placeholder = window.t ? window.t('Select region…') : 'Select region…';
     regionSel.innerHTML = '';
     regionSel.appendChild(_mkOpt('', placeholder));
-    Object.keys(_cadastralStructure).sort().forEach(r => {
+    const regionNames = _cadastralStructure
+        ? Object.keys(_cadastralStructure).sort()
+        : _searchRegionNames.slice().sort();
+    regionNames.forEach(r => {
         regionSel.appendChild(_mkOpt(r, r));
     });
     regionSel.disabled = false;
-    if (prev && _cadastralStructure[prev]) {
+    if (prev && regionNames.includes(prev)) {
         regionSel.value = prev;
         onSearchRegionChange();
     } else {
@@ -3671,7 +3861,7 @@ window.refreshSearchComuneList = async function() {
     }
 };
 
-window.onSearchRegionChange = function() {
+window.onSearchRegionChange = async function() {
     const region = document.getElementById('searchRegion')?.value || '';
     const provinceSel = document.getElementById('searchProvince');
     if (!provinceSel) return;
@@ -3679,7 +3869,23 @@ window.onSearchRegionChange = function() {
     _resetSelect('searchProvince', window.t ? window.t('Select province…') : 'Select province…');
     _resetSelect('searchMunicipality', window.t ? window.t('Select municipality…') : 'Select municipality…');
 
-    if (!region || !_cadastralStructure?.[region]) return;
+    if (!region) return;
+
+    if (!_cadastralStructure) {
+        try {
+            const resp = await fetch(`/api/v1/get-provinces/?regions=${encodeURIComponent(region)}`);
+            if (!resp.ok) return;
+            const payload = await resp.json();
+            const provinces = Array.isArray(payload.provinces) ? payload.provinces : [];
+            provinceSel.innerHTML = '';
+            provinceSel.appendChild(_mkOpt('', window.t ? window.t('Select province…') : 'Select province…'));
+            provinces.sort().forEach(p => provinceSel.appendChild(_mkOpt(p, p)));
+            provinceSel.disabled = false;
+        } catch (e) {
+            console.warn('[Search] Could not load provinces:', e);
+        }
+        return;
+    }
 
     const provinces = _cadastralStructure[region];
     provinceSel.innerHTML = '';
@@ -3690,7 +3896,7 @@ window.onSearchRegionChange = function() {
     provinceSel.disabled = false;
 };
 
-window.onSearchProvinceChange = function() {
+window.onSearchProvinceChange = async function() {
     const region = document.getElementById('searchRegion')?.value || '';
     const province = document.getElementById('searchProvince')?.value || '';
     const muniSel = document.getElementById('searchMunicipality');
@@ -3698,7 +3904,24 @@ window.onSearchProvinceChange = function() {
 
     _resetSelect('searchMunicipality', window.t ? window.t('Select municipality…') : 'Select municipality…');
 
-    if (!region || !province || !_cadastralStructure?.[region]?.[province]) return;
+    if (!region || !province) return;
+
+    if (!_cadastralStructure) {
+        try {
+            const params = new URLSearchParams({ regions: region, provinces: province });
+            const resp = await fetch(`/api/v1/get-municipalities/?${params.toString()}`);
+            if (!resp.ok) return;
+            const payload = await resp.json();
+            const municipalities = Array.isArray(payload.municipalities) ? payload.municipalities : [];
+            muniSel.innerHTML = '';
+            muniSel.appendChild(_mkOpt('', window.t ? window.t('Select municipality…') : 'Select municipality…'));
+            municipalities.forEach(m => muniSel.appendChild(_mkOpt(m.code, `${m.name} (${m.code})`)));
+            muniSel.disabled = false;
+        } catch (e) {
+            console.warn('[Search] Could not load municipalities:', e);
+        }
+        return;
+    }
 
     const municipalities = _cadastralStructure[region][province];
     muniSel.innerHTML = '';
@@ -4215,25 +4438,30 @@ function updateSelectionSummary() {
         debugLog('Updated currentFileSelection with', fileSelection.length, 'files');
 
         // Update summary content
+        const t = window.t || (key => key);
+        const regionWord = t(selectedRegions.length === 1 ? 'region' : 'regions');
+        const provinceWord = t(selectedProvinces.length === 1 ? 'province' : 'provinces');
+        const municipalityWord = t(selectedMunicipalities.length === 1 ? 'municipality' : 'municipalities');
+        const fileTypeWord = t(selectedFileTypes.length === 1 ? 'file type' : 'file types');
         summaryContent.innerHTML = `
-            <div><strong>Selected:</strong></div>
-            <div>• ${selectedRegions.length} region(s): ${selectedRegions.join(', ')}</div>
-            <div>• ${selectedProvinces.length} province(s): ${selectedProvinces.join(', ')}</div>
-            <div>• ${selectedMunicipalities.length} municipality(ies)</div>
-            <div>• ${selectedFileTypes.length} file type(s): ${selectedFileTypes.join(', ')}</div>
-            <div><strong>Total files: ${totalFiles}</strong></div>
+            <div><strong>${t('Selected:')}</strong></div>
+            <div>• ${selectedRegions.length} ${regionWord}: ${selectedRegions.join(', ')}</div>
+            <div>• ${selectedProvinces.length} ${provinceWord}: ${selectedProvinces.join(', ')}</div>
+            <div>• ${selectedMunicipalities.length} ${municipalityWord}</div>
+            <div>• ${selectedFileTypes.length} ${fileTypeWord}: ${selectedFileTypes.join(', ')}</div>
+            <div><strong>${t('Total files:')} ${totalFiles}</strong></div>
         `;
 
         // Update files breakdown
         if (totalFiles > 0) {
-            let filesHTML = '<div class="files-breakdown"><strong>Files breakdown:</strong>';
+            let filesHTML = `<div class="files-breakdown"><strong>${t('Files breakdown:')}</strong>`;
             Object.entries(fileBreakdown).forEach(([type, count]) => {
-                filesHTML += `<div>• ${type}: ${count} files</div>`;
+                filesHTML += `<div>• ${type}: ${count} ${t('files')}</div>`;
             });
             filesHTML += '</div>';
             filesList.innerHTML = filesHTML;
         } else {
-            filesList.innerHTML = '<div class="no-files">No files found for this selection</div>';
+            filesList.innerHTML = `<div class="no-files">${t('No files found for this selection')}</div>`;
         }
 
         selectionSummary.style.display = 'block';
@@ -4283,62 +4511,6 @@ function getCadastralFeatureLayers() {
 }
 
 // Load attribute table data
-function loadAttributeTable() {
-    const tableContainer = document.getElementById('attributeTable');
-    const tableInfo = document.getElementById('tableInfo');
-
-    // Progressive loading creates one Leaflet layer per file. Its shared
-    // collection is the authoritative source for table/analysis views.
-    let features = null;
-    if (window.progressiveGeoJsonData?.features?.length) {
-        features = window.progressiveGeoJsonData.features;
-    } else if (currentGeoJsonLayer) {
-        // Extract features from the Leaflet layer
-        const geoJsonData = currentGeoJsonLayer.toGeoJSON();
-        features = geoJsonData.features;
-    } else if (window.geoJsonData) {
-        features = window.geoJsonData.features;
-    }
-
-    if (features && features.length > 0) {
-        // Update info
-        tableInfo.textContent = `${features.length} features loaded`;
-
-        // Create table
-        let tableHTML = '<table class="data-table"><thead><tr>';
-
-        // Get all property keys
-        const allKeys = new Set();
-        features.forEach(feature => {
-            if (feature.properties) {
-                Object.keys(feature.properties).forEach(key => allKeys.add(key));
-            }
-        });
-
-        // Add headers
-        allKeys.forEach(key => {
-            tableHTML += `<th>${key}</th>`;
-        });
-        tableHTML += '</tr></thead><tbody>';
-
-        // Add rows
-        features.forEach((feature, index) => {
-            tableHTML += `<tr data-feature-index="${index}">`;
-            allKeys.forEach(key => {
-                const value = feature.properties && feature.properties[key] ? feature.properties[key] : '';
-                tableHTML += `<td>${value}</td>`;
-            });
-            tableHTML += '</tr>';
-        });
-
-        tableHTML += '</tbody></table>';
-        tableContainer.innerHTML = tableHTML;
-    } else {
-        tableContainer.innerHTML = '<div class="no-data-message"><p>No geospatial data loaded. Please upload a file or select cadastral data to view attributes.</p></div>';
-        tableInfo.textContent = 'No data loaded';
-    }
-}
-
 // NOTE: updateDrawingStats defined earlier in file (line 873)
 
 // Save drawn polygons
@@ -4461,8 +4633,12 @@ window.handleTableViewClick = function() {
     document.querySelectorAll('.view-toggle button').forEach(btn => btn.classList.remove('active'));
     document.getElementById('tableViewBtn').classList.add('active');
 
-    // Load table data if available
-    loadAttributeTable();
+    // Table population happens once, as data loads (see table-manager.js);
+    // re-showing this view must not re-run it. loadAttributeTable() used to
+    // be called here, but it independently re-derives "is there data" from
+    // globals the load path doesn't actually populate, so on every second
+    // visit it wiped out the already-rendered table with a false "no data"
+    // message even though the map layer was still loaded and visible.
 
     debugLog('Switched to Table View');
 };
@@ -6101,8 +6277,20 @@ async function loadAllZones() {
         var listResponse = await _authenticatedFetch('/api/v1/zones/');
         if (!listResponse.ok) {
             if (listResponse.status === 401) {
+                // Zones are per-user, so an anonymous visitor legitimately
+                // has none to load — but that's a different fact from "you
+                // have zero saved zones", and showing the same empty-state
+                // copy for both let a signed-out user believe their saved
+                // zones had been deleted.
                 console.log('Not authenticated - skipping zone load');
                 updateZoneCountBadge(0);
+                var zoneListEl = document.getElementById('zoneList');
+                if (zoneListEl) {
+                    var t = window.t || function(key) { return key; };
+                    zoneListEl.innerHTML = '<p class="zone-empty-message">' +
+                        t('Sign in to save and view your zones') +
+                        ' &mdash; <a href="/auth/login">' + t('Sign In') + '</a></p>';
+                }
                 return;
             }
             console.error('Failed to load zones:', listResponse.status);

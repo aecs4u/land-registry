@@ -1,0 +1,19 @@
+{#
+  Local override of the aecs4u-theme login page.
+
+  The theme's auth_base.html links its own /static/aecs4u-theme/css/auth.css,
+  which does not define .btn-gradient or .btn-modern — the classes the theme's
+  own submit button carries. The result was a primary "Sign in" action with a
+  transparent background and a transparent border, rendering as plain body text
+  while the secondary navbar link was a filled button (design audit finding B3).
+
+  This repo already ships a complete /static/css/auth.css that defines both
+  classes; it was simply never linked. Load it after the theme's copy so the
+  button styling resolves, and keep everything else the theme provides.
+#}
+{% extends "auth/login_base.html" %}
+
+{% block auth_extra_head %}
+  {{ super() }}
+  <link rel="stylesheet" href="/static/css/auth.css" />
+{% endblock %}

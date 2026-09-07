@@ -4164,8 +4164,8 @@ async def load_cadastral_files_stream(request: CadastralFileRequest):
     Each line is a JSON object with one of these event types:
     - {"event": "start", "total_files": N}
     - {"event": "progress", "file_index": i, "file_path": "...", "status": "loading"}
-    - {"event": "layer", "file_index": i, "layer_name": "...", "geojson": {...}, "feature_count": N}
-    - {"event": "error", "file_index": i, "file_path": "...", "error": "..."}
+    - {"event": "layer", "file_index": i, "layer_name": "...", "geojson": {...}, "feature_count": N, "completed_files": N, "total_files": N}
+    - {"event": "error", "file_index": i, "file_path": "...", "error": "...", "completed_files": N, "total_files": N}
     - {"event": "complete", "total_layers": N, "total_features": N, "load_time_seconds": T, "bounds": {...}}
 
     This allows the frontend to render parcels progressively as each file loads,
@@ -4189,7 +4189,10 @@ async def load_cadastral_files_stream(request: CadastralFileRequest):
             clear_current_layers()
             set_current_gdf(None)
 
-        # Save pre-existing GDF (for append mode) before the loop
+        # Save pre-existing GDF (for append mode) before the load starts.  The
+        # stream endpoint used to concatenate this frame with every completed
+        # layer.  That made loading N files increasingly expensive because the
+        # complete accumulated frame was copied after each file (O(N^2)).
         original_existing_gdf = None if clear_existing else get_current_gdf()
 
         # Create S3 client only if needed
@@ -4206,90 +4209,120 @@ async def load_cadastral_files_stream(request: CadastralFileRequest):
         all_gdfs = []
         total_features = 0
         feature_offset = len(original_existing_gdf) if original_existing_gdf is not None else 0
+        completed_files = 0
         layers_data = {}
 
-        for i, file_path in enumerate(file_paths):
-            # Send progress event
-            yield json.dumps({
-                "event": "progress",
-                "file_index": i,
-                "file_path": os.path.basename(file_path),
-                "status": "loading"
-            }) + "\n"
+        # Start file reads concurrently, but keep the number of GDAL/S3 jobs
+        # bounded.  The previous implementation awaited each read in the loop,
+        # so total latency was the sum of every file's read/parse/area/JSON work.
+        max_concurrent_loads = min(8, len(file_paths))
+        load_semaphore = asyncio.Semaphore(max_concurrent_loads)
 
-            # Load file in thread pool to avoid blocking
-            try:
-                result = await asyncio.to_thread(
-                    _load_single_file,
-                    file_path, use_local, local_root, s3_client, bucket
-                )
+        async def load_one(index: int, file_path: str):
+            async with load_semaphore:
+                try:
+                    result = await asyncio.to_thread(
+                        _load_single_file,
+                        file_path, use_local, local_root, s3_client, bucket
+                    )
+                    return index, file_path, result, None
+                except Exception as exc:
+                    return index, file_path, None, exc
+
+        load_tasks = [
+            asyncio.create_task(load_one(i, file_path))
+            for i, file_path in enumerate(file_paths)
+        ]
+
+        try:
+            for completed_task in asyncio.as_completed(load_tasks):
+                i, file_path, result, load_error = await completed_task
+
+                if load_error is not None:
+                    completed_files += 1
+                    logger.error(f"Error streaming file {file_path}: {load_error}")
+                    layers_data[os.path.basename(file_path)] = {"error": str(load_error)}
+                    yield json.dumps({
+                        "event": "error",
+                        "file_index": i,
+                        "file_path": os.path.basename(file_path),
+                        "error": str(load_error),
+                        "completed_files": completed_files,
+                        "total_files": len(file_paths),
+                    }) + "\n"
+                    continue
 
                 if "error" in result:
+                    completed_files += 1
                     layer_name = os.path.basename(result["file_path"])
                     layers_data[layer_name] = {"error": result["error"]}
                     yield json.dumps({
                         "event": "error",
                         "file_index": i,
                         "file_path": os.path.basename(file_path),
-                        "error": result["error"]
+                        "error": result["error"],
+                        "completed_files": completed_files,
+                        "total_files": len(file_paths),
                     }) + "\n"
+                    continue
+
+                gdf = result["gdf"]
+                layer_name = result["layer_name"]
+                feature_count = result["feature_count"]
+
+                # Infer layer type from filename (_PLE = particelle, _MAP = mappa)
+                name_upper = layer_name.upper()
+                if "_PLE" in name_upper:
+                    layer_type = "ple"
+                elif "_FLE" in name_upper:
+                    layer_type = "ple"
                 else:
-                    gdf = result["gdf"]
-                    layer_name = result["layer_name"]
-                    feature_count = result["feature_count"]
+                    layer_type = "map"
 
-                    # Infer layer type from filename (_PLE = particelle, _MAP = mappa)
-                    name_upper = layer_name.upper()
-                    if "_PLE" in name_upper:
-                        layer_type = "ple"
-                    elif "_FLE" in name_upper:
-                        layer_type = "ple"
-                    else:
-                        layer_type = "map"
+                # Tag each feature with the layer_type so the frontend can colour by type.
+                # Completion order is intentionally used here: feature IDs are
+                # re-numbered once on the final combined frame below.
+                gdf["layer_type"] = layer_type
+                gdf["feature_id"] = range(feature_offset, feature_offset + len(gdf))
+                feature_offset += len(gdf)
+                # GeoJSON conversion is CPU-heavy for cadastral layers.  Keep
+                # it out of the event loop so other file jobs can continue
+                # completing while a large layer is being serialized.
+                layer_geojson = await asyncio.to_thread(
+                    lambda: json.loads(gdf.to_json())
+                )
 
-                    # Tag each feature with the layer_type so the frontend can colour by type
-                    gdf["layer_type"] = layer_type
-                    gdf["feature_id"] = range(feature_offset, feature_offset + len(gdf))
-                    feature_offset += len(gdf)
-                    layer_geojson = json.loads(gdf.to_json())
+                layers_data[layer_name] = {
+                    "geojson": layer_geojson,
+                    "feature_count": feature_count,
+                    "source_file": file_path,
+                    "layer_name": layer_name,
+                }
+                all_gdfs.append(gdf)
+                total_features += feature_count
+                completed_files += 1
 
-                    layers_data[layer_name] = {
-                        "geojson": layer_geojson,
-                        "feature_count": feature_count,
-                        "source_file": file_path,
-                        "layer_name": layer_name,
-                    }
-                    all_gdfs.append(gdf)
-                    total_features += feature_count
-
-                    # Update current_gdf incrementally so adjacency analysis works
-                    # as soon as the first layer is rendered, without waiting for all files.
-                    _parts = (
-                        ([original_existing_gdf] if original_existing_gdf is not None else [])
-                        + all_gdfs
-                    )
-                    _incremental = gpd.pd.concat(_parts, ignore_index=True)
-                    _incremental["feature_id"] = range(len(_incremental))
-                    set_current_gdf(_incremental)
-
-                    # Stream the layer data so frontend can render immediately
-                    yield json.dumps({
-                        "event": "layer",
-                        "file_index": i,
-                        "layer_name": layer_name,
-                        "layer_type": layer_type,
-                        "geojson": layer_geojson,
-                        "feature_count": feature_count,
-                    }) + "\n"
-
-            except Exception as e:
-                logger.error(f"Error streaming file {file_path}: {e}")
+                # Stream the layer data so the frontend can render immediately.
+                # The global GeoDataFrame is consolidated once after all jobs
+                # finish; repeatedly concatenating it here was the main O(N^2)
+                # latency source.
                 yield json.dumps({
-                    "event": "error",
+                    "event": "layer",
                     "file_index": i,
-                    "file_path": os.path.basename(file_path),
-                    "error": str(e)
+                    "layer_name": layer_name,
+                    "layer_type": layer_type,
+                    "geojson": layer_geojson,
+                    "feature_count": feature_count,
+                    "completed_files": completed_files,
+                    "total_files": len(file_paths),
                 }) + "\n"
+        finally:
+            # If the browser cancels/closes the stream, do not leave file loads
+            # running in the background.
+            for task in load_tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*load_tasks, return_exceptions=True)
 
         # Update global state with all loaded data
         existing_layers = get_current_layers() or {}
@@ -4297,10 +4330,19 @@ async def load_cadastral_files_stream(request: CadastralFileRequest):
         combined_layers.update(layers_data)
         set_current_layers(combined_layers)
 
-        # current_gdf was already updated incrementally after each file — just compute bounds.
+        # Consolidate the application state once.  This preserves append mode
+        # and makes adjacency analysis available when the stream completes,
+        # without copying all prior layers after every file.
         new_bounds = None
         if all_gdfs:
             new_combined_gdf = gpd.pd.concat(all_gdfs, ignore_index=True)
+            final_parts = (
+                ([original_existing_gdf] if original_existing_gdf is not None else [])
+                + [new_combined_gdf]
+            )
+            final_gdf = gpd.pd.concat(final_parts, ignore_index=True)
+            final_gdf["feature_id"] = range(len(final_gdf))
+            set_current_gdf(final_gdf)
             try:
                 bounds = new_combined_gdf.total_bounds
                 if bounds is not None and len(bounds) == 4:
@@ -4312,6 +4354,10 @@ async def load_cadastral_files_stream(request: CadastralFileRequest):
                     }
             except Exception as e:
                 logger.warning(f"Could not calculate bounds: {e}")
+        elif clear_existing:
+            # Keep the clear-existing contract even when every selected file
+            # failed to load.
+            set_current_gdf(None)
 
         load_time = time.time() - start_time
         successful = len([layer for layer in layers_data.values() if "error" not in layer])
@@ -4328,7 +4374,11 @@ async def load_cadastral_files_stream(request: CadastralFileRequest):
     return StreamingResponse(
         stream_files(),
         media_type="application/x-ndjson",
-        headers={"X-Content-Type-Options": "nosniff"},
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 

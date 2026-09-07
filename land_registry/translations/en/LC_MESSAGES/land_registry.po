@@ -596,9 +596,6 @@ msgstr "Real-time counts of regions, provinces, municipalities, and files. Cache
 msgid "Data Sources"
 msgstr "Data Sources"
 
-msgid "Adjacency Analysis"
-msgstr "Adjacency Analysis"
-
 msgid "Select a polygon and find all adjacent parcels using spatial predicates: touches, intersects, or overlaps."
 msgstr "Select a polygon and find all adjacent parcels using spatial predicates: touches, intersects, or overlaps."
 
@@ -684,17 +681,11 @@ msgstr "The cadastral structure file could not be found or loaded."
 msgid "Please ensure the cadastral data is properly configured."
 msgstr "Please ensure the cadastral data is properly configured."
 
-msgid "0 polygons selected"
-msgstr "0 polygons selected"
-
 msgid "1 polygon selected"
 msgstr "1 polygon selected"
 
 msgid "{n} polygons selected"
 msgstr "{n} polygons selected"
-
-msgid "No polygons loaded"
-msgstr "No polygons loaded"
 
 msgid "{n} polygons on map"
 msgstr "{n} polygons on map"
@@ -746,3 +737,166 @@ msgstr "Select municipality…"
 
 msgid "Select a municipality before searching."
 msgstr "Select a municipality before searching."
+
+# --- Design/quality audit fixes (H1 localization) ---
+msgid "Enrichment Layers"
+msgstr "Enrichment Layers"
+
+msgid "Points of Interest"
+msgstr "Points of Interest"
+
+msgid "Active Fires"
+msgstr "Active Fires"
+
+msgid "Civil Protection Alerts"
+msgstr "Civil Protection Alerts"
+
+msgid "Cadastral Boundaries"
+msgstr "Cadastral Boundaries"
+
+msgid "Drawn Shapes"
+msgstr "Drawn Shapes"
+
+msgid "Polygons"
+msgstr "Polygons"
+
+msgid "Polylines"
+msgstr "Polylines"
+
+msgid "Save"
+msgstr "Save"
+
+msgid "Show regions"
+msgstr "Show regions"
+
+msgid "Border color"
+msgstr "Border color"
+
+msgid "Region Layer"
+msgstr "Region Layer"
+
+msgid "Parcel report"
+msgstr "Parcel report"
+
+msgid "Print / Save PDF"
+msgstr "Print / Save PDF"
+
+msgid "Close"
+msgstr "Close"
+
+msgid "region"
+msgstr "region"
+
+msgid "regions"
+msgstr "regions"
+
+msgid "province"
+msgstr "province"
+
+msgid "provinces"
+msgstr "provinces"
+
+msgid "municipality"
+msgstr "municipality"
+
+msgid "municipalities"
+msgstr "municipalities"
+
+msgid "file type"
+msgstr "file type"
+
+msgid "file types"
+msgstr "file types"
+
+msgid "Total files:"
+msgstr "Total files:"
+
+msgid "Files breakdown:"
+msgstr "Files breakdown:"
+
+msgid "files"
+msgstr "files"
+
+msgid "No files found for this selection"
+msgstr "No files found for this selection"
+
+msgid "Method:"
+msgstr "Method:"
+
+msgid "0 polygons found"
+msgstr "0 polygons found"
+
+msgid "1 polygon found"
+msgstr "1 polygon found"
+
+msgid "{n} polygons found"
+msgstr "{n} polygons found"
+
+msgid "{n} features in {m} layers loaded"
+msgstr "{n} features in {m} layers loaded"
+
+msgid "{n} polygon layers loaded"
+msgstr "{n} polygon layers loaded"
+
+msgid "Loading Cadastral Data"
+msgstr "Loading Cadastral Data"
+
+msgid "Loading: {file}"
+msgstr "Loading: {file}"
+
+msgid "{n} / {m} files"
+msgstr "{n} / {m} files"
+
+msgid "Filter by column..."
+msgstr "Filter by column..."
+
+msgid "Sort by column..."
+msgstr "Sort by column..."
+
+msgid "Showing {start} to {end} of {total} entries"
+msgstr "Showing {start} to {end} of {total} entries"
+
+msgid "Statistics:"
+msgstr "Statistics:"
+
+msgid "Code:"
+msgstr "Code:"
+
+msgid "Files"
+msgstr "Files"
+
+msgid "Civil Protection hydrogeological and hydraulic alert zones for today"
+msgstr "Civil Protection hydrogeological and hydraulic alert zones for today"
+
+
+# --- Design/quality audit fixes, round 2 ---
+msgid "Sign in to save and view your zones"
+msgstr "Sign in to save and view your zones"
+
+msgid "{n} features loaded"
+msgstr "{n} features loaded"
+
+msgid "Cadastral boundaries are unavailable right now"
+msgstr "Cadastral boundaries are unavailable right now"
+
+msgid "Info copied to clipboard"
+msgstr "Info copied to clipboard"
+
+msgid "Link copied to clipboard"
+msgstr "Link copied to clipboard"
+
+msgid "Close panel"
+msgstr "Close panel"
+
+msgid "For developers: full API reference"
+msgstr "For developers: full API reference"
+
+msgid "Map Table"
+msgstr "Map Table"
+
+msgid "Adjacency Table"
+msgstr "Adjacency Table"
+
+msgid "Mapping Table"
+msgstr "Mapping Table"
+

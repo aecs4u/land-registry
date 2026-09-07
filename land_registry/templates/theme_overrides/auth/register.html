@@ -1,0 +1,11 @@
+{#
+  Local override of the aecs4u-theme registration page — same fix as
+  auth/login.html: link this repo's /static/css/auth.css so .btn-gradient and
+  .btn-modern on the submit button actually resolve (design audit finding B3).
+#}
+{% extends "auth/register_base.html" %}
+
+{% block auth_extra_head %}
+  {{ super() }}
+  <link rel="stylesheet" href="/static/css/auth.css" />
+{% endblock %}

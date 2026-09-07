@@ -1,12 +1,37 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ request.state.lr_locale | default('it') }}">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Land Registry Viewer</title>
+  <title>{{ _('Land Registry Viewer') }}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.0/css/all.min.css">
   <link rel="stylesheet" href="/static/css/pages/landing.css">
 </head>
 <body>
+
+  <!-- Same brand + language + dark-mode controls as /map and /cadastral-data,
+       so this doesn't read as a different, unstyled product (design audit
+       finding M5). theme-sync.js applies whatever dark-mode preference was
+       already set elsewhere in the app on load. -->
+  <nav class="landing-nav">
+    <a class="brand" href="/">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" height="22" style="margin-right:4px">
+        <rect fill="#1a5490" width="32" height="32" rx="4"/>
+        <path fill="#fff" d="M6 8h8v6H6zM16 8h10v6H16zM6 16h10v8H6zM18 16h8v8h-8z"/>
+        <path fill="#28a745" d="M7 9h6v4H7zM17 9h8v4h-8zM7 17h8v6H7zM19 17h6v6h-6z"/>
+      </svg>
+      {{ _('Land Registry') }}
+    </a>
+    <div class="nav-actions">
+      <select id="langSelect" onchange="changeLang(this.value)" title="{{ _('Language') }}" autocomplete="off">
+        <option value="it" {% if request.state.lr_locale == 'it' %}selected{% endif %}>🇮🇹 IT</option>
+        <option value="en" {% if request.state.lr_locale == 'en' %}selected{% endif %}>🇬🇧 EN</option>
+      </select>
+      <button onclick="toggleDarkMode()" id="themeToggleBtn" title="{{ _('Toggle dark mode') }}" aria-label="{{ _('Toggle dark mode') }}">
+        <i class="fas fa-moon" id="themeIcon"></i>
+      </button>
+    </div>
+  </nav>
 
   <!-- Hero -->
   <header class="hero">
@@ -44,7 +69,7 @@
 
     <!-- Interactive Mapping -->
     <section>
-      <div class="section-title"><span class="icon">&#127758;</span> {{ _('Interactive Mapping') }}</div>
+      <div class="section-title"><i class="icon fa-solid fa-earth-europe" aria-hidden="true"></i> {{ _('Interactive Mapping') }}</div>
       <div class="feature-grid">
         <div class="feature-card">
           <h3>{{ _('Leaflet Map') }}</h3>
@@ -67,7 +92,7 @@
 
     <!-- Cadastral Data -->
     <section>
-      <div class="section-title"><span class="icon">&#128196;</span> {{ _('Italian Cadastral Data') }}</div>
+      <div class="section-title"><i class="icon fa-solid fa-file-lines" aria-hidden="true"></i> {{ _('Italian Cadastral Data') }}</div>
       <div class="feature-grid">
         <div class="feature-card">
           <h3>{{ _('Hierarchical Browser') }}</h3>
@@ -90,7 +115,7 @@
 
     <!-- Data Sources -->
     <section>
-      <div class="section-title"><span class="icon">&#128230;</span> {{ _('Data Sources') }}</div>
+      <div class="section-title"><i class="icon fa-solid fa-boxes-stacked" aria-hidden="true"></i> {{ _('Data Sources') }}</div>
       <ul class="source-list">
         <li><span class="bullet"></span> File upload (QPKG / GPKG / SHP / GeoJSON / KML)</li>
         <li><span class="bullet"></span> AWS S3 bucket (public &amp; private)</li>
@@ -103,7 +128,7 @@
 
     <!-- Spatial Analysis -->
     <section>
-      <div class="section-title"><span class="icon">&#128269;</span> {{ _('Spatial Analysis') }}</div>
+      <div class="section-title"><i class="icon fa-solid fa-magnifying-glass-location" aria-hidden="true"></i> {{ _('Spatial Analysis') }}</div>
       <div class="feature-grid">
         <div class="feature-card">
           <h3>{{ _('Adjacency Analysis') }}</h3>
@@ -120,10 +145,35 @@
       </div>
     </section>
 
-    <!-- API Endpoints -->
+    <!-- Tech Stack -->
     <section>
-      <div class="section-title"><span class="icon">&#128268;</span> {{ _('API Reference') }}</div>
+      <div class="section-title"><i class="icon fa-solid fa-gear" aria-hidden="true"></i> {{ _('Tech Stack') }}</div>
+      <div class="tech-grid">
+        <span class="tech-tag">FastAPI</span>
+        <span class="tech-tag">Leaflet.js</span>
+        <span class="tech-tag">Leaflet Draw</span>
+        <span class="tech-tag">Folium</span>
+        <span class="tech-tag">GeoPandas</span>
+        <span class="tech-tag">Shapely</span>
+        <span class="tech-tag">Panel / Tabulator</span>
+        <span class="tech-tag">SpatiaLite</span>
+        <span class="tech-tag">FlatGeobuf</span>
+        <span class="tech-tag">AWS S3</span>
+        <span class="tech-tag">Google Cloud Storage</span>
+        <span class="tech-tag">Clerk Auth</span>
+        <span class="tech-tag">Pydantic</span>
+        <span class="tech-tag">Jinja2</span>
+      </div>
+    </section>
 
+    <!-- Moved below the marketing sections and collapsed by default: a raw
+         30+ route API dump (including infra endpoints like configure-s3)
+         was an abrupt tonal break on an otherwise consumer-facing page, and
+         surfaced more backend detail than an anonymous visitor needs to see
+         (design audit finding M7). Still one click away for anyone who does
+         want it, e.g. an integrator landing here from /docs. -->
+    <details class="api-reference-details">
+      <summary>{{ _('For developers: full API reference') }}</summary>
       <div class="endpoint-group">
         <h3>Pages</h3>
         <ul class="endpoint-list">
@@ -203,28 +253,7 @@
           <li><span class="method method-get">GET</span> <span class="path">/health</span> <span class="desc">&mdash; Health check (Cloud Run)</span></li>
         </ul>
       </div>
-    </section>
-
-    <!-- Tech Stack -->
-    <section>
-      <div class="section-title"><span class="icon">&#9881;</span> {{ _('Tech Stack') }}</div>
-      <div class="tech-grid">
-        <span class="tech-tag">FastAPI</span>
-        <span class="tech-tag">Leaflet.js</span>
-        <span class="tech-tag">Leaflet Draw</span>
-        <span class="tech-tag">Folium</span>
-        <span class="tech-tag">GeoPandas</span>
-        <span class="tech-tag">Shapely</span>
-        <span class="tech-tag">Panel / Tabulator</span>
-        <span class="tech-tag">SpatiaLite</span>
-        <span class="tech-tag">FlatGeobuf</span>
-        <span class="tech-tag">AWS S3</span>
-        <span class="tech-tag">Google Cloud Storage</span>
-        <span class="tech-tag">Clerk Auth</span>
-        <span class="tech-tag">Pydantic</span>
-        <span class="tech-tag">Jinja2</span>
-      </div>
-    </section>
+    </details>
 
   </main>
 
@@ -234,5 +263,12 @@
     &middot; <a href="/docs">API Docs</a>
   </footer>
 
+  <script src="/static/theme-sync.js"></script>
+  <script>
+    function changeLang(lang) {
+      document.cookie = 'lang=' + lang + '; path=/; max-age=31536000; SameSite=Lax';
+      window.location.reload();
+    }
+  </script>
 </body>
 </html>

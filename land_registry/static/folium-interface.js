@@ -18,6 +18,20 @@ const CADASTRAL_LABEL_LIMIT = 1000;
 window._cadastralLabelLayers = new Set();
 let cadastralInteractionBound = false;
 
+// The Folium map lives in the parent document (not an iframe — see the
+// architecture note in _build_main_map_shell_context), so it's reachable
+// via window[mapId] rather than window.map. This was previously defined as
+// a function-local helper inside _loadCadastralProgressive only, so every
+// other caller (e.g. map.js's Escape-key handler) threw ReferenceError.
+window.getFoliumMapInstance = function() {
+    const mapElements = document.querySelectorAll('.leaflet-container');
+    if (mapElements.length > 0) {
+        const mapId = mapElements[0].id;
+        return window[mapId];
+    }
+    return null;
+};
+
 // ============================================================
 // Display helpers — region title-case + province full names
 // ============================================================
@@ -866,11 +880,13 @@ function updatePolygonManagementState() {
 
     // Update polygon count display
     if (polygonCount) {
+        const t = window.t || (key => key);
         if (hasPolygons) {
             if (totalFeatureCount > 0) {
-                polygonCount.textContent = `${totalFeatureCount} features in ${polygonLayerCount} layers loaded`;
+                polygonCount.textContent = t('{n} features in {m} layers loaded')
+                    .replace('{n}', totalFeatureCount).replace('{m}', polygonLayerCount);
             } else {
-                polygonCount.textContent = `${polygonLayerCount} polygon layers loaded`;
+                polygonCount.textContent = t('{n} polygon layers loaded').replace('{n}', polygonLayerCount);
             }
         } else {
             polygonCount.textContent = 'No polygons loaded';
@@ -967,6 +983,18 @@ function showMapView() {
     document.querySelectorAll('.view-toggle button').forEach(el => el.classList.remove('active'));
     document.getElementById('mapView').classList.add('active');
     document.getElementById('mapViewBtn').classList.add('active');
+    // Leaflet measures its container once and caches the result. While the map
+    // pane is hidden that measurement is 0x0, and nothing remeasures it on the
+    // way back — so returning from Table view left getSize() reporting 0x0
+    // against a correctly laid out container, tiles unrendered over roughly a
+    // third of the pane and popups positioned against the wrong origin
+    // (design audit finding B4). Remeasure once the pane is actually visible.
+    requestAnimationFrame(() => {
+        const map = window.getFoliumMapInstance && window.getFoliumMapInstance();
+        if (map && typeof map.invalidateSize === 'function') {
+            map.invalidateSize({ animate: false });
+        }
+    });
 }
 
 // NOTE: handleTableViewClick(), showAdjacencyView() and showMappingView() are defined in table-manager.js
@@ -1773,11 +1801,12 @@ async function findAdjacencyForSelected() {
     const selectedRows = featureInfos.map(f => f.properties);
 
     // Display selected polygons table
+    const _t = window.t || (key => key);
     if (selectedPolygonInfo) {
         selectedPolygonInfo.innerHTML = `
             <div class="adj-panel-toolbar">
                 <span class="adj-count-badge">${selectedRows.length}</span>
-                <span class="adj-method-label">Method: <em>${method}</em></span>
+                <span class="adj-method-label">${_t('Method:')} <em>${method}</em></span>
                 <div class="adj-export-btns">
                     <button onclick="_exportAdjRows('selected','csv')" class="adj-export-btn">CSV</button>
                     <button onclick="_exportAdjRows('selected','xlsx')" class="adj-export-btn">Excel</button>
@@ -1797,7 +1826,11 @@ async function findAdjacencyForSelected() {
             adjacentPolygonsInfo.innerHTML = `
                 <div class="adj-panel-toolbar">
                     <span class="adj-count-badge">${adjacentRows.length}</span>
-                    <span class="adj-method-label">${adjacentRows.length} polygon(s) found</span>
+                    <span class="adj-method-label">${
+                        adjacentRows.length === 0 ? _t('0 polygons found') :
+                        adjacentRows.length === 1 ? _t('1 polygon found') :
+                        _t('{n} polygons found').replace('{n}', adjacentRows.length)
+                    }</span>
                     <div class="adj-export-btns">
                         <button onclick="_exportAdjRows('adjacent','csv')" class="adj-export-btn">CSV</button>
                         <button onclick="_exportAdjRows('adjacent','xlsx')" class="adj-export-btn">Excel</button>
@@ -2516,15 +2549,9 @@ async function loadCadastralSelection() {
  * Progressive streaming loader - renders layers as they arrive, no page reload
  */
 async function _loadCadastralProgressive(filePaths, loadButton, originalText) {
-    // Get the Folium map instance for adding layers
-    function getFoliumMapInstance() {
-        const mapElements = document.querySelectorAll('.leaflet-container');
-        if (mapElements.length > 0) {
-            const mapId = mapElements[0].id;
-            return window[mapId];
-        }
-        return null;
-    }
+    // Get the Folium map instance for adding layers (window.getFoliumMapInstance,
+    // defined once near the top of this file)
+    const getFoliumMapInstance = window.getFoliumMapInstance;
 
     const totalFiles = filePaths.length;
     let totalFeatures = 0;
@@ -2600,6 +2627,19 @@ async function _loadCadastralProgressive(filePaths, loadButton, originalText) {
 
                 console.log(`[Progressive] Complete: ${completeSummary.total_layers} layers, ` +
                     `${completeSummary.total_features} features in ${completeSummary.load_time_seconds}s`);
+
+                // The header status line is only set once, on initial page
+                // load (from the server-rendered window.hasData flag) — a
+                // progressive load never revisits it, so it kept reading
+                // "No data loaded" indefinitely after a successful load.
+                if (completeSummary.total_features > 0) {
+                    const t = window.t || (key => key);
+                    const statusText = t('{n} features loaded').replace('{n}', completeSummary.total_features);
+                    ['tableInfo', 'tableViewInfo'].forEach(id => {
+                        const el = document.getElementById(id);
+                        if (el) el.textContent = statusText;
+                    });
+                }
             }
         });
 
