@@ -41,6 +41,10 @@ class _UnavailableDatashaderService:
 
     available = False
 
+    def warmup_jit(self) -> None:
+        """Keep the optional service interface safe during application startup."""
+        return None
+
     def _empty_tile(self) -> bytes:
         return empty_datashader_tile()
 

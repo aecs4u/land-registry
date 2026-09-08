@@ -316,7 +316,11 @@ async def lifespan(app: FastAPI):
         from land_registry.dependencies import get_datashader_registry
 
         service = get_datashader_registry().get_service()
-        asyncio.create_task(asyncio.to_thread(service.warmup_jit))
+        warmup = getattr(service, "warmup_jit", None)
+        if callable(warmup) and getattr(service, "available", True):
+            asyncio.create_task(asyncio.to_thread(warmup))
+        else:
+            logger.info("Datashader JIT warm-up skipped: optional dependencies unavailable")
     except Exception as e:
         logger.warning(f"Could not schedule datashader JIT warm-up (non-fatal): {e}")
 

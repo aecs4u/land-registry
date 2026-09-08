@@ -1513,31 +1513,26 @@ async function checkDbStatus() {
     if (!statusText || !statusIndicator) return;
     
     try {
-        // Try a test query with limit 1 to check connection
-        const response = await fetch('/api/v1/load-spatialite/', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ limit: 1, layer_type: 'map' })
-        });
-        
-        if (response.ok) {
-            const data = await response.json();
-            if (data.success) {
-                statusIndicator.className = 'db-status connected';
-                statusText.textContent = `Connected (${data.columns?.length || 0} columns)`;
-            } else {
-                statusIndicator.className = 'db-status error';
-                statusText.textContent = 'Database empty or not found';
-            }
+        // A health check must not execute a geospatial query. The previous
+        // POST opened SpatiaLite/GDAL on every page load and reported a total
+        // outage when only the provisioned FlatGeobuf source was available.
+        const response = await fetch('/api/v1/get-regions/');
+        const payload = response.ok ? await response.json() : {};
+        const regionCount = Array.isArray(payload.regions) ? payload.regions.length : 0;
+
+        if (regionCount > 0) {
+            statusIndicator.className = 'db-status connected';
+            statusText.textContent = `FlatGeobuf available (${regionCount} regions)`;
+            // Make the usable source active when SpatiaLite is not provisioned.
+            if (typeof selectDataSource === 'function') selectDataSource('fgb');
         } else {
-            const err = await response.json().catch(() => ({}));
             statusIndicator.className = 'db-status error';
-            statusText.textContent = err.detail?.substring(0, 50) || 'Connection error';
+            statusText.textContent = 'No cadastral data source available';
         }
     } catch (error) {
         statusIndicator.className = 'db-status error';
-        statusText.textContent = 'Database unavailable';
-        console.error('Database status check error:', error);
+        statusText.textContent = 'Cadastral data unavailable';
+        console.error('Cadastral data status check error:', error);
     }
 }
 

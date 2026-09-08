@@ -20,6 +20,8 @@ dependencies = [
     "pyogrio>=0.7.0",
     # Datashader for high-performance visualization
     "datashader>=0.16.0",
+    # Numba (used by Datashader) currently supports NumPy up to 2.4.
+    "numpy<2.5",
     "colorcet>=3.0.1",
     "xarray>=2024.1.0",
     "pillow>=10.0.0",

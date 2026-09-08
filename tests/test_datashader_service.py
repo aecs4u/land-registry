@@ -379,7 +379,7 @@ class TestGenerateCategoricalMap:
 #
 # Unlike generate_tile (centroid density heatmap from CadastralDatabase),
 # generate_boundary_tile reads real polygon geometry straight from the
-# cadastral_map.<region>.fgb source files. These tests write small synthetic
+# per-municipality *_map.fgb source files (plus legacy names). These tests write small synthetic
 # fgb files to a tmp dir (not the real /mnt/mobile dataset) so they're
 # self-contained in CI.
 # ---------------------------------------------------------------------------
@@ -435,6 +435,18 @@ class TestRegionFgbBounds:
         minx, miny, maxx, maxy = bounds["cadastral_map.laziotest.fgb"]
         assert minx == pytest.approx(12.0, abs=0.01)
         assert maxx == pytest.approx(12.1, abs=0.01)
+
+    def test_indexes_deployed_municipality_filename_and_nested_path(self, service, fgb_dir):
+        path = fgb_dir / "ITALIA" / "LAZIO" / "RM" / "GROTTAFERRATA" / "E204_GROTTAFERRATA_map.fgb"
+        path.parent.mkdir(parents=True)
+        polygon = Polygon([(12.2, 41.2), (12.3, 41.2), (12.3, 41.3), (12.2, 41.3)])
+        _write_region_fgb(path, polygon)
+
+        bounds = service._region_fgb_bounds()
+
+        relative_path = str(path.relative_to(fgb_dir))
+        assert relative_path in bounds
+        assert bounds[relative_path][0] == pytest.approx(12.2, abs=0.01)
 
     def test_cached_after_first_call(self, service, fgb_dir):
         first = service._region_fgb_bounds()

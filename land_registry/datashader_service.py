@@ -632,9 +632,11 @@ class DatashaderTileService:
             )
             return self._empty_image(width, height)
 
-    # layer_type -> fgb filename prefix ("map" = foglio/sheet outlines,
-    # "ple" = particella/individual parcel outlines).
-    _LAYER_FGB_PREFIX = {"map": "cadastral_map", "ple": "cadastral_ple"}
+    # layer_type -> deployed FGB filename suffix ("map" = foglio/sheet
+    # outlines, "ple" = particella/individual parcel outlines).  Keep the
+    # legacy cadastral_<layer>.<region>.fgb form supported below as well.
+    _LAYER_FGB_SUFFIX = {"map": "_map.fgb", "ple": "_ple.fgb"}
+    _LEGACY_LAYER_FGB_PREFIX = {"map": "cadastral_map", "ple": "cadastral_ple"}
     # Distinct outline color per layer so both can be told apart when stacked.
     _LAYER_LINE_COLOR = {"map": "#cc5500", "ple": "#1f7a8c"}
 
@@ -876,8 +878,9 @@ class DatashaderTileService:
 
     def _region_fgb_bounds(self, layer_type: str = "map") -> dict[str, tuple]:
         """
-        Lazily map each cadastral_<layer_type>.<region>.fgb file to its
-        total_bounds (in the source EPSG:6706 CRS), read once from each
+        Lazily map each deployed <municipality>_<layer_type>.fgb file (or
+        legacy cadastral_<layer_type>.<region>.fgb file) to its total_bounds
+        (in the source EPSG:6706 CRS), read once from each
         file's header via pyogrio (cheap regardless of file size — no full
         read). Cached separately per layer_type ("map" vs "ple").
         """
@@ -886,7 +889,8 @@ class DatashaderTileService:
 
         from land_registry.config import spatialite_settings
 
-        prefix = self._LAYER_FGB_PREFIX[layer_type]
+        suffix = self._LAYER_FGB_SUFFIX[layer_type]
+        legacy_prefix = self._LEGACY_LAYER_FGB_PREFIX[layer_type]
         fgb_dir = Path(spatialite_settings.fgb_directory)
         bounds: dict[str, tuple] = {}
         if not fgb_dir.exists():
@@ -894,15 +898,26 @@ class DatashaderTileService:
             self._fgb_bounds[layer_type] = bounds
             return bounds
 
-        for fgb_path in fgb_dir.glob(f"{prefix}.*.fgb"):
+        # The production store contains one pair per municipality, commonly
+        # at the root or in ITALIA/REGIONE/PROVINCIA/COMUNE subdirectories.
+        # A set avoids indexing a file twice when it also matches the legacy
+        # naming convention.
+        fgb_paths = {
+            *fgb_dir.rglob(f"*{suffix}"),
+            *fgb_dir.rglob(f"{legacy_prefix}.*.fgb"),
+        }
+        for fgb_path in sorted(fgb_paths):
             try:
                 info = pyogrio.read_info(fgb_path)
-                bounds[fgb_path.name] = tuple(info["total_bounds"])
+                # Preserve subdirectories (and therefore duplicate
+                # municipality filenames) when resolving the candidate path.
+                key = str(fgb_path.relative_to(fgb_dir))
+                bounds[key] = tuple(info["total_bounds"])
             except Exception as e:
                 log.warning(f"Failed reading fgb header for {fgb_path}: {e}")
 
         self._fgb_bounds[layer_type] = bounds
-        log.info(f"Indexed {len(bounds)} {prefix} fgb file(s) for boundary tiles")
+        log.info(f"Indexed {len(bounds)} {layer_type} fgb file(s) for boundary tiles")
         return bounds
 
     def _candidate_fgb_files(self, bbox: tuple, layer_type: str = "map") -> list:
@@ -929,11 +944,9 @@ class DatashaderTileService:
         """
         Pay datashader/numba's one-time JIT compile cost (~7s for
         Canvas.polygons/Canvas.line) with a throwaway call, so the first real
-        tile request doesn't stall. Also pre-indexes the "map" and "ple" fgb
-        bounds (see _region_fgb_bounds) — for "ple" specifically this reads
-        pyogrio.read_info() across ~19 files up to several GB each, which can
-        take well over a minute on a cold cache; better to eat that once here
-        than on a user's first click-to-identify or boundary-tile request.
+        tile request doesn't stall. FGB bounds stay lazy: the deployed store
+        contains thousands of per-municipality files, so scanning every file
+        during application startup would make the app appear unresponsive.
         Call this once at process startup, off the request path.
         """
         try:
@@ -949,17 +962,7 @@ class DatashaderTileService:
         except Exception as e:
             log.warning(f"Datashader JIT warm-up failed (non-fatal): {e}")
 
-        # With the canonical database configured, avoid scanning all local FGB
-        # headers during startup; they are only an offline fallback.
-        if self._postgres_boundary_source is None:
-            for layer_type in ("map", "ple"):
-                try:
-                    bounds = self._region_fgb_bounds(layer_type)
-                    log.info(f"Pre-indexed {len(bounds)} cadastral_{layer_type} fgb file(s)")
-                except Exception as e:
-                    log.warning(f"Cadastral {layer_type} fgb pre-indexing failed (non-fatal): {e}")
-        else:
-            log.info("Skipping FGB boundary pre-index: PostGIS is configured")
+        log.info("FGB boundary index remains lazy until a boundary tile or identify request")
 
     def _polygons_to_points(self, gdf: gpd.GeoDataFrame) -> pd.DataFrame:
         """
