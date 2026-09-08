@@ -160,6 +160,8 @@ def test_api_and_frontend_expose_catalog_health_and_tiles():
     assert "setCanonicalMapLayerOpacity" in frontend
     assert "canonical-layer-status" in frontend
     assert "canonicalLayerOpacities" in frontend
+    assert "_canonicalLoadFeatureDetails" in frontend
+    assert "detail_url" in frontend
 
 
 def test_consumer_map_has_geojson_fallback():

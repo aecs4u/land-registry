@@ -197,8 +197,15 @@ class CadastralDatabase:
                 conn.enable_load_extension(True)
                 conn.load_extension(SPATIALITE_LIB)
                 if init_spatialite:
-                    # Only init metadata on first connection/table creation
-                    conn.execute("SELECT InitSpatialMetaData(1)")
+                    # InitSpatialMetaData emits a noisy error when called on
+                    # every application restart. The metadata table is the
+                    # durable marker that initialization has already run.
+                    metadata_exists = conn.execute(
+                        "SELECT 1 FROM sqlite_master "
+                        "WHERE type = 'table' AND name = 'spatial_ref_sys' LIMIT 1"
+                    ).fetchone()
+                    if metadata_exists is None:
+                        conn.execute("SELECT InitSpatialMetaData(1)")
             except Exception as e:
                 logger.debug(f"SpatiaLite load/init: {e}")
 
@@ -270,19 +277,35 @@ class CadastralDatabase:
 
             # Create spatial index if SpatiaLite is available
             if SPATIALITE_AVAILABLE:
-                try:
-                    # Add geometry column if not exists
-                    conn.execute("""
-                        SELECT AddGeometryColumn('cadastral_parcels', 'geometry', 6706, 'MULTIPOLYGON', 'XY')
-                    """)
-                except Exception:
-                    pass  # Column might already exist
+                geometry_column = conn.execute(
+                    "PRAGMA table_info(cadastral_parcels)"
+                ).fetchall()
+                has_geometry_column = any(row[1] == 'geometry' for row in geometry_column)
+                if not has_geometry_column:
+                    try:
+                        conn.execute("""
+                            SELECT AddGeometryColumn('cadastral_parcels', 'geometry', 6706, 'MULTIPOLYGON', 'XY')
+                        """)
+                    except Exception:
+                        pass  # A concurrent/legacy schema may already define it
 
+                # Only call CreateSpatialIndex for a registered Geometry
+                # column. Calling it for a plain SQLite column produces the
+                # misleading "isn't a Geometry column" startup warning.
                 try:
-                    # Create R-tree spatial index
-                    conn.execute("SELECT CreateSpatialIndex('cadastral_parcels', 'geometry')")
+                    registered_geometry = conn.execute(
+                        "SELECT 1 FROM geometry_columns "
+                        "WHERE f_table_name = 'cadastral_parcels' "
+                        "AND f_geometry_column = 'geometry' LIMIT 1"
+                    ).fetchone()
+                    spatial_index = conn.execute(
+                        "SELECT 1 FROM sqlite_master "
+                        "WHERE type = 'table' AND name = 'idx_cadastral_parcels_geometry' LIMIT 1"
+                    ).fetchone()
+                    if registered_geometry is not None and spatial_index is None:
+                        conn.execute("SELECT CreateSpatialIndex('cadastral_parcels', 'geometry')")
                 except Exception:
-                    pass  # Index might already exist
+                    pass  # Spatial metadata may be from a legacy SpatiaLite release
 
             # Statistics table for quick lookups
             conn.execute("""

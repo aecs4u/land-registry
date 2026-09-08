@@ -38,7 +38,7 @@
     {% endblock %}
 
     <!-- Application CSS (overrides theme tokens where needed) -->
-    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="{{ asset_url('styles.css') }}" />
 
     {% block extra_css %}{% endblock %}
   </head>
@@ -86,12 +86,12 @@
     <script src="/static/aecs4u-theme/js/theme.js"></script>
 
     {% block map_js %}
-    <script src="/static/progressive-loader.js"></script>
-    <script src="/static/map.js"></script>
+    <script src="{{ asset_url('progressive-loader.js') }}"></script>
+    <script src="{{ asset_url('map.js') }}"></script>
     {% endblock %}
-    <script src="/static/table-manager.js"></script>
+    <script src="{{ asset_url('table-manager.js') }}"></script>
 
-    <script src="/static/i18n.js"></script>
+    <script src="{{ asset_url('i18n.js') }}"></script>
     {% block i18n_data %}{% endblock %}
     {% block app_js %}{% endblock %}
     {% block data_scripts %}{% endblock %}

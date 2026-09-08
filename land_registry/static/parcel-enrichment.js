@@ -71,6 +71,22 @@
         if (ref && typeof ref === 'string' && ref.includes('_')) {
             return ref.split('_')[0].trim().toUpperCase();
         }
+        // Some WFS/FGB response paths expose the municipality code but omit
+        // NATIONALCADASTRALREFERENCE. That reference is needed only for the
+        // parcel-keyed read model; municipality-level enrichment can still be
+        // resolved from ADMINISTRATIVEUNIT (e.g. C708 -> Cinisi).
+        const cadastralCode = props.ADMINISTRATIVEUNIT
+            || props.administrativeunit
+            || props.municipality_code
+            || props.comune_code
+            || props.cadastral_code
+            || props.comune
+            || props.municipality_name
+            || props.municipality;
+        if (cadastralCode && typeof cadastralCode === 'string') {
+            const normalized = cadastralCode.trim().toUpperCase();
+            return /^[A-Z]\d{3}$/.test(normalized) ? normalized : null;
+        }
         return null;
     }
 
@@ -605,7 +621,7 @@
         }
 
         if (!cadastralCode) {
-            container.innerHTML = `<div class="enrichment-empty text-muted">Codice catastale del comune non disponibile per questa particella (manca NATIONALCADASTRALREFERENCE).</div>`;
+            container.innerHTML = `<div class="enrichment-empty text-muted">Codice catastale del comune non disponibile per questa particella.</div>`;
             return;
         }
 
@@ -629,25 +645,32 @@
         const cards = container.querySelectorAll('.enrichment-card');
         const coverageEl = cards[cards.length - 1];
 
-        // Resolve the parcel-keyed read model first. It combines the stable
-        // parcel, municipality, census, and OMI lookups into one indexed read
-        // after the first request. Keep the old municipality endpoint as a
-        // compatibility fallback for features without a canonical reference.
-        // Start the compatibility municipality lookup at the same time as the
-        // optional read-model request. A slow/broken cache must not delay the
-        // rest of the parcel cards or prevent the local fallback from being
-        // used.
+        // Request the parcel-keyed read model in the background. It combines
+        // the stable parcel, municipality, census, and OMI lookups into one
+        // indexed read after the first request. Keep the old municipality
+        // endpoint as the immediate compatibility path: a slow/broken cache
+        // must not delay the rest of the parcel cards or prevent local
+        // fallback data from being used.
+        let readModel = null;
         const readModelPromise = nationalReference
             ? _fetchJson(`/api/v1/enrichment/parcel/details/${encodeURIComponent(nationalReference)}`)
             : Promise.resolve({ ok: false, data: null });
         const municipalityPromise = _fetchJson(`/api/v1/enrichment/municipality/${encodeURIComponent(cadastralCode)}`);
-        const readModelResult = await readModelPromise;
-        if (renderToken !== activeRenderToken) return;
-        const readModel = readModelResult.ok ? readModelResult.data : null;
-        if (coverageEl) coverageEl.querySelector('.enrichment-card-body').innerHTML = _renderBlockCoverage(readModel);
-        const muniResult = readModel && readModel.municipality
-            ? { ok: true, data: readModel.municipality }
-            : await municipalityPromise;
+        // The read model is an optional optimization. Do not wait for its
+        // PostgreSQL connection attempt before rendering the local/ISTAT
+        // municipality and enrichment stores; an unavailable database used to
+        // hold the entire details panel in a blank/unavailable state.
+        if (coverageEl) {
+            coverageEl.querySelector('.enrichment-card-body').innerHTML = _renderBlockCoverage(null);
+        }
+        readModelPromise.then(result => {
+            if (renderToken !== activeRenderToken || !result.ok || !result.data) return;
+            readModel = result.data;
+            if (coverageEl) {
+                coverageEl.querySelector('.enrichment-card-body').innerHTML = _renderBlockCoverage(readModel);
+            }
+        });
+        const muniResult = await municipalityPromise;
         if (renderToken !== activeRenderToken) return;
         const muniData = muniResult.ok ? muniResult.data : null;
         if (muniEl) muniEl.querySelector('.enrichment-card-body').innerHTML = _renderMunicipality(muniData);

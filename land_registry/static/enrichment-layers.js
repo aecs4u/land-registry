@@ -82,13 +82,35 @@
         return { color, weight: 1.5, opacity: 0.85, fillColor: color, fillOpacity: 0.12 };
     }
 
-    function _canonicalPopup(properties) {
+    function _canonicalPopup(properties, details) {
         const rows = Object.entries(properties || {})
             .filter(([, value]) => value !== null && value !== undefined && value !== '')
             .slice(0, 10)
             .map(([key, value]) => `<div><b>${_escapeHtml(key)}:</b> ${_escapeHtml(value)}</div>`)
             .join('');
-        return `<div class="canonical-layer-popup">${rows || _escapeHtml('No attributes')}</div>`;
+        const related = Object.entries((details && details.related) || {})
+            .map(([name, value]) => {
+                if (!Array.isArray(value)) return '';
+                const items = value.slice(0, 3).map(item => Object.entries(item || {})
+                    .filter(([, field]) => field !== null && field !== undefined && field !== '')
+                    .slice(0, 5)
+                    .map(([key, field]) => `<div><b>${_escapeHtml(key)}:</b> ${_escapeHtml(field)}</div>`)
+                    .join('')).join('<hr>');
+                return `<div class="canonical-layer-related"><b>${_escapeHtml(name)}</b> (${value.length})${items ? `<div>${items}</div>` : ''}</div>`;
+            }).filter(Boolean).join('');
+        return `<div class="canonical-layer-popup">${rows || _escapeHtml('No attributes')}${related}</div>`;
+    }
+
+    async function _canonicalLoadFeatureDetails(spec, featureId, setContent) {
+        if (!spec.detail_url || featureId === null || featureId === undefined) return;
+        try {
+            const response = await fetch(spec.detail_url.replace('{feature_id}', encodeURIComponent(featureId)));
+            if (!response.ok) return;
+            const details = await response.json();
+            setContent(_canonicalPopup(details.properties, details));
+        } catch (error) {
+            console.warn('[EnrichmentLayers] Canonical feature detail failed', error);
+        }
     }
 
     function _canonicalSetStatus(layerId, state, message) {
@@ -146,7 +168,14 @@
             const next = L.geoJSON(collection, {
                 style: feature => _canonicalStyle(spec, feature),
                 pointToLayer: (feature, latlng) => L.circleMarker(latlng, _canonicalStyle(spec, feature)),
-                onEachFeature: (feature, layer) => layer.bindPopup(_canonicalPopup(feature.properties)),
+                onEachFeature: (feature, layer) => {
+                    layer.bindPopup(_canonicalPopup(feature.properties));
+                    layer.on('popupopen', () => _canonicalLoadFeatureDetails(
+                        spec,
+                        feature.id ?? (feature.properties || {})[spec.id_column],
+                        content => layer.setPopupContent(content),
+                    ));
+                },
             });
             if (entry.layer && map.hasLayer(entry.layer)) map.removeLayer(entry.layer);
             entry.layer = next.addTo(map);
@@ -188,7 +217,14 @@
             });
             entry.layer.on('click', event => {
                 const properties = event.layer && event.layer.properties;
-                if (properties) L.popup().setLatLng(event.latlng).setContent(_canonicalPopup(properties)).openOn(map);
+                if (properties) {
+                    const popup = L.popup().setLatLng(event.latlng).setContent(_canonicalPopup(properties)).openOn(map);
+                    _canonicalLoadFeatureDetails(
+                        spec,
+                        properties[spec.id_column] ?? properties.id,
+                        content => popup.setContent(content),
+                    );
+                }
             });
             entry.layer.on('tileload', () => _canonicalSetStatus(spec.id, 'ready', 'Ready'));
             entry.layer.on('tileerror', () => _useCanonicalGeoJsonFallback(spec, map));

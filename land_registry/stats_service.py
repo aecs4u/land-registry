@@ -1075,6 +1075,88 @@ def _latest_omi_semester(db_path: Path) -> Optional[tuple[int, int]]:
         return None
 
 
+def _omi_istat_keys(comune: str) -> list[int]:
+    """Resolve a comune to the indexed, region-prefixed OMI ISTAT key."""
+    value = str(comune or "").strip().upper()
+    if not value:
+        return []
+    try:
+        import sqlite3
+
+        connection = sqlite3.connect(f"file:{_istat_sqlite_path()}?mode=ro", uri=True)
+        try:
+            if value[0].isalpha():
+                row = connection.execute(
+                    "SELECT alphanumeric_code, region_id FROM municipalities "
+                    "WHERE UPPER(cadastral_code) = ? LIMIT 1",
+                    (value,),
+                ).fetchone()
+            else:
+                numeric = value.lstrip("0") or "0"
+                row = connection.execute(
+                    "SELECT alphanumeric_code, region_id FROM municipalities "
+                    "WHERE CAST(alphanumeric_code AS INTEGER) = CAST(? AS INTEGER) "
+                    "LIMIT 1",
+                    (numeric,),
+                ).fetchone()
+        finally:
+            connection.close()
+        if row and row[0] is not None and row[1] is not None:
+            # AdE stores the region code followed by the five-digit ISTAT
+            # municipality code (Cinisi: 19 + 082031).
+            return [int(f"{int(row[1]):02d}{int(row[0]):06d}")]
+    except (OSError, sqlite3.Error, TypeError, ValueError):
+        return []
+    return []
+
+
+def _fast_omi_quotes(
+    comune: str,
+    *,
+    zona: Optional[str] = None,
+    anno: Optional[int] = None,
+    semestre: Optional[int] = None,
+    db_path: Optional[Path] = None,
+) -> Optional[list[dict]]:
+    """Read OMI rows through the existing ``cod_comune_istat`` index.
+
+    The upstream compatibility query applies ``UPPER``/``CAST`` to columns
+    and therefore scans the multi-gigabyte table. The imported ISTAT store
+    provides the exact region-prefixed key needed for the covering index.
+    ``None`` means the key could not be resolved and lets callers retain the
+    upstream fallback for legacy stores.
+    """
+    keys = _omi_istat_keys(comune)
+    if not keys:
+        return None
+    db_path = db_path or _omi_sqlite_path()
+    latest = (anno, semestre) if anno is not None and semestre is not None else _latest_omi_semester(db_path)
+    if latest is None:
+        return []
+    anno, semestre = latest
+    try:
+        import sqlite3
+
+        connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        connection.row_factory = sqlite3.Row
+        placeholders = ",".join("?" for _ in keys)
+        sql = (
+            f"SELECT * FROM quotazioni_valori WHERE cod_comune_istat IN ({placeholders}) "
+            "AND anno = ? AND semestre = ?"
+        )
+        params: list[Any] = [*keys, anno, semestre]
+        if zona:
+            sql += " AND UPPER(zona) = ?"
+            params.append(zona.strip().upper())
+        try:
+            rows = connection.execute(sql, params).fetchall()
+        finally:
+            connection.close()
+        return [dict(row) for row in rows]
+    except (OSError, sqlite3.Error):
+        return []
+
+
 def get_omi_quotes(comune: str, zona: Optional[str] = None) -> Dict[str, Any]:
     """
     OMI (Osservatorio Mercato Immobiliare) quotes for a comune's latest
@@ -1088,7 +1170,9 @@ def get_omi_quotes(comune: str, zona: Optional[str] = None) -> Dict[str, Any]:
     kwargs = {"db_path": db_path}
     if latest:
         kwargs.update({"anno": latest[0], "semestre": latest[1]})
-    rows = quotes_for_comune(comune, zona=zona, **kwargs)
+    rows = _fast_omi_quotes(comune, zona=zona, **kwargs)
+    if rows is None:
+        rows = quotes_for_comune(comune, zona=zona, **kwargs)
     return {
         "comune": comune,
         "zona": zona,
@@ -1099,7 +1183,33 @@ def get_omi_quotes(comune: str, zona: Optional[str] = None) -> Dict[str, Any]:
 
 def get_omi_history(comune: str, zona: str, cod_tipologia: Optional[str] = None) -> Dict[str, Any]:
     """Full semester history (oldest-first) of OMI quotes for one comune/zone."""
-    rows = quote_history(comune, zona, cod_tipologia=cod_tipologia, db_path=_omi_sqlite_path())
+    keys = _omi_istat_keys(comune)
+    rows = []
+    if keys:
+        try:
+            import sqlite3
+
+            connection = sqlite3.connect(f"file:{_omi_sqlite_path()}?mode=ro", uri=True)
+            connection.row_factory = sqlite3.Row
+            placeholders = ",".join("?" for _ in keys)
+            sql = (
+                "SELECT anno, semestre, zona, cod_tipologia, tipologia, stato_conservazione, "
+                "prezzo_min, prezzo_max, locazione_min, locazione_max "
+                f"FROM quotazioni_valori WHERE cod_comune_istat IN ({placeholders}) AND UPPER(zona) = ?"
+            )
+            params: list[Any] = [*keys, zona.strip().upper()]
+            if cod_tipologia is not None:
+                sql += " AND CAST(cod_tipologia AS TEXT) = ?"
+                params.append(str(cod_tipologia))
+            sql += " ORDER BY anno, semestre"
+            try:
+                rows = [dict(row) for row in connection.execute(sql, params).fetchall()]
+            finally:
+                connection.close()
+        except (OSError, sqlite3.Error):
+            rows = []
+    else:
+        rows = quote_history(comune, zona, cod_tipologia=cod_tipologia, db_path=_omi_sqlite_path())
     return {
         "comune": comune,
         "zona": zona,
@@ -1127,7 +1237,9 @@ def estimate_omi_value(
     kwargs = {"db_path": db_path}
     if latest:
         kwargs.update({"anno": latest[0], "semestre": latest[1]})
-    rows = quotes_for_comune(comune, zona=zona, **kwargs)
+    rows = _fast_omi_quotes(comune, zona=zona, **kwargs)
+    if rows is None:
+        rows = quotes_for_comune(comune, zona=zona, **kwargs)
     type_code = str(cod_tipologia).strip().upper()
     state = stato_conservazione.strip().casefold() if stato_conservazione else None
     matches = [

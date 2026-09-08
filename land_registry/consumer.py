@@ -117,6 +117,26 @@ async def canonical_map_layer_features(
     return payload
 
 
+@consumer_router.get("/map/layers/{layer_id}/features/{feature_id}")
+async def canonical_map_layer_feature_details(layer_id: str, feature_id: int = Query(..., ge=1)) -> dict:
+    """Return one map feature and its related source records."""
+    try:
+        get_map_layer(layer_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    source = get_map_layer_source()
+    if not source.available:
+        raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable")
+    try:
+        payload = await asyncio.to_thread(source.read_feature_details, layer_id, feature_id)
+    except Exception as exc:
+        logger.warning("Consumer canonical feature detail failed for %s/%s: %s", layer_id, feature_id, exc)
+        raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable") from exc
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Map feature not found")
+    return payload
+
+
 @consumer_router.get("/tiles/map-layers/{layer_id}/{z}/{x}/{y}.pbf")
 async def canonical_map_layer_tile(layer_id: str, z: int, x: int, y: int) -> Response:
     """Serve one canonical map layer to an embedded consumer map."""

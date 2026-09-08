@@ -282,11 +282,11 @@ async def get_parcel_details(
     stores. Later requests use one indexed SQLite lookup, keeping the parcel
     details panel independent of the latency of the source databases.
     """
-    result = await asyncio.to_thread(
-        stats_service.get_parcel_enrichment,
-        national_reference,
-        refresh,
-    )
+    # FlatGeobuf/GDAL can deadlock when invoked from an AnyIO worker thread on
+    # this deployment. Keep this short cold-path read on the route's direct
+    # execution path; the optional PostgreSQL connection is independently
+    # bounded by stats_service's hard timeout.
+    result = stats_service.get_parcel_enrichment(national_reference, refresh)
     if result is None:
         raise HTTPException(status_code=404, detail=f"No enrichment data found for '{national_reference}'")
     return result

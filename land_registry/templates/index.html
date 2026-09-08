@@ -865,11 +865,11 @@
   window.cartoApiKey = {{ carto_api_key | tojson }};
 </script>
 {% endblock %} {% block app_js %}
-<script src="/static/folium-interface.js"></script>
-<script src="/static/parcel-enrichment.js"></script>
-<script src="/static/parcel-report.js"></script>
-<script src="/static/enrichment-layers.js"></script>
-<script src="/static/index-init.js"></script>
+<script src="{{ asset_url('folium-interface.js') }}"></script>
+<script src="{{ asset_url('parcel-enrichment.js') }}"></script>
+<script src="{{ asset_url('parcel-report.js') }}"></script>
+<script src="{{ asset_url('enrichment-layers.js') }}"></script>
+<script src="{{ asset_url('index-init.js') }}"></script>
 {% endblock %}
 
 {% block i18n_data %}<script>window._i18n = {{ i18n_strings | tojson }};</script>{% endblock %}

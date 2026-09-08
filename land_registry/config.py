@@ -205,7 +205,9 @@ class SpatialiteSettings(BaseSettings):
     extension_path: Optional[str] = None  # Optional override for mod_spatialite path
 
     # FlatGeobuf directory (for FGB data source)
-    fgb_directory: str = "/mnt/mobile/data/aecs4u.it/land-registry"
+    # Shared container mount; individual files are commonly organized as
+    # ITALIA/REGIONE/PROVINCIA/COMUNE/*_{map,ple}.fgb.
+    fgb_directory: str = "/data/catasto"
 
     class Config:
         env_prefix = "SPATIALITE_"

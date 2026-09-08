@@ -428,60 +428,58 @@ function restoreSelectionFromUrl() {
         if (option) option.selected = true;
     });
 
-    // Trigger province loading
-    if (regions.length > 0 && typeof loadCadastralProvinces === 'function') {
-        loadCadastralProvinces();
+    // Populate the dependent selects.  Both build their options synchronously
+    // from the already-loaded `cadastralData`, so there is nothing to wait for.
+    //
+    // This previously called loadCadastralProvinces/loadCadastralMunicipalities
+    // behind `typeof ... === 'function'` guards.  Neither function exists
+    // anywhere in the codebase, so the guards were always false and the calls
+    // silently did nothing: the province and municipality selects stayed empty,
+    // currentFileSelection stayed empty, and a fully-specified deep link
+    // restored the region only and then loaded nothing at all.
+    if (regions.length > 0) {
+        updateProvincesSelect();
 
-        // Wait for provinces to load, then restore
-        setTimeout(() => {
-            if (provincesParam && provincesSelect) {
-                const provinces = provincesParam.split(',');
-                provinces.forEach(province => {
-                    const option = provincesSelect.querySelector(`option[value="${province}"]`);
-                    if (option) option.selected = true;
-                });
+        if (provincesParam && provincesSelect) {
+            provincesParam.split(',').forEach(province => {
+                const option = provincesSelect.querySelector(`option[value="${province}"]`);
+                if (option) option.selected = true;
+            });
+        }
 
-                // Trigger municipality loading
-                if (typeof loadCadastralMunicipalities === 'function') {
-                    loadCadastralMunicipalities();
+        updateMunicipalitiesSelect();
 
-                    // Wait for municipalities to load, then restore
-                    setTimeout(() => {
-                        if (municipalitiesParam && municipalitiesSelect) {
-                            const municipalities = municipalitiesParam.split(',').map(m => decodeURIComponent(m));
-                            municipalities.forEach(municipality => {
-                                const option = municipalitiesSelect.querySelector(`option[value="${municipality}"]`);
-                                if (option) option.selected = true;
-                            });
-                        }
+        if (municipalitiesParam && municipalitiesSelect) {
+            municipalitiesParam.split(',').map(m => decodeURIComponent(m)).forEach(municipality => {
+                const option = municipalitiesSelect.querySelector(`option[value="${municipality}"]`);
+                if (option) option.selected = true;
+            });
+        }
 
-                        // Restore file types
-                        if (fileTypesParam && fileTypesContainer) {
-                            const fileTypes = fileTypesParam.split(',');
-                            fileTypesContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-                                cb.checked = fileTypes.includes(cb.value);
-                            });
-                        }
+        // Restore file types
+        if (fileTypesParam && fileTypesContainer) {
+            const fileTypes = fileTypesParam.split(',');
+            fileTypesContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                cb.checked = fileTypes.includes(cb.value);
+                const parentDiv = cb.closest('.file-type-checkbox');
+                if (parentDiv) parentDiv.classList.toggle('selected', cb.checked);
+            });
+        }
 
-                        // Update summary — this also (re)computes window.currentFileSelection
-                        // from the DOM selection state set above, since setting
-                        // option.selected/checkbox.checked directly doesn't fire 'change'.
-                        updateSelectionSummary();
+        // Recompute window.currentFileSelection from the DOM state set above:
+        // assigning option.selected / checkbox.checked does not fire 'change'.
+        updateSelectionSummary();
 
-                        debugLog('Selection restored from URL');
+        debugLog('Selection restored from URL');
 
-                        // A deep link that fully specifies region+province+municipality+
-                        // fileTypes is expected to load data automatically — restoring the
-                        // dropdowns alone (previous behavior) left the map empty until the
-                        // user manually clicked "Load Selected Files".
-                        if (window.currentFileSelection && window.currentFileSelection.length > 0
-                            && typeof loadCadastralSelection === 'function') {
-                            loadCadastralSelection();
-                        }
-                    }, 100);
-                }
-            }
-        }, 100);
+        // A deep link that fully specifies region+province+municipality+
+        // fileTypes is expected to load data automatically — restoring the
+        // dropdowns alone left the map empty until the user clicked
+        // "Load Selected Files".
+        if (window.currentFileSelection && window.currentFileSelection.length > 0
+            && typeof loadCadastralSelection === 'function') {
+            loadCadastralSelection();
+        }
     }
 
     return true;
@@ -647,59 +645,48 @@ function loadRecentFile(index) {
         Array.from(regionsSelect.options).forEach(opt => {
             opt.selected = file.regions.includes(opt.value);
         });
-        // Trigger province loading
-        if (typeof loadCadastralProvinces === 'function') {
-            loadCadastralProvinces();
+        // Same synchronous cascade as restoreSelectionFromUrl.
+        updateProvincesSelect();
+    }
+
+    if (provincesSelect && file.provinces) {
+        Array.from(provincesSelect.options).forEach(opt => {
+            opt.selected = file.provinces.includes(opt.value);
+        });
+        updateMunicipalitiesSelect();
+    }
+
+    if (municipalitiesSelect && file.municipalities) {
+        Array.from(municipalitiesSelect.options).forEach(opt => {
+            opt.selected = file.municipalities.includes(opt.value);
+        });
+    }
+
+    // Set file types
+    if (file.fileTypes) {
+        const fileTypesContainer = document.getElementById('cadastralFileTypes');
+        if (fileTypesContainer) {
+            fileTypesContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                cb.checked = file.fileTypes.includes(cb.value);
+                const parentDiv = cb.closest('.file-type-checkbox');
+                if (parentDiv) {
+                    parentDiv.classList.toggle('selected', cb.checked);
+                }
+            });
         }
     }
 
-    // Wait for provinces to load, then set them
+    // Update summary
+    if (typeof updateSelectionSummary === 'function') {
+        updateSelectionSummary();
+    }
+
+    // Auto-load the selection
     setTimeout(() => {
-        if (provincesSelect && file.provinces) {
-            Array.from(provincesSelect.options).forEach(opt => {
-                opt.selected = file.provinces.includes(opt.value);
-            });
-            // Trigger municipality loading
-            if (typeof loadCadastralMunicipalities === 'function') {
-                loadCadastralMunicipalities();
-            }
+        if (typeof loadCadastralSelection === 'function') {
+            loadCadastralSelection();
         }
-
-        // Wait for municipalities to load, then set them
-        setTimeout(() => {
-            if (municipalitiesSelect && file.municipalities) {
-                Array.from(municipalitiesSelect.options).forEach(opt => {
-                    opt.selected = file.municipalities.includes(opt.value);
-                });
-            }
-
-            // Set file types
-            if (file.fileTypes) {
-                const fileTypesContainer = document.getElementById('cadastralFileTypes');
-                if (fileTypesContainer) {
-                    fileTypesContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-                        cb.checked = file.fileTypes.includes(cb.value);
-                        const parentDiv = cb.closest('.file-type-checkbox');
-                        if (parentDiv) {
-                            parentDiv.classList.toggle('selected', cb.checked);
-                        }
-                    });
-                }
-            }
-
-            // Update summary
-            if (typeof updateSelectionSummary === 'function') {
-                updateSelectionSummary();
-            }
-
-            // Auto-load the selection
-            setTimeout(() => {
-                if (typeof loadCadastralSelection === 'function') {
-                    loadCadastralSelection();
-                }
-            }, 200);
-        }, 300);
-    }, 300);
+    }, 200);
 
     showToastNotification(`Loading: ${file.displayName}`, 'success');
 }
@@ -4688,6 +4675,7 @@ let cadastralData = null;
 let cadastralDataLoading = false;
 let cadastralDataLoaded = false;
 let cadastralDataPromise = null;
+let cadastralCascadeRequest = 0;
 
 // Load cadastral data and populate selects
 async function loadCadastralData() {
@@ -4719,6 +4707,25 @@ async function _doLoadCadastralData() {
         regionsSelect.innerHTML = '<option value="">Loading regions...</option>';
     }
 
+    // Populate the first cascade level from the bounded endpoint before
+    // requesting the full hierarchy.  The hierarchy contains every
+    // municipality and file name, so it can be noticeably larger than the
+    // region list and must not be allowed to leave the sidebar blank while it
+    // is loading (or when it is temporarily unavailable).
+    let regionNames = [];
+    try {
+        const regionResponse = await fetch('/api/v1/get-regions/');
+        if (regionResponse.ok) {
+            const regionPayload = await regionResponse.json();
+            regionNames = Array.isArray(regionPayload.regions) ? regionPayload.regions : [];
+            if (regionNames.length > 0) {
+                populateRegionNames(regionNames);
+            }
+        }
+    } catch (error) {
+        console.warn('Could not load the lightweight cadastral region list:', error);
+    }
+
     try {
         const response = await fetch('/api/v1/get-cadastral-structure/');
         debugLog('Cadastral data response status:', response.status);
@@ -4743,19 +4750,25 @@ async function _doLoadCadastralData() {
                 return cadastralData;
             } else {
                 console.error('Cadastral data is empty');
-                showCadastralError('No cadastral data available');
+                if (regionNames.length === 0) {
+                    showCadastralError('No cadastral data available');
+                }
                 return null;
             }
         } else {
             console.error('Failed to load cadastral data:', response.status, response.statusText);
             const errorText = await response.text();
             console.error('Error response:', errorText);
-            showCadastralError('No regions available');
+            if (regionNames.length === 0) {
+                showCadastralError('No regions available');
+            }
             return null;
         }
     } catch (error) {
         console.error('Error loading cadastral data:', error);
-        showCadastralError('Could not connect — try reloading');
+        if (regionNames.length === 0) {
+            showCadastralError('Could not connect — try reloading');
+        }
         return null;
     } finally {
         cadastralDataLoading = false;
@@ -4768,6 +4781,22 @@ function showCadastralError(message) {
     if (regionsSelect) {
         regionsSelect.innerHTML = `<option value="" disabled>${message}</option>`;
     }
+}
+
+// Populate the first cascade level without requiring the complete hierarchy.
+function populateRegionNames(regionNames) {
+    const regionsSelect = document.getElementById('cadastralRegions');
+    if (!regionsSelect) return;
+
+    const previous = new Set(Array.from(regionsSelect.selectedOptions).map(option => option.value));
+    regionsSelect.innerHTML = '';
+    regionNames.slice().sort().forEach(regionName => {
+        const option = document.createElement('option');
+        option.value = regionName;
+        option.textContent = typeof _toTitleCase === 'function' ? _toTitleCase(regionName) : regionName;
+        option.selected = previous.has(regionName);
+        regionsSelect.appendChild(option);
+    });
 }
 
 // Populate regions select
@@ -4792,33 +4821,25 @@ function populateRegionsSelect() {
     debugLog('Cadastral data keys:', Object.keys(cadastralData));
     debugLog('Sample region data:', cadastralData[Object.keys(cadastralData)[0]]);
 
-    // Clear existing options
-    regionsSelect.innerHTML = '';
-    debugLog('Cleared existing options');
-
     // Add region options
     const regions = Object.keys(cadastralData).sort();
     debugLog('Regions to add:', regions);
     debugLog('Number of regions:', regions.length);
 
-    regions.forEach(regionName => {
-        const option = document.createElement('option');
-        option.value = regionName;
-        option.textContent = typeof _toTitleCase === 'function' ? _toTitleCase(regionName) : regionName;
-        regionsSelect.appendChild(option);
-        debugLog('Added region:', regionName);
-    });
+    populateRegionNames(regions);
 
     debugLog('Regions select populated with', regions.length, 'regions');
 }
 
 // Update provinces based on selected regions
-function updateProvincesSelect() {
+async function updateProvincesSelect() {
     const regionsSelect = document.getElementById('cadastralRegions');
     const provincesSelect = document.getElementById('cadastralProvinces');
     const municipalitiesSelect = document.getElementById('cadastralMunicipalities');
 
-    if (!regionsSelect || !provincesSelect || !municipalitiesSelect || !cadastralData) return;
+    if (!regionsSelect || !provincesSelect || !municipalitiesSelect) return;
+
+    const requestId = ++cadastralCascadeRequest;
 
     // Get selected regions (filter out empty values)
     const selectedRegions = Array.from(regionsSelect.selectedOptions)
@@ -4835,21 +4856,38 @@ function updateProvincesSelect() {
         return;
     }
 
-    // Enable provinces select
-    provincesSelect.disabled = false;
-
-    // Collect all provinces from selected regions
-    const allProvinces = new Set();
-    selectedRegions.forEach(regionName => {
-        if (cadastralData[regionName]) {
-            Object.keys(cadastralData[regionName]).forEach(provinceCode => {
-                allProvinces.add(provinceCode);
-            });
+    let provinceCodes = [];
+    if (cadastralData) {
+        // Collect provinces from the already-loaded full hierarchy.
+        const allProvinces = new Set();
+        selectedRegions.forEach(regionName => {
+            if (cadastralData[regionName]) {
+                Object.keys(cadastralData[regionName]).forEach(provinceCode => allProvinces.add(provinceCode));
+            }
+        });
+        provinceCodes = Array.from(allProvinces).sort();
+    } else {
+        // The full hierarchy is optional and can be slow to serialize. Keep
+        // the cascade usable from the bounded directory endpoint meanwhile.
+        provincesSelect.disabled = true;
+        provincesSelect.innerHTML = '<option value="">Loading provinces...</option>';
+        try {
+            const response = await fetch(`/api/v1/get-provinces/?regions=${encodeURIComponent(selectedRegions.join(','))}`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const payload = await response.json();
+            provinceCodes = Array.isArray(payload.provinces) ? payload.provinces : [];
+        } catch (error) {
+            if (requestId === cadastralCascadeRequest) {
+                provincesSelect.innerHTML = '<option value="" disabled>Provinces unavailable</option>';
+            }
+            console.warn('Could not load cadastral provinces:', error);
+            return;
         }
-    });
+        if (requestId !== cadastralCascadeRequest) return;
+    }
 
-    // Add province options
-    Array.from(allProvinces).sort().forEach(provinceCode => {
+    provincesSelect.disabled = false;
+    provinceCodes.forEach(provinceCode => {
         const option = document.createElement('option');
         option.value = provinceCode;
         option.textContent = typeof _provinceLabel === 'function' ? _provinceLabel(provinceCode) : provinceCode;
@@ -4861,12 +4899,14 @@ function updateProvincesSelect() {
 }
 
 // Update municipalities based on selected regions and provinces
-function updateMunicipalitiesSelect() {
+async function updateMunicipalitiesSelect() {
     const regionsSelect = document.getElementById('cadastralRegions');
     const provincesSelect = document.getElementById('cadastralProvinces');
     const municipalitiesSelect = document.getElementById('cadastralMunicipalities');
 
-    if (!regionsSelect || !provincesSelect || !municipalitiesSelect || !cadastralData) return;
+    if (!regionsSelect || !provincesSelect || !municipalitiesSelect) return;
+
+    const requestId = ++cadastralCascadeRequest;
 
     // Get selected regions and provinces (filter out empty values)
     const selectedRegions = Array.from(regionsSelect.selectedOptions)
@@ -4884,24 +4924,46 @@ function updateMunicipalitiesSelect() {
         return;
     }
 
-    // Enable municipalities select
-    municipalitiesSelect.disabled = false;
-
-    // Collect all municipalities from selected regions and provinces
-    const allMunicipalities = new Map(); // Use Map to store municipality -> region mapping
-    selectedRegions.forEach(regionName => {
-        if (cadastralData[regionName]) {
-            selectedProvinces.forEach(provinceCode => {
-                if (cadastralData[regionName][provinceCode]) {
-                    Object.keys(cadastralData[regionName][provinceCode]).forEach(municipalityKey => {
-                        const municipalityData = cadastralData[regionName][provinceCode][municipalityKey];
-                        const municipalityName = municipalityData.name || municipalityKey;
-                        allMunicipalities.set(`${regionName}|${provinceCode}|${municipalityKey}`, municipalityName);
-                    });
-                }
+    let allMunicipalities = new Map();
+    if (cadastralData) {
+        // Collect municipalities from the already-loaded full hierarchy.
+        selectedRegions.forEach(regionName => {
+            if (cadastralData[regionName]) {
+                selectedProvinces.forEach(provinceCode => {
+                    if (cadastralData[regionName][provinceCode]) {
+                        Object.keys(cadastralData[regionName][provinceCode]).forEach(municipalityKey => {
+                            const municipalityData = cadastralData[regionName][provinceCode][municipalityKey];
+                            allMunicipalities.set(`${regionName}|${provinceCode}|${municipalityKey}`, municipalityData.name || municipalityKey);
+                        });
+                    }
+                });
+            }
+        });
+    } else {
+        municipalitiesSelect.disabled = true;
+        municipalitiesSelect.innerHTML = '<option value="">Loading municipalities...</option>';
+        try {
+            const query = new URLSearchParams({
+                regions: selectedRegions.join(','),
+                provinces: selectedProvinces.join(','),
             });
+            const response = await fetch(`/api/v1/get-municipalities/?${query}`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const payload = await response.json();
+            (Array.isArray(payload.municipalities) ? payload.municipalities : []).forEach(municipality => {
+                if (municipality.key) allMunicipalities.set(municipality.key, municipality.name || municipality.key);
+            });
+        } catch (error) {
+            if (requestId === cadastralCascadeRequest) {
+                municipalitiesSelect.innerHTML = '<option value="" disabled>Municipalities unavailable</option>';
+            }
+            console.warn('Could not load cadastral municipalities:', error);
+            return;
         }
-    });
+        if (requestId !== cadastralCascadeRequest) return;
+    }
+
+    municipalitiesSelect.disabled = false;
 
     // Add municipality options (sorted by name)
     Array.from(allMunicipalities.entries())

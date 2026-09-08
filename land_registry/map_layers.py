@@ -41,6 +41,7 @@ class MapLayerSpec:
         value["source"] = "aecs4u-stats PostgreSQL/PostGIS"
         value["tile_url"] = f"/api/v1/tiles/map-layers/{self.id}/{{z}}/{{x}}/{{y}}.pbf"
         value["geojson_url"] = f"/api/v1/map/layers/{self.id}/features"
+        value["detail_url"] = f"/api/v1/map/layers/{self.id}/features/{{feature_id}}"
         return value
 
 
@@ -308,6 +309,88 @@ class PostgresMapLayerSource:
                         "geometry": json.loads(geometry) if geometry else None,
                     })
         return {"type": "FeatureCollection", "features": features}
+
+    def read_feature_details(self, layer_id: str, feature_id: int) -> Optional[dict[str, Any]]:
+        """Return one allow-listed feature and related maritime records."""
+
+        layer = get_map_layer(layer_id)
+        if not self.connection_source:
+            return None
+        columns = self._source_columns(layer)
+        with self.connection_source._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"select {columns} from {layer.table} t "
+                    f"where t.{layer.id_column} = %s limit 1",
+                    (feature_id,),
+                )
+                row = cursor.fetchone()
+                if not row:
+                    return None
+                names = [column.name for column in cursor.description]
+                properties = {name: _json_value(value) for name, value in zip(names, row)}
+                result: dict[str, Any] = {
+                    "layer": layer.id,
+                    "id": feature_id,
+                    "properties": properties,
+                    "related": {},
+                }
+                if layer_id != "maritime-concessions":
+                    return result
+
+                def related_rows() -> list[dict[str, Any]]:
+                    names = [column.name for column in cursor.description]
+                    return [
+                        {name: _json_value(value) for name, value in zip(names, row)}
+                        for row in cursor.fetchall()
+                    ]
+
+                snapshot_id = properties.get("snapshot_id")
+                idconc = properties.get("idconc")
+                cursor.execute(
+                    "select gap_id, source_row_id, idconc, institution_key, document_type, "
+                    "document_description, status, evidence, checked_at "
+                    "from demanio_marittimo.document_gaps "
+                    "where source_row_id = %s order by gap_id",
+                    (feature_id,),
+                )
+                result["related"]["document_gaps"] = related_rows()
+                cursor.execute(
+                    "select match_id, document_url, idconc, match_type, confidence, evidence, "
+                    "extraction_status, extracted_text_chars, page_count, checked_at "
+                    "from demanio_marittimo.online_document_matches "
+                    "where snapshot_id = %s and idconc = %s order by match_id",
+                    (snapshot_id, idconc),
+                )
+                matches = related_rows()
+                result["related"]["online_document_matches"] = matches
+                urls = [item["document_url"] for item in matches if item.get("document_url")]
+                if urls:
+                    cursor.execute(
+                        "select source_page_url, document_url, title, document_kind, status, "
+                        "content_type, local_path, size_bytes, sha256, discovered_at, "
+                        "downloaded_at, error from demanio_marittimo.online_documents "
+                        "where snapshot_id = %s and document_url = any(%s) "
+                        "order by document_url",
+                        (snapshot_id, urls),
+                    )
+                    result["related"]["online_documents"] = related_rows()
+                else:
+                    result["related"]["online_documents"] = []
+                cursor.execute(
+                    "select snapshot_id, package_id, reference_date, status, manifest_path, loaded_at_utc "
+                    "from demanio_marittimo.snapshots where snapshot_id = %s",
+                    (snapshot_id,),
+                )
+                result["related"]["snapshot"] = related_rows()
+                cursor.execute(
+                    "select resource_id, kind, resource_title, requested_url, final_url, "
+                    "size_bytes, sha256, qa_json from demanio_marittimo.resources "
+                    "where snapshot_id = %s order by resource_id",
+                    (snapshot_id,),
+                )
+                result["related"]["resources"] = related_rows()
+                return result
 
 
 _source: Optional[PostgresMapLayerSource] = None

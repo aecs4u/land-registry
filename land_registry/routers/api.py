@@ -7,7 +7,7 @@ import asyncio
 import boto3
 from botocore import UNSIGNED
 from botocore.config import Config
-from fastapi import APIRouter, Body, UploadFile, File, HTTPException, Depends, Query
+from fastapi import APIRouter, Body, UploadFile, File, HTTPException, Depends, Query, Path as ApiPath
 from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPBearer
 import geopandas as gpd
@@ -3741,6 +3741,26 @@ async def get_map_layer_features(
     return payload
 
 
+@api_router.get("/map/layers/{layer_id}/features/{feature_id}")
+async def get_map_layer_feature_details(layer_id: str, feature_id: int = ApiPath(..., ge=1)):
+    """Return one map feature plus related source records when available."""
+    try:
+        get_map_layer(layer_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    source = get_map_layer_source()
+    if not source.available:
+        raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable")
+    try:
+        payload = await asyncio.to_thread(source.read_feature_details, layer_id, feature_id)
+    except Exception as exc:
+        logger.warning("Canonical map feature detail failed for %s/%s: %s", layer_id, feature_id, exc)
+        raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable") from exc
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Map feature not found")
+    return payload
+
+
 @api_router.get("/tiles/map-layers/{layer_id}/{z}/{x}/{y}.pbf")
 async def get_map_layer_tile(layer_id: str, z: int, x: int, y: int):
     """Serve an attribute-bearing vector tile for a canonical spatial layer."""
@@ -4089,6 +4109,41 @@ async def ghsl_enrich(mode: str = "broad"):
 # FlatGeobuf (FGB) API Endpoints
 # ============================================================================
 
+def _fgb_directory() -> Path:
+    """Resolve the configured FGB root, including the shared data mount."""
+    from land_registry.config import spatialite_settings
+
+    configured = os.getenv("SPATIALITE_FGB_DIRECTORY") or os.getenv("FGB_DIRECTORY")
+    root = Path(configured or spatialite_settings.fgb_directory).expanduser()
+    if (root / "ITALIA").is_dir():
+        return root / "ITALIA"
+    return root
+
+
+def _iter_fgb_files(fgb_dir: Path):
+    """Yield regional and municipality FGB files without an unrestricted rglob."""
+    if not fgb_dir.is_dir():
+        return
+
+    # Legacy/regional layout: cadastral_{map,ple}.<region>.fgb.
+    yield from fgb_dir.glob("cadastral_*.fgb")
+
+    # Provisioned shared-volume layout: REGION/PROVINCE/COMUNE/file.fgb.
+    try:
+        for region_dir in fgb_dir.iterdir():
+            if not region_dir.is_dir():
+                continue
+            for province_dir in region_dir.iterdir():
+                if not province_dir.is_dir():
+                    continue
+                for municipality_dir in province_dir.iterdir():
+                    if not municipality_dir.is_dir():
+                        continue
+                    yield from municipality_dir.glob("*_map.fgb")
+                    yield from municipality_dir.glob("*_ple.fgb")
+    except OSError:
+        return
+
 @api_router.get("/fgb/regions")
 async def list_fgb_regions():
     """
@@ -4096,8 +4151,7 @@ async def list_fgb_regions():
     Returns a list of regions with their available files.
     """
     try:
-        from land_registry.config import spatialite_settings
-        fgb_dir = Path(spatialite_settings.fgb_directory)
+        fgb_dir = _fgb_directory()
 
         # Check if directory exists and is accessible
         if not fgb_dir.exists():
@@ -4106,36 +4160,29 @@ async def list_fgb_regions():
 
         regions = {}
 
-        # Find all FGB files
-        for fgb_file in fgb_dir.glob("cadastral_*.fgb"):
-            # Parse filename: cadastral_{type}.{region}.fgb
+        for fgb_file in _iter_fgb_files(fgb_dir):
+            relative = fgb_file.relative_to(fgb_dir)
             parts = fgb_file.stem.split('.')
-            if len(parts) >= 2:
-                type_part = parts[0]  # e.g., "cadastral_map" or "cadastral_ple"
-                region_slug = parts[1]  # e.g., "basilicata"
-                
-                # Extract layer type (map or ple)
-                if "_map" in type_part:
-                    layer_type = "map"
-                elif "_ple" in type_part:
-                    layer_type = "ple"
-                else:
-                    continue
-                
-                # Initialize region if not exists
-                if region_slug not in regions:
-                    regions[region_slug] = {
-                        "slug": region_slug,
-                        "name": region_slug.replace('_', ' ').title(),
-                        "map_file": None,
-                        "ple_file": None
-                    }
-                
-                # Add file to region
-                if layer_type == "map":
-                    regions[region_slug]["map_file"] = fgb_file.name
-                else:
-                    regions[region_slug]["ple_file"] = fgb_file.name
+            if len(parts) >= 2 and parts[0] in ("cadastral_map", "cadastral_ple"):
+                # Regional filename: cadastral_{type}.<region>.fgb.
+                region_slug = parts[1].lower()
+                layer_type = "map" if parts[0].endswith("_map") else "ple"
+            elif len(relative.parts) >= 4 and relative.parts[0].upper() != "ITALIA":
+                # Municipality filename: REGION/PROVINCE/COMUNE/*_{type}.fgb.
+                region_slug = relative.parts[0].strip().lower().replace(' ', '_')
+                layer_type = "map" if fgb_file.stem.endswith("_map") else "ple"
+            else:
+                continue
+
+            entry = regions.setdefault(region_slug, {
+                "slug": region_slug,
+                "name": region_slug.replace('_', ' ').title(),
+                "map_file": None,
+                "ple_file": None,
+            })
+            # Keep the legacy API shape. For nested data this is a sample
+            # municipality file; the region itself remains selectable.
+            entry[f"{layer_type}_file"] = entry[f"{layer_type}_file"] or fgb_file.name
         
         # Convert to list and sort by name
         region_list = sorted(regions.values(), key=lambda x: x["name"])

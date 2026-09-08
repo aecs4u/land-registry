@@ -531,6 +531,43 @@ templates.env.globals["_"] = contextvar_gettext
 # locale is passed per-request in template context (set by each route handler)
 
 
+def _asset_version(relative_path: str) -> str:
+    """Cache-busting token for one static file, derived from its mtime.
+
+    StaticFiles sends an ETag but no Cache-Control, so browsers fall back to
+    heuristic caching and will happily serve a stale script for a long time
+    without revalidating.  That silently withholds every frontend fix until the
+    user hard-refreshes.  A version in the query string makes the URL itself
+    change when the file does, which no cache can ignore.
+
+    The token uses nanosecond mtime and size so it also changes during local
+    development without requiring a process restart.
+    """
+    try:
+        normalized = str(relative_path or "").strip().lstrip("/")
+        if normalized.startswith("static/"):
+            normalized = normalized[7:]
+        root = Path(static_dir).resolve()
+        asset = (root / normalized).resolve()
+        if root != asset and root not in asset.parents:
+            return "0"
+        metadata = asset.stat()
+        return f"{metadata.st_mtime_ns:x}-{metadata.st_size:x}"
+    except (OSError, ValueError):
+        return "0"
+
+
+def asset_url(relative_path: str) -> str:
+    """Versioned URL for a static asset owned by this app."""
+    normalized = str(relative_path or "").strip().lstrip("/")
+    if normalized.startswith("static/"):
+        normalized = normalized[7:]
+    return f"/static/{normalized}?v={_asset_version(normalized)}"
+
+
+templates.env.globals["asset_url"] = asset_url
+
+
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
     from fastapi.responses import RedirectResponse

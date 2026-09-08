@@ -1,7 +1,7 @@
 {% extends "base.html" %} {% block title %}{{ _('Italian Cadastral Data Structure') }} - {{ _('Land Registry Viewer') }}{% endblock %} {% block external_css %}
 <!-- No external CSS libraries needed for this page -->
 {% endblock %} {% block extra_css %}
-<link rel="stylesheet" href="/static/cadastral_data.css" />
+<link rel="stylesheet" href="{{ asset_url('cadastral_data.css') }}" />
 {% endblock %} {% block content %}
 
 <!-- Same navbar as /map (minus the sidebar toggle, which doesn't apply
@@ -220,7 +220,7 @@
 <!-- Map.js (and index-init.js, which depends on it) isn't needed on this
      page; theme-sync.js covers just the navbar's dark-mode toggle, and
      changeLang() below is small enough to not need its own file. -->
-<script src="/static/theme-sync.js"></script>
+<script src="{{ asset_url('theme-sync.js') }}"></script>
 <script>
   function changeLang(lang) {
     document.cookie = 'lang=' + lang + '; path=/; max-age=31536000; SameSite=Lax';
@@ -228,5 +228,5 @@
   }
 </script>
 {% endblock %} {% block i18n_data %}<script>window._i18n = {{ i18n_strings | tojson }};</script>{% endblock %} {% block app_js %}
-<script src="/static/cadastral_data.js"></script>
+<script src="{{ asset_url('cadastral_data.js') }}"></script>
 {% endblock %}
