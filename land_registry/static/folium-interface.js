@@ -1544,6 +1544,54 @@ async function checkDbStatus() {
     }
 }
 
+// Populate the region dropdown for the database tab.
+//
+// /api/v1/cadastral/hierarchy is the richer source, but it answers 200 with an
+// empty list when the SpatiaLite cadastral stores are not provisioned on the
+// host -- so an empty result, not merely an HTTP error, has to fall through to
+// the FlatGeobuf region listing. Without that the select keeps only its static
+// "All Regions" placeholder and the tab looks broken.
+async function loadDbRegions() {
+    const regionSelect = document.getElementById('dbRegion');
+    if (!regionSelect) return;
+
+    let regions = [];
+    try {
+        const response = await fetch('/api/v1/cadastral/hierarchy');
+        if (response.ok) {
+            const data = await response.json();
+            regions = data.regions || [];
+        }
+    } catch (error) {
+        console.warn('[DB] Hierarchy lookup failed:', error);
+    }
+
+    if (regions.length === 0) {
+        try {
+            const response = await fetch('/api/v1/fgb/regions');
+            if (response.ok) {
+                const data = await response.json();
+                regions = (data.regions || []).map(r => r.name);
+            }
+        } catch (error) {
+            console.warn('[DB] FlatGeobuf region fallback failed:', error);
+        }
+    }
+
+    regionSelect.innerHTML = '<option value="">All Regions</option>';
+    regions.forEach(region => {
+        const opt = document.createElement('option');
+        opt.value = region;
+        opt.textContent = _toTitleCase(region);
+        regionSelect.appendChild(opt);
+    });
+
+    if (window.dbHierarchyCache) {
+        window.dbHierarchyCache.regions = regions;
+    }
+    console.log(`[DB] Loaded ${regions.length} regions`);
+}
+
 // Load provinces for database tab (placeholder - extend for hierarchy API)
 async function loadDbProvinces() {
     const regionSelect = document.getElementById('dbRegion');
@@ -1710,6 +1758,7 @@ function initDatabaseTab() {
     if (window.dbTabInitialized) return;
     
     checkDbStatus();
+    loadDbRegions();
     window.dbTabInitialized = true;
 }
 
