@@ -4676,6 +4676,7 @@ let cadastralDataLoading = false;
 let cadastralDataLoaded = false;
 let cadastralDataPromise = null;
 let cadastralCascadeRequest = 0;
+let cadastralEventListenersReady = false;
 
 // Load cadastral data and populate selects
 async function loadCadastralData() {
@@ -4720,6 +4721,10 @@ async function _doLoadCadastralData() {
             regionNames = Array.isArray(regionPayload.regions) ? regionPayload.regions : [];
             if (regionNames.length > 0) {
                 populateRegionNames(regionNames);
+                // Wire the cascade before the optional full hierarchy request
+                // starts, so selecting a region remains functional even if
+                // that larger request is delayed or unavailable.
+                setupCadastralEventListeners();
             }
         }
     } catch (error) {
@@ -4981,9 +4986,13 @@ async function updateMunicipalitiesSelect() {
 
 // Setup event listeners for cadastral selects
 function setupCadastralEventListeners() {
+    if (cadastralEventListenersReady) return;
+
     const regionsSelect = document.getElementById('cadastralRegions');
     const provincesSelect = document.getElementById('cadastralProvinces');
     const municipalitiesSelect = document.getElementById('cadastralMunicipalities');
+
+    if (!regionsSelect || !provincesSelect || !municipalitiesSelect) return;
 
     if (regionsSelect) {
         regionsSelect.addEventListener('change', updateProvincesSelect);
@@ -4996,6 +5005,7 @@ function setupCadastralEventListeners() {
     if (municipalitiesSelect) {
         municipalitiesSelect.addEventListener('change', updateSelectionSummary);
     }
+    cadastralEventListenersReady = true;
 }
 
 // Additional cadastral functions moved from folium-interface.js for consolidation
