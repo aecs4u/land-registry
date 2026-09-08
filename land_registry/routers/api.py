@@ -778,10 +778,11 @@ async def get_regions():
     # can render; the deeper endpoints remain lazy.
     from land_registry.cadastral_utils import list_local_cadastral_regions
 
-    local_regions = list_local_cadastral_regions()
+    import asyncio
+    local_regions = await asyncio.to_thread(list_local_cadastral_regions)
     if local_regions:
         return {"regions": local_regions}
-    data = _load_cadastral_json()
+    data = await asyncio.to_thread(_load_cadastral_json)
     return {"regions": sorted(data.keys())}
 
 
@@ -793,11 +794,15 @@ async def get_provinces(regions: str = None):
         list_local_cadastral_regions,
     )
 
-    region_list = [r.strip() for r in regions.split(',')] if regions else list_local_cadastral_regions()
-    local_provinces = list_local_cadastral_provinces(region_list)
+    import asyncio
+    region_list = (
+        [r.strip() for r in regions.split(',')]
+        if regions else await asyncio.to_thread(list_local_cadastral_regions)
+    )
+    local_provinces = await asyncio.to_thread(list_local_cadastral_provinces, region_list)
     if local_provinces:
         return {"provinces": local_provinces}
-    data = _load_cadastral_json()
+    data = await asyncio.to_thread(_load_cadastral_json)
     region_list = [r.strip() for r in regions.split(',')] if regions else list(data.keys())
     provinces: set[str] = set()
     for r in region_list:
@@ -815,12 +820,21 @@ async def get_municipalities(regions: str = None, provinces: str = None):
         list_local_cadastral_provinces,
     )
 
-    region_list = [r.strip() for r in regions.split(',')] if regions else list_local_cadastral_regions()
-    province_list = [p.strip() for p in provinces.split(',')] if provinces else list_local_cadastral_provinces(region_list)
-    local_municipalities = list_local_cadastral_municipalities(region_list, province_list)
+    import asyncio
+    region_list = (
+        [r.strip() for r in regions.split(',')]
+        if regions else await asyncio.to_thread(list_local_cadastral_regions)
+    )
+    province_list = (
+        [p.strip() for p in provinces.split(',')]
+        if provinces else await asyncio.to_thread(list_local_cadastral_provinces, region_list)
+    )
+    local_municipalities = await asyncio.to_thread(
+        list_local_cadastral_municipalities, region_list, province_list
+    )
     if local_municipalities:
         return {"municipalities": local_municipalities}
-    data = _load_cadastral_json()
+    data = await asyncio.to_thread(_load_cadastral_json)
     region_list = [r.strip() for r in regions.split(',')] if regions else list(data.keys())
     province_list = [p.strip() for p in provinces.split(',')] if provinces else None
     municipalities = []
@@ -838,6 +852,7 @@ async def get_municipalities(regions: str = None, provinces: str = None):
                     "code": muni.get('code', 'N/A'),
                     "region": region_name,
                     "province": province_code,
+                    "files": muni.get('files', []),
                     "files_count": len(muni.get('files', [])),
                 })
     municipalities.sort(key=lambda x: x['name'])

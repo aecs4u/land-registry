@@ -260,6 +260,7 @@ def list_local_cadastral_municipalities(
                         "code": code,
                         "region": region,
                         "province": province,
+                        "files": files,
                         "files_count": len(files),
                     })
     except OSError:

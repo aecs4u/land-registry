@@ -154,6 +154,7 @@ def test_api_and_frontend_expose_catalog_health_and_tiles():
     frontend = FRONTEND_SOURCE.read_text(encoding="utf-8")
     assert '@api_router.get("/map/layers")' in api
     assert '@api_router.get("/map/layers/health")' in api
+    assert '@api_router.get("/map/layers/{layer_id}/features/{feature_id}")' in api
     assert '@api_router.get("/tiles/map-layers/{layer_id}/{z}/{x}/{y}.pbf")' in api
     assert "/api/v1/map/layers/health" in frontend
     assert "L.vectorGrid.protobuf(spec.tile_url" in frontend
@@ -168,5 +169,6 @@ def test_consumer_map_has_geojson_fallback():
     consumer = (Path(__file__).parents[1] / "land_registry" / "consumer.py").read_text(encoding="utf-8")
     embedded = (Path(__file__).parents[1] / "land_registry" / "static" / "consumer-map.js").read_text(encoding="utf-8")
     assert '@consumer_router.get("/map/layers/{layer_id}/features")' in consumer
+    assert '@consumer_router.get("/map/layers/{layer_id}/features/{feature_id}")' in consumer
     assert "/features" in embedded
     assert "refreshCanonicalGeoJson" in embedded

@@ -42,14 +42,37 @@ try:
 except ImportError:  # pragma: no cover - dotenv is an application dependency
     pass
 
-from aecs4u_stats.cadastral import (
-    cadastral_db_available,
-    fogli_for_comune,
-    parcel_at_point,
-    parcel_by_reference,
-    parcels_for_comune,
-    parcels_in_bbox,
-)
+try:
+    from aecs4u_stats.cadastral import (
+        cadastral_db_available,
+        fogli_for_comune,
+        parcel_at_point,
+        parcel_by_reference,
+        parcels_for_comune,
+        parcels_in_bbox,
+    )
+except ImportError:
+    # Keep the application and cadastral map usable when an older installed
+    # aecs4u-stats wheel predates the optional cadastral subpackage. The
+    # enrichment endpoints already treat an unbuilt cadastral store as an
+    # unavailable dataset; importing the adapter must follow the same rule.
+    def cadastral_db_available(*args, **kwargs) -> bool:
+        return False
+
+    def fogli_for_comune(*args, **kwargs) -> list:
+        return []
+
+    def parcel_at_point(*args, **kwargs):
+        return None
+
+    def parcel_by_reference(*args, **kwargs):
+        return None
+
+    def parcels_for_comune(*args, **kwargs) -> Dict[str, Any]:
+        return {"type": "FeatureCollection", "features": [], "metadata": {}}
+
+    def parcels_in_bbox(*args, **kwargs) -> Dict[str, Any]:
+        return {"type": "FeatureCollection", "features": [], "metadata": {}}
 try:
     from aecs4u_stats.census import census_db_available as _census_db_available
     from aecs4u_stats.census import section_at_point as _census_section_at_point
@@ -82,13 +105,27 @@ from aecs4u_stats.istat.config import ISTAT_SQLITE_PATH
 from aecs4u_stats.mef import income_by_cadastral_code, mef_db_available
 from aecs4u_stats.omi import (
     OMI_DB_PATH,
-    OMI_ZONES_DIR,
     omi_db_available,
     quote_history,
     quotes_for_comune,
-    zone_boundaries,
-    zone_boundaries_available as _zone_boundaries_available,
 )
+try:
+    from aecs4u_stats.omi.boundaries import (
+        OMI_ZONES_DIR,
+        zone_boundaries,
+        zone_boundaries_available as _zone_boundaries_available,
+    )
+except ImportError:
+    # OMI values exist in older aecs4u-stats releases, while the optional
+    # boundary mirror was added later. Keep quote/enrichment imports usable
+    # and report only the boundary dataset as unavailable.
+    OMI_ZONES_DIR = Path(os.getenv("OMI_ZONES_DIR", "/data/istat/omi_zones"))
+
+    def _zone_boundaries_available(*args, **kwargs) -> bool:
+        return False
+
+    def zone_boundaries(*args, **kwargs) -> Dict[str, Any]:
+        return {"type": "FeatureCollection", "features": []}
 from aecs4u_stats.osm.config import POI_CATEGORIES
 from aecs4u_stats.osm.pois import pois_within_radius, resolve_poi_db
 from shapely.geometry import Point, shape

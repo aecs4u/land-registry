@@ -1037,49 +1037,42 @@ async function initDatabaseFilters() {
     if (window.dbFiltersInitialized) return;
 
     try {
-        // Load database statistics
-        const statsResponse = await fetch('/api/v1/cadastral/statistics');
-        if (statsResponse.ok) {
-            const stats = await statsResponse.json();
-            document.getElementById('dbTotalParcels').textContent = stats.total_parcels?.toLocaleString() || '0';
-            document.getElementById('dbTotalRegions').textContent = Object.keys(stats.by_region || {}).length || '0';
+        // Populate the first selector from the bounded endpoint immediately.
+        // Statistics are useful but not required to operate the filters.
+        const regionResponse = await fetch('/api/v1/get-regions/');
+        let regions = regionResponse.ok ? ((await regionResponse.json()).regions || []) : [];
+        if (regions.length === 0) {
+            const fgbResponse = await fetch('/api/v1/fgb/regions');
+            if (fgbResponse.ok) {
+                const fgbData = await fgbResponse.json();
+                regions = (fgbData.regions || []).map(r => r.name);
+            }
         }
 
-        // Load regions for dropdown
-        const hierResponse = await fetch('/api/v1/cadastral/hierarchy');
-        if (hierResponse.ok) {
-            const data = await hierResponse.json();
-            window.dbHierarchyCache.regions = data.regions || [];
-
-            const regionSelect = document.getElementById('dbRegione');
+        window.dbHierarchyCache.regions = regions;
+        const regionSelect = document.getElementById('dbRegione');
+        if (regionSelect) {
             regionSelect.innerHTML = '<option value="">All Regions</option>';
-            window.dbHierarchyCache.regions.forEach(region => {
+            regions.forEach(region => {
                 const opt = document.createElement('option');
                 opt.value = region;
                 opt.textContent = _toTitleCase(region);
                 regionSelect.appendChild(opt);
             });
-        } else {
-            // Fallback: use FGB regions if hierarchy endpoint fails
-            console.log('[DB] Hierarchy endpoint failed, using FGB regions as fallback');
-            const fgbResponse = await fetch('/api/v1/fgb/regions');
-            if (fgbResponse.ok) {
-                const fgbData = await fgbResponse.json();
-                const regions = (fgbData.regions || []).map(r => r.name);
-                window.dbHierarchyCache.regions = regions;
-
-                const regionSelect = document.getElementById('dbRegione');
-                regionSelect.innerHTML = '<option value="">All Regions</option>';
-                regions.forEach(region => {
-                    const opt = document.createElement('option');
-                    opt.value = region;
-                    opt.textContent = _toTitleCase(region);
-                    regionSelect.appendChild(opt);
-                });
-            }
         }
-
         window.dbFiltersInitialized = true;
+
+        // Do not hold up the cascade on a potentially slow statistics query.
+        fetch('/api/v1/cadastral/statistics')
+            .then(response => response.ok ? response.json() : null)
+            .then(stats => {
+                if (!stats) return;
+                const totalParcels = document.getElementById('dbTotalParcels');
+                const totalRegions = document.getElementById('dbTotalRegions');
+                if (totalParcels) totalParcels.textContent = stats.total_parcels?.toLocaleString() || '0';
+                if (totalRegions) totalRegions.textContent = Object.keys(stats.by_region || {}).length || '0';
+            })
+            .catch(error => console.warn('[DB] Statistics lookup failed:', error));
     } catch (error) {
         console.error('Error initializing database filters:', error);
     }
@@ -1114,7 +1107,7 @@ async function updateDbProvinces() {
             return;
         }
 
-        const response = await fetch(`/api/v1/cadastral/hierarchy?regione=${encodeURIComponent(regione)}`);
+        const response = await fetch(`/api/v1/get-provinces/?regions=${encodeURIComponent(regione)}`);
         if (response.ok) {
             const data = await response.json();
             window.dbHierarchyCache.provinces[regione] = data.provinces || [];
@@ -1163,11 +1156,15 @@ async function updateDbComuni() {
             return;
         }
 
-        const response = await fetch(`/api/v1/cadastral/hierarchy?regione=${encodeURIComponent(regione)}&provincia=${encodeURIComponent(provincia)}`);
+        const response = await fetch(`/api/v1/get-municipalities/?regions=${encodeURIComponent(regione)}&provinces=${encodeURIComponent(provincia)}`);
         if (response.ok) {
             const data = await response.json();
-            window.dbHierarchyCache.comuni[cacheKey] = data.comuni || [];
-            populateComuneSelect(data.comuni || []);
+            const comuni = (data.municipalities || []).map(municipality => ({
+                code: municipality.code,
+                name: municipality.name,
+            }));
+            window.dbHierarchyCache.comuni[cacheKey] = comuni;
+            populateComuneSelect(comuni);
         }
     } catch (error) {
         console.error('Error loading comuni:', error);
@@ -1557,13 +1554,26 @@ async function loadDbRegions() {
 
     let regions = [];
     try {
-        const response = await fetch('/api/v1/cadastral/hierarchy');
+        const response = await fetch('/api/v1/get-regions/');
         if (response.ok) {
             const data = await response.json();
             regions = data.regions || [];
         }
     } catch (error) {
-        console.warn('[DB] Hierarchy lookup failed:', error);
+        console.warn('[DB] Region lookup failed:', error);
+    }
+
+    // Compatibility fallback for hosts without the local cadastral directory.
+    if (regions.length === 0) {
+        try {
+            const response = await fetch('/api/v1/cadastral/hierarchy');
+            if (response.ok) {
+                const data = await response.json();
+                regions = data.regions || [];
+            }
+        } catch (error) {
+            console.warn('[DB] Hierarchy lookup failed:', error);
+        }
     }
 
     if (regions.length === 0) {

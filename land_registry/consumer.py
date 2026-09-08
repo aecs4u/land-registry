@@ -4,7 +4,7 @@ import asyncio
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, FastAPI, HTTPException, Query
+from fastapi import APIRouter, FastAPI, HTTPException, Query, Path as ApiPath
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
@@ -118,7 +118,7 @@ async def canonical_map_layer_features(
 
 
 @consumer_router.get("/map/layers/{layer_id}/features/{feature_id}")
-async def canonical_map_layer_feature_details(layer_id: str, feature_id: int = Query(..., ge=1)) -> dict:
+async def canonical_map_layer_feature_details(layer_id: str, feature_id: int = ApiPath(..., ge=1)) -> dict:
     """Return one map feature and its related source records."""
     try:
         get_map_layer(layer_id)

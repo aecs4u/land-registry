@@ -39,12 +39,35 @@ if _AUTH_AVAILABLE:
         AuthConfig,
         get_auth_config,
         create_clerk_router,
-        create_local_auth_router,
         configure_user_integration,
         set_password_verify_callback,
     )
-    from land_registry import local_auth
+    try:
+        # Newer aecs4u-auth versions re-export this factory at package level;
+        # older compatible versions keep it in the local router module.
+        from aecs4u_auth import create_local_auth_router
+    except ImportError:
+        try:
+            from aecs4u_auth.routers.local import create_local_auth_router
+        except ImportError:
+            # Some older installations have Clerk support but no local-auth
+            # router. Keep the public app routes available; local sign-in is
+            # unavailable until the declared aecs4u-auth dependency is synced.
+            from fastapi import APIRouter
+
+            def create_local_auth_router(*, prefix="/auth"):
+                return APIRouter()
+    try:
+        from land_registry import local_auth
+        _LOCAL_AUTH_AVAILABLE = True
+    except (ImportError, AttributeError):
+        # The Clerk portion of aecs4u-auth can run without the local-auth
+        # integration. Older installed auth packages may not expose the
+        # SQLAlchemy user model expected by this application's adapter.
+        local_auth = None
+        _LOCAL_AUTH_AVAILABLE = False
 else:
+    _LOCAL_AUTH_AVAILABLE = False
     from types import SimpleNamespace
 
     def get_auth_config():
@@ -235,7 +258,7 @@ async def lifespan(app: FastAPI):
     # Local email/password auth (AUTH_MODE=clerk_and_local) shares the same
     # Neon database as the app; skip it entirely when no Postgres is
     # configured (local mode then has no accounts to sign in with).
-    if _AUTH_AVAILABLE and db_settings.use_neon and db_settings.database_url:
+    if _LOCAL_AUTH_AVAILABLE and db_settings.use_neon and db_settings.database_url:
         try:
             local_auth.init_engine(local_auth.to_asyncpg_url(db_settings.database_url))
             await local_auth.ensure_user_table()
@@ -326,7 +349,7 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Error closing PostgreSQL application pool: {e}", exc_info=True)
 
-    if _AUTH_AVAILABLE:
+    if _LOCAL_AUTH_AVAILABLE:
         try:
             await local_auth.dispose_engine()
             logger.info("Local auth database connection closed")
@@ -426,7 +449,11 @@ if _AUTH_AVAILABLE:
     # this app's own Neon database — see land_registry/local_auth.py. Without
     # Postgres configured, aecs4u-auth falls back to its packaged SQLite
     # default, which is fine for pure-Clerk local/offline runs.
-    _auth_db_url = local_auth.to_asyncpg_url(db_settings.database_url)
+    _auth_db_url = (
+        local_auth.to_asyncpg_url(db_settings.database_url)
+        if _LOCAL_AUTH_AVAILABLE and local_auth
+        else None
+    )
     if _auth_db_url:
         _auth_config_kwargs["database_url"] = _auth_db_url
     setup_auth(
@@ -443,13 +470,14 @@ if _AUTH_AVAILABLE:
     # AUTH_MODE=clerk_and_local: accept either a Clerk session or a local
     # password (get_current_user tries Clerk first, then falls back to the
     # local session/JWT only when these callbacks are registered).
-    configure_user_integration(
-        lookup_by_clerk_id=local_auth.lookup_by_clerk_id,
-        create_from_clerk=local_auth.create_from_clerk,
-        lookup_by_username=local_auth.lookup_by_username,
-        lookup_by_id=local_auth.lookup_by_id,
-    )
-    set_password_verify_callback(local_auth.verify_local_password)
+    if _LOCAL_AUTH_AVAILABLE and local_auth:
+        configure_user_integration(
+            lookup_by_clerk_id=local_auth.lookup_by_clerk_id,
+            create_from_clerk=local_auth.create_from_clerk,
+            lookup_by_username=local_auth.lookup_by_username,
+            lookup_by_id=local_auth.lookup_by_id,
+        )
+        set_password_verify_callback(local_auth.verify_local_password)
 else:
     logger.warning("aecs4u-auth not installed - running without authentication")
 

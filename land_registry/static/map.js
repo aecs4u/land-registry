@@ -404,7 +404,7 @@ function saveSelectionToUrl() {
  * Restore cadastral selection from URL params
  * Called after cadastral data is loaded
  */
-function restoreSelectionFromUrl() {
+async function restoreSelectionFromUrl() {
     const params = new URLSearchParams(window.location.search);
 
     const regionsParam = params.get('regions');
@@ -419,7 +419,7 @@ function restoreSelectionFromUrl() {
     const municipalitiesSelect = document.getElementById('cadastralMunicipalities');
     const fileTypesContainer = document.getElementById('cadastralFileTypes');
 
-    if (!regionsSelect || !cadastralData) return false;
+    if (!regionsSelect) return false;
 
     // Restore regions
     const regions = regionsParam.split(',');
@@ -428,17 +428,10 @@ function restoreSelectionFromUrl() {
         if (option) option.selected = true;
     });
 
-    // Populate the dependent selects.  Both build their options synchronously
-    // from the already-loaded `cadastralData`, so there is nothing to wait for.
-    //
-    // This previously called loadCadastralProvinces/loadCadastralMunicipalities
-    // behind `typeof ... === 'function'` guards.  Neither function exists
-    // anywhere in the codebase, so the guards were always false and the calls
-    // silently did nothing: the province and municipality selects stayed empty,
-    // currentFileSelection stayed empty, and a fully-specified deep link
-    // restored the region only and then loaded nothing at all.
+    // Dependent options are lazy API calls when the complete hierarchy is not
+    // in memory, so wait for each level before restoring the next selection.
     if (regions.length > 0) {
-        updateProvincesSelect();
+        await updateProvincesSelect();
 
         if (provincesParam && provincesSelect) {
             provincesParam.split(',').forEach(province => {
@@ -447,7 +440,7 @@ function restoreSelectionFromUrl() {
             });
         }
 
-        updateMunicipalitiesSelect();
+        await updateMunicipalitiesSelect();
 
         if (municipalitiesParam && municipalitiesSelect) {
             municipalitiesParam.split(',').map(m => decodeURIComponent(m)).forEach(municipality => {
@@ -3525,7 +3518,8 @@ window.loadCadastralSelection = async function() {
     const fileTypesContainer = document.getElementById('cadastralFileTypes');
     const loadBtn = document.getElementById('loadCadastralBtn');
 
-    if (!regionsSelect || !provincesSelect || !municipalitiesSelect || !fileTypesContainer || !cadastralData) {
+    const hierarchyData = cadastralData || cadastralFallbackData;
+    if (!regionsSelect || !provincesSelect || !municipalitiesSelect || !fileTypesContainer || !hierarchyData) {
         console.error('Missing required elements or cadastral data');
         return;
     }
@@ -3556,8 +3550,8 @@ window.loadCadastralSelection = async function() {
     selectedMunicipalities.forEach(municipalityKey => {
         const [region, province, municipality] = municipalityKey.split('|');
 
-        if (cadastralData[region] && cadastralData[region][province] && cadastralData[region][province][municipality]) {
-            const municipalityData = cadastralData[region][province][municipality];
+        if (hierarchyData[region] && hierarchyData[region][province] && hierarchyData[region][province][municipality]) {
+            const municipalityData = hierarchyData[region][province][municipality];
             const files = municipalityData.files || [];
 
             files.forEach(filename => {
@@ -4354,7 +4348,8 @@ function updateSelectionSummary() {
     const filesList = document.getElementById('filesList');
     const loadBtn = document.getElementById('loadCadastralBtn');
 
-    if (!regionsSelect || !provincesSelect || !municipalitiesSelect || !selectionSummary || !cadastralData) {
+    const hierarchyData = cadastralData || cadastralFallbackData;
+    if (!regionsSelect || !provincesSelect || !municipalitiesSelect || !selectionSummary || !hierarchyData) {
         return;
     }
 
@@ -4391,11 +4386,11 @@ function updateSelectionSummary() {
 
         selectedMunicipalities.forEach(municipalityKey => {
             const [regionName, provinceCode, municipalityId] = municipalityKey.split('|');
-            if (cadastralData[regionName] &&
-                cadastralData[regionName][provinceCode] &&
-                cadastralData[regionName][provinceCode][municipalityId]) {
+            if (hierarchyData[regionName] &&
+                hierarchyData[regionName][provinceCode] &&
+                hierarchyData[regionName][provinceCode][municipalityId]) {
 
-                const municipalityData = cadastralData[regionName][provinceCode][municipalityId];
+                const municipalityData = hierarchyData[regionName][provinceCode][municipalityId];
                 const files = municipalityData.files || [];
 
                 selectedFileTypes.forEach(fileType => {
@@ -4672,8 +4667,10 @@ window.showMappingView = function() {
 
 // Cadastral data
 let cadastralData = null;
+let cadastralFallbackData = {};
 let cadastralDataLoading = false;
 let cadastralDataLoaded = false;
+let cadastralRegionNames = [];
 let cadastralDataPromise = null;
 let cadastralCascadeRequest = 0;
 let cadastralEventListenersReady = false;
@@ -4681,9 +4678,9 @@ let cadastralEventListenersReady = false;
 // Load cadastral data and populate selects
 async function loadCadastralData() {
     // If already loaded, return immediately
-    if (cadastralDataLoaded && cadastralData) {
+    if (cadastralDataLoaded) {
         debugLog('Cadastral data already loaded, returning cached data');
-        return cadastralData;
+        return cadastralData || cadastralRegionNames;
     }
 
     // If currently loading, return the existing promise
@@ -4708,11 +4705,10 @@ async function _doLoadCadastralData() {
         regionsSelect.innerHTML = '<option value="">Loading regions...</option>';
     }
 
-    // Populate the first cascade level from the bounded endpoint before
-    // requesting the full hierarchy.  The hierarchy contains every
-    // municipality and file name, so it can be noticeably larger than the
-    // region list and must not be allowed to leave the sidebar blank while it
-    // is loading (or when it is temporarily unavailable).
+    // Populate only the first cascade level here. The complete hierarchy
+    // contains every municipality and file name and is too large to fetch on
+    // page startup. Province and municipality lists are loaded lazily by the
+    // bounded endpoints when the preceding selector changes.
     let regionNames = [];
     try {
         const regionResponse = await fetch('/api/v1/get-regions/');
@@ -4720,10 +4716,9 @@ async function _doLoadCadastralData() {
             const regionPayload = await regionResponse.json();
             regionNames = Array.isArray(regionPayload.regions) ? regionPayload.regions : [];
             if (regionNames.length > 0) {
+                cadastralRegionNames = regionNames.slice();
+                cadastralDataLoaded = true;
                 populateRegionNames(regionNames);
-                // Wire the cascade before the optional full hierarchy request
-                // starts, so selecting a region remains functional even if
-                // that larger request is delayed or unavailable.
                 setupCadastralEventListeners();
             }
         }
@@ -4731,53 +4726,17 @@ async function _doLoadCadastralData() {
         console.warn('Could not load the lightweight cadastral region list:', error);
     }
 
-    try {
-        const response = await fetch('/api/v1/get-cadastral-structure/');
-        debugLog('Cadastral data response status:', response.status);
-
-        if (response.ok) {
-            cadastralData = await response.json();
-            // Also set on window for access from other scripts (folium-interface.js)
-            window.cadastralData = cadastralData;
-            debugLog('Cadastral data loaded:', cadastralData);
-            debugLog('Number of regions:', Object.keys(cadastralData).length);
-
-            if (cadastralData && Object.keys(cadastralData).length > 0) {
-                cadastralDataLoaded = true;
-                populateRegionsSelect();
-                setupCadastralEventListeners();
-
-                // Restore selection from URL params if present
-                setTimeout(() => {
-                    restoreSelectionFromUrl();
-                }, 200);
-
-                return cadastralData;
-            } else {
-                console.error('Cadastral data is empty');
-                if (regionNames.length === 0) {
-                    showCadastralError('No cadastral data available');
-                }
-                return null;
-            }
-        } else {
-            console.error('Failed to load cadastral data:', response.status, response.statusText);
-            const errorText = await response.text();
-            console.error('Error response:', errorText);
-            if (regionNames.length === 0) {
-                showCadastralError('No regions available');
-            }
-            return null;
-        }
-    } catch (error) {
-        console.error('Error loading cadastral data:', error);
-        if (regionNames.length === 0) {
-            showCadastralError('Could not connect — try reloading');
-        }
-        return null;
-    } finally {
-        cadastralDataLoading = false;
+    cadastralDataLoading = false;
+    if (regionNames.length > 0) {
+        // Restore selection from URL params once the first selector exists.
+        setTimeout(() => {
+            restoreSelectionFromUrl();
+        }, 200);
+        return regionNames;
     }
+
+    showCadastralError('Could not connect — try reloading');
+    return null;
 }
 
 // Show error message in the regions select
@@ -4836,6 +4795,13 @@ function populateRegionsSelect() {
     debugLog('Regions select populated with', regions.length, 'regions');
 }
 
+function _cadastralRegionKey(regionName) {
+    if (!cadastralData || !regionName) return regionName;
+    if (cadastralData[regionName]) return regionName;
+    const normalized = String(regionName).trim().toUpperCase();
+    return Object.keys(cadastralData).find(key => String(key).trim().toUpperCase() === normalized) || regionName;
+}
+
 // Update provinces based on selected regions
 async function updateProvincesSelect() {
     const regionsSelect = document.getElementById('cadastralRegions');
@@ -4866,8 +4832,9 @@ async function updateProvincesSelect() {
         // Collect provinces from the already-loaded full hierarchy.
         const allProvinces = new Set();
         selectedRegions.forEach(regionName => {
-            if (cadastralData[regionName]) {
-                Object.keys(cadastralData[regionName]).forEach(provinceCode => allProvinces.add(provinceCode));
+            const regionKey = _cadastralRegionKey(regionName);
+            if (cadastralData[regionKey]) {
+                Object.keys(cadastralData[regionKey]).forEach(provinceCode => allProvinces.add(provinceCode));
             }
         });
         provinceCodes = Array.from(allProvinces).sort();
@@ -4889,6 +4856,16 @@ async function updateProvincesSelect() {
             return;
         }
         if (requestId !== cadastralCascadeRequest) return;
+
+        // Keep enough metadata for the file loader after the lazy response.
+        selectedRegions.forEach(regionName => {
+            if (!cadastralFallbackData[regionName]) cadastralFallbackData[regionName] = {};
+            provinceCodes.forEach(provinceCode => {
+                if (!cadastralFallbackData[regionName][provinceCode]) {
+                    cadastralFallbackData[regionName][provinceCode] = {};
+                }
+            });
+        });
     }
 
     provincesSelect.disabled = false;
@@ -4933,12 +4910,13 @@ async function updateMunicipalitiesSelect() {
     if (cadastralData) {
         // Collect municipalities from the already-loaded full hierarchy.
         selectedRegions.forEach(regionName => {
-            if (cadastralData[regionName]) {
+            const regionKey = _cadastralRegionKey(regionName);
+            if (cadastralData[regionKey]) {
                 selectedProvinces.forEach(provinceCode => {
-                    if (cadastralData[regionName][provinceCode]) {
-                        Object.keys(cadastralData[regionName][provinceCode]).forEach(municipalityKey => {
-                            const municipalityData = cadastralData[regionName][provinceCode][municipalityKey];
-                            allMunicipalities.set(`${regionName}|${provinceCode}|${municipalityKey}`, municipalityData.name || municipalityKey);
+                    if (cadastralData[regionKey][provinceCode]) {
+                        Object.keys(cadastralData[regionKey][provinceCode]).forEach(municipalityKey => {
+                            const municipalityData = cadastralData[regionKey][provinceCode][municipalityKey];
+                            allMunicipalities.set(`${regionKey}|${provinceCode}|${municipalityKey}`, municipalityData.name || municipalityKey);
                         });
                     }
                 });
@@ -4956,7 +4934,19 @@ async function updateMunicipalitiesSelect() {
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const payload = await response.json();
             (Array.isArray(payload.municipalities) ? payload.municipalities : []).forEach(municipality => {
-                if (municipality.key) allMunicipalities.set(municipality.key, municipality.name || municipality.key);
+                if (!municipality.key) return;
+                allMunicipalities.set(municipality.key, municipality.name || municipality.key);
+                const [regionName, provinceCode, municipalityKey] = municipality.key.split('|');
+                if (!regionName || !provinceCode || !municipalityKey) return;
+                if (!cadastralFallbackData[regionName]) cadastralFallbackData[regionName] = {};
+                if (!cadastralFallbackData[regionName][provinceCode]) {
+                    cadastralFallbackData[regionName][provinceCode] = {};
+                }
+                cadastralFallbackData[regionName][provinceCode][municipalityKey] = {
+                    code: municipality.code,
+                    name: municipality.name || municipalityKey,
+                    files: municipality.files || [],
+                };
             });
         } catch (error) {
             if (requestId === cadastralCascadeRequest) {

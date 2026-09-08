@@ -51,3 +51,16 @@ def test_region_loader_falls_back_when_hierarchy_is_empty() -> None:
     assert "/api/v1/cadastral/hierarchy" in loader
     assert "/api/v1/fgb/regions" in loader
     assert "regions.length === 0" in loader
+
+
+def test_cadastral_sidebar_uses_lazy_cascade_endpoints() -> None:
+    """The map must not fetch the full national hierarchy at startup."""
+    source = (STATIC_DIR / "map.js").read_text(encoding="utf-8")
+    loader_start = source.index("async function _doLoadCadastralData()")
+    loader_end = source.index("// Show error message in the regions select")
+    loader = source[loader_start:loader_end]
+
+    assert "/api/v1/get-regions/" in loader
+    assert "/api/v1/get-cadastral-structure/" not in loader
+    assert "/api/v1/get-provinces/" in source
+    assert "/api/v1/get-municipalities/" in source
