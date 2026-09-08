@@ -1592,44 +1592,85 @@ async function loadDbRegions() {
     console.log(`[DB] Loaded ${regions.length} regions`);
 }
 
-// Load provinces for database tab (placeholder - extend for hierarchy API)
+// Load provinces for database tab.
 async function loadDbProvinces() {
-    const regionSelect = document.getElementById('dbRegion');
-    const provinceSelect = document.getElementById('dbProvince');
+    const regionSelect = document.getElementById('dbRegion') || document.getElementById('dbRegione');
+    const provinceSelect = document.getElementById('dbProvince') || document.getElementById('dbProvincia');
     const comuneSelect = document.getElementById('dbComune');
-    
+
     if (!regionSelect || !provinceSelect) return;
-    
+
     const region = regionSelect.value;
-    
+
     // Reset downstream selects
     provinceSelect.innerHTML = '<option value="">All Provinces</option>';
-    comuneSelect.innerHTML = '<option value="">All Comuni</option>';
-    
-    if (region) {
-        provinceSelect.disabled = false;
-        // Could load from hierarchy API here if available
-    } else {
+    if (comuneSelect) comuneSelect.innerHTML = '<option value="">All Comuni</option>';
+
+    if (!region) {
         provinceSelect.disabled = true;
-        comuneSelect.disabled = true;
+        if (comuneSelect) comuneSelect.disabled = true;
+        return;
+    }
+
+    provinceSelect.disabled = true;
+    provinceSelect.innerHTML = '<option value="">Loading provinces...</option>';
+    try {
+        const response = await fetch(`/api/v1/get-provinces/?regions=${encodeURIComponent(region)}`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json();
+        const provinces = Array.isArray(payload.provinces) ? payload.provinces : [];
+        provinceSelect.innerHTML = '<option value="">All Provinces</option>';
+        provinces.forEach(province => {
+            const option = document.createElement('option');
+            option.value = province;
+            option.textContent = typeof _provinceLabel === 'function' ? _provinceLabel(province) : province;
+            provinceSelect.appendChild(option);
+        });
+        provinceSelect.disabled = false;
+        if (window.dbHierarchyCache) window.dbHierarchyCache.provinces[region] = provinces;
+    } catch (error) {
+        provinceSelect.innerHTML = '<option value="" disabled>Provinces unavailable</option>';
+        console.warn('[DB] Could not load provinces:', error);
     }
 }
 
 // Load comuni for database tab
 async function loadDbComuni() {
-    const provinceSelect = document.getElementById('dbProvince');
+    const regionSelect = document.getElementById('dbRegion') || document.getElementById('dbRegione');
+    const provinceSelect = document.getElementById('dbProvince') || document.getElementById('dbProvincia');
     const comuneSelect = document.getElementById('dbComune');
-    
-    if (!provinceSelect || !comuneSelect) return;
-    
+
+    if (!regionSelect || !provinceSelect || !comuneSelect) return;
+
+    const region = regionSelect.value;
     const province = provinceSelect.value;
-    
+
     comuneSelect.innerHTML = '<option value="">All Comuni</option>';
-    
-    if (province) {
-        comuneSelect.disabled = false;
-    } else {
+    if (!region || !province) {
         comuneSelect.disabled = true;
+        return;
+    }
+
+    comuneSelect.disabled = true;
+    comuneSelect.innerHTML = '<option value="">Loading municipalities...</option>';
+    try {
+        const query = new URLSearchParams({ regions: region, provinces: province });
+        const response = await fetch(`/api/v1/get-municipalities/?${query}`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json();
+        const municipalities = Array.isArray(payload.municipalities) ? payload.municipalities : [];
+        comuneSelect.innerHTML = '<option value="">All Comuni</option>';
+        municipalities.forEach(municipality => {
+            const option = document.createElement('option');
+            option.value = municipality.code || municipality.key;
+            option.textContent = municipality.name || municipality.code || municipality.key;
+            comuneSelect.appendChild(option);
+        });
+        comuneSelect.disabled = false;
+        if (window.dbHierarchyCache) window.dbHierarchyCache.comuni[`${region}|${province}`] = municipalities;
+    } catch (error) {
+        comuneSelect.innerHTML = '<option value="" disabled>Municipalities unavailable</option>';
+        console.warn('[DB] Could not load municipalities:', error);
     }
 }
 

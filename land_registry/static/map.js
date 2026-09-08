@@ -5008,6 +5008,11 @@ function setupCadastralEventListeners() {
     cadastralEventListenersReady = true;
 }
 
+// map.js is loaded after the page controls are rendered. Bind immediately as
+// well as from the data-loader path, so a user can select a region even while
+// the asynchronous cadastral hierarchy request is still in flight.
+setupCadastralEventListeners();
+
 // Additional cadastral functions moved from folium-interface.js for consolidation
 // NOTE: Duplicate functions have been removed - using definitions from earlier in file
 
