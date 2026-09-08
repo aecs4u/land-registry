@@ -3811,15 +3811,37 @@ window.refreshSearchComuneList = async function() {
         _cadastralStructure = window.cadastralData;
     }
 
+    // The main sidebar and Explore panel use the same lightweight region
+    // source. Reuse it when the sidebar has already initialized instead of
+    // making the Explore panel depend on a second request.
+    if (!_cadastralStructure && !_searchRegionNames.length && cadastralRegionNames.length) {
+        _searchRegionNames = cadastralRegionNames.slice();
+    }
+
     if (!_cadastralStructure && !_searchRegionNames.length) {
         try {
             const resp = await fetch('/api/v1/get-regions/');
-            if (!resp.ok) return;
-            const payload = await resp.json();
-            _searchRegionNames = Array.isArray(payload.regions) ? payload.regions : [];
+            if (resp.ok) {
+                const payload = await resp.json();
+                _searchRegionNames = Array.isArray(payload.regions) ? payload.regions : [];
+            }
         } catch (e) {
             console.warn('[Search] Could not load cadastral regions:', e);
-            return;
+        }
+    }
+
+    // A valid empty response can mean that only FlatGeobuf is provisioned.
+    if (!_cadastralStructure && !_searchRegionNames.length) {
+        try {
+            const resp = await fetch('/api/v1/fgb/regions');
+            if (resp.ok) {
+                const payload = await resp.json();
+                _searchRegionNames = (Array.isArray(payload.regions) ? payload.regions : [])
+                    .map(region => typeof region === 'string' ? region : region.name)
+                    .filter(Boolean);
+            }
+        } catch (e) {
+            console.warn('[Search] Could not load FlatGeobuf regions:', e);
         }
     }
 
@@ -4717,9 +4739,15 @@ async function _doLoadCadastralData() {
             regionNames = Array.isArray(regionPayload.regions) ? regionPayload.regions : [];
             if (regionNames.length > 0) {
                 cadastralRegionNames = regionNames.slice();
+                _searchRegionNames = regionNames.slice();
                 cadastralDataLoaded = true;
                 populateRegionNames(regionNames);
                 setupCadastralEventListeners();
+                // Keep the Explore cascade populated even when the user opens
+                // it before clicking the main cadastral sidebar selector.
+                if (typeof window.refreshSearchComuneList === 'function') {
+                    window.refreshSearchComuneList();
+                }
             }
         }
     } catch (error) {

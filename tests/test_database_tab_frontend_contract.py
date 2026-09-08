@@ -64,3 +64,18 @@ def test_cadastral_sidebar_uses_lazy_cascade_endpoints() -> None:
     assert "/api/v1/get-cadastral-structure/" not in loader
     assert "/api/v1/get-provinces/" in source
     assert "/api/v1/get-municipalities/" in source
+
+
+def test_explore_cascade_initializes_without_opening_the_panel() -> None:
+    """Explore selectors must not depend solely on the toolbar click."""
+    template = (TEMPLATE_DIR / "index.html").read_text(encoding="utf-8")
+    source = (STATIC_DIR / "map.js").read_text(encoding="utf-8")
+    init_source = (STATIC_DIR / "index-init.js").read_text(encoding="utf-8")
+
+    assert 'id="searchRegion"' in template
+    assert 'id="searchProvince"' in template
+    assert 'id="searchMunicipality"' in template
+    assert "window.refreshSearchComuneList" in source
+    assert "initializeExploreSearch" in init_source
+    assert "DOMContentLoaded" in init_source
+    assert "/api/v1/fgb/regions" in source

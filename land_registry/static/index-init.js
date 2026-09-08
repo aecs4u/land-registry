@@ -69,6 +69,19 @@ function toggleToolPanel(panelId, btnId) {
     }
 }
 
+// Populate the Explore cascade independently of the panel click. This also
+// covers direct links, restored browser state, and pages where the toolbar is
+// opened before the map's delayed initialization callback runs.
+function initializeExploreSearch() {
+    if (typeof window.refreshSearchComuneList !== 'function') return;
+    window.refreshSearchComuneList().catch(error => {
+        console.warn('[Search] Explore selectors could not be initialized:', error);
+    });
+}
+
+document.addEventListener('DOMContentLoaded', initializeExploreSearch);
+window.addEventListener('load', initializeExploreSearch);
+
 function closeToolPanel(panelId) {
     const panel = document.getElementById(panelId);
     if (panel) panel.style.display = 'none';
