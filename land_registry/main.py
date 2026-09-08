@@ -85,6 +85,12 @@ logging.basicConfig(
     level=logging.INFO if not app_settings.debug else logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+# Datashader enables compiler DEBUG logging when the application runs in
+# debug mode. Those messages contain Numba's generated IR and can produce
+# megabytes of output during the first tile warm-up; retain warnings/errors
+# while keeping normal application diagnostics readable.
+logging.getLogger("datashader.compiler").setLevel(logging.WARNING)
+logging.getLogger("numba").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 # Panel server configuration (from settings)
