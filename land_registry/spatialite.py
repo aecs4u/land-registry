@@ -29,6 +29,8 @@ def _allowed_tables() -> frozenset:
     """Return the set of table names that callers are permitted to query."""
     return frozenset({
         spatialite_settings.table,
+        spatialite_settings.table_map,
+        spatialite_settings.table_ple,
         "fogli",
         "particelle",
         "cadastral_parcels",
@@ -79,7 +81,8 @@ def load_layer(
     Load a layer from SpatiaLite into a GeoDataFrame.
 
     Args:
-        table: Table/view name to query (defaults to settings.table).
+        table: Table/view name to query.  Defaults to settings.table_map for
+               layer_type 'map' and settings.table_ple for 'ple'.
                Must be in the allowlist of known table names.
         conditions: Optional mapping of ``{column_name: value}`` pairs used
                     to build a parameterised WHERE clause.  Column names must
@@ -90,7 +93,15 @@ def load_layer(
     Returns:
         GeoDataFrame with the queried data, or None if table doesn't exist.
     """
-    table_name = table or spatialite_settings.table
+    # The default table has to follow layer_type: db_map_path holds fogli and
+    # db_ple_path holds particelle, so a single default would send one of them
+    # looking for the other database's table.
+    if table:
+        table_name = table
+    elif layer_type == 'ple':
+        table_name = spatialite_settings.table_ple
+    else:
+        table_name = spatialite_settings.table_map
     row_limit = limit or spatialite_settings.default_limit
 
     # --- Table-name allowlist check -------------------------------------------
@@ -107,8 +118,14 @@ def load_layer(
         db_path = spatialite_settings.db_map_path
 
     # --- Check if database file exists ----------------------------------------
+    # A zero-byte file is a placeholder, not a database: SQLite opens it
+    # happily, so without this the caller gets a confusing "table does not
+    # exist" instead of "this database was never provisioned".
     if not db_path or not os.path.exists(db_path):
         logger.warning(f"SpatiaLite database not found at: {db_path}")
+        return None
+    if os.path.getsize(db_path) == 0:
+        logger.warning(f"SpatiaLite database is empty (not provisioned): {db_path}")
         return None
 
     # --- Build parameterised query -------------------------------------------

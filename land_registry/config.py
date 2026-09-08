@@ -193,6 +193,11 @@ class SpatialiteSettings(BaseSettings):
     db_ple_path: str = "data/cadastral_ple.sqlite"
     # Legacy single database (for backward compatibility)
     db_path: str = "data/cadastral.sqlite"
+    # Default table per layer type.  These must agree with the database each
+    # layer_type resolves to: db_map_path holds fogli, db_ple_path holds
+    # particelle.  ``table`` remains the legacy single-database default.
+    table_map: str = "fogli"
+    table_ple: str = "particelle"
     table: str = "cadastral_parcels"
     geometry_column: str = "geometry"
     srid: int = 4326

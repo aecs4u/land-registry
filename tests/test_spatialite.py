@@ -8,6 +8,7 @@ Tests:
 - load_layer: invalid table (ValueError), missing db file (None)
 """
 
+import os
 import sqlite3
 from unittest.mock import patch
 
@@ -147,10 +148,15 @@ class TestLoadLayer:
 
     def test_invalid_condition_column_raises(self, tmp_path):
         """Condition columns are validated as safe identifiers."""
-        # Create an actual SQLite file so the db-exists check passes
+        # Create a non-empty SQLite file so the db-provisioned check passes:
+        # connect() alone leaves a zero-byte file, which load_layer now treats
+        # as an unprovisioned placeholder and short-circuits before validation.
         import sqlite3 as _sqlite3
         db_file = str(tmp_path / "existing.db")
-        _sqlite3.connect(db_file).close()
+        _conn = _sqlite3.connect(db_file)
+        _conn.execute("CREATE TABLE fogli (id INTEGER)")
+        _conn.commit()
+        _conn.close()
 
         with patch("land_registry.spatialite.spatialite_settings") as mock_settings:
             mock_settings.table = "fogli"
@@ -162,3 +168,68 @@ class TestLoadLayer:
             mock_settings.extension_path = "mod_spatialite"
             with pytest.raises(ValueError, match="Invalid"):
                 load_layer(table="fogli", conditions={"bad-column": "value"})
+
+
+class TestUnprovisionedDatabase:
+    """A zero-byte placeholder must read as 'not provisioned', not as a
+    database that happens to be missing one table."""
+
+    def test_empty_db_file_returns_none(self, tmp_path):
+        import sqlite3 as _sqlite3
+        db_file = str(tmp_path / "placeholder.sqlite")
+        _sqlite3.connect(db_file).close()
+        assert os.path.getsize(db_file) == 0
+
+        with patch("land_registry.spatialite.spatialite_settings") as mock_settings:
+            mock_settings.table = "cadastral_parcels"
+            mock_settings.default_limit = 100
+            mock_settings.db_map_path = db_file
+            mock_settings.db_ple_path = db_file
+            mock_settings.geometry_column = "geometry"
+            mock_settings.srid = 4326
+            mock_settings.extension_path = "mod_spatialite"
+            result = load_layer(table="fogli")
+
+        assert result is None
+
+
+class TestLayerTypeDefaultTable:
+    """The default table follows layer_type, so a 'map' request never goes
+    looking for the particelle table (and vice versa)."""
+
+    def test_map_default_uses_table_map(self, tmp_path):
+        missing = str(tmp_path / "missing_map.sqlite")
+        with patch("land_registry.spatialite.spatialite_settings") as mock_settings:
+            mock_settings.table = "cadastral_parcels"
+            mock_settings.table_map = "fogli"
+            mock_settings.table_ple = "particelle"
+            mock_settings.default_limit = 100
+            mock_settings.db_map_path = missing
+            mock_settings.db_ple_path = missing
+            mock_settings.geometry_column = "geometry"
+            mock_settings.srid = 4326
+            mock_settings.extension_path = "mod_spatialite"
+            # Reaching the missing-file branch proves the allowlist accepted
+            # the resolved default rather than raising ValueError.
+            assert load_layer(layer_type="map") is None
+
+    def test_ple_default_uses_table_ple(self, tmp_path):
+        missing = str(tmp_path / "missing_ple.sqlite")
+        with patch("land_registry.spatialite.spatialite_settings") as mock_settings:
+            mock_settings.table = "cadastral_parcels"
+            mock_settings.table_map = "fogli"
+            mock_settings.table_ple = "particelle"
+            mock_settings.default_limit = 100
+            mock_settings.db_map_path = missing
+            mock_settings.db_ple_path = missing
+            mock_settings.geometry_column = "geometry"
+            mock_settings.srid = 4326
+            mock_settings.extension_path = "mod_spatialite"
+            assert load_layer(layer_type="ple") is None
+
+    def test_settings_defaults_match_layer_databases(self):
+        """The shipped defaults must name the tables each database holds."""
+        from land_registry.config import spatialite_settings as real_settings
+
+        assert real_settings.table_map == "fogli"
+        assert real_settings.table_ple == "particelle"
