@@ -57,7 +57,7 @@ try:
 except ImportError:
     # Census sections are an optional aecs4u-stats dataset. Keep the adapter
     # importable with older package releases that predate this subpackage.
-    def _census_db_available() -> bool:
+    def _census_db_available(*args, **kwargs) -> bool:
         return False
 
     def _census_section_at_point(*args, **kwargs):
