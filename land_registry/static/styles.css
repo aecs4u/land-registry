@@ -6481,6 +6481,12 @@ h4,
   margin-bottom: 12px;
 }
 
+.progressive-load-elapsed {
+  /* Tabular figures keep the once-a-second update from shifting the layout. */
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+
 .progressive-load-log {
   max-height: 120px;
   overflow-y: auto;

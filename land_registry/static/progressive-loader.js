@@ -131,6 +131,8 @@ const ProgressiveLoader = {
                 break;
 
             case 'progress':
+                // Heartbeats carry only elapsed_seconds -- no file identity.
+                if (event.file_path === undefined) break;
                 console.log(`[ProgressiveLoader] Loading file ${event.file_index + 1}: ${event.file_path}`);
                 callbacks.onProgress(event.file_index, null, event.file_path, 'loading');
                 break;
@@ -195,6 +197,8 @@ const ProgressiveLoader = {
 
 const ProgressUI = {
     _overlay: null,
+    _startedAt: 0,
+    _timer: null,
 
     /**
      * Show progress overlay
@@ -218,6 +222,7 @@ const ProgressUI = {
                 <div class="progressive-load-status">${t('Preparing...')}</div>
                 <div class="progressive-load-details">
                     <span class="progressive-load-files">${t('{n} / {m} files').replace('{n}', 0).replace('{m}', totalFiles)}</span>
+                    <span class="progressive-load-elapsed">0s</span>
                     <span class="progressive-load-features">${t('0 features')}</span>
                 </div>
                 <div class="progressive-load-log"></div>
@@ -232,6 +237,25 @@ const ProgressUI = {
 
         document.body.appendChild(overlay);
         this._overlay = overlay;
+
+        // A single large file produces no server events at all while it is
+        // being read and serialized -- and because that work is CPU-bound and
+        // holds the GIL, server-side heartbeats cannot be relied upon either.
+        // Tick locally so the panel always shows the load is still alive.
+        this._startedAt = Date.now();
+        clearInterval(this._timer);
+        this._timer = setInterval(() => this._tickElapsed(), 1000);
+    },
+
+    /** Update the locally-measured elapsed time. */
+    _tickElapsed() {
+        if (!this._overlay) {
+            clearInterval(this._timer);
+            this._timer = null;
+            return;
+        }
+        const el = this._overlay.querySelector('.progressive-load-elapsed');
+        if (el) el.textContent = `${Math.round((Date.now() - this._startedAt) / 1000)}s`;
     },
 
     /**
@@ -295,6 +319,9 @@ const ProgressUI = {
     showComplete(summary) {
         if (!this._overlay) return;
 
+        clearInterval(this._timer);
+        this._timer = null;
+
         const bar = this._overlay.querySelector('.progressive-load-bar');
         if (bar) {
             bar.style.width = '100%';
@@ -314,6 +341,8 @@ const ProgressUI = {
      * Hide and remove the overlay
      */
     hide() {
+        clearInterval(this._timer);
+        this._timer = null;
         if (this._overlay) {
             this._overlay.remove();
             this._overlay = null;

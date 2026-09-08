@@ -4325,88 +4325,121 @@ async def load_cadastral_files_stream(request: CadastralFileRequest):
             for i, file_path in enumerate(file_paths)
         ]
 
+        # Announce the queued work straight away.  This event is part of the
+        # documented protocol but was never emitted, so the client had no file
+        # name to display and its progress callback never fired at all.
+        for i, file_path in enumerate(file_paths):
+            yield json.dumps({
+                "event": "progress",
+                "file_index": i,
+                "file_path": os.path.basename(file_path),
+                "status": "loading",
+                "completed_files": completed_files,
+                "total_files": len(file_paths),
+            }) + "\n"
+
         try:
-            for completed_task in asyncio.as_completed(load_tasks):
-                i, file_path, result, load_error = await completed_task
-
-                if load_error is not None:
-                    completed_files += 1
-                    logger.error(f"Error streaming file {file_path}: {load_error}")
-                    layers_data[os.path.basename(file_path)] = {"error": str(load_error)}
-                    yield json.dumps({
-                        "event": "error",
-                        "file_index": i,
-                        "file_path": os.path.basename(file_path),
-                        "error": str(load_error),
-                        "completed_files": completed_files,
-                        "total_files": len(file_paths),
-                    }) + "\n"
-                    continue
-
-                if "error" in result:
-                    completed_files += 1
-                    layer_name = os.path.basename(result["file_path"])
-                    layers_data[layer_name] = {"error": result["error"]}
-                    yield json.dumps({
-                        "event": "error",
-                        "file_index": i,
-                        "file_path": os.path.basename(file_path),
-                        "error": result["error"],
-                        "completed_files": completed_files,
-                        "total_files": len(file_paths),
-                    }) + "\n"
-                    continue
-
-                gdf = result["gdf"]
-                layer_name = result["layer_name"]
-                feature_count = result["feature_count"]
-
-                # Infer layer type from filename (_PLE = particelle, _MAP = mappa)
-                name_upper = layer_name.upper()
-                if "_PLE" in name_upper:
-                    layer_type = "ple"
-                elif "_FLE" in name_upper:
-                    layer_type = "ple"
-                else:
-                    layer_type = "map"
-
-                # Tag each feature with the layer_type so the frontend can colour by type.
-                # Completion order is intentionally used here: feature IDs are
-                # re-numbered once on the final combined frame below.
-                gdf["layer_type"] = layer_type
-                gdf["feature_id"] = range(feature_offset, feature_offset + len(gdf))
-                feature_offset += len(gdf)
-                # GeoJSON conversion is CPU-heavy for cadastral layers.  Keep
-                # it out of the event loop so other file jobs can continue
-                # completing while a large layer is being serialized.
-                layer_geojson = await asyncio.to_thread(
-                    lambda: json.loads(gdf.to_json())
+            pending = set(load_tasks)
+            while pending:
+                # A single large cadastral file can take tens of seconds to
+                # read, tag and serialize.  Waiting only on completion left the
+                # stream silent for that whole span, which reads as a hang.
+                # Time-box the wait so a heartbeat keeps the client informed.
+                done, pending = await asyncio.wait(
+                    pending, timeout=2.0, return_when=asyncio.FIRST_COMPLETED
                 )
 
-                layers_data[layer_name] = {
-                    "geojson": layer_geojson,
-                    "feature_count": feature_count,
-                    "source_file": file_path,
-                    "layer_name": layer_name,
-                }
-                all_gdfs.append(gdf)
-                total_features += feature_count
-                completed_files += 1
+                if not done:
+                    yield json.dumps({
+                        "event": "progress",
+                        "status": "loading",
+                        "elapsed_seconds": round(time.time() - start_time, 1),
+                        "completed_files": completed_files,
+                        "total_files": len(file_paths),
+                    }) + "\n"
+                    continue
 
-                # Stream the layer data so the frontend can render immediately.
-                # The global GeoDataFrame is consolidated once after all jobs
-                # finish; repeatedly concatenating it here was the main O(N^2)
-                # latency source.
-                yield json.dumps({
-                    "event": "layer",
-                    "file_index": i,
-                    "layer_name": layer_name,
-                    "layer_type": layer_type,
-                    "geojson": layer_geojson,
-                    "feature_count": feature_count,
-                    "completed_files": completed_files,
-                    "total_files": len(file_paths),
-                }) + "\n"
+                for completed_task in done:
+                    i, file_path, result, load_error = completed_task.result()
+
+                    if load_error is not None:
+                        completed_files += 1
+                        logger.error(f"Error streaming file {file_path}: {load_error}")
+                        layers_data[os.path.basename(file_path)] = {"error": str(load_error)}
+                        yield json.dumps({
+                            "event": "error",
+                            "file_index": i,
+                            "file_path": os.path.basename(file_path),
+                            "error": str(load_error),
+                            "completed_files": completed_files,
+                            "total_files": len(file_paths),
+                        }) + "\n"
+                        continue
+
+                    if "error" in result:
+                        completed_files += 1
+                        layer_name = os.path.basename(result["file_path"])
+                        layers_data[layer_name] = {"error": result["error"]}
+                        yield json.dumps({
+                            "event": "error",
+                            "file_index": i,
+                            "file_path": os.path.basename(file_path),
+                            "error": result["error"],
+                            "completed_files": completed_files,
+                            "total_files": len(file_paths),
+                        }) + "\n"
+                        continue
+
+                    gdf = result["gdf"]
+                    layer_name = result["layer_name"]
+                    feature_count = result["feature_count"]
+
+                    # Infer layer type from filename (_PLE = particelle, _MAP = mappa)
+                    name_upper = layer_name.upper()
+                    if "_PLE" in name_upper:
+                        layer_type = "ple"
+                    elif "_FLE" in name_upper:
+                        layer_type = "ple"
+                    else:
+                        layer_type = "map"
+
+                    # Tag each feature with the layer_type so the frontend can colour by type.
+                    # Completion order is intentionally used here: feature IDs are
+                    # re-numbered once on the final combined frame below.
+                    gdf["layer_type"] = layer_type
+                    gdf["feature_id"] = range(feature_offset, feature_offset + len(gdf))
+                    feature_offset += len(gdf)
+                    # GeoJSON conversion is CPU-heavy for cadastral layers.  Keep
+                    # it out of the event loop so other file jobs can continue
+                    # completing while a large layer is being serialized.
+                    layer_geojson = await asyncio.to_thread(
+                        lambda: json.loads(gdf.to_json())
+                    )
+
+                    layers_data[layer_name] = {
+                        "geojson": layer_geojson,
+                        "feature_count": feature_count,
+                        "source_file": file_path,
+                        "layer_name": layer_name,
+                    }
+                    all_gdfs.append(gdf)
+                    total_features += feature_count
+                    completed_files += 1
+
+                    # Stream the layer data so the frontend can render immediately.
+                    # The global GeoDataFrame is consolidated once after all jobs
+                    # finish; repeatedly concatenating it here was the main O(N^2)
+                    # latency source.
+                    yield json.dumps({
+                        "event": "layer",
+                        "file_index": i,
+                        "layer_name": layer_name,
+                        "layer_type": layer_type,
+                        "geojson": layer_geojson,
+                        "feature_count": feature_count,
+                        "completed_files": completed_files,
+                        "total_files": len(file_paths),
+                    }) + "\n"
         finally:
             # If the browser cancels/closes the stream, do not leave file loads
             # running in the background.
@@ -4467,6 +4500,16 @@ async def load_cadastral_files_stream(request: CadastralFileRequest):
         media_type="application/x-ndjson",
         headers={
             "Cache-Control": "no-cache",
+            # Defeat buffering at every layer between here and the browser.
+            # X-Accel-Buffering covers nginx; Content-Encoding covers Starlette's
+            # GZipMiddleware, which otherwise feeds each event into a shared
+            # zlib stream.  GzipFile.write() does not flush, so the small
+            # start/progress events compress to nothing and the browser
+            # receives the whole stream in one burst at the end -- progress
+            # events are useless if they all arrive after the work is done.
+            # Starlette's responders skip any response that already declares a
+            # Content-Encoding, which is the supported way to opt out.
+            "Content-Encoding": "identity",
             "X-Accel-Buffering": "no",
             "X-Content-Type-Options": "nosniff",
         },
