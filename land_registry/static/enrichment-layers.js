@@ -60,6 +60,239 @@
         return `<span class="enrichment-legend-item"><span class="enrichment-legend-dot" style="background:${color}"></span>${label}</span>`;
     }
 
+    // ---- Canonical aecs4u-stats layers --------------------------------
+    //
+    // The catalog is server-owned: the browser never chooses a table name.
+    // VectorGrid is preferred for large layers; bounded GeoJSON is retained
+    // as a compatibility fallback for installations without the plugin.
+    const CANONICAL_LAYER_COLORS = ['#7c3aed', '#0f766e', '#2563eb', '#b45309', '#be123c', '#15803d'];
+    const canonicalLayerSpecs = {};
+    const canonicalLayerObjects = {};
+    const canonicalLayerOpacities = {};
+    let canonicalLayerMap = null;
+    let canonicalRefreshAttached = false;
+    let canonicalLayerCatalogLoaded = false;
+
+    function _canonicalStyle(spec, feature) {
+        const index = Object.keys(canonicalLayerSpecs).indexOf(spec.id);
+        const color = CANONICAL_LAYER_COLORS[Math.max(index, 0) % CANONICAL_LAYER_COLORS.length];
+        if (spec.kind === 'point') {
+            return { radius: 4, color, fillColor: color, fillOpacity: 0.75, weight: 1 };
+        }
+        return { color, weight: 1.5, opacity: 0.85, fillColor: color, fillOpacity: 0.12 };
+    }
+
+    function _canonicalPopup(properties) {
+        const rows = Object.entries(properties || {})
+            .filter(([, value]) => value !== null && value !== undefined && value !== '')
+            .slice(0, 10)
+            .map(([key, value]) => `<div><b>${_escapeHtml(key)}:</b> ${_escapeHtml(value)}</div>`)
+            .join('');
+        return `<div class="canonical-layer-popup">${rows || _escapeHtml('No attributes')}</div>`;
+    }
+
+    function _canonicalSetStatus(layerId, state, message) {
+        const status = document.getElementById(`canonicalStatus-${layerId}`);
+        if (!status) return;
+        status.className = `canonical-layer-status ${state || ''}`.trim();
+        status.textContent = message || '';
+    }
+
+    function _canonicalApplyOpacity(entry, value) {
+        if (!entry || !entry.layer) return;
+        const opacity = Math.max(0, Math.min(1, Number(value)));
+        const style = { opacity, fillOpacity: opacity * 0.12 };
+        if (typeof entry.layer.setStyle === 'function') {
+            entry.layer.setStyle(style);
+        } else if (typeof entry.layer.eachLayer === 'function') {
+            entry.layer.eachLayer(layer => {
+                if (typeof layer.setStyle === 'function') layer.setStyle(style);
+            });
+        }
+        entry.opacity = opacity;
+    }
+
+    function setCanonicalMapLayerOpacity(layerId, value) {
+        const opacity = Math.max(0, Math.min(1, Number(value)));
+        canonicalLayerOpacities[layerId] = opacity;
+        const output = document.getElementById(`canonicalOpacityValue-${layerId}`);
+        if (output) output.textContent = `${Math.round(opacity * 100)}%`;
+        const entry = canonicalLayerObjects[layerId];
+        if (!entry) return;
+        _canonicalApplyOpacity(entry, opacity);
+    }
+
+    function _canonicalBoundsParams(map) {
+        const bounds = map.getBounds();
+        return new URLSearchParams({
+            west: bounds.getWest().toFixed(6),
+            south: bounds.getSouth().toFixed(6),
+            east: bounds.getEast().toFixed(6),
+            north: bounds.getNorth().toFixed(6),
+        });
+    }
+
+    async function _refreshCanonicalGeoJsonLayer(spec) {
+        const map = canonicalLayerMap || _getFoliumMap();
+        const entry = canonicalLayerObjects[spec.id];
+        if (!map || !entry || entry.mode !== 'geojson' || !entry.active) return;
+        const token = ++entry.token;
+        _canonicalSetStatus(spec.id, 'loading', 'Loading…');
+        try {
+            const response = await fetch(`${spec.geojson_url}?${_canonicalBoundsParams(map)}`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const collection = await response.json();
+            if (token !== entry.token || !entry.active) return;
+            const next = L.geoJSON(collection, {
+                style: feature => _canonicalStyle(spec, feature),
+                pointToLayer: (feature, latlng) => L.circleMarker(latlng, _canonicalStyle(spec, feature)),
+                onEachFeature: (feature, layer) => layer.bindPopup(_canonicalPopup(feature.properties)),
+            });
+            if (entry.layer && map.hasLayer(entry.layer)) map.removeLayer(entry.layer);
+            entry.layer = next.addTo(map);
+            _canonicalApplyOpacity(entry, entry.opacity);
+            _canonicalSetStatus(spec.id, collection.zoom_required ? 'zoom-required' : 'ready',
+                collection.zoom_required ? `Zoom ${collection.zoom_required}+` : 'Ready');
+        } catch (error) {
+            if (token === entry.token && entry.active) _canonicalSetStatus(spec.id, 'error', 'Unavailable');
+            console.warn('[EnrichmentLayers] Canonical GeoJSON failed', error);
+        }
+    }
+
+    function _useCanonicalGeoJsonFallback(spec, map) {
+        const entry = canonicalLayerObjects[spec.id];
+        if (!entry || !entry.active) return;
+        if (entry.layer && map.hasLayer(entry.layer)) map.removeLayer(entry.layer);
+        entry.mode = 'geojson';
+        _canonicalSetStatus(spec.id, 'loading', 'Using GeoJSON…');
+        _refreshCanonicalGeoJsonLayer(spec);
+    }
+
+    function _createCanonicalLayer(spec, map) {
+        const opacityControl = document.getElementById(`canonicalOpacity-${spec.id}`);
+        const entry = canonicalLayerObjects[spec.id] = {
+            active: true, layer: null, mode: 'vector', token: 0,
+            opacity: canonicalLayerOpacities[spec.id] ?? (opacityControl ? Number(opacityControl.value) : 0.85),
+        };
+        _canonicalSetStatus(spec.id, map.getZoom() < spec.min_zoom ? 'zoom-required' : 'loading',
+            map.getZoom() < spec.min_zoom ? `Zoom ${spec.min_zoom}+` : 'Loading…');
+        if (L.vectorGrid && typeof L.vectorGrid.protobuf === 'function') {
+            const style = _canonicalStyle(spec);
+            entry.layer = L.vectorGrid.protobuf(spec.tile_url, {
+                pane: map.getPane('canonicalMapLayerPane') ? 'canonicalMapLayerPane' : undefined,
+                minZoom: spec.min_zoom,
+                maxZoom: 22,
+                interactive: true,
+                vectorTileLayerStyles: { [spec.id]: style },
+                getFeatureId: feature => feature.properties?.[spec.id_column] || feature.properties?.id,
+            });
+            entry.layer.on('click', event => {
+                const properties = event.layer && event.layer.properties;
+                if (properties) L.popup().setLatLng(event.latlng).setContent(_canonicalPopup(properties)).openOn(map);
+            });
+            entry.layer.on('tileload', () => _canonicalSetStatus(spec.id, 'ready', 'Ready'));
+            entry.layer.on('tileerror', () => _useCanonicalGeoJsonFallback(spec, map));
+        } else {
+            entry.mode = 'geojson';
+            entry.layer = L.layerGroup();
+        }
+        entry.layer.addTo(map);
+        _canonicalApplyOpacity(entry, entry.opacity);
+        if (entry.mode === 'geojson') _refreshCanonicalGeoJsonLayer(spec);
+    }
+
+    function toggleCanonicalMapLayer(layerId) {
+        const spec = canonicalLayerSpecs[layerId];
+        const map = canonicalLayerMap || _getFoliumMap();
+        const button = document.getElementById(`toggleCanonicalLayer-${layerId}`);
+        if (!spec || !map) return;
+        const entry = canonicalLayerObjects[layerId];
+        if (!entry || !entry.active) {
+            _createCanonicalLayer(spec, map);
+            if (!canonicalRefreshAttached) {
+                map.on('moveend', _refreshCanonicalGeoJsonLayers);
+                canonicalRefreshAttached = true;
+            }
+            if (button) button.classList.add('active');
+        } else {
+            entry.active = false;
+            if (entry.layer && map.hasLayer(entry.layer)) map.removeLayer(entry.layer);
+            if (button) button.classList.remove('active');
+            _canonicalSetStatus(layerId, '', 'Hidden');
+        }
+    }
+
+    function _refreshCanonicalGeoJsonLayers() {
+        Object.keys(canonicalLayerSpecs).forEach(layerId => {
+            const entry = canonicalLayerObjects[layerId];
+            if (entry && entry.active && entry.mode === 'geojson') {
+                _refreshCanonicalGeoJsonLayer(canonicalLayerSpecs[layerId]);
+            }
+        });
+    }
+
+    async function _loadCanonicalLayerCatalog() {
+        if (canonicalLayerCatalogLoaded) return;
+        const container = document.getElementById('canonicalMapLayers');
+        if (!container) return;
+        canonicalLayerCatalogLoaded = true;
+        const data = await _fetchJson('/api/v1/map/layers');
+        if (!data || !data.layers) {
+            container.innerHTML = '<span class="enrichment-legend-meta">Database layers unavailable</span>';
+            return;
+        }
+        data.layers.forEach(spec => { canonicalLayerSpecs[spec.id] = spec; });
+        container.innerHTML = data.layers.map((spec, index) => `
+            <div class="canonical-layer-control">
+                <button id="toggleCanonicalLayer-${_escapeHtml(spec.id)}" class="tool-btn-ghost canonical-layer-toggle"
+                        onclick="toggleCanonicalMapLayer('${_escapeHtml(spec.id)}')"
+                        title="${_escapeHtml(spec.table)} · zoom ${spec.min_zoom}+">
+                    <span class="canonical-layer-swatch" style="background:${CANONICAL_LAYER_COLORS[index % CANONICAL_LAYER_COLORS.length]}"></span>${_escapeHtml(spec.title)}
+                    <span id="canonicalStatus-${_escapeHtml(spec.id)}" class="canonical-layer-status">Available</span>
+                </button>
+                <label class="canonical-layer-opacity" for="canonicalOpacity-${_escapeHtml(spec.id)}">
+                    Opacity <input id="canonicalOpacity-${_escapeHtml(spec.id)}" type="range" min="0" max="1" step="0.05" value="0.85"
+                                   oninput="setCanonicalMapLayerOpacity('${_escapeHtml(spec.id)}', this.value)" aria-label="${_escapeHtml(spec.title)} opacity">
+                    <output id="canonicalOpacityValue-${_escapeHtml(spec.id)}">85%</output>
+                </label>
+                <span class="canonical-layer-meta">aecs4u-stats · zoom ${spec.min_zoom}+ · ${_escapeHtml(spec.coverage_note || 'Coverage available')}</span>
+            </div>`).join('');
+        if (!data.available) {
+            container.insertAdjacentHTML('beforeend', '<span class="enrichment-legend-meta">PostGIS source is not configured</span>');
+            container.querySelectorAll('button').forEach(button => { button.disabled = true; });
+            return;
+        }
+        const health = await _fetchJson('/api/v1/map/layers/health');
+        if (!health || !health.layers) {
+            container.insertAdjacentHTML('beforeend', '<span class="enrichment-legend-meta">Layer health is temporarily unavailable</span>');
+            return;
+        }
+        const readiness = new Map((health && health.layers || []).map(item => [item.id, item]));
+        let unavailable = 0;
+        let partial = 0;
+        container.querySelectorAll('.canonical-layer-toggle').forEach(button => {
+            const layerId = button.id.replace('toggleCanonicalLayer-', '');
+            const status = readiness.get(layerId);
+            if (status && !status.available) {
+                unavailable += 1;
+                button.disabled = true;
+                button.title = `${button.title} · database layer not ready`;
+                _canonicalSetStatus(layerId, 'error', 'Not ready');
+            }
+            if (status && status.coverage === 'partial') {
+                partial += 1;
+                button.title = `${button.title} · partial coverage`;
+                if (status.available) _canonicalSetStatus(layerId, 'partial', 'Partial');
+            }
+        });
+        if (unavailable) {
+            container.insertAdjacentHTML('beforeend', `<span class="enrichment-legend-meta">${unavailable} database layer(s) unavailable</span>`);
+        }
+        if (partial) {
+            container.insertAdjacentHTML('beforeend', `<span class="enrichment-legend-meta">${partial} layer(s) have partial database coverage</span>`);
+        }
+    }
+
     // ---- POIs ---------------------------------------------------------
 
     async function _refreshPoiLayer() {
@@ -716,6 +949,12 @@
             return;
         }
 
+        canonicalLayerMap = map;
+        if (map.createPane && !map.getPane('canonicalMapLayerPane')) {
+            map.createPane('canonicalMapLayerPane').style.zIndex = 425;
+        }
+        _loadCanonicalLayerCatalog();
+
         _attachViewportParcelLoader(map);
         const vectorGridReady = L.vectorGrid && typeof L.vectorGrid.protobuf === 'function';
         if (!cadastralBoundaryActive && (vectorGridReady || attempt >= 40)) {
@@ -761,6 +1000,8 @@
     window.toggleBulletinLayer = toggleBulletinLayer;
     window.refreshBulletinLayer = function () { if (bulletinActive) _refreshBulletinLayer(); };
     window.toggleCadastralBoundaryLayer = toggleCadastralBoundaryLayer;
+    window.toggleCanonicalMapLayer = toggleCanonicalMapLayer;
+    window.setCanonicalMapLayerOpacity = setCanonicalMapLayerOpacity;
     window.refreshViewportParcelLayer = _refreshViewportParcelLayer;
     window.clearCadastralParcelSelection = _clearCadastralParcelSelection;
 })();

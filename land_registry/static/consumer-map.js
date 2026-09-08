@@ -65,6 +65,100 @@
         // zoom-gated and therefore do not request detail at overview zoom.
         cadastral.addTo(map);
 
+        map.createPane('canonicalPane').style.zIndex = String(options.canonicalZIndex || 425);
+        var canonicalLayers = {};
+        var canonicalLayerModes = {};
+        var canonicalLayerOptions = {};
+        var canonicalLayerTokens = {};
+        var canonicalRefreshAttached = false;
+        function canonicalGeoJsonUrl(layerId) {
+            var bounds = map.getBounds();
+            var params = new URLSearchParams({
+                west: bounds.getWest().toFixed(6),
+                south: bounds.getSouth().toFixed(6),
+                east: bounds.getEast().toFixed(6),
+                north: bounds.getNorth().toFixed(6)
+            });
+            var configured = canonicalLayerOptions[layerId] || {};
+            if (configured.maxFeatures) params.set('limit', String(configured.maxFeatures));
+            return joinUrl(apiBase, '/map/layers/' + encodeURIComponent(layerId) + '/features') + '?' + params.toString();
+        }
+        function refreshCanonicalGeoJson(layerId) {
+            if (canonicalLayerModes[layerId] !== 'geojson' || !canonicalLayers[layerId]) return;
+            var token = (canonicalLayerTokens[layerId] || 0) + 1;
+            canonicalLayerTokens[layerId] = token;
+            fetch(canonicalGeoJsonUrl(layerId)).then(function (response) {
+                if (!response.ok) throw new Error('Canonical GeoJSON request failed');
+                return response.json();
+            }).then(function (collection) {
+                if (canonicalLayerTokens[layerId] !== token || !canonicalLayers[layerId]) return;
+                var configured = canonicalLayerOptions[layerId] || {};
+                var replacement = L.geoJSON(collection, {
+                    style: configured.style || { color: '#7c3aed', weight: 1.5, fillOpacity: 0.12 },
+                    pointToLayer: function (_feature, latlng) {
+                        return L.circleMarker(latlng, { radius: 4, color: '#7c3aed', fillColor: '#7c3aed', fillOpacity: 0.75, weight: 1 });
+                    },
+                    onEachFeature: function (feature, featureLayer) {
+                        var properties = feature.properties || {};
+                        var rows = Object.keys(properties).slice(0, 10).map(function (key) {
+                            return '<div><b>' + escapeHtml(key) + ':</b> ' + escapeHtml(properties[key]) + '</div>';
+                        }).join('');
+                        featureLayer.bindPopup(rows || 'No attributes');
+                    }
+                });
+                map.removeLayer(canonicalLayers[layerId]);
+                canonicalLayers[layerId] = replacement.addTo(map);
+            }).catch(function (error) {
+                if (global.console) console.warn('[LandRegistryMap] canonical GeoJSON failed', error);
+            });
+        }
+        function refreshCanonicalGeoJsonLayers() {
+            Object.keys(canonicalLayerModes).forEach(refreshCanonicalGeoJson);
+        }
+        function addCanonicalLayer(layerId, layerOptions) {
+            layerOptions = layerOptions || {};
+            if (canonicalLayers[layerId]) return canonicalLayers[layerId];
+            canonicalLayerOptions[layerId] = layerOptions;
+            if (global.L.vectorGrid && typeof global.L.vectorGrid.protobuf === 'function') {
+                var url = joinUrl(apiBase, '/tiles/map-layers/' + encodeURIComponent(layerId) + '/{z}/{x}/{y}.pbf');
+                var layer = global.L.vectorGrid.protobuf(url, {
+                    pane: 'canonicalPane',
+                    minZoom: layerOptions.minZoom || 0,
+                    maxZoom: layerOptions.maxZoom || 22,
+                    interactive: true,
+                    vectorTileLayerStyles: { [layerId]: layerOptions.style || { color: '#7c3aed', weight: 1.5, fillOpacity: 0.12 } },
+                    getFeatureId: feature => feature.properties && (feature.properties.id || feature.properties.point_id || feature.properties.sez21_id),
+                });
+                layer.on('click', function (event) {
+                    var properties = (event.layer && event.layer.properties) || {};
+                    var rows = Object.keys(properties).slice(0, 10).map(function (key) {
+                        return '<div><b>' + escapeHtml(key) + ':</b> ' + escapeHtml(properties[key]) + '</div>';
+                    }).join('');
+                    L.popup().setLatLng(event.latlng).setContent(rows || 'No attributes').openOn(map);
+                });
+                canonicalLayers[layerId] = layer.addTo(map);
+                canonicalLayerModes[layerId] = 'vector';
+            } else {
+                canonicalLayers[layerId] = L.layerGroup().addTo(map);
+                canonicalLayerModes[layerId] = 'geojson';
+                refreshCanonicalGeoJson(layerId);
+            }
+            if (!canonicalRefreshAttached) {
+                map.on('moveend', refreshCanonicalGeoJsonLayers);
+                canonicalRefreshAttached = true;
+            }
+            return canonicalLayers[layerId];
+        }
+        function removeCanonicalLayer(layerId) {
+            if (canonicalLayers[layerId]) {
+                map.removeLayer(canonicalLayers[layerId]);
+                delete canonicalLayers[layerId];
+                delete canonicalLayerModes[layerId];
+                delete canonicalLayerOptions[layerId];
+                delete canonicalLayerTokens[layerId];
+            }
+        }
+
         var baseLayers = {};
         baseLayers[labels.streets || 'Streets'] = streets;
         baseLayers[labels.satellite || 'Satellite'] = satellite;
@@ -101,6 +195,7 @@
             map: map,
             baseLayers: { streets: streets, satellite: satellite, terrain: terrain },
             cadastral: { layer: cadastral, sheets: sheets, parcels: parcels },
+            canonical: { add: addCanonicalLayer, remove: removeCanonicalLayer, layers: canonicalLayers },
             destroy: function () { map.off('click', identify); map.remove(); }
         };
     }

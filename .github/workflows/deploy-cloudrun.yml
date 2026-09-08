@@ -97,8 +97,8 @@ jobs:
             --timeout=300 \
             --cpu-boost \
             --cpu-throttling \
-            --set-env-vars="ENVIRONMENT=production,DEBUG=false,LOG_LEVEL=INFO,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_Y2hhbXBpb24tbXVsbGV0LTc2LmNsZXJrLmFjY291bnRzLmRldiQ,CLERK_JWKS_URL=https://champion-mullet-76.clerk.accounts.dev/.well-known/jwks.json" \
-            --set-secrets="SECRET_KEY=LAND_REGISTRY_SECRET_KEY:latest,SESSION_SECRET_KEY=LAND_REGISTRY_SESSION_SECRET_KEY:latest,DATABASE_URL=LAND_REGISTRY_DATABASE_URL:latest,CLERK_SECRET_KEY=LAND_REGISTRY_CLERK_SECRET_KEY:latest,LOGFIRE_TOKEN=LAND_REGISTRY_LOGFIRE_TOKEN:latest"
+            --set-env-vars="ENVIRONMENT=production,DEBUG=false,LOG_LEVEL=INFO,AECS4U_STATS_POSTGRES_ENABLE=1,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_Y2hhbXBpb24tbXVsbGV0LTc2LmNsZXJrLmFjY291bnRzLmRldiQ,CLERK_JWKS_URL=https://champion-mullet-76.clerk.accounts.dev/.well-known/jwks.json" \
+            --set-secrets="SECRET_KEY=LAND_REGISTRY_SECRET_KEY:latest,SESSION_SECRET_KEY=LAND_REGISTRY_SESSION_SECRET_KEY:latest,DATABASE_URL=LAND_REGISTRY_DATABASE_URL:latest,AECS4U_STATS_POSTGRES_DSN=AECS4U_STATS_POSTGRES_DSN:latest,CLERK_SECRET_KEY=LAND_REGISTRY_CLERK_SECRET_KEY:latest,LOGFIRE_TOKEN=LAND_REGISTRY_LOGFIRE_TOKEN:latest"
 
           URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
             --region=${{ env.GCP_REGION }} \
@@ -116,3 +116,10 @@ jobs:
             sleep 6
           done
           echo "/health did not return 200 after 10 attempts"; exit 1
+
+      - name: Verify canonical map layers
+        run: |
+          URL="${{ steps.deploy.outputs.url }}"
+          curl --fail --silent --show-error --max-time 30 \
+            "$URL/api/v1/map/layers/health" > /tmp/canonical-map-health.json
+          python -c 'import json; d=json.load(open("/tmp/canonical-map-health.json")); assert d.get("available"), "PostGIS map source is unavailable"; layers=d.get("layers", []); assert len(layers) == 15, f"expected 15 map layers, got {len(layers)}"; bad=[x["id"] for x in layers if not x.get("available")]; assert not bad, f"unavailable map layers: {bad}"; print(f"canonical map health passed: {len(layers)} layers")'

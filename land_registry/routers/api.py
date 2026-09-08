@@ -58,6 +58,11 @@ from land_registry.parcel_identity import (
 )
 from land_registry.cadastral_db import CadastralDatabase, CadastralFilter
 from land_registry.dependencies import _cadastral_registry, _datashader_registry, _discover_ple_databases, empty_datashader_tile
+from land_registry.map_layers import (
+    get_map_layer,
+    get_map_layer_source,
+    map_layer_catalog,
+)
 # Import proper JWT verification from aecs4u-auth
 from land_registry.routers.auth import (
     get_current_user,
@@ -3674,6 +3679,92 @@ from fastapi.responses import Response, StreamingResponse
 def get_datashader_service():
     """Lazy initialization of datashader service."""
     return _datashader_registry.get_service()
+
+
+# ============================================================================
+# Canonical PostGIS map layers
+# ============================================================================
+
+@api_router.get("/map/layers")
+async def get_map_layers():
+    """Return the allow-listed canonical spatial layers and their contracts."""
+    source = get_map_layer_source()
+    return {
+        "source": "aecs4u-stats PostgreSQL/PostGIS",
+        "available": source.available,
+        "layers": map_layer_catalog(),
+    }
+
+
+@api_router.get("/map/layers/health")
+async def get_map_layers_health():
+    """Return deployment-readiness checks for every canonical map layer."""
+    source = get_map_layer_source()
+    if not source.available:
+        return {"available": False, "layers": source.health()}
+    try:
+        return {"available": True, "layers": await asyncio.to_thread(source.health)}
+    except Exception as exc:
+        logger.warning("Canonical map layer health check failed: %s", exc)
+        raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable") from exc
+
+
+@api_router.get("/map/layers/{layer_id}/features")
+async def get_map_layer_features(
+    layer_id: str,
+    west: float = Query(..., ge=-180, le=180),
+    south: float = Query(..., ge=-90, le=90),
+    east: float = Query(..., ge=-180, le=180),
+    north: float = Query(..., ge=-90, le=90),
+    limit: int = Query(2000, ge=1, le=5000),
+):
+    """Return a bounded WGS84 GeoJSON viewport for one canonical layer."""
+    try:
+        layer = get_map_layer(layer_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if west >= east or south >= north:
+        raise HTTPException(status_code=400, detail="Invalid map bounding box")
+    # Dense point datasets must be viewed through MVT at small scales.  Do
+    # not let a compatibility GeoJSON fallback turn a national viewport into
+    # a sequential scan; an empty collection tells the client to zoom in.
+    if (east - west) * (north - south) > layer.geojson_max_area:
+        return {"type": "FeatureCollection", "features": [], "layer": layer.id, "truncated": False, "zoom_required": layer.min_zoom}
+    source = get_map_layer_source()
+    if not source.available:
+        raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable")
+    payload = await asyncio.to_thread(
+        source.read_geojson, layer.id, (west, south, east, north), min(limit, layer.max_features)
+    )
+    payload["layer"] = layer.id
+    payload["truncated"] = len(payload["features"]) >= min(limit, layer.max_features)
+    return payload
+
+
+@api_router.get("/tiles/map-layers/{layer_id}/{z}/{x}/{y}.pbf")
+async def get_map_layer_tile(layer_id: str, z: int, x: int, y: int):
+    """Serve an attribute-bearing vector tile for a canonical spatial layer."""
+    try:
+        layer = get_map_layer(layer_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if z < 0 or z > 22 or x < 0 or y < 0 or x >= (1 << z) or y >= (1 << z):
+        raise HTTPException(status_code=400, detail="Invalid tile coordinates")
+    if z < layer.min_zoom:
+        return Response(content=b"", media_type="application/vnd.mapbox-vector-tile")
+    source = get_map_layer_source()
+    if not source.available:
+        raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable")
+    try:
+        tile_bytes = await asyncio.to_thread(source.read_mvt, layer.id, z, x, y)
+    except Exception as exc:
+        logger.warning("Canonical map layer tile failed for %s/%s/%s/%s: %s", layer_id, z, x, y, exc)
+        raise HTTPException(status_code=503, detail="Canonical PostGIS map layer unavailable") from exc
+    return Response(
+        content=tile_bytes,
+        media_type="application/vnd.mapbox-vector-tile",
+        headers={"Cache-Control": "public, max-age=3600", "Access-Control-Allow-Origin": "*"},
+    )
 
 
 @api_router.get("/tiles/datashader/{z}/{x}/{y}.png")

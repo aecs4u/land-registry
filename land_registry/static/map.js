@@ -1772,6 +1772,7 @@ window.togglePolygonsVisibility = function() {
 
 function clearAllData() {
     // Clear current data
+    const hadProgressiveFeatures = window.progressiveGeoJsonData?.features?.length > 0;
     if (currentGeoJsonLayer && map.hasLayer(currentGeoJsonLayer)) {
         map.removeLayer(currentGeoJsonLayer);
     }
@@ -1787,7 +1788,7 @@ function clearAllData() {
     updateSelectionCounter();
     updateDataDependentButtons();
 
-    debugLog('All data cleared, buttons disabled');
+    debugLog(`All data cleared, buttons disabled${hadProgressiveFeatures ? ' (progressive data released)' : ''}`);
 }
 
 // Auction Properties Layer Management

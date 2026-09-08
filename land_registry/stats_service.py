@@ -367,44 +367,32 @@ class _PostgresStatsSource(_PostgresPoiSource):
         self._read_model_ready = False
         self._read_model_lock = threading.Lock()
 
-    def _ensure_read_model(self) -> None:
-        """Create the PostgreSQL parcel-keyed read model if needed.
+    def _ensure_read_model(self) -> bool:
+        """Check that the migrated parcel cache exists, without doing DDL.
 
-        This is a narrow application-facing cache, separate from the source
-        facts. It is intentionally keyed by the canonical parcel reference so
-        the details panel performs one indexed lookup after the cold build.
+        Serving schema objects are deployment artifacts.  A GET endpoint must
+        not attempt to create tables, both because the application role should
+        be read-only and because concurrent cold requests could race schema
+        changes.  ``migration.canonical_views.ensure_serving_schema`` owns
+        provisioning this table.
         """
         if self._read_model_ready:
-            return
+            return True
         with self._read_model_lock:
             if self._read_model_ready:
-                return
+                return True
             with self._connection() as connection:
                 with connection.cursor() as cursor:
-                    cursor.execute(
-                        """
-                        CREATE TABLE IF NOT EXISTS serving.parcel_enrichment_read_model (
-                            parcel_key TEXT PRIMARY KEY,
-                            payload JSONB NOT NULL,
-                            source_fingerprint TEXT,
-                            refreshed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-                        )
-                        """
-                    )
-                    cursor.execute(
-                        """
-                        CREATE INDEX IF NOT EXISTS parcel_enrichment_read_model_refreshed_idx
-                        ON serving.parcel_enrichment_read_model (refreshed_at)
-                        """
-                    )
-                connection.commit()
-            self._read_model_ready = True
+                    cursor.execute("SELECT to_regclass('serving.parcel_enrichment_read_model')")
+                    self._read_model_ready = bool((cursor.fetchone() or (None,))[0])
+            if not self._read_model_ready:
+                logger.error("Serving parcel enrichment read model is not provisioned")
+            return self._read_model_ready
 
     def get_read_model(self, parcel_key: str) -> Optional[Dict[str, Any]]:
         """Return one PostgreSQL materialized read-model payload."""
-        self._ensure_read_model()
+        if not self._ensure_read_model():
+            return None
         with self._connection() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
@@ -441,9 +429,10 @@ class _PostgresStatsSource(_PostgresPoiSource):
         parcel_key: str,
         payload: Dict[str, Any],
         source_fingerprint: Optional[str],
-    ) -> None:
+    ) -> bool:
         """Atomically replace one PostgreSQL parcel read-model row."""
-        self._ensure_read_model()
+        if not self._ensure_read_model():
+            return False
         serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
         with self._connection() as connection:
             with connection.cursor() as cursor:
@@ -461,6 +450,7 @@ class _PostgresStatsSource(_PostgresPoiSource):
                     (parcel_key, serialized, source_fingerprint),
                 )
             connection.commit()
+        return True
 
     def context_for_parcel(
         self,
@@ -1366,6 +1356,140 @@ def _local_parcel_by_reference(national_reference: str) -> Optional[Dict[str, An
     code = reference.split("_", 1)[0].upper() if "_" in reference else ""
     if not code:
         return None
+
+    def _fgb_candidates() -> list[Path]:
+        """Return municipal FGB candidates without recursively walking the tree."""
+        configured_dirs = (
+            os.getenv("SPATIALITE_FGB_DIRECTORY"),
+            os.getenv("FGB_DIRECTORY"),
+            os.getenv("CADASTRAL_DATA_DIR"),
+        )
+        fgb_roots = []
+        for configured_dir in configured_dirs:
+            if configured_dir:
+                root = Path(configured_dir).expanduser()
+                if root.name.upper() == "ITALIA":
+                    fgb_roots.append(root)
+                elif (root / "ITALIA").is_dir():
+                    fgb_roots.append(root / "ITALIA")
+                else:
+                    fgb_roots.append(root)
+        # The application container mounts the shared data volume at /data;
+        # the historical developer default under /mnt/mobile is not present
+        # in that deployment.
+        fgb_roots.extend((Path("/data/catasto/ITALIA"), Path("/data/catasto")))
+        try:
+            from land_registry.config import spatialite_settings
+
+            configured_root = Path(spatialite_settings.fgb_directory).expanduser()
+            if configured_root.name.upper() == "ITALIA":
+                fgb_roots.append(configured_root)
+            elif (configured_root / "ITALIA").is_dir():
+                fgb_roots.append(configured_root / "ITALIA")
+            else:
+                fgb_roots.append(configured_root)
+        except (ImportError, OSError, TypeError):
+            pass
+
+        candidates = []
+        seen = set()
+
+        # Use the ISTAT hierarchy to jump directly to REGION/PROVINCE. This
+        # avoids scanning every municipality directory on the shared volume.
+        hierarchy = None
+        try:
+            hierarchy = get_municipality_by_cadastral_code(code)
+        except Exception:  # the cadastral fallback must work without ISTAT
+            hierarchy = None
+        region_name = str((hierarchy or {}).get("region") or "").strip().upper()
+        province_code = str((hierarchy or {}).get("province_sigla") or "").strip().upper()
+
+        def _add_from_province_dir(province_dir: Path) -> None:
+            if not province_dir.is_dir():
+                return
+            try:
+                for path in province_dir.glob(f"*/{code}_*_ple.fgb"):
+                    if path not in seen:
+                        seen.add(path)
+                        candidates.append(path)
+            except OSError:
+                return
+
+        for root in fgb_roots:
+            if not root.is_dir():
+                continue
+            bases = [root]
+            if root.name.upper() != "ITALIA":
+                bases.append(root / "ITALIA")
+            for base in bases:
+                if region_name and province_code:
+                    _add_from_province_dir(base / region_name / province_code)
+                if candidates:
+                    break
+            if candidates:
+                break
+
+        if candidates:
+            return candidates
+
+        # ISTAT may be absent or use a different directory spelling. The
+        # fallback only enumerates the three known directory levels; it never
+        # performs a recursive glob over the full cadastral volume.
+        for root in fgb_roots:
+            if not root.is_dir():
+                continue
+            base = root if root.name.upper() == "ITALIA" else root / "ITALIA"
+            try:
+                for region_dir in base.iterdir():
+                    if not region_dir.is_dir():
+                        continue
+                    for province_dir in region_dir.iterdir():
+                        _add_from_province_dir(province_dir)
+                        if candidates:
+                            break
+                    if candidates:
+                        break
+            except OSError:
+                continue
+            if candidates:
+                break
+        return candidates
+
+    # FlatGeobuf is the provisioned cadastral source for the map. Check it
+    # before the legacy GeoPackage tree: the latter can contain millions of
+    # files and its fallback discovery is not an acceptable request path.
+    try:
+        import pyogrio
+        from shapely.geometry import mapping
+
+        escaped = reference.replace("'", "''")
+        for path in _fgb_candidates():
+            for column in ("NATIONALCADASTRALREFERENCE", "national_cadastral_reference"):
+                try:
+                    frame = pyogrio.read_dataframe(
+                        path,
+                        where=f"{column} = '{escaped}'",
+                        use_arrow=False,
+                    )
+                except Exception:  # a different FGB schema/file must not break the panel
+                    continue
+                if frame is None or frame.empty:
+                    continue
+                row = frame.iloc[0]
+                properties = {
+                    key: (value.item() if hasattr(value, "item") else value)
+                    for key, value in row.to_dict().items()
+                    if key != "geometry"
+                }
+                geometry = row.get("geometry")
+                return {
+                    "type": "Feature",
+                    "properties": properties,
+                    "geometry": mapping(geometry) if geometry is not None else None,
+                }
+    except (ImportError, OSError, ValueError):
+        logger.debug("FlatGeobuf parcel fallback is unavailable", exc_info=True)
+
     roots = []
     configured = os.getenv("CADASTRAL_DATA_DIR")
     if configured:
@@ -1481,6 +1605,7 @@ def _local_parcel_by_reference(national_reference: str) -> Optional[Dict[str, An
                     continue
         except ImportError:
             logger.warning("Neither Fiona nor pyogrio is available; local cadastral fallback is disabled")
+
     return None
 
 
@@ -1756,29 +1881,37 @@ def get_parcel_enrichment(
         return None
 
     postgres_source = _get_postgres_stats_source()
-    if postgres_source is None or not postgres_source.available():
-        logger.warning("PostgreSQL stats source is required for parcel enrichment")
-        return None
-
     fingerprint = _parcel_enrichment_fingerprint()
-    if not refresh:
-        cached = postgres_source.get_read_model(reference)
-        cached_meta = (cached or {}).get("read_model") or {}
-        if cached is not None and cached_meta.get("source_fingerprint") == fingerprint:
-            return cached
+    if postgres_source is not None and postgres_source.available() and not refresh:
+        try:
+            cached = postgres_source.get_read_model(reference)
+            cached_meta = (cached or {}).get("read_model") or {}
+            if cached is not None and cached_meta.get("source_fingerprint") == fingerprint:
+                return cached
+        except Exception:
+            # A broken optional cache must not prevent the parcel itself and
+            # local ISTAT/OMI stores from populating the details panel.
+            postgres_source._retry_at = time.monotonic() + 60
+            logger.warning("PostgreSQL parcel read-model unavailable; using local enrichment fallback", exc_info=True)
 
     payload = _build_parcel_enrichment(reference)
     if payload is None:
         return None
-    postgres_source.upsert_read_model(
-        reference,
-        payload,
-        source_fingerprint=fingerprint,
-    )
+    cached_ok = False
+    if postgres_source is not None and postgres_source.available():
+        try:
+            cached_ok = postgres_source.upsert_read_model(
+                reference,
+                payload,
+                source_fingerprint=fingerprint,
+            )
+        except Exception:
+            postgres_source._retry_at = time.monotonic() + 60
+            logger.warning("Could not persist parcel enrichment read model", exc_info=True)
     payload["read_model"] = {
         "key": reference,
         "source_fingerprint": fingerprint,
-        "cached": False,
+        "cached": bool(cached_ok),
         "database": "aecs4u-stats PostgreSQL",
     }
     return payload

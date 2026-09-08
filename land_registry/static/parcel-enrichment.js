@@ -10,6 +10,10 @@
 (function () {
     const SECTIONS_CONTAINER_ID = 'parcelEnrichmentSections';
     const INDICATOR_PREVIEW_LIMIT = 4;
+    // A database connection can outlive the browser request when a local
+    // PostGIS instance is restarting. Never leave the panel's scaffold in a
+    // permanent spinner state while waiting for an optional enrichment.
+    const ENRICHMENT_REQUEST_TIMEOUT_MS = 10000;
     let activeRenderToken = 0;
     let omiHistoryToken = 0;
 
@@ -92,26 +96,35 @@
     }
 
     async function _fetchJson(url) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), ENRICHMENT_REQUEST_TIMEOUT_MS);
         try {
-            const resp = await fetch(url);
+            const resp = await fetch(url, { signal: controller.signal });
             if (!resp.ok) return { ok: false, status: resp.status, data: null };
             return { ok: true, status: resp.status, data: await resp.json() };
         } catch (e) {
             return { ok: false, status: 0, data: null };
+        } finally {
+            clearTimeout(timeout);
         }
     }
 
     async function _postJson(url, payload) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), ENRICHMENT_REQUEST_TIMEOUT_MS);
         try {
             const resp = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
+                signal: controller.signal,
             });
             if (!resp.ok) return { ok: false, status: resp.status, data: null };
             return { ok: true, status: resp.status, data: await resp.json() };
         } catch (e) {
             return { ok: false, status: 0, data: null };
+        } finally {
+            clearTimeout(timeout);
         }
     }
 
@@ -620,15 +633,21 @@
         // parcel, municipality, census, and OMI lookups into one indexed read
         // after the first request. Keep the old municipality endpoint as a
         // compatibility fallback for features without a canonical reference.
-        const readModelResult = nationalReference
-            ? await _fetchJson(`/api/v1/enrichment/parcel/details/${encodeURIComponent(nationalReference)}`)
-            : { ok: false, data: null };
+        // Start the compatibility municipality lookup at the same time as the
+        // optional read-model request. A slow/broken cache must not delay the
+        // rest of the parcel cards or prevent the local fallback from being
+        // used.
+        const readModelPromise = nationalReference
+            ? _fetchJson(`/api/v1/enrichment/parcel/details/${encodeURIComponent(nationalReference)}`)
+            : Promise.resolve({ ok: false, data: null });
+        const municipalityPromise = _fetchJson(`/api/v1/enrichment/municipality/${encodeURIComponent(cadastralCode)}`);
+        const readModelResult = await readModelPromise;
         if (renderToken !== activeRenderToken) return;
         const readModel = readModelResult.ok ? readModelResult.data : null;
         if (coverageEl) coverageEl.querySelector('.enrichment-card-body').innerHTML = _renderBlockCoverage(readModel);
         const muniResult = readModel && readModel.municipality
             ? { ok: true, data: readModel.municipality }
-            : await _fetchJson(`/api/v1/enrichment/municipality/${encodeURIComponent(cadastralCode)}`);
+            : await municipalityPromise;
         if (renderToken !== activeRenderToken) return;
         const muniData = muniResult.ok ? muniResult.data : null;
         if (muniEl) muniEl.querySelector('.enrichment-card-body').innerHTML = _renderMunicipality(muniData);

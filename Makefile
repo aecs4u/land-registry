@@ -1,6 +1,6 @@
 # Makefile for Land Registry project
 
-.PHONY: help dev dev-fast test test-cov test-html test-unit test-integration test-slow clean-cov install lint format check
+.PHONY: help dev dev-fast test test-cov test-html test-unit test-integration test-slow map-preflight clean-cov install lint format check
 
 # Default target
 help:
@@ -13,6 +13,7 @@ help:
 	@echo "  test-unit     - Run only unit tests"
 	@echo "  test-integration - Run only integration tests"
 	@echo "  test-slow     - Run slow/stress tests"
+	@echo "  map-preflight - Check canonical PostGIS map layers for release"
 	@echo "  clean-cov     - Clean coverage files"
 	@echo "  install       - Install dependencies"
 	@echo "  lint          - Run linting"
@@ -54,6 +55,10 @@ test-integration:
 # Run slow tests
 test-slow:
 	uv run pytest tests/ -m "slow" -v
+
+# Release readiness
+map-preflight:
+	uv run land-registry-map-preflight
 
 # Clean coverage files
 clean-cov:

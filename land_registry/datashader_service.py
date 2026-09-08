@@ -165,11 +165,15 @@ class PostgresCadastralBoundarySource:
 
     def read_mvt(self, layer_type: str, z: int, x: int, y: int) -> bytes:
         table = self.TABLES[layer_type]
+        attributes = {
+            "map": "t.id, t.sheet_reference, t.national_zoning_reference, t.municipality_id, t.level, t.level_name, t.area_sqm, t.source_release",
+            "ple": "t.id, t.canonical_reference, t.national_cadastral_reference, t.parcel, t.sheet, t.municipality_id, t.area_sqm, t.source_release",
+        }[layer_type]
         sql = f"""
             WITH bounds AS (
                 SELECT ST_Transform(ST_TileEnvelope(%s, %s, %s), 4326) AS geom
             ), mvtgeom AS (
-                SELECT ST_AsMVTGeom(
+                SELECT {attributes}, ST_AsMVTGeom(
                     ST_Transform(ST_Intersection(t.geom, bounds.geom), 3857),
                     ST_TileEnvelope(%s, %s, %s), 4096, 64, true
                 ) AS geom
@@ -210,7 +214,12 @@ class PostgresCadastralBoundarySource:
             WITH click AS (
                 SELECT ST_SetSRID(ST_Point(%s, %s), 4326) AS geom
             )
-            SELECT t.* FROM {table} AS t CROSS JOIN click
+            SELECT t.*, u.canonical_name AS canonical_comune_name, gi.code AS cadastral_code
+            FROM {table} AS t
+            LEFT JOIN geo.geo_unit AS u ON u.id = t.municipality_id
+            LEFT JOIN geo.geo_identifier AS gi
+              ON gi.geo_unit_id = t.municipality_id AND gi.scheme = 'CATASTALE_COMUNE'
+            CROSS JOIN click
             WHERE ST_Covers(t.geom, click.geom)
             LIMIT 1
         """
@@ -223,10 +232,15 @@ class PostgresCadastralBoundarySource:
                 columns = [column.name for column in cursor.description]
                 values = dict(zip(columns, row))
                 return {
-                    "label": values.get("label"),
-                    "reference": values.get("nationalcadastralreference")
-                    or values.get("nationalcadastralzoningreference"),
-                    "comune": values.get("comune_name") or values.get("administrativeunit"),
+                    "label": values.get("level_name") or values.get("sheet") or values.get("parcel"),
+                    "reference": values.get("national_cadastral_reference")
+                    or values.get("national_zoning_reference")
+                    or values.get("canonical_reference")
+                    or values.get("sheet_reference"),
+                    "comune": values.get("canonical_comune_name")
+                    or values.get("cadastral_code")
+                    or values.get("comune_name")
+                    or values.get("administrativeunit"),
                     "provincia": values.get("provincia"),
                     "regione": values.get("regione"),
                     "administrative_unit": values.get("administrativeunit"),
@@ -632,7 +646,14 @@ class DatashaderTileService:
         ):
             return None
         try:
-            return self._postgres_boundary_source.read_geometries(layer_type, bbox)
+            frame = self._postgres_boundary_source.read_geometries(layer_type, bbox)
+            # An empty canonical tile is not proof that the geography is
+            # empty: the consolidated database may currently contain only a
+            # subset of regions while the local INSPIRE extract is national.
+            # Let the existing FlatGeobuf path serve uncovered tiles.
+            if frame is None or len(frame) == 0:
+                return None
+            return frame
         except Exception as exc:
             self._postgres_boundary_retry_at = time.monotonic() + 60
             log.warning(
@@ -679,10 +700,14 @@ class DatashaderTileService:
         if cached is not None:
             return cached
         try:
-            return self._cache_tile(
-                cache_key,
-                self._postgres_boundary_source.read_mvt(layer_type, z, x, y),
-            )
+            tile = self._postgres_boundary_source.read_mvt(layer_type, z, x, y)
+            if not tile:
+                # The PNG endpoint has a local FlatGeobuf fallback. Returning
+                # 503 here deliberately makes the browser switch from MVT to
+                # that fallback instead of accepting an empty canonical tile
+                # and hiding regions not yet published to PostGIS.
+                raise RuntimeError("canonical cadastral tile is empty")
+            return self._cache_tile(cache_key, tile)
         except Exception:
             self._postgres_boundary_retry_at = time.monotonic() + 60
             log.warning("PostGIS MVT generation failed for %s/%d/%d/%d", layer_type, z, x, y, exc_info=True)

@@ -31,6 +31,36 @@ def client():
     return TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def isolate_database_environment(monkeypatch):
+    """Keep local database credentials from affecting unit tests.
+
+    Importing the application loads the developer's ``.env`` file before
+    pytest starts individual tests.  Database tests need to be able to verify
+    both configured and unconfigured settings without ever opening a real
+    PostgreSQL connection, so remove those values for each test.  Tests that
+    exercise environment loading can still set them explicitly via
+    ``monkeypatch``.
+    """
+    database_environment = (
+        "DATABASE_URL",
+        "DB_HOST",
+        "DB_PORT",
+        "DB_NAME",
+        "DB_USER",
+        "DB_PASSWORD",
+        "DB_SSLMODE",
+        "DB_POOL_SIZE",
+        "DB_MAX_OVERFLOW",
+        "DB_POOL_TIMEOUT",
+        "DB_POOL_RECYCLE",
+        "DB_ECHO",
+        "DB_STATEMENT_TIMEOUT",
+    )
+    for variable in database_environment:
+        monkeypatch.delenv(variable, raising=False)
+
+
 @pytest.fixture
 def sample_geojson():
     """Sample GeoJSON data for testing."""

@@ -148,9 +148,21 @@ class CadastralConverter:
         }
 
         try:
-            # Read GML file with geopandas
+            # Read GML file with geopandas. on_invalid='fix' repairs unclosed
+            # rings (a real defect in some source GML exports — e.g. Palermo,
+            # Roma — that otherwise makes shapely's WKB parser raise
+            # GEOSException and abort the whole file); anything it can't fix
+            # comes back as a null geometry, dropped below rather than left
+            # to break the FlatGeobuf/GeoPackage writers downstream.
             logger.debug(f"Reading {gml_path.name}...")
-            gdf = gpd.read_file(gml_path)
+            gdf = gpd.read_file(gml_path, on_invalid='fix')
+
+            if (null_geoms := gdf.geometry.isna().sum()) > 0:
+                logger.warning(
+                    f"{gml_path.name}: dropping {null_geoms} feature(s) with "
+                    "unrepairable geometry"
+                )
+                gdf = gdf[gdf.geometry.notna()]
 
             if gdf.empty:
                 logger.warning(f"Empty GML file: {gml_path}")

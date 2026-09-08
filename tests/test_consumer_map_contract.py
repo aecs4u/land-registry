@@ -15,6 +15,7 @@ def test_consumer_map_exposes_cadastral_map_contract():
     assert "/tiles/cadastral-boundaries/{z}/{x}/{y}.png?layer=ple" in source
     assert "/cadastral-identify" in source
     assert "cadastral: { layer: cadastral, sheets: sheets, parcels: parcels }" in source
+    assert "canonical: { add: addCanonicalLayer, remove: removeCanonicalLayer, layers: canonicalLayers }" in source
 
 
 def test_consumer_package_installer_mounts_asset_and_api():
@@ -22,7 +23,14 @@ def test_consumer_package_installer_mounts_asset_and_api():
 
     install_land_registry_consumer(app)
 
-    paths = {getattr(route, "path", None) for route in app.routes}
-    assert "/land-registry/static" in paths
+    # FastAPI 0.141 stores included routers lazily; OpenAPI is the
+    # authoritative route inventory across supported FastAPI versions.
+    paths = set(app.openapi()["paths"])
+    route_paths = {getattr(route, "path", None) for route in app.routes}
+    assert "/land-registry/static" in route_paths
     assert "/land-registry/api/tiles/cadastral-boundaries/{z}/{x}/{y}.png" in paths
     assert "/land-registry/api/cadastral-identify" in paths
+    assert "/land-registry/api/map/layers" in paths
+    assert "/land-registry/api/map/layers/health" in paths
+    assert "/land-registry/api/map/layers/{layer_id}/features" in paths
+    assert "/land-registry/api/tiles/map-layers/{layer_id}/{z}/{x}/{y}.pbf" in paths

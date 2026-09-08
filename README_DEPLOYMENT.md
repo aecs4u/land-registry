@@ -63,7 +63,7 @@ The script now requires **ALL** configuration values. No defaults are provided t
 - `startup_probe_timeout` - Timeout in seconds (60-3600)
 
 ### Docker Settings (Required)
-- `base_image` - Base Docker image (e.g., "python:3.11-slim")
+- `base_image` - Base Docker image (e.g., "python:3.12-slim")
 - `working_dir` - Working directory in container (e.g., "/app")
 - `exposed_port` - Port to expose (usually "8080")
 
@@ -130,11 +130,19 @@ make test-html
 gcloud secrets create s3-access-key --data-file=- <<< "your-access-key"
 gcloud secrets create s3-secret-key --data-file=- <<< "your-secret-key"
 
+# Store the canonical aecs4u-stats PostGIS DSN used by map layers
+gcloud secrets create AECS4U_STATS_POSTGRES_DSN --data-file=- <<< "postgresql://..."
+
 # Grant Cloud Run access to secrets
 gcloud projects add-iam-policy-binding PROJECT_ID \
     --member="serviceAccount:SERVICE_ACCOUNT@PROJECT_ID.iam.gserviceaccount.com" \
     --role="roles/secretmanager.secretAccessor"
 ```
+
+The Cloud Run deployment workflow enables `AECS4U_STATS_POSTGRES_ENABLE=1`,
+injects this DSN as a secret, and verifies all 15 canonical map layers after
+deployment. The database role needs `SELECT` on the canonical and serving
+relations plus network access from Cloud Run.
 
 ## 📊 Monitoring and Logging
 

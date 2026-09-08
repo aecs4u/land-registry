@@ -350,6 +350,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Error clearing S3 client: {e}", exc_info=True)
 
+    try:
+        from land_registry.map_layers import close_map_layer_source
+
+        close_map_layer_source()
+        logger.info("Canonical map-layer database resources closed")
+    except Exception as e:
+        logger.error(f"Error closing canonical map-layer resources: {e}", exc_info=True)
+
     logger.info("Application shutdown complete")
 
 
@@ -374,7 +382,10 @@ class _CadastralTileCorpMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "http" and scope["path"].startswith("/api/v1/tiles/cadastral-boundaries/"):
+        if scope["type"] == "http" and (
+            scope["path"].startswith("/api/v1/tiles/cadastral-boundaries/")
+            or scope["path"].startswith("/api/v1/tiles/map-layers/")
+        ):
             async def send_wrapper(message):
                 if message["type"] == "http.response.start":
                     headers = [
