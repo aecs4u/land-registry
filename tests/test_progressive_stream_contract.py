@@ -79,3 +79,11 @@ def test_client_ignores_heartbeat_events_without_a_file() -> None:
     case_start = source.index("case 'progress':")
     case_body = source[case_start:case_start + 400]
     assert "event.file_path === undefined" in case_body
+
+
+def test_client_forwards_optional_viewport_bbox() -> None:
+    """High-zoom parcel loads must not serialize an entire municipality PLE."""
+    source = (STATIC / "progressive-loader.js").read_text(encoding="utf-8")
+
+    assert "requestBody.bbox = options.bbox" in source
+    assert "options.bbox.length === 4" in source

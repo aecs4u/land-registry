@@ -47,7 +47,7 @@ def _ctx(request: Request, **extra) -> dict:
     # with Clerk fully configured.
     get_clerk_ctx = getattr(config, "get_clerk_frontend_config", None)
     clerk = get_clerk_ctx() if get_clerk_ctx else {"enabled": False}
-    return {
+    context = {
         "request": request,
         "clerk_publishable_key": getattr(config, "clerk_publishable_key", ""),
         "clerk": clerk,
@@ -58,8 +58,13 @@ def _ctx(request: Request, **extra) -> dict:
         "auth_register_url": "/auth/register",
         "auth_callback_url": "/auth/callback",
         "next_url": auth_settings.after_sign_in_url,
-        **extra,
     }
+    context.update(extra)
+    # aecs4u-theme's shared navbar uses this separate variable for its Sign In
+    # link. Keep that link aligned with the validated `next` query parameter
+    # instead of silently sending users to the landing page.
+    context.setdefault("login_redirect_url", context.get("next_url", auth_settings.after_sign_in_url))
+    return context
 
 
 def _theme_response(template_name: str, ctx: dict):

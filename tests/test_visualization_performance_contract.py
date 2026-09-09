@@ -194,7 +194,7 @@ def test_legacy_layer_control_has_no_broken_weather_overlays() -> None:
     map_source = (STATIC / "map.js").read_text(encoding="utf-8")
     templates = [
         (ROOT / "land_registry/templates/index.html").read_text(encoding="utf-8"),
-        (ROOT / "land_registry/templates/map.html").read_text(encoding="utf-8"),
+        (ROOT / "land_registry/templates/map_legacy.html").read_text(encoding="utf-8"),
     ]
 
     assert "weatherOverlays" not in map_source

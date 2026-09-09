@@ -328,6 +328,144 @@ body.sidebar-collapsed .main-content {
   clear: both;
 }
 
+/* Google Maps-style location search overlay. It is intentionally independent
+   of the Leaflet search plugin because the main map is rendered by Folium. */
+.location-search {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  width: min(420px, calc(100% - 32px));
+  transform: translateX(-50%);
+  z-index: 1700;
+  font-family: var(--font-sans);
+}
+
+.location-search-form {
+  position: relative;
+  margin: 0;
+}
+
+.location-search-input-wrap {
+  display: flex;
+  align-items: center;
+  height: 48px;
+  overflow: hidden;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-md);
+  transition: var(--transition-base);
+}
+
+.location-search-icon {
+  padding-left: 16px;
+  color: var(--color-primary-600);
+  font-size: var(--text-base);
+  line-height: 1;
+}
+
+.location-search-input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 12px;
+  border: 0 !important;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  box-shadow: none !important;
+}
+
+.location-search-input::placeholder { color: var(--color-text-muted); }
+.location-search-input:focus { box-shadow: none !important; }
+
+.location-search-submit {
+  flex: 0 0 52px;
+  width: 52px !important;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--color-border-light);
+  border-radius: 0;
+  background: var(--color-bg-primary);
+  color: var(--color-primary-600);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: 1;
+  cursor: pointer;
+  transition: var(--transition-base);
+}
+
+.location-search-submit:hover,
+.location-search-submit:focus-visible { background: var(--color-bg-tertiary); }
+
+.location-search-results {
+  position: absolute;
+  top: 54px;
+  left: 0;
+  right: 52px;
+  overflow: hidden;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+}
+
+.location-search-result {
+  display: block;
+  width: 100% !important;
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  border-bottom: 1px solid var(--color-border-light);
+  background: var(--color-bg-primary);
+  color: var(--color-text-secondary);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+}
+
+.location-search-result:last-child { border-bottom: 0; }
+.location-search-result:hover,
+.location-search-result:focus-visible { background: var(--color-bg-tertiary); outline: 0; }
+
+.location-search-status {
+  min-height: 0;
+  padding: 4px 8px 0;
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.9);
+}
+
+.location-search-status.error { color: var(--color-danger-600); }
+.location-search.is-loading .location-search-submit { opacity: 0.55; cursor: wait; }
+
+body.dark-mode .location-search-input-wrap,
+body.dark-mode .location-search-submit,
+body.dark-mode .location-search-results,
+body.dark-mode .location-search-result { background: #1e293b; }
+body.dark-mode .location-search-input-wrap,
+body.dark-mode .location-search-results { border-color: #334155; }
+body.dark-mode .location-search-input,
+body.dark-mode .location-search-result { color: #e4e4e7; }
+body.dark-mode .location-search-icon,
+body.dark-mode .location-search-input::placeholder,
+body.dark-mode .location-search-status { color: #94a3b8; }
+body.dark-mode .location-search-submit { border-left-color: #334155; color: #93c5fd; }
+body.dark-mode .location-search-result { border-bottom-color: #334155; }
+body.dark-mode .location-search-result:hover,
+body.dark-mode .location-search-result:focus-visible { background: #0f3460; }
+
+/* In the map-first shell the title/status pill occupies the top centre. */
+.map-first-shell .location-search { top: 72px; }
+
+@media (max-width: 560px) {
+  .map-first-shell .location-search { top: 110px; width: calc(100% - 20px); }
+}
+
 .navigation-links {
   margin-bottom: 20px;
   padding-bottom: 15px;
@@ -3699,6 +3837,53 @@ body.dark-mode .drawing-subsection-divider {
   padding-top: 6px;
 }
 
+.enrichment-api-details {
+  margin-top: 10px;
+  border-top: 1px solid #eef1f4;
+  padding-top: 8px;
+}
+
+.enrichment-api-details summary {
+  cursor: pointer;
+  color: #1a5490;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.enrichment-api-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 11px;
+}
+
+.enrichment-api-row span {
+  flex: 0 0 78px;
+  color: #666;
+}
+
+.enrichment-api-row code {
+  overflow-wrap: anywhere;
+  color: #334155;
+  white-space: normal;
+}
+
+.enrichment-api-response {
+  max-height: 280px;
+  margin: 8px 0 0;
+  padding: 8px;
+  overflow: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 10px;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .enrichment-omi-row {
   padding: 6px 0;
   border-bottom: 1px solid #f5f5f5;
@@ -6124,6 +6309,28 @@ body.dark-mode .enrichment-source {
   border-color: #2d3a4f;
 }
 
+body.dark-mode .enrichment-api-details {
+  border-color: #2d3a4f;
+}
+
+body.dark-mode .enrichment-api-details summary {
+  color: #93c5fd;
+}
+
+body.dark-mode .enrichment-api-row span {
+  color: #94a3b8;
+}
+
+body.dark-mode .enrichment-api-row code,
+body.dark-mode .enrichment-api-response {
+  color: #cbd5e1;
+}
+
+body.dark-mode .enrichment-api-response {
+  border-color: #2d3a4f;
+  background: #0f172a;
+}
+
 body.dark-mode .enrichment-omi-row {
   border-color: #2d3a4f;
 }
@@ -7131,3 +7338,120 @@ body.parcel-panel-open .map-first-shell .leaflet-top.leaflet-right {
   .map-first-shell .view-toggle button { padding: 6px 9px; font-size: 10px; }
   .map-first-shell .leaflet-top.leaflet-left { top: 56px !important; }
 }
+
+/* Keep the search actions aligned with the theme after the legacy global
+   button rule above has been applied. */
+.location-search button.location-search-submit {
+  margin: 0 !important;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--color-border-light);
+  border-radius: 0;
+  background: linear-gradient(135deg, var(--color-primary-600), var(--color-secondary-600));
+  color: var(--color-text-inverse);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.15);
+}
+
+.location-search button.location-search-submit:hover,
+.location-search button.location-search-submit:focus-visible {
+  background: linear-gradient(135deg, var(--color-primary-700), var(--color-secondary-700));
+  color: var(--color-text-inverse);
+}
+
+.location-search button.location-search-result {
+  margin: 0 !important;
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  border-bottom: 1px solid var(--color-border-light);
+  border-radius: 0;
+  background: var(--color-bg-primary);
+  color: var(--color-text-secondary);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  text-align: left;
+}
+
+.location-search button.location-search-result:hover,
+.location-search button.location-search-result:focus-visible {
+  background: var(--color-primary-50);
+  color: var(--color-primary-700);
+}
+
+body.dark-mode .location-search button.location-search-submit {
+  border-left-color: #334155;
+  background: linear-gradient(135deg, var(--color-primary-700), var(--color-secondary-700));
+}
+
+body.dark-mode .location-search button.location-search-result {
+  border-bottom-color: #334155;
+  background: #1e293b;
+  color: #e4e4e7;
+}
+
+body.dark-mode .location-search button.location-search-result:hover,
+body.dark-mode .location-search button.location-search-result:focus-visible {
+  background: #0f3460;
+  color: #bfdbfe;
+}
+
+/* Audit hardening: panels must sit below the toolbar row so their header and
+   close control remain clickable. */
+.map-first-shell .tool-panel {
+  top: 100px !important;
+  z-index: 3000 !important;
+}
+.map-first-shell .tool-panel-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+/* Long-form views have their own content scroll; the map view remains a
+   fixed viewport. */
+#mappingView.view-content.active,
+#adjacencyView.view-content.active {
+  overflow: auto;
+}
+#mappingView .mapping-container,
+#adjacencyView .adjacency-container {
+  min-height: 100%;
+  height: auto;
+}
+
+/* A mobile sidebar is an overlay. Hide the map chrome while it is open so
+   the overlay cannot intercept clicks intended for view controls underneath. */
+@media (max-width: 991px) {
+  body.sidebar-visible .main-content .view-toggle,
+  body.sidebar-visible .main-content .map-toolbar,
+  body.sidebar-visible .main-content .location-search {
+    visibility: hidden;
+    pointer-events: none;
+  }
+}
+
+/* On small screens the details panel is a true full-screen sheet, not an
+   off-canvas element positioned beyond the right edge. */
+@media (max-width: 480px) {
+  .parcel-info-panel {
+    left: 0 !important;
+    right: auto !important;
+    width: 100vw !important;
+    max-width: 100vw;
+    transform: translateX(100%);
+    transition: transform 0.3s ease;
+  }
+  .parcel-info-panel.open {
+    right: auto !important;
+    transform: translateX(0);
+  }
+}
+
+/* Keep the key identifier visible while wide attribute tables scroll. */
+#dataTable th:first-child,
+#dataTable td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: inherit;
+}
+#dataTable thead th:first-child { z-index: 2; }

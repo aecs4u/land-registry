@@ -991,6 +991,33 @@
         }
         _loadCanonicalLayerCatalog();
 
+        // Do not let Leaflet create a full vector-tile grid when the shared
+        // PostGIS source is known to be unavailable. The old path generated
+        // dozens of predictable 503s before switching to another endpoint
+        // backed by the same unavailable service.
+        if (attempt === 0) {
+            _fetchJson('/api/v1/map/layers').then(catalog => {
+                if (!catalog) {
+                    _initializeCadastralOverlays(attempt + 1);
+                    return;
+                }
+                if (catalog && catalog.available === false) {
+                    const button = document.getElementById('toggleEnrichmentCadastral');
+                    if (button) {
+                        button.disabled = true;
+                        button.title = 'Cadastral boundary service is not configured';
+                    }
+                    const status = document.getElementById('canonicalMapLayers');
+                    if (status) status.insertAdjacentHTML('beforeend', '<span class="enrichment-legend-meta">Cadastral boundaries unavailable</span>');
+                    return;
+                }
+                _attachViewportParcelLoader(map);
+                const vectorGridReady = L.vectorGrid && typeof L.vectorGrid.protobuf === 'function';
+                if (!cadastralBoundaryActive && (vectorGridReady || attempt >= 40)) toggleCadastralBoundaryLayer();
+            });
+            return;
+        }
+
         _attachViewportParcelLoader(map);
         const vectorGridReady = L.vectorGrid && typeof L.vectorGrid.protobuf === 'function';
         if (!cadastralBoundaryActive && (vectorGridReady || attempt >= 40)) {

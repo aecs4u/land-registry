@@ -258,7 +258,7 @@ const LayerPanel = (function() {
         panel.innerHTML = `
             <div class="layer-panel-header">
                 <span class="layer-panel-title">Layers</span>
-                <button class="layer-panel-clear" onclick="LayerPanel.clearAll()" title="Remove all layers">✕ Clear all</button>
+                <button class="layer-panel-clear" onclick="LayerPanel.clearAll()" title="Remove all layers" aria-label="Remove all layers">✕ Clear all</button>
             </div>
             <div id="layerPanelList" class="layer-panel-list"></div>
         `;
@@ -351,6 +351,17 @@ const LayerPanel = (function() {
         getLayers() { return layers; }
     };
 })();
+
+// Leaflet's collapsed layer switcher is icon-only. Give assistive technology
+// a stable name even though Leaflet creates the anchor after page markup.
+function labelLeafletControls() {
+    document.querySelectorAll('.leaflet-control-layers-toggle').forEach((control) => {
+        control.setAttribute('aria-label', 'Toggle map layers');
+        control.setAttribute('title', 'Toggle map layers');
+    });
+}
+document.addEventListener('DOMContentLoaded', labelLeafletControls);
+window.addEventListener('load', () => setTimeout(labelLeafletControls, 250));
 window.LayerPanel = LayerPanel;
 
 // Export function (migrated from map.js)
@@ -723,7 +734,8 @@ function initializeDrawingControls() {
                         const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
                         const button = L.DomUtil.create('a', 'leaflet-control-export', container);
                         button.href = '#';
-                        button.title = 'Export GeoJSON';
+            button.title = 'Export GeoJSON';
+            button.setAttribute('aria-label', 'Export GeoJSON');
                         button.innerHTML = '📤';
                         button.style.fontSize = '18px';
                         button.style.display = 'flex';
@@ -2653,12 +2665,19 @@ async function _loadCadastralProgressive(filePaths, loadButton, originalText) {
     window.progressiveGeoJsonData = { type: 'FeatureCollection', features: [] };
     window.geoJsonData = window.progressiveGeoJsonData;
     const layerGroup = L.layerGroup();  // Group all new layers together
+    const mapForViewport = getFoliumMapInstance();
+    let viewportBbox = null;
+    if (mapForViewport && typeof mapForViewport.getZoom === 'function' && mapForViewport.getZoom() >= 17) {
+        const bounds = mapForViewport.getBounds();
+        viewportBbox = [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()];
+    }
 
     // Show progress UI
     ProgressUI.show(totalFiles);
 
     try {
         const summary = await ProgressiveLoader.load(filePaths, {
+            bbox: viewportBbox,
             onProgress(fileIndex, total, fileName, status) {
                 ProgressUI.updateProgress(fileIndex, total || totalFiles, fileName, status);
             },

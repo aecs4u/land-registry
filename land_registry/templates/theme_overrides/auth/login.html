@@ -16,4 +16,11 @@
 {% block auth_extra_head %}
   {{ super() }}
   <link rel="stylesheet" href="/static/css/auth.css" />
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      const next = new URLSearchParams(window.location.search).get('next') || '/map';
+      const signInLink = Array.from(document.querySelectorAll('a')).find(a => a.textContent.trim() === 'Sign In');
+      if (signInLink) signInLink.href = '/auth/login?next=' + encodeURIComponent(next);
+    });
+  </script>
 {% endblock %}

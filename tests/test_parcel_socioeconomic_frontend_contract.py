@@ -31,6 +31,9 @@ def test_parcel_read_model_route_is_exposed() -> None:
     paths = [route.path for route in enrichment_router.routes]
 
     assert "/parcel/details/{national_reference}" in paths
+    assert "/parcel/buildings/{national_reference}" in paths
+    assert "/parcel/opendata" in paths
+    assert "/parcel/pvp" in paths
 
 
 @pytest.mark.asyncio
@@ -87,6 +90,29 @@ def test_parcel_panel_prefers_the_parcel_read_model() -> None:
     assert "/api/v1/enrichment/parcel/details/" in source
     assert "readModel.omi" in source
     assert "readModel.census" in source
+
+
+def test_parcel_panel_renders_sister_building_categories() -> None:
+    source = STATIC_FILE.read_text(encoding="utf-8")
+
+    assert "/api/v1/enrichment/parcel/buildings/" in source
+    assert "building_type" in source
+    assert "Nessun fabbricato presente nella cache SISTER" in source
+
+
+def test_parcel_panel_renders_opendata_and_pvp_records() -> None:
+    source = STATIC_FILE.read_text(encoding="utf-8")
+
+    assert "/api/v1/enrichment/parcel/opendata${parcelLookupQuery}" in source
+    assert "/api/v1/enrichment/parcel/pvp${pvpLookupQuery}" in source
+    assert "municipality_code: referenceParts[0] || cadastralCode" in source
+    assert "municipality_code: istatCode" in source
+    assert "Dati catastali OpenData" in source
+    assert "Aste PVP" in source
+    assert "candidati di asta" in source
+    assert "Query API e risposta" in source
+    assert "enrichment-api-response" in source
+    assert "relations_resolved" in source
 
 
 def test_read_model_declares_reference_catalog_blocks() -> None:

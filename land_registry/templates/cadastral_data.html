@@ -2,7 +2,7 @@
 <!-- No external CSS libraries needed for this page -->
 {% endblock %} {% block extra_css %}
 <link rel="stylesheet" href="{{ asset_url('cadastral_data.css') }}" />
-{% endblock %} {% block content %}
+{% endblock %} {% block body_class %}cadastral-page{% endblock %} {% block content %}
 
 <!-- Same navbar as /map (minus the sidebar toggle, which doesn't apply
      here), so this page doesn't read as a different, unstyled product. -->
@@ -135,6 +135,7 @@
           <div
             class="municipality"
             data-municipality="{{ municipality_data.get('name', municipality_key)|lower }}"
+            data-file-count="{{ municipality_data.get('files', [])|length }}"
           >
             <div class="municipality-name">
               {% set municipality_name = municipality_data.get('name',

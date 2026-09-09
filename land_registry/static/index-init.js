@@ -52,6 +52,18 @@ function _updateToolbarHeight() {
 document.addEventListener('DOMContentLoaded', _updateToolbarHeight);
 window.addEventListener('resize', _updateToolbarHeight);
 
+function syncViewToggleAria() {
+    document.querySelectorAll('.view-toggle button').forEach((button) => {
+        button.setAttribute('aria-pressed', button.classList.contains('active') ? 'true' : 'false');
+    });
+}
+document.addEventListener('DOMContentLoaded', () => {
+    syncViewToggleAria();
+    new MutationObserver(syncViewToggleAria).observe(document.querySelector('.view-toggle') || document.body, {
+        subtree: true, attributes: true, attributeFilter: ['class']
+    });
+});
+
 // ── Map toolbar panels ────────────────────────────────────────────────────
 
 function toggleToolPanel(panelId, btnId) {
@@ -63,9 +75,15 @@ function toggleToolPanel(panelId, btnId) {
     if (!isOpen) {
         panel.style.display = 'block';
         btn.classList.add('active');
+        btn.setAttribute('aria-expanded', 'true');
+        panel.setAttribute('aria-hidden', 'false');
         if (panelId === 'panelExplore' && window.refreshSearchComuneList) {
             window.refreshSearchComuneList();
         }
+    }
+    if (isOpen) {
+        btn.setAttribute('aria-expanded', 'false');
+        panel.setAttribute('aria-hidden', 'true');
     }
 }
 
@@ -85,6 +103,8 @@ window.addEventListener('load', initializeExploreSearch);
 function closeToolPanel(panelId) {
     const panel = document.getElementById(panelId);
     if (panel) panel.style.display = 'none';
+    if (panel) panel.setAttribute('aria-hidden', 'true');
+    document.querySelector(`[aria-controls="${panelId}"]`)?.setAttribute('aria-expanded', 'false');
     document.querySelectorAll('.map-tool-btn').forEach(b => b.classList.remove('active'));
 }
 

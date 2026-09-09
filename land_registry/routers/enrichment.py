@@ -42,12 +42,12 @@ async def get_municipality(cadastral_code: str):
     ISTAT hierarchy (province, region, NUTS), coordinates, postal code and
     resident-population history.
     """
-    if not stats_service.istat_db_available():
+    if not (stats_service.istat_db_available() or stats_service.postgres_stats_available()):
         raise HTTPException(
             status_code=503,
             detail="ISTAT reference store not built. Run the aecs4u-stats import pipeline.",
         )
-    result = stats_service.get_municipality_by_cadastral_code(cadastral_code)
+    result = await stats_service.aget_municipality_by_cadastral_code(cadastral_code)
     if result is None:
         raise HTTPException(
             status_code=404,
@@ -64,28 +64,9 @@ async def get_pois(
     categories: Optional[List[str]] = Query(None, description="POI categories (default: all); see /enrichment/status"),
 ):
     """OSM points of interest around a point, grouped by category, nearest-first."""
-    try:
-        # Outer backstop on top of stats_service's own internal Postgres
-        # timeout: on this host a blocking psycopg2 call has been observed to
-        # hang in a way that even a thread-level join(timeout) doesn't escape
-        # (consistent with the call never releasing the GIL) — asyncio.wait_for
-        # bounds the *response*, at the cost of leaking the stuck worker
-        # thread, rather than the request hanging indefinitely.
-        return await asyncio.wait_for(
-            asyncio.to_thread(stats_service.get_pois_near, lat, lng, radius_km=radius_km, categories=categories),
-            timeout=8,
-        )
-    except asyncio.TimeoutError:
-        grouped = await asyncio.to_thread(
-            stats_service.pois_within_radius, lat, lng, radius_km=radius_km, categories=categories
-        )
-        return {
-            "center": {"lat": lat, "lng": lng},
-            "radius_km": radius_km,
-            "total": sum(len(v) for v in grouped.values()),
-            "categories": grouped,
-            "source": "OpenStreetMap via aecs4u-stats",
-        }
+    return await stats_service.aget_pois_near(
+        lat, lng, radius_km=radius_km, categories=categories
+    )
 
 
 @enrichment_router.get("/omi/quotes")
@@ -99,7 +80,7 @@ async def get_omi_quotes(
             status_code=503,
             detail="OMI store not built. Run: python -m aecs4u_stats.omi.scripts.import_omi",
         )
-    return stats_service.get_omi_quotes(comune, zona=zona)
+    return await stats_service.aget_omi_quotes(comune, zona=zona)
 
 
 @enrichment_router.get("/omi/history")
@@ -158,7 +139,7 @@ async def get_income(cadastral_code: str, year: Optional[int] = Query(None)):
             status_code=503,
             detail="MEF/IRPEF store not built. Run: python -m aecs4u_stats.mef.scripts.import_irpef --year <YYYY>",
         )
-    result = stats_service.get_income_profile(cadastral_code, year=year)
+    result = await stats_service.aget_income_profile(cadastral_code, year=year)
     if result is None:
         raise HTTPException(status_code=404, detail=f"No IRPEF data found for '{cadastral_code}'")
     return result
@@ -282,14 +263,83 @@ async def get_parcel_details(
     stores. Later requests use one indexed SQLite lookup, keeping the parcel
     details panel independent of the latency of the source databases.
     """
-    # FlatGeobuf/GDAL can deadlock when invoked from an AnyIO worker thread on
-    # this deployment. Keep this short cold-path read on the route's direct
-    # execution path; the optional PostgreSQL connection is independently
-    # bounded by stats_service's hard timeout.
-    result = stats_service.get_parcel_enrichment(national_reference, refresh)
+    result = await stats_service.aget_parcel_enrichment(national_reference, refresh)
     if result is None:
         raise HTTPException(status_code=404, detail=f"No enrichment data found for '{national_reference}'")
     return result
+
+
+@enrichment_router.get("/parcel/buildings/{national_reference}")
+async def get_parcel_buildings(national_reference: str):
+    """Return building categories for a parcel from the sister/SISTER cache."""
+    return stats_service.get_buildings_for_parcel(national_reference)
+
+
+def _parcel_reference_from_query(municipality: str, sheet: str, parcel: str) -> str:
+    """Build the canonical parcel key from explicit cadastral components."""
+    return f"{municipality.strip().upper()}_{sheet.strip()}.{parcel.strip()}"
+
+
+async def _get_parcel_external(
+    lookup,
+    source: str,
+    municipality: str,
+    sheet: str,
+    parcel: str,
+    *,
+    lookup_context: Optional[Dict[str, str]] = None,
+):
+    """Run one external parcel lookup with a bounded response time."""
+    national_reference = _parcel_reference_from_query(municipality, sheet, parcel)
+    # The municipality is part of the explicit API identity. Forward it to
+    # the source adapter instead of making the adapter infer it from the local
+    # cache; otherwise a missing cache could weaken the source-side filter to
+    # sheet+parcel alone.
+    lookup_municipality = lookup_context or {"cadastral_code": municipality.strip().upper()}
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(lookup, national_reference, lookup_municipality),
+            timeout=10,
+        )
+    except asyncio.TimeoutError:
+        return {"records": [], "count": 0, "available": False, "source": source, "error": "lookup_timeout"}
+    except Exception:
+        return {"records": [], "count": 0, "available": False, "source": source, "error": "lookup_failed"}
+
+
+@enrichment_router.get("/parcel/opendata")
+async def get_parcel_opendata(
+    municipality_code: str = Query(..., min_length=1, max_length=16),
+    sheet: str = Query(..., min_length=1, max_length=32),
+    parcel: str = Query(..., min_length=1, max_length=32),
+):
+    """Return OpenData records for a cadastral municipality_code, sheet, and parcel."""
+    return await _get_parcel_external(
+        stats_service.get_opendata_for_parcel,
+        "OpenData PostgreSQL",
+        municipality_code,
+        sheet,
+        parcel,
+    )
+
+
+@enrichment_router.get("/parcel/pvp")
+async def get_parcel_pvp(
+    municipality_code: str = Query(..., min_length=1, max_length=16),
+    sheet: str = Query(..., min_length=1, max_length=32),
+    parcel: str = Query(..., min_length=1, max_length=32),
+):
+    """Return PVP records for a PVP municipality_code, sheet, and parcel."""
+    return await _get_parcel_external(
+        stats_service.get_pvp_for_parcel,
+        "PVP modelview PostgreSQL",
+        municipality_code,
+        sheet,
+        parcel,
+        lookup_context={
+            "pvp_municipality_code": municipality_code.strip(),
+        },
+    )
 
 
 @enrichment_router.get("/parcel/at-point")
@@ -321,7 +371,7 @@ async def get_census_section_at_point(
     Keep this static route above ``/census/{cadastral_code}`` so Starlette
     does not interpret ``at-point`` as a cadastral code.
     """
-    if not stats_service.census_db_available():
+    if not (stats_service.census_db_available() or stats_service.postgres_stats_available()):
         raise HTTPException(status_code=503, detail=_CENSUS_BUILD_HINT)
     result = stats_service.get_census_section_at_point(lat, lng)
     if result is None:
@@ -335,7 +385,7 @@ async def get_census_sections(cadastral_code: str, limit: int = Query(5000, gt=0
     FeatureCollection — population by age/sex, education, employment,
     foreign-resident, household-size and dwelling-occupancy indicators,
     plus derived rates, per section."""
-    if not stats_service.census_db_available():
+    if not (stats_service.census_db_available() or stats_service.postgres_stats_available()):
         raise HTTPException(status_code=503, detail=_CENSUS_BUILD_HINT)
     result = stats_service.get_census_sections(cadastral_code, limit=limit)
     if result is None:

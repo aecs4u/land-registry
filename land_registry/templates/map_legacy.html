@@ -403,6 +403,19 @@
             </div>
 
             <div class="map-container">
+                <div class="location-search" data-location-search role="search">
+                    <form class="location-search-form">
+                        <label class="sr-only" for="locationSearchInput">Search for a location</label>
+                        <div class="location-search-input-wrap">
+                            <span class="location-search-icon" aria-hidden="true"><i class="fas fa-search"></i></span>
+                            <input type="search" id="locationSearchInput" class="location-search-input"
+                                   placeholder="Search for a location" autocomplete="off" spellcheck="false">
+                            <button type="submit" class="location-search-submit" aria-label="Search for a location"><i class="fas fa-search"></i></button>
+                        </div>
+                        <div class="location-search-results" role="listbox" hidden></div>
+                        <div class="location-search-status" aria-live="polite"></div>
+                    </form>
+                </div>
                 <div id="map"></div>
             </div>
         </div>

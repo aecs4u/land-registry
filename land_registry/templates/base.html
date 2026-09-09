@@ -42,7 +42,7 @@
 
     {% block extra_css %}{% endblock %}
   </head>
-  <body>
+  <body class="{% block body_class %}{% endblock %}">
     <!-- Auth widget (top-right corner, rendered by clerk-auth.js) -->
     <div id="auth-widget"></div>
 
@@ -88,6 +88,7 @@
     {% block map_js %}
     <script src="{{ asset_url('progressive-loader.js') }}"></script>
     <script src="{{ asset_url('map.js') }}"></script>
+    <script src="{{ asset_url('location-search.js') }}"></script>
     {% endblock %}
     <script src="{{ asset_url('table-manager.js') }}"></script>
 

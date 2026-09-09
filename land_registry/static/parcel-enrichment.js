@@ -26,6 +26,7 @@
         valuation_history: 'Storico OMI', coastal_erosion: 'Erosione costiera',
         cultural_heritage: 'Patrimonio culturale', solar: 'Potenziale solare',
         poi: 'Punti di interesse', nightlights: 'Luminosità notturna',
+        opendata: 'Dati catastali OpenData', pvp: 'Aste PVP',
     };
 
     function _escapeHtml(value) {
@@ -170,6 +171,18 @@
         return source ? `<div class="enrichment-source">${source}</div>` : '';
     }
 
+    function _requestStatusLabel(requestResult) {
+        const italian = (document.documentElement.lang || 'it').toLowerCase().startsWith('it');
+        if (!requestResult) return italian ? 'Non disponibile' : 'Not available';
+        if (requestResult.status) {
+            if (requestResult.ok) return `${requestResult.status} OK`;
+            return requestResult.status === 404
+                ? (italian ? 'Servizio non disponibile' : 'Service not available')
+                : (italian ? 'Servizio temporaneamente non raggiungibile' : 'Service temporarily unavailable');
+        }
+        return italian ? 'Servizio temporaneamente non raggiungibile' : 'Service temporarily unavailable';
+    }
+
     // ---- Section renderers -------------------------------------------------
 
     function _renderMunicipality(data) {
@@ -203,6 +216,114 @@
             ${data.wikipedia_url ? `<div class="enrichment-row"><span>Wikipedia</span><strong>${link(data.wikipedia_url, 'Apri pagina')}</strong></div>` : ''}
             ${_sourceFootnote(data.source)}
         `;
+    }
+
+    function _renderBuildings(data) {
+        const buildings = Array.isArray(data && data.buildings) ? data.buildings : [];
+        if (!buildings.length) {
+            return _emptyState('Nessun fabbricato presente nella cache SISTER per questa particella.')
+                + _sourceFootnote(data && data.source);
+        }
+        const rows = buildings.map((building, index) => `
+            <div class="enrichment-building">
+                <div class="enrichment-row"><span>Tipo fabbricato${buildings.length > 1 ? ` ${index + 1}` : ''}</span><strong>${_escapeHtml(building.building_type || building.category || '—')}</strong></div>
+                ${building.cadastral_class ? `<div class="enrichment-row"><span>Classe catastale</span><strong>${_escapeHtml(building.cadastral_class)}</strong></div>` : ''}
+                ${building.consistency != null ? `<div class="enrichment-row"><span>Consistenza</span><strong>${_escapeHtml(building.consistency)}</strong></div>` : ''}
+                ${building.cadastral_income != null ? `<div class="enrichment-row"><span>Rendita catastale</span><strong>€ ${_formatNumber(building.cadastral_income, 2)}</strong></div>` : ''}
+                ${building.address ? `<div class="enrichment-row"><span>Indirizzo</span><strong>${_escapeHtml(building.address)}</strong></div>` : ''}
+            </div>`).join('');
+        return `${rows}${_sourceFootnote(data.source)}`;
+    }
+
+    function _flattenValues(value, prefix = '', rows = [], limit = 14) {
+        if (rows.length >= limit || value === null || value === undefined || value === '') return rows;
+        if (Array.isArray(value)) {
+            value.slice(0, 6).forEach((item, index) => _flattenValues(item, `${prefix}[${index + 1}]`, rows, limit));
+            return rows;
+        }
+        if (typeof value === 'object') {
+            Object.entries(value).forEach(([key, item]) => {
+                if (!['documento', 'pdf', 'base64', 'content_base64'].includes(key.toLowerCase())) {
+                    _flattenValues(item, prefix ? `${prefix} · ${key}` : key, rows, limit);
+                }
+            });
+            return rows;
+        }
+        rows.push([prefix || 'Valore', String(value)]);
+        return rows;
+    }
+
+    function _responsePreview(value, depth = 0, state = { nodes: 0 }) {
+        if (value === null || value === undefined) return value;
+        if (state.nodes++ >= 120 || depth >= 5) return '[…]';
+        if (Array.isArray(value)) return value.slice(0, 8).map(item => _responsePreview(item, depth + 1, state));
+        if (typeof value === 'object') {
+            const result = {};
+            Object.entries(value).slice(0, 40).forEach(([key, item]) => {
+                if (!['documento', 'pdf', 'base64', 'content_base64'].includes(key.toLowerCase())) {
+                    result[key] = _responsePreview(item, depth + 1, state);
+                }
+            });
+            return result;
+        }
+        return value;
+    }
+
+    function _renderApiResponseDetails(data, requestUrl, requestResult) {
+        if (!requestUrl && !requestResult && !data) return '';
+        const status = requestResult ? _requestStatusLabel(requestResult) : (data ? '200 OK' : _requestStatusLabel(null));
+        let responseText = 'null';
+        try {
+            responseText = JSON.stringify(_responsePreview(data), null, 2);
+        } catch (e) {
+            responseText = String(data);
+        }
+        return `
+            <details class="enrichment-api-details">
+                <summary>Query API e risposta</summary>
+                ${requestUrl ? `<div class="enrichment-api-row"><span>GET</span><code>${_escapeHtml(requestUrl)}</code></div>` : ''}
+                <div class="enrichment-api-row"><span>HTTP</span><strong>${_escapeHtml(status)}</strong></div>
+                ${data && data.available !== undefined ? `<div class="enrichment-api-row"><span>Disponibilità</span><strong>${data.available ? 'Disponibile' : 'Non disponibile'}</strong></div>` : ''}
+                ${data && data.match_method ? `<div class="enrichment-api-row"><span>Metodo match</span><strong>${_escapeHtml(data.match_method)}</strong></div>` : ''}
+                ${data && data.relations_resolved !== undefined ? `<div class="enrichment-api-row"><span>Relazioni FK</span><strong>${data.relations_resolved ? 'Risolte ricorsivamente' : 'Non risolte'}</strong></div>` : ''}
+                <pre class="enrichment-api-response">${_escapeHtml(responseText)}</pre>
+            </details>`;
+    }
+
+    function _renderOpenData(data, requestUrl = '', requestResult = null) {
+        const diagnostics = _renderApiResponseDetails(data, requestUrl, requestResult);
+        const records = Array.isArray(data && data.records) ? data.records : [];
+        if (!records.length) return diagnostics + _emptyState('Nessun dato catastale OpenData trovato per questa particella.') + _sourceFootnote(data && data.source);
+        const html = records.map((record, index) => {
+            const rows = _flattenValues(record.result);
+            return `
+                <div class="enrichment-building">
+                    <div class="enrichment-row"><span>Risultato ${index + 1}</span><strong>${_escapeHtml(record.endpoint || 'Catasto')}</strong></div>
+                    ${record.timestamp ? `<div class="enrichment-row"><span>Data query</span><strong>${_escapeHtml(record.timestamp)}</strong></div>` : ''}
+                    ${rows.map(([label, value]) => `<div class="enrichment-row"><span>${_escapeHtml(label)}</span><strong>${_escapeHtml(value)}</strong></div>`).join('')}
+                </div>`;
+        }).join('');
+        return `${html}${diagnostics}${_sourceFootnote(data.source)}${data.match_method ? `<div class="enrichment-source">Match: ${_escapeHtml(data.match_method)}</div>` : ''}`;
+    }
+
+    function _renderPvp(data, requestUrl = '', requestResult = null) {
+        const diagnostics = _renderApiResponseDetails(data, requestUrl, requestResult);
+        const records = Array.isArray(data && data.records) ? data.records : [];
+        if (!records.length) return diagnostics + _emptyState('Nessuna asta PVP trovata per questa particella.') + _sourceFootnote(data && data.source);
+        const rows = records.slice(0, 8).map((record, index) => `
+            <div class="enrichment-building">
+                <div class="enrichment-row"><span>Annuncio ${index + 1}</span><strong>${_escapeHtml(record.source || 'PVP')}</strong></div>
+                ${record.sale_id != null ? `<div class="enrichment-row"><span>ID vendita</span><strong>${_escapeHtml(record.sale_id)}</strong></div>` : ''}
+                ${record.description || record.sale_description ? `<div class="enrichment-row"><span>Descrizione</span><strong>${_escapeHtml(record.description || record.sale_description)}</strong></div>` : ''}
+                ${record.street ? `<div class="enrichment-row"><span>Indirizzo</span><strong>${_escapeHtml(`${record.street || ''} ${record.house_number || ''}`.trim())}</strong></div>` : ''}
+                ${record.announcement_status ? `<div class="enrichment-row"><span>Stato</span><strong>${_escapeHtml(record.announcement_status)}</strong></div>` : ''}
+                ${record.sale_date ? `<div class="enrichment-row"><span>Data vendita</span><strong>${_escapeHtml(record.sale_date)}</strong></div>` : ''}
+                ${record.minimum_offer != null ? `<div class="enrichment-row"><span>Offerta minima</span><strong>${_formatCurrency(record.minimum_offer)}</strong></div>` : ''}
+                ${record.base_auction_price != null ? `<div class="enrichment-row"><span>Base d'asta</span><strong>${_formatCurrency(record.base_auction_price)}</strong></div>` : ''}
+                ${record.surface_area != null ? `<div class="enrichment-row"><span>Superficie annuncio</span><strong>${_formatNumber(record.surface_area, 2)} m²</strong></div>` : ''}
+                ${record.source_url ? `<div class="enrichment-row"><span>Fonte</span><strong><a href="${_escapeHtml(record.source_url)}" target="_blank" rel="noopener noreferrer">Apri annuncio</a></strong></div>` : ''}
+            </div>`).join('');
+        return `${rows}${records.length > 8 ? `<div class="enrichment-empty text-muted">Visualizzati 8 annunci su ${records.length}.</div>` : ''}${diagnostics}${_sourceFootnote(data.source)}<div class="enrichment-source">Match: ${_escapeHtml(data.match_method || 'municipality_code+sheet+parcel')}; i record PVP sono candidati di asta, non identificativi catastali ufficiali.</div>`;
     }
 
     function _renderBlockCoverage(readModel) {
@@ -628,6 +749,9 @@
         // Scaffold loading state immediately, then fill sections as they resolve.
         container.innerHTML = [
             _loadingCard('location-dot', 'Comune'),
+            _loadingCard('building', 'Edifici'),
+            _loadingCard('database', 'Dati catastali OpenData'),
+            _loadingCard('gavel', 'Aste PVP'),
             _loadingCard('chart-line', 'Quotazioni OMI'),
             _loadingCard('coins', 'Reddito IRPEF'),
             _loadingCard('people-group', 'Censimento 2021'),
@@ -640,7 +764,7 @@
             centroid ? _loadingCard('fire', 'Incendi attivi') : '',
             _loadingCard('layer-group', 'Copertura dati'),
         ].join('');
-        const [muniEl, omiEl, incomeEl, censusEl, crimeEl, demographicsEl, qualityEl,
+        const [muniEl, buildingEl, opendataEl, pvpEl, omiEl, incomeEl, censusEl, crimeEl, demographicsEl, qualityEl,
             riskEl, bulletinEl, poiEl, firesEl] = container.querySelectorAll('.enrichment-card');
         const cards = container.querySelectorAll('.enrichment-card');
         const coverageEl = cards[cards.length - 1];
@@ -669,6 +793,15 @@
             if (coverageEl) {
                 coverageEl.querySelector('.enrichment-card-body').innerHTML = _renderBlockCoverage(readModel);
             }
+            if (buildingEl && readModel.buildings) {
+                buildingEl.querySelector('.enrichment-card-body').innerHTML = _renderBuildings(readModel.buildings);
+            }
+            if (opendataEl && readModel.opendata) {
+                opendataEl.querySelector('.enrichment-card-body').innerHTML = _renderOpenData(readModel.opendata);
+            }
+            if (pvpEl && readModel.pvp) {
+                pvpEl.querySelector('.enrichment-card-body').innerHTML = _renderPvp(readModel.pvp);
+            }
         });
         const muniResult = await municipalityPromise;
         if (renderToken !== activeRenderToken) return;
@@ -676,8 +809,38 @@
         if (muniEl) muniEl.querySelector('.enrichment-card-body').innerHTML = _renderMunicipality(muniData);
 
         const istatCode = muniData ? muniData.istat_code : null;
+        const referenceParts = nationalReference ? nationalReference.split('_', 2) : [];
+        const referenceLocation = referenceParts.length === 2 ? referenceParts[1].split('.', 2) : [];
+        const parcelLookupQuery = nationalReference
+            ? `?${new URLSearchParams({
+                municipality_code: referenceParts[0] || cadastralCode,
+                sheet: referenceLocation[0] || '',
+                parcel: referenceLocation[1] || '',
+              })}`
+            : '';
+        const pvpLookupQuery = nationalReference && istatCode
+            ? `?${new URLSearchParams({
+                municipality_code: istatCode,
+                sheet: referenceLocation[0] || '',
+                parcel: referenceLocation[1] || '',
+              })}`
+            : '';
+        const opendataUrl = `/api/v1/enrichment/parcel/opendata${parcelLookupQuery}`;
+        const pvpUrl = `/api/v1/enrichment/parcel/pvp${pvpLookupQuery}`;
 
         const tasks = [
+            nationalReference
+                ? _fetchJson(`/api/v1/enrichment/parcel/buildings/${encodeURIComponent(nationalReference)}`)
+                    .then(r => { if (buildingEl && renderToken === activeRenderToken) buildingEl.querySelector('.enrichment-card-body').innerHTML = _renderBuildings(r.ok ? r.data : null); })
+                : Promise.resolve().then(() => { if (buildingEl && renderToken === activeRenderToken) buildingEl.querySelector('.enrichment-card-body').innerHTML = _renderBuildings(null); }),
+            nationalReference
+                ? _fetchJson(opendataUrl)
+                    .then(r => { if (opendataEl && renderToken === activeRenderToken) opendataEl.querySelector('.enrichment-card-body').innerHTML = _renderOpenData(r.ok ? r.data : null, opendataUrl, r); })
+                : Promise.resolve().then(() => { if (opendataEl && renderToken === activeRenderToken) opendataEl.querySelector('.enrichment-card-body').innerHTML = _renderOpenData(null, opendataUrl, { ok: false, status: 0 }); }),
+            nationalReference && pvpLookupQuery
+                ? _fetchJson(pvpUrl)
+                    .then(r => { if (pvpEl && renderToken === activeRenderToken) pvpEl.querySelector('.enrichment-card-body').innerHTML = _renderPvp(r.ok ? r.data : null, pvpUrl, r); })
+                : Promise.resolve().then(() => { if (pvpEl && renderToken === activeRenderToken) pvpEl.querySelector('.enrichment-card-body').innerHTML = _renderPvp(null, pvpUrl, { ok: false, status: 0 }); }),
             Promise.all([
                 readModel && readModel.omi
                     ? Promise.resolve({ ok: true, data: readModel.omi })

@@ -19,6 +19,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import geopandas as gpd
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from shapely.geometry import Polygon
@@ -592,3 +593,26 @@ class TestCadastralIdentifyEndpoint:
             response = await api_module.identify_cadastral_feature(41.79, 12.67, "map")
 
         assert response == {"found": False}
+
+    @pytest.mark.asyncio
+    async def test_identify_normalizes_numpy_scalars(self):
+        """GeoPandas scalar fields must remain JSON serializable at the route boundary."""
+        mock_service = MagicMock()
+        mock_service.identify_feature.return_value = {
+            "feature_id": np.int32(42),
+            "area_sqm": np.float64(12.5),
+            "nested": {"ids": [np.int64(7)]},
+        }
+
+        with patch("land_registry.routers.api.get_datashader_service", return_value=mock_service), \
+             patch("land_registry.routers.api.asyncio.to_thread", new=AsyncMock(
+                 side_effect=lambda func, *args, **kwargs: func(*args, **kwargs)
+             )):
+            response = await api_module.identify_cadastral_feature(41.79, 12.67, "map")
+
+        assert response == {
+            "found": True,
+            "feature_id": 42,
+            "area_sqm": 12.5,
+            "nested": {"ids": [7]},
+        }

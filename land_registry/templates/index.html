@@ -355,16 +355,16 @@
   <div class="main-content">
     <!-- View Toggle Buttons -->
     <div class="view-toggle">
-      <button id="mapViewBtn" class="active" onclick="showMapView()">
+      <button id="mapViewBtn" class="active" onclick="showMapView()" aria-controls="mapView" aria-pressed="true">
         {{ _('Map View') }}
       </button>
-      <button id="tableViewBtn" onclick="handleTableViewClick()" class="">
+      <button id="tableViewBtn" onclick="handleTableViewClick()" class="" aria-controls="tableView" aria-pressed="false">
         {{ _('Table View') }}
       </button>
-      <button id="adjacencyViewBtn" onclick="showAdjacencyView()" class="">
+      <button id="adjacencyViewBtn" onclick="showAdjacencyView()" class="" aria-controls="adjacencyView" aria-pressed="false">
         {{ _('Adjacency') }}
       </button>
-      <button id="mappingViewBtn" onclick="showMappingView()" class="">
+      <button id="mappingViewBtn" onclick="showMappingView()" class="" aria-controls="mappingView" aria-pressed="false">
         {{ _('Mapping') }}
       </button>
     </div>
@@ -377,21 +377,34 @@
       </div>
 
       <div class="map-container">
+        <div class="location-search" data-location-search role="search">
+          <form class="location-search-form">
+            <label class="sr-only" for="locationSearchInput">{{ _('Search for a location') }}</label>
+            <div class="location-search-input-wrap">
+              <span class="location-search-icon" aria-hidden="true"><i class="fas fa-search"></i></span>
+              <input type="search" id="locationSearchInput" class="location-search-input"
+                     placeholder="{{ _('Search for a location') }}" autocomplete="off" spellcheck="false">
+              <button type="submit" class="location-search-submit" aria-label="{{ _('Search for a location') }}"><i class="fas fa-search"></i></button>
+            </div>
+            <div class="location-search-results" role="listbox" hidden></div>
+            <div class="location-search-status" aria-live="polite"></div>
+          </form>
+        </div>
         <!-- Map toolbar — horizontal bar at top of map area -->
         <div class="map-toolbar" id="mapToolbar">
-          <button class="map-tool-btn" id="toolBtnExplore" onclick="toggleToolPanel('panelExplore', 'toolBtnExplore')" title="{{ _('Explore') }}">
+          <button class="map-tool-btn" id="toolBtnExplore" onclick="toggleToolPanel('panelExplore', 'toolBtnExplore')" title="{{ _('Explore') }}" aria-label="{{ _('Explore') }}" aria-controls="panelExplore">
             <i class="fas fa-search"></i>
             <span>{{ _('Explore') }}</span>
           </button>
-          <button class="map-tool-btn" id="toolBtnAnalyse" onclick="toggleToolPanel('panelAnalyse', 'toolBtnAnalyse')" title="{{ _('Analyse') }}">
+          <button class="map-tool-btn" id="toolBtnAnalyse" onclick="toggleToolPanel('panelAnalyse', 'toolBtnAnalyse')" title="{{ _('Analyse') }}" aria-label="{{ _('Analyse') }}" aria-controls="panelAnalyse">
             <i class="fas fa-drafting-compass"></i>
             <span>{{ _('Analyse') }}</span>
           </button>
-          <button class="map-tool-btn" id="toolBtnZones" onclick="toggleToolPanel('panelZones', 'toolBtnZones')" title="{{ _('Zones') }}">
+          <button class="map-tool-btn" id="toolBtnZones" onclick="toggleToolPanel('panelZones', 'toolBtnZones')" title="{{ _('Zones') }}" aria-label="{{ _('Zones') }}" aria-controls="panelZones">
             <i class="fas fa-layer-group"></i>
             <span>{{ _('Zones') }}</span>
           </button>
-          <button class="map-tool-btn" id="toolBtnActions" onclick="toggleToolPanel('panelActions', 'toolBtnActions')" title="{{ _('Actions') }}">
+          <button class="map-tool-btn" id="toolBtnActions" onclick="toggleToolPanel('panelActions', 'toolBtnActions')" title="{{ _('Actions') }}" aria-label="{{ _('Actions') }}" aria-controls="panelActions">
             <i class="fas fa-filter"></i>
             <span>{{ _('Actions') }}</span>
           </button>
@@ -407,33 +420,33 @@
             <div class="tool-panel-section">
               <h5>{{ _('Search Parcels') }}</h5>
               <div class="tool-field">
-                <label>{{ _('Region') }}</label>
+                <label for="searchRegion">{{ _('Region') }}</label>
                 <select id="searchRegion" class="tool-select" onchange="onSearchRegionChange()">
                   <option value="">{{ _('Select region…') }}</option>
                 </select>
               </div>
               <div class="tool-field">
-                <label>{{ _('Province') }}</label>
+                <label for="searchProvince">{{ _('Province') }}</label>
                 <select id="searchProvince" class="tool-select" onchange="onSearchProvinceChange()" disabled>
                   <option value="">{{ _('Select province…') }}</option>
                 </select>
               </div>
               <div class="tool-field">
-                <label>{{ _('Municipality (required)') }}</label>
+                <label for="searchMunicipality">{{ _('Municipality (required)') }}</label>
                 <select id="searchMunicipality" class="tool-select" disabled>
                   <option value="">{{ _('Select municipality…') }}</option>
                 </select>
               </div>
               <div class="tool-field">
-                <label>{{ _('Foglio') }}</label>
+                <label for="searchFoglio">{{ _('Foglio') }}</label>
                 <input type="text" id="searchFoglio" placeholder="{{ _('e.g., 35') }}" class="tool-input" />
               </div>
               <div class="tool-field">
-                <label>{{ _('Particella') }}</label>
+                <label for="searchParticella">{{ _('Particella') }}</label>
                 <input type="text" id="searchParticella" placeholder="{{ _('e.g., 257') }}" class="tool-input" />
               </div>
               <div class="tool-field">
-                <label>{{ _('Subalterno (optional)') }}</label>
+                <label for="searchSubalterno">{{ _('Subalterno (optional)') }}</label>
                 <input type="text" id="searchSubalterno" placeholder="{{ _('e.g., 1') }}" class="tool-input" />
               </div>
               <div class="tool-row">
@@ -743,6 +756,9 @@
           <h2>{{ _('Adjacency Analysis') }}</h2>
           <div id="adjacencyInfo" class="table-info">
             {{ _('Select a polygon on the map, then use Analysis Tools to find adjacent features.') }}
+            <button type="button" id="adjacencyRunBtn" class="control-btn" onclick="findAdjacencyForSelected()" disabled>
+              {{ _('Find Adjacent') }}
+            </button>
           </div>
         </div>
         <div id="adjacencyResults" class="adjacency-results">
@@ -829,9 +845,9 @@
   </div>
 
   <!-- Parcel Info Panel (slides in from right) -->
-  <div id="parcelInfoPanel" class="parcel-info-panel">
+  <div id="parcelInfoPanel" class="parcel-info-panel" role="dialog" aria-modal="false" aria-labelledby="parcelInfoTitle">
     <div class="parcel-info-header-bar">
-      <span>{{ _('Parcel Details') }}</span>
+      <span id="parcelInfoTitle">{{ _('Parcel Details') }}</span>
       <button onclick="hideParcelInfo()" class="close-panel-btn" title="{{ _('Close panel') }}" aria-label="{{ _('Close panel') }}">&times;</button>
     </div>
     <div id="parcelInfoContent" class="parcel-info-body">

@@ -1062,10 +1062,13 @@ function showParcelInfo(feature, layer) {
         displayFoglio = foglio || (labelParts.length > 1 ? labelParts[0] : '');
         displayParticella = particella || (labelParts.length > 1 ? labelParts[1] : label);
     }
+    const panelHeading = isZoningLayer
+        ? `Foglio ${displayFoglio || label}`
+        : `Particella ${label}`;
 
     let html = `
         <div class="parcel-info-header">
-            <h3>${escapeHtml(label)}</h3>
+            <h3>${escapeHtml(panelHeading)}</h3>
             ${comune ? `<span class="parcel-comune">${escapeHtml(comune)}</span>` : ''}
         </div>
         <div class="parcel-info-details">
@@ -1114,16 +1117,16 @@ function showParcelInfo(feature, layer) {
     // Add action buttons
     html += `
         <div class="parcel-actions">
-            <button onclick="zoomToParcel()" class="parcel-action-btn" title="Zoom to this parcel">
+            <button onclick="zoomToParcel()" class="parcel-action-btn" title="Zoom to this parcel" aria-label="Zoom to this parcel">
                 Zoom To
             </button>
-            <button id="copyParcelInfoBtn" onclick="copyParcelInfo()" class="parcel-action-btn" title="Copy info to clipboard">
+            <button id="copyParcelInfoBtn" onclick="copyParcelInfo()" class="parcel-action-btn" title="Copy info to clipboard" aria-label="Copy parcel information">
                 Copy Info
             </button>
-            <button id="copyParcelLinkBtn" onclick="copyParcelLink()" class="parcel-action-btn" title="Copy a link to this parcel">
+            <button id="copyParcelLinkBtn" onclick="copyParcelLink()" class="parcel-action-btn" title="Copy a link to this parcel" aria-label="Copy parcel link">
                 Copy Link
             </button>
-            <button id="parcelReportBtn" onclick="openParcelReport()" class="parcel-action-btn" title="Open a printable parcel dossier">
+            <button id="parcelReportBtn" onclick="openParcelReport()" class="parcel-action-btn" title="Open a printable parcel dossier" aria-label="Open parcel report">
                 Report
             </button>
         </div>
@@ -1336,6 +1339,7 @@ function updateSelectionButtons() {
     const selectAllBtn = document.getElementById('selectAllBtn');
     const deselectAllBtn = document.getElementById('deselectAllBtn');
     const findAdjacencyBtn = document.getElementById('findAdjacencyBtn');
+    const adjacencyRunBtn = document.getElementById('adjacencyRunBtn');
     const clearSelectionBtn = document.getElementById('clearSelectionBtn');
 
     const hasData = currentGeoJsonLayer && currentGeoJsonLayer.getLayers().length > 0;
@@ -1349,6 +1353,9 @@ function updateSelectionButtons() {
     }
     if (findAdjacencyBtn) {
         findAdjacencyBtn.disabled = !hasSelections;
+    }
+    if (adjacencyRunBtn) {
+        adjacencyRunBtn.disabled = !hasSelections;
     }
     if (clearSelectionBtn) {
         clearSelectionBtn.disabled = !hasSelections;
@@ -2913,6 +2920,7 @@ function initializeMap() {
             const button = L.DomUtil.create('a', 'leaflet-control-export', container);
             button.href = '#';
             button.title = 'Export GeoJSON';
+            button.setAttribute('aria-label', 'Export GeoJSON');
             button.innerHTML = '📤';
             button.style.fontSize = '18px';
             button.style.display = 'flex';
@@ -3611,6 +3619,16 @@ window.loadCadastralSelection = async function() {
     try {
         debugLog(`Loading ${filePaths.length} cadastral files directly from S3:`, filePaths);
 
+        // At street/building zoom load only the visible cadastral parcels.
+        // Palermo's municipality PLE contains 135k features; sending the
+        // whole GeoJSON makes the browser appear stuck before identification
+        // can be used.
+        let viewportBbox = null;
+        if (map && typeof map.getZoom === 'function' && map.getZoom() >= 17) {
+            const bounds = map.getBounds();
+            viewportBbox = [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()];
+        }
+
         // Clear existing map layers
         clearMap();
 
@@ -3646,6 +3664,7 @@ window.loadCadastralSelection = async function() {
         if (typeof ProgressiveLoader !== 'undefined') {
             await ProgressiveLoader.load(filePaths, {
                 clearExisting: true,
+                bbox: viewportBbox,
                 onProgress(fileIndex, total, filename) {
                     loadBtn.textContent = `Loading... (${completedFiles}/${filePaths.length})`;
                     if (filename) {
@@ -3668,7 +3687,7 @@ window.loadCadastralSelection = async function() {
             const response = await fetch('/api/v1/load-cadastral-files/', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-                body: JSON.stringify({ file_paths: filePaths, clear_existing: true })
+                body: JSON.stringify({ file_paths: filePaths, clear_existing: true, bbox: viewportBbox })
             });
             if (!response.ok) {
                 const detail = await response.json().catch(() => ({}));
@@ -4897,6 +4916,10 @@ async function updateProvincesSelect() {
     }
 
     provincesSelect.disabled = false;
+    // Loading is a transient state, never a selectable option in a populated
+    // cascade. Clear again here to protect against a stale placeholder left
+    // by a concurrent region-change request.
+    provincesSelect.querySelectorAll('option[value=""]').forEach(option => option.remove());
     provinceCodes.forEach(provinceCode => {
         const option = document.createElement('option');
         option.value = provinceCode;
@@ -4987,6 +5010,9 @@ async function updateMunicipalitiesSelect() {
     }
 
     municipalitiesSelect.disabled = false;
+    // Do not leave the asynchronous loading sentinel as the first item after
+    // the real municipality options have arrived.
+    municipalitiesSelect.querySelectorAll('option[value=""]').forEach(option => option.remove());
 
     // Add municipality options (sorted by name)
     Array.from(allMunicipalities.entries())
@@ -5047,7 +5073,7 @@ document.addEventListener('DOMContentLoaded', function() {
     debugLog('Map container found:', !!mapContainer);
 
     if (!mapElement) {
-        console.warn('Map element not found - using Folium map instead');
+        debugLog('Map element not found - using Folium map instead');
         // Continue to load cadastral data even without client-side map
     }
 
@@ -5323,7 +5349,7 @@ async function loadSqlJs() {
 
 // =============================================================================
 // UNIFIED AUTO-ZOOM FUNCTIONALITY
-// Works with both regular Leaflet maps (map.html) and Folium maps (index.html)
+// Works with both regular Leaflet maps (map_legacy.html) and Folium maps (index.html)
 // =============================================================================
 
 /**
@@ -5334,7 +5360,7 @@ function autoZoomToAllPolygons() {
     debugLog('🔍 autoZoomToAllPolygons called from map.js (unified implementation)');
 
     try {
-        // First try: Regular Leaflet map (map.html)
+        // First try: Regular Leaflet map (map_legacy.html)
         if (typeof map !== 'undefined' && map && map.getBounds) {
             debugLog('📍 Found regular Leaflet map, attempting auto-zoom');
             return autoZoomLeafletMap();
@@ -5368,7 +5394,7 @@ function autoZoomToAllPolygons() {
 }
 
 /**
- * Auto-zoom for regular Leaflet maps (map.html)
+ * Auto-zoom for regular Leaflet maps (map_legacy.html)
  */
 function autoZoomLeafletMap() {
     try {

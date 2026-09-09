@@ -409,3 +409,24 @@ body {
         grid-template-columns: 1fr;
     }
 }
+
+/* This page contains a large, progressively expanded hierarchy.  The shared
+   application shell intentionally locks the map viewport, but that rule must
+   not make thousands of cadastral rows unreachable on this document. */
+html:has(body.cadastral-page) {
+    height: auto;
+    min-height: 100%;
+    overflow-y: auto !important;
+}
+
+body.cadastral-page {
+    min-height: 100vh;
+    height: auto;
+    overflow-y: auto !important;
+    overflow-x: hidden;
+}
+
+body.cadastral-page #cadastralDataContainer {
+    max-height: none;
+    overflow: visible;
+}

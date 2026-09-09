@@ -75,6 +75,26 @@ from land_registry.routers.auth import (
 logger = logging.getLogger(__name__)
 
 
+def _json_safe(value: Any) -> Any:
+    """Convert scalar values from GeoPandas/NumPy into JSON primitives.
+
+    Spatial lookups commonly return ``numpy`` scalar values from a GeoDataFrame.
+    Starlette's encoder cannot serialize those values, which previously turned a
+    successful cadastral identify into a 500 response.
+    """
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(item) for item in value]
+    item = getattr(value, "item", None)
+    if callable(item):
+        try:
+            return _json_safe(item())
+        except (TypeError, ValueError):
+            pass
+    return value
+
+
 def _geojson_lineage(source: str, dataset: str, method: Optional[str] = None) -> Dict[str, Any]:
     """Return conservative lineage metadata for an EPSG:4326 GeoJSON response.
 
@@ -117,6 +137,11 @@ class PolygonSelection(BaseModel):
 class CadastralFileRequest(BaseModel):
     file_paths: List[str] = Field(..., min_length=1, max_length=500, description="List of file paths to load")
     clear_existing: bool = Field(default=True, description="Clear existing layers before loading")
+    # At high zoom the municipality PLE file can contain hundreds of
+    # thousands of parcels. The map sends its current viewport so the server
+    # can keep the response interactive while retaining full-file loading for
+    # batch/low-zoom requests.
+    bbox: Optional[List[float]] = Field(default=None, min_length=4, max_length=4)
 
     @field_validator('file_paths')
     @classmethod
@@ -128,6 +153,18 @@ class CadastralFileRequest(BaseModel):
             # Validate extension
             if not any(path.lower().endswith(ext) for ext in ['.gpkg', '.fgb', '.geojson', '.shp', '.kml', '.qpkg']):
                 raise ValueError(f'Unsupported file format: {path}')
+        return v
+
+    @field_validator('bbox')
+    @classmethod
+    def validate_bbox(cls, v):
+        if v is None:
+            return v
+        west, south, east, north = v
+        if west >= east or south >= north:
+            raise ValueError('bbox must be [west, south, east, north] with increasing bounds')
+        if not (-180 <= west <= 180 and -180 <= east <= 180 and -90 <= south <= 90 and -90 <= north <= 90):
+            raise ValueError('bbox coordinates are outside WGS84 bounds')
         return v
 
 
@@ -973,7 +1010,7 @@ async def load_spatialite_data(request: SpatialiteQueryRequest):
 
 @api_router.get("/load-cadastral-files/{file_path:path}")
 async def load_cadastral_file(file_path: str):
-    """Load a single cadastral file from S3 and return as GeoJSON"""
+    """Load a single cadastral file from local storage or S3 as GeoJSON."""
     if not file_path:
         raise HTTPException(status_code=400, detail="No file path specified")
 
@@ -983,28 +1020,25 @@ async def load_cadastral_file(file_path: str):
         # Ensure proper S3 key format
         s3_key = file_path if file_path.startswith('ITALIA/') else f"ITALIA/{file_path}"
 
-        # Try unsigned S3 client directly (since we know it works)
-        from io import BytesIO
-        import geopandas as gpd
+        if cadastral_settings.use_local_files:
+            local_path = _resolve_local_cadastral_path(file_path, get_cadastral_data_root())
+            if not local_path.exists():
+                raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
+            source_path = str(local_path)
+            logger.info(f"Loading from local storage: {source_path}")
+        else:
+            # Public S3 access is retained for production deployments.
+            from io import BytesIO
 
-        # Create unsigned S3 client for public bucket access
-        s3_client = boto3.client("s3", config=Config(signature_version=UNSIGNED))
-        bucket = s3_settings.s3_bucket_name
-
-        logger.info(f"Loading from S3: {bucket}/{s3_key}")
-
-        # Get the object from S3
-        obj = s3_client.get_object(Bucket=bucket, Key=s3_key)
-        body = obj["Body"]
-        logger.info(f"Successfully retrieved S3 object, content length: {obj.get('ContentLength', 'unknown')}")
-
-        # Save to an in-memory file-like object
-        file_like = BytesIO(body.read())
-        logger.debug(f"Created BytesIO object, size: {file_like.tell()} bytes")
-        file_like.seek(0)  # Reset to beginning
+            s3_client = boto3.client("s3", config=Config(signature_version=UNSIGNED))
+            bucket = s3_settings.s3_bucket_name
+            logger.info(f"Loading from S3: {bucket}/{s3_key}")
+            obj = s3_client.get_object(Bucket=bucket, Key=s3_key)
+            source_path = BytesIO(obj["Body"].read())
+            source_path.seek(0)
 
         logger.debug("Attempting to read with geopandas...")
-        gdf = gpd.read_file(file_like, layer=0)
+        gdf = gpd.read_file(source_path, layer=0)
         logger.info(f"Successfully read GeoDataFrame with {len(gdf)} features, columns: {list(gdf.columns)}")
 
         # Add feature IDs if not present
@@ -1020,7 +1054,7 @@ async def load_cadastral_file(file_path: str):
 
         return {
             "success": True,
-            "message": "Successfully loaded cadastral file from S3",
+            "message": "Successfully loaded cadastral file",
             "name": os.path.basename(file_path),
             "filename": os.path.basename(file_path),
             "file": s3_key,
@@ -1028,6 +1062,8 @@ async def load_cadastral_file(file_path: str):
             "geojson": geojson_data
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error loading cadastral file: {type(e).__name__}: {e}")
         import traceback
@@ -1111,6 +1147,25 @@ async def save_drawn_polygons_anonymous(request: DrawnPolygonsRequest):
         raise HTTPException(status_code=500, detail=f"Error saving drawn polygons: {str(e)}")
 
 
+def _resolve_local_cadastral_path(file_path: str, local_root: str) -> Path:
+    """Resolve a client cadastral path against the configured local root.
+
+    API/S3 paths are rooted at ``ITALIA/`` while the development setting
+    points directly at ``.../catasto/ITALIA``.  Joining those values verbatim
+    produced ``.../ITALIA/ITALIA/...`` and made every local load fail.  Keep
+    accepting both path forms because older clients omit the S3 prefix.
+    """
+    root = Path(local_root).resolve()
+    relative = Path(file_path)
+    if relative.parts and relative.parts[0].casefold() == "italia" and root.name.casefold() == "italia":
+        relative = Path(*relative.parts[1:])
+
+    resolved = (root / relative).resolve()
+    if resolved != root and root not in resolved.parents:
+        raise ValueError(f"Invalid local cadastral path: {file_path}")
+    return resolved
+
+
 def _load_single_file(file_path: str, use_local: bool, local_root: str, s3_client, bucket: str) -> dict:
     """
     Load a single cadastral file from local filesystem or S3.
@@ -1124,12 +1179,12 @@ def _load_single_file(file_path: str, use_local: bool, local_root: str, s3_clien
 
         if use_local and local_root:
             # Load from local filesystem
-            local_file_path = os.path.join(local_root, file_path)
+            local_file_path = _resolve_local_cadastral_path(file_path, local_root)
 
-            if not os.path.exists(local_file_path):
+            if not local_file_path.exists():
                 return {"error": f"File not found: {local_file_path}", "file_path": file_path}
 
-            source_path = local_file_path
+            source_path = str(local_file_path)
         else:
             # Load from S3
             s3_key = file_path if file_path.startswith('ITALIA/') else f"ITALIA/{file_path}"
@@ -1304,6 +1359,27 @@ def _load_single_file(file_path: str, use_local: bool, local_root: str, s3_clien
         return {"error": str(e), "file_path": file_path}
 
 
+def _clip_cadastral_result(result: dict, bbox: Optional[List[float]]) -> dict:
+    """Clip one loaded layer to a WGS84 viewport before GeoJSON serialization."""
+    if not bbox or "gdf" not in result or result.get("error"):
+        return result
+    try:
+        from shapely.geometry import box
+
+        gdf = result["gdf"]
+        if gdf.crs and str(gdf.crs).upper() not in {"EPSG:4326", "OGC:CRS84"}:
+            gdf = gdf.to_crs("EPSG:4326")
+        viewport = box(*bbox)
+        clipped = gdf[gdf.geometry.intersects(viewport)].copy()
+        result = dict(result)
+        result["gdf"] = clipped
+        result["feature_count"] = len(clipped)
+        return result
+    except Exception as exc:
+        logger.warning("Could not clip cadastral layer to viewport: %s", exc)
+        return result
+
+
 @api_router.post("/load-cadastral-files/")
 async def load_multiple_cadastral_files(request: CadastralFileRequest):
     """
@@ -1363,7 +1439,7 @@ async def load_multiple_cadastral_files(request: CadastralFileRequest):
 
             # Collect results as they complete
             for future in as_completed(future_to_path):
-                result = future.result()
+                result = _clip_cadastral_result(future.result(), request.bbox)
                 results.append(result)
 
         # Process results
@@ -3961,7 +4037,7 @@ async def identify_cadastral_feature(
         result = await asyncio.to_thread(service.identify_feature, lat, lng, layer)
         if result is None:
             return {"found": False}
-        return {"found": True, **result}
+        return {"found": True, **_json_safe(result)}
     except Exception as e:
         logger.error(f"Cadastral identify error at ({lat}, {lng}): {e}", exc_info=True)
         return {"found": False}
@@ -4378,6 +4454,7 @@ async def load_cadastral_files_stream(request: CadastralFileRequest):
                         _load_single_file,
                         file_path, use_local, local_root, s3_client, bucket
                     )
+                    result = _clip_cadastral_result(result, request.bbox)
                     return index, file_path, result, None
                 except Exception as exc:
                     return index, file_path, None, exc

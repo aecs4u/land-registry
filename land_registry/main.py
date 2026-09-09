@@ -114,12 +114,16 @@ _panel_already_running = False  # Track if we're reusing an existing server
 def _is_port_in_use(host: str, port: int) -> bool:
     """Check if a port is already in use."""
     import socket
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        try:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind((host, port))
             return False
-        except OSError:
-            return True
+    except OSError:
+        # Restricted runtimes may deny socket creation itself, before bind()
+        # is reached. Treat the probe as inconclusive and let the actual
+        # Panel server decide whether it can bind, rather than aborting the
+        # entire FastAPI startup with an empty-reply connection failure.
+        return False
 
 
 def _run_panel_server_blocking():
@@ -399,7 +403,12 @@ app = FastAPI(
     title=app_settings.app_name,
     version=app_settings.app_version,
     debug=app_settings.debug,
-    lifespan=lifespan
+    lifespan=lifespan,
+    swagger_ui_parameters={
+        "docExpansion": "none",
+        "defaultModelsExpandDepth": -1,
+        "defaultModelExpandDepth": -1,
+    },
 )
 
 # aecs4u_auth's SecurityHeadersMiddleware (added below by setup_auth) stamps
@@ -473,7 +482,11 @@ if _AUTH_AVAILABLE:
         mount_static=True,
         setup_exception_handlers=True,
         security_headers_csp_extend={
-            "connect-src": [f"http://{_panel_origin}", f"ws://{_panel_origin}"],
+            "connect-src": [
+                f"http://{_panel_origin}",
+                f"ws://{_panel_origin}",
+                "https://nominatim.openstreetmap.org",
+            ],
             "script-src": [f"http://{_panel_origin}"],
         },
     )

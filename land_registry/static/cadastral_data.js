@@ -124,11 +124,10 @@ function applyFilters() {
                     visibleMunicipalities++;
 
                     // Count files in this municipality
-                    const filesText = municipality.querySelector('.files strong').textContent;
-                    const filesMatch = filesText.match(/Files \\((\\d+)\\)/);
-                    if (filesMatch) {
-                        visibleFiles += parseInt(filesMatch[1]);
-                    }
+                    // Read the machine-readable count instead of parsing the
+                    // translated label (the old regex also failed outside
+                    // English and counted zero for valid municipalities).
+                    visibleFiles += parseInt(municipality.dataset.fileCount || '0', 10);
                 } else {
                     municipality.style.display = 'none';
                 }

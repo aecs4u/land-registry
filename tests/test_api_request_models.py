@@ -100,6 +100,20 @@ class TestCadastralFileRequest:
         with pytest.raises(ValidationError):
             CadastralFileRequest(file_paths=[])
 
+    def test_valid_viewport_bbox(self):
+        req = CadastralFileRequest(
+            file_paths=["SICILIA/PA/G273_PALERMO/G273_PALERMO_ple.fgb"],
+            bbox=[13.31, 38.19, 13.32, 38.20],
+        )
+        assert req.bbox == [13.31, 38.19, 13.32, 38.20]
+
+    def test_invalid_viewport_bbox_raises(self):
+        with pytest.raises(ValidationError):
+            CadastralFileRequest(
+                file_paths=["SICILIA/PA/G273_PALERMO/G273_PALERMO_ple.fgb"],
+                bbox=[13.32, 38.20, 13.31, 38.19],
+            )
+
 
 # ---------------------------------------------------------------------------
 # DrawnPolygonsRequest

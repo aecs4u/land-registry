@@ -1,8 +1,8 @@
-"""Pydantic transport schemas for the ``land-registry`` API.
+"""Transport schemas for the ``land-registry`` API.
 
-Persistent/domain SQLModel classes are owned by ``aecs4u-domain``. The classes in
-this module are request/response DTOs used to validate the HTTP contract and
-must not be used as a second SQLModel persistence schema.
+Persistent/domain SQLModel table classes are owned by ``aecs4u-domain``. The
+classes in this module are request/response DTOs used to validate the HTTP
+contract and must not be used as a second SQLModel persistence schema.
 """
 
 from datetime import date, datetime, timezone
@@ -10,6 +10,7 @@ from typing import Generic, List, Any, Optional, Dict, Literal, TypeVar, Union
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from sqlmodel import SQLModel
 
 
 class HealthResponse(BaseModel):
@@ -193,7 +194,7 @@ class CadastralLookupResponse(BaseModel):
     metadata: Optional[LineageMetadata] = None
 
 
-class ParcelIdentity(BaseModel):
+class ParcelIdentity(SQLModel):
     """Stable identity independent of a dataset snapshot or row number."""
 
     parcel_identity_id: UUID
@@ -203,7 +204,7 @@ class ParcelIdentity(BaseModel):
     source_gml_id: Optional[str] = None
 
 
-class ParcelVersion(BaseModel):
+class ParcelVersion(SQLModel):
     """A versioned observation of a parcel identity in one published dataset."""
 
     parcel_version_id: UUID

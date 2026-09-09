@@ -42,13 +42,17 @@ const ProgressiveLoader = {
         } = options;
 
         try {
+            const requestBody = {
+                file_paths: filePaths,
+                clear_existing: clearExisting,
+            };
+            if (Array.isArray(options.bbox) && options.bbox.length === 4) {
+                requestBody.bbox = options.bbox;
+            }
             const response = await fetch('/api/v1/load-cadastral-files-stream/', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    file_paths: filePaths,
-                    clear_existing: clearExisting,
-                }),
+                body: JSON.stringify(requestBody),
                 signal: this.abortController.signal,
             });
 

@@ -38,6 +38,7 @@ dependencies = [
     # Neon PostgreSQL database
     "psycopg2-binary>=2.9.9",
     "asyncpg>=0.29.0",
+    "sqlmodel>=0.0.38",
     # DuckDB for in-process SQL on DataFrames
     "duckdb>=1.0.0",
     # Panel for interactive data apps

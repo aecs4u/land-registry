@@ -9,3 +9,14 @@
   {{ super() }}
   <link rel="stylesheet" href="/static/css/auth.css" />
 {% endblock %}
+
+{% block extra_js %}
+<div id="authRegisterConfig"
+     data-clerk-enabled="{{ 'true' if clerk and clerk.enabled else 'false' }}"
+     data-after-sign-in-url="{{ (clerk.after_sign_in_url if clerk else None) | default('/map') }}"
+     data-after-sign-up-url="{{ (clerk.after_sign_up_url if clerk else None) | default('/map') }}"
+     data-sign-in-url="{{ (clerk.sign_in_url if clerk else None) | default('/auth/login') }}"
+     data-register-post-url="{{ register_post_url | default('/auth/register') }}"
+     hidden></div>
+<script src="/static/auth-register-form.js"></script>
+{% endblock %}
