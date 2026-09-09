@@ -15,7 +15,6 @@ from land_registry.models import (
     GeoJSONFeatureCollection,
     HealthResponse,
     LineageMetadata,
-    ParcelVersion,
 )
 from land_registry.routers.enrichment import get_enrichment_status
 from land_registry.routers.api import _attach_parcel_identity
@@ -200,13 +199,9 @@ def test_geojson_features_expose_derived_identity_without_replacing_feature_id()
     assert enriched["properties"]["parcel_version_id"]
 
 
-def test_parcel_version_rejects_inverted_validity_range():
-    with pytest.raises(ValidationError):
-        ParcelVersion(
-            parcel_version_id=UUID("b6a6e302-2f93-4a89-9cb0-75c49c9d0dd1"),
-            parcel_identity_id=UUID("a6a6e302-2f93-4a89-9cb0-75c49c9d0dd1"),
-            dataset_version="2025-01",
-            valid_from=date(2025, 2, 1),
-            valid_to=date(2025, 1, 1),
-            lineage=LineageMetadata(source="test"),
-        )
+def test_parcel_version_defines_validity_range_database_constraint():
+    from aecs4u_domain.real_estate.models import ParcelVersion
+
+    constraint_names = {constraint.name for constraint in ParcelVersion.__table__.constraints}
+
+    assert "ck_parcel_versions_valid_range" in constraint_names
