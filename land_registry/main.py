@@ -22,6 +22,7 @@ from land_registry.dashboard import TEMPLATE
 from land_registry.file_availability_db import file_availability_db
 from land_registry.i18n import LocaleMiddleware, detect_locale, make_gettext, contextvar_gettext
 from land_registry.map import get_current_gdf, map_generator
+from land_registry.map_observability import MapMetricsMiddleware, map_metrics
 from land_registry.dependencies import _map_state
 from land_registry.routers.api import api_router
 from land_registry.routers.auth_pages import router as auth_pages_router
@@ -444,6 +445,7 @@ class _CadastralTileCorpMiddleware:
 
 app.add_middleware(_CadastralTileCorpMiddleware)
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
+app.add_middleware(MapMetricsMiddleware, metrics=map_metrics)
 
 # Setup authentication using aecs4u-auth (if available)
 if _AUTH_AVAILABLE:
@@ -540,7 +542,14 @@ if _AUTH_AVAILABLE:
 # Include the API router with /api/v1 prefix
 app.include_router(api_router, prefix="/api/v1")
 
-# Parcel enrichment backed by aecs4u-stats (ISTAT reference data, OSM POIs)
+# Parcel enrichment backed by aecs4u-stats (ISTAT reference data, OSM POIs).
+# land_registry/routers/enrichment.py directly re-registers six handler
+# functions imported from aecs4u_stats.web.enrichment (bulletin, fires, risks,
+# parcel bbox/comune listings, fogli) instead of maintaining its own duplicate
+# implementations — see docs/AECS4U_STATS_CONSOLIDATION_PLAN.md. Mounting the
+# whole upstream router here instead was tried and reverted: it registers
+# duplicate OpenAPI operation IDs and a colliding `EnrichmentDatasetStatus`
+# schema name for every path land-registry already overrides.
 app.include_router(enrichment_router, prefix="/api/v1/enrichment", tags=["enrichment"])
 
 root_folder = os.path.dirname(__file__)
@@ -770,12 +779,46 @@ async def _build_main_map_shell_context(request: Request) -> dict:
     }
 
 
-@app.get("/map", response_class=HTMLResponse)
-async def serve_map_shell(request: Request):
-    """Serve the canonical map shell with full workflow capabilities."""
+async def _serve_legacy_map_shell(request: Request):
+    """Render the Folium/upload compatibility map."""
     context = await _build_main_map_shell_context(request)
     context.pop("request", None)  # starlette 1.x injects request automatically
     return templates.TemplateResponse(request, "index.html", context)
+
+
+@app.get("/map", response_class=HTMLResponse)
+async def serve_map_shell(request: Request):
+    """Serve the direct map as the primary experience.
+
+    ``?legacy=1`` remains a compatibility escape hatch for upload and
+    analysis workflows while the Folium page is being retired.
+    """
+    if request.query_params.get("legacy") == "1":
+        return await _serve_legacy_map_shell(request)
+    return await serve_direct_map(request)
+
+
+@app.get("/map-legacy", response_class=HTMLResponse)
+async def serve_legacy_map_shell(request: Request):
+    """Serve the Folium/upload compatibility map explicitly."""
+    return await _serve_legacy_map_shell(request)
+
+
+@app.get("/map-v2", response_class=HTMLResponse)
+async def serve_direct_map(request: Request):
+    """Serve the direct, vector-tile map experience.
+
+    The Folium/upload compatibility page is available at ``/map-legacy`` or
+    ``/map?legacy=1`` while the migration target described by MAP_SRS.md is
+    rolled out.
+    """
+    locale = detect_locale(request)
+    return templates.TemplateResponse(request, "map_v2.html", {
+        "request": request,
+        "_": make_gettext(locale),
+        "locale": locale,
+        "clerk_publishable_key": get_auth_config().clerk_publishable_key,
+    })
 
 
 @app.get("/map_table")

@@ -13,10 +13,57 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from aecs4u_stats.web import enrichment as _aecs4u_stats_enrichment
 from land_registry import stats_service
 from land_registry.models import EnrichmentDatasetStatus
 
 enrichment_router = APIRouter()
+
+# Reuse aecs4u-stats's own implementations directly for the handful of
+# endpoints verified byte-for-byte equivalent to what this router used to
+# duplicate (bulletin, fires, risks, parcel bbox/comune listings, fogli — see
+# docs/AECS4U_STATS_CONSOLIDATION_PLAN.md). Registering the imported
+# functions themselves — rather than `app.include_router`-mounting the whole
+# upstream router — avoids duplicate OpenAPI operation IDs and a colliding
+# `EnrichmentDatasetStatus` schema name for every path land-registry already
+# overrides with its own richer handler below.
+enrichment_router.add_api_route(
+    "/bulletin", _aecs4u_stats_enrichment.get_bulletin, methods=["GET"]
+)
+enrichment_router.add_api_route("/fires", _aecs4u_stats_enrichment.get_fires, methods=["GET"])
+enrichment_router.add_api_route(
+    "/risks/{istat_code}", _aecs4u_stats_enrichment.get_risks, methods=["GET"]
+)
+enrichment_router.add_api_route(
+    "/parcels/in-bbox/", _aecs4u_stats_enrichment.get_parcels_in_bbox, methods=["GET"]
+)
+enrichment_router.add_api_route(
+    "/parcels/{comune_code}", _aecs4u_stats_enrichment.get_parcels, methods=["GET"]
+)
+enrichment_router.add_api_route(
+    "/fogli/{comune_code}", _aecs4u_stats_enrichment.get_fogli, methods=["GET"]
+)
+enrichment_router.add_api_route(
+    "/crime/{cadastral_code}", _aecs4u_stats_enrichment.get_crime, methods=["GET"]
+)
+enrichment_router.add_api_route(
+    "/quality-of-life/{cadastral_code}",
+    _aecs4u_stats_enrichment.get_quality_of_life,
+    methods=["GET"],
+)
+enrichment_router.add_api_route(
+    "/quality-of-life/{cadastral_code}/{data_type}",
+    _aecs4u_stats_enrichment.get_quality_of_life_series,
+    methods=["GET"],
+)
+enrichment_router.add_api_route(
+    "/demographics/{cadastral_code}", _aecs4u_stats_enrichment.get_demographics, methods=["GET"]
+)
+enrichment_router.add_api_route(
+    "/demographics/{cadastral_code}/{data_type}",
+    _aecs4u_stats_enrichment.get_demographics_series,
+    methods=["GET"],
+)
 
 
 class OmiEstimateRequest(BaseModel):
@@ -83,6 +130,30 @@ async def get_omi_quotes(
     return await stats_service.aget_omi_quotes(comune, zona=zona)
 
 
+### None of /omi/history, /omi/at-point, /omi/estimate delegate, despite
+### looking like pure duplicates of aecs4u_stats.web.enrichment's versions:
+###
+### - get_omi_history resolves the comune to an exact, pre-computed
+###   region-prefixed cod_comune_istat integer via _omi_istat_keys() and
+###   filters on that (falling back to aecs4u_stats.omi.queries.quote_history
+###   only when the key can't be resolved) — a deliberate optimization
+###   (see _fast_omi_quotes's docstring) to hit a covering index on the
+###   multi-gigabyte quotazioni_valori table; upstream's quote_history()
+###   applies UPPER()/CAST() to the filter columns, which prevents that same
+###   index from being used. Delegating would trade a real perf
+###   characteristic for no behavioral gain.
+### - get_omi_zone_at_point and estimate_omi_value: aecs4u_stats's zone-code
+###   robustness and estimate's disclaimer field were both ported upstream
+###   (see docs/AECS4U_STATS_CONSOLIDATION_PLAN.md), but
+###   tests/test_omi_spatial_join_contract.py and
+###   tests/test_omi_server_estimate_contract.py directly monkeypatch
+###   `enrichment_module.stats_service.get_omi_zone_at_point` /
+###   `.estimate_omi_value` (this module's own land_registry.stats_service
+###   reference) and construct `enrichment_module.OmiEstimateRequest`
+###   directly — pinned contracts a router-level swap would silently break
+###   without a coordinated test rewrite, out of scope for this pass.
+
+
 @enrichment_router.get("/omi/history")
 async def get_omi_history(
     comune: str = Query(..., description="Catasto code (e.g. C773) or ISTAT code"),
@@ -145,100 +216,10 @@ async def get_income(cadastral_code: str, year: Optional[int] = Query(None)):
     return result
 
 
-@enrichment_router.get("/risks/{istat_code}")
-async def get_risks(istat_code: str):
-    """
-    Environmental risk profile: DPC seismic zone (local store) plus ISPRA
-    IdroGEO flood/landslide indicators (live API).
-    """
-    result = stats_service.get_environmental_risks(istat_code)
-    if result is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No hazard data found for ISTAT code '{istat_code}' (seismic store missing and IdroGEO unreachable/unknown code)",
-        )
-    return result
-
-
-@enrichment_router.get("/fires")
-async def get_fires(
-    lat: Optional[float] = Query(None, ge=-90, le=90),
-    lng: Optional[float] = Query(None, ge=-180, le=180),
-    radius_km: float = Query(50.0, gt=0, le=500),
-):
-    """
-    Active-fire detections (NASA FIRMS) near a point, or nationwide when no
-    point is given. Requires FIRMS_MAP_KEY on the server.
-    """
-    return stats_service.get_active_fires(radius_km=radius_km, lat=lat, lng=lng)
-
-
-@enrichment_router.get("/bulletin")
-async def get_bulletin():
-    """Latest Protezione Civile hydro-criticality (allerta meteo) bulletin."""
-    result = stats_service.get_criticality_bulletin()
-    if result is None:
-        raise HTTPException(status_code=503, detail="Protezione Civile bulletin unreachable")
-    return result
-
-
 _CADASTRAL_BUILD_HINT = (
     "Cadastral parcel store not built. Run: "
     "python -m aecs4u_stats.cadastral.scripts.import_cadastral --regione <REGIONE>"
 )
-
-
-@enrichment_router.get("/parcels/in-bbox/")
-async def get_parcels_in_bbox(
-    min_lng: float = Query(..., ge=-180, le=180),
-    min_lat: float = Query(..., ge=-90, le=90),
-    max_lng: float = Query(..., ge=-180, le=180),
-    max_lat: float = Query(..., ge=-90, le=90),
-    limit: int = Query(5000, gt=0, le=20000),
-    include_geometry: bool = Query(True),
-):
-    """Parcels intersecting a WGS84 bounding box, across all built region stores."""
-    if not stats_service.cadastral_store_available():
-        raise HTTPException(status_code=503, detail=_CADASTRAL_BUILD_HINT)
-    return stats_service.get_parcels_in_bbox(
-        min_lng,
-        min_lat,
-        max_lng,
-        max_lat,
-        limit=limit,
-        include_geometry=include_geometry,
-    )
-
-
-@enrichment_router.get("/parcels/{comune_code}")
-async def get_parcels(
-    comune_code: str,
-    foglio: Optional[str] = Query(None, description="Sheet label, e.g. 75 or 75A"),
-    particella: Optional[str] = Query(None, description="Parcel label, e.g. 63 or STRADA304"),
-    limit: int = Query(1000, gt=0, le=10000),
-    offset: int = Query(0, ge=0),
-    include_geometry: bool = Query(True),
-):
-    """Cadastral parcels of a comune as a GeoJSON FeatureCollection
-    (per-region DuckDB stores built from the AdE INSPIRE extracts)."""
-    if not stats_service.cadastral_store_available():
-        raise HTTPException(status_code=503, detail=_CADASTRAL_BUILD_HINT)
-    return stats_service.get_parcels(
-        comune_code,
-        foglio=foglio,
-        particella=particella,
-        limit=limit,
-        offset=offset,
-        include_geometry=include_geometry,
-    )
-
-
-@enrichment_router.get("/fogli/{comune_code}")
-async def get_fogli(comune_code: str):
-    """Sheet (foglio) list for a comune with per-sheet parcel counts."""
-    if not stats_service.cadastral_store_available():
-        raise HTTPException(status_code=503, detail=_CADASTRAL_BUILD_HINT)
-    return stats_service.get_fogli(comune_code)
 
 
 @enrichment_router.get("/parcel/by-reference/{national_reference}")
@@ -393,75 +374,14 @@ async def get_census_sections(cadastral_code: str, limit: int = Query(5000, gt=0
     return result
 
 
-@enrichment_router.get("/crime/{cadastral_code}")
-async def get_crime(cadastral_code: str, year: Optional[int] = Query(None)):
-    """Reported-crime (delitti denunciati) profile for a comune's province
-    (ISTAT publishes this at province, not comune, granularity)."""
-    if not stats_service.safety_db_available():
-        raise HTTPException(
-            status_code=503,
-            detail="ISTAT safety/crime store not built. Download with `aecs4u-stats istat datasets download`.",
-        )
-    result = stats_service.get_crime_profile(cadastral_code, year=year)
-    if result is None:
-        raise HTTPException(status_code=404, detail=f"No crime data found for '{cadastral_code}'")
-    return result
-
-
-@enrichment_router.get("/quality-of-life/{cadastral_code}")
-async def get_quality_of_life(cadastral_code: str):
-    """BES territorial quality-of-life indicator codes available for a
-    comune's province."""
-    if not stats_service.bes_db_available():
-        raise HTTPException(
-            status_code=503,
-            detail="ISTAT BES store not built. Download with `aecs4u-stats istat datasets download`.",
-        )
-    result = stats_service.get_quality_of_life_indicators(cadastral_code)
-    if result is None:
-        raise HTTPException(status_code=404, detail=f"No BES data found for '{cadastral_code}'")
-    return result
-
-
-@enrichment_router.get("/quality-of-life/{cadastral_code}/{data_type}")
-async def get_quality_of_life_series(cadastral_code: str, data_type: str, year: Optional[int] = Query(None)):
-    """Time series for one BES indicator (see ``/quality-of-life/{cadastral_code}``
-    for available codes)."""
-    if not stats_service.bes_db_available():
-        raise HTTPException(
-            status_code=503,
-            detail="ISTAT BES store not built. Download with `aecs4u-stats istat datasets download`.",
-        )
-    result = stats_service.get_quality_of_life_indicator(cadastral_code, data_type, year=year)
-    if result is None:
-        raise HTTPException(status_code=404, detail=f"No BES data for '{data_type}' at '{cadastral_code}'")
-    return result
-
-
-@enrichment_router.get("/demographics/{cadastral_code}")
-async def get_demographics(cadastral_code: str):
-    """ISTAT demographic indicator codes available for a comune's province."""
-    if not stats_service.demographic_db_available():
-        raise HTTPException(
-            status_code=503,
-            detail="ISTAT demographic-indicators store not built. Download with `aecs4u-stats istat datasets download`.",
-        )
-    result = stats_service.get_demographic_indicators(cadastral_code)
-    if result is None:
-        raise HTTPException(status_code=404, detail=f"No demographic data found for '{cadastral_code}'")
-    return result
-
-
-@enrichment_router.get("/demographics/{cadastral_code}/{data_type}")
-async def get_demographics_series(cadastral_code: str, data_type: str, year: Optional[int] = Query(None)):
-    """Time series for one demographic indicator (see
-    ``/demographics/{cadastral_code}`` for available codes)."""
-    if not stats_service.demographic_db_available():
-        raise HTTPException(
-            status_code=503,
-            detail="ISTAT demographic-indicators store not built. Download with `aecs4u-stats istat datasets download`.",
-        )
-    result = stats_service.get_demographic_indicator(cadastral_code, data_type, year=year)
-    if result is None:
-        raise HTTPException(status_code=404, detail=f"No demographic data for '{data_type}' at '{cadastral_code}'")
-    return result
+### /crime, /quality-of-life (x2), and /demographics (x2) delegate to
+### aecs4u_stats.web.enrichment's matching functions (see the add_api_route
+### block above) — verified equivalent: both this module's now-removed
+### handlers and aecs4u_stats's own call the identical
+### aecs4u_stats.istat.queries.ISTATQueryEngine methods
+### (get_safety_overview_kpis/list_crime_types, list_bes_indicators/
+### get_bes_indicator, list_demographic_indicators/get_demographic_indicator),
+### which already exist upstream today — the try/except AttributeError
+### fallback to _local_* helpers this module used to have was dead code, never
+### actually exercised. No test in this repo references these routes or their
+### local stats_service functions directly.
