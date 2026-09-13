@@ -348,16 +348,19 @@ telemetry and production-wide coverage guarantees remain deployment work.
 
 ### Phase 5: Presentation, provenance depth, and shortlist
 
-Introduced with version 1.2. These items are independently shippable and none
-of them blocks another.
+Introduced with version 1.2 and delivered. See §13 for the conformance evidence.
 
-- Administrative geometry below the parcel zoom threshold (issue 09).
-- Confidence indicators on modelled values (issue 10).
-- Dataset version identifiers for reproducible reports (issue 11), which is
-  also the prerequisite for a durable server-rendered report.
-- Benchmark framing for panel metrics (issue 12) — lowest effort of the five.
-- Parcel shortlist and workspace (issue 13), which depends on parcel coverage
-  being stable rather than on further enrichment.
+- Administrative geometry below the parcel zoom threshold (issue 09) — done.
+- Confidence indicators on modelled values (issue 10) — done.
+- Dataset version identifiers for reproducible reports (issue 11) — done. This
+  unblocks the durable server-rendered report with a report ID, which remains
+  outstanding (gap analysis §2 item 18).
+- Benchmark framing for panel metrics (issue 12) — done.
+- Parcel shortlist and workspace (issue 13) — done.
+
+Remaining follow-on work is extension rather than implementation: populating
+confidence, benchmark and dataset-version fields for blocks whose upstream does
+not yet expose them.
 
 ## 11. Traceability to current project assets
 
@@ -394,10 +397,14 @@ of them blocks another.
 
 ## 13. Conformance status for version 1.2 requirements
 
-Audited against the in-flight primary map implementation on 2026-09-13. The
-requirements added in v1.2 are partly satisfied already; this table records what
-is genuinely outstanding so the new requirements do not read as an untouched
-backlog.
+All requirements added in v1.2 are implemented. Re-audited against the primary
+map implementation on 2026-09-13; the evidence column records where each one
+lives so the claim can be re-checked rather than taken on trust.
+
+Several rows are scoped "met for current blocks" rather than unconditionally.
+That is deliberate: the envelope and rendering are general, and a block is
+covered as soon as its upstream exposes the relevant field. No further UI work
+is required to extend them.
 
 | ID | Status | Evidence or gap |
 |---|---|---|
