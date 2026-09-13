@@ -178,6 +178,48 @@ def test_saved_parcel_collection_contract_uses_configured_statuses_and_summary(m
     }
 
 
+@pytest.mark.asyncio
+async def test_saved_parcel_active_hazard_filter_attaches_only_matching_rows(monkeypatch):
+    rows = [
+        {
+            "id": 1,
+            "source": "catasto",
+            "source_key": "CATASTO|REF=RM-HAZARD",
+            "national_reference": "RM-HAZARD",
+            "status": "researching",
+            "geometry": None,
+        },
+        {
+            "id": 2,
+            "source": "catasto",
+            "source_key": "CATASTO|REF=RM-CLEAR",
+            "national_reference": "RM-CLEAR",
+            "status": "new",
+            "geometry": None,
+        },
+    ]
+
+    async def fake_active_hazard(row):
+        if row["national_reference"] == "RM-HAZARD":
+            return {
+                "type": "dpc_criticality",
+                "label": "ALLERTA GIALLA",
+                "issue_time": "2026-09-13T12:00:00Z",
+            }
+        return None
+
+    monkeypatch.setattr(api_router, "_saved_parcel_active_hazard", fake_active_hazard)
+
+    items = await api_router._saved_parcel_response_items(rows, active_hazard_only=True)
+
+    assert [item["national_reference"] for item in items] == ["RM-HAZARD"]
+    assert items[0]["active_hazard"] == {
+        "type": "dpc_criticality",
+        "label": "ALLERTA GIALLA",
+        "issue_time": "2026-09-13T12:00:00Z",
+    }
+
+
 def test_dpc_topojson_decoder_handles_transform_and_reversed_arcs():
     topology = {
         "type": "Topology",
