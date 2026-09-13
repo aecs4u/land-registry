@@ -8,7 +8,8 @@ import boto3
 from botocore import UNSIGNED
 from botocore.config import Config
 from fastapi import APIRouter, Body, UploadFile, File, HTTPException, Depends, Query, Path as ApiPath
-from fastapi.responses import HTMLResponse
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import HTTPBearer
 import geopandas as gpd
 from io import BytesIO
@@ -18,7 +19,7 @@ import os
 import pandas as pd
 from pathlib import Path
 from datetime import datetime, timezone
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 import tempfile
 from typing import Dict, Any, List, Literal, Optional
 import hashlib
@@ -48,6 +49,7 @@ from land_registry.models import (
     SavedParcelCreateRequest,
     SavedParcelUpdateRequest,
     SavedParcelResponse,
+    UserPreferences,
 )
 from land_registry.parcel_identity import (
     build_source_key,
@@ -3339,6 +3341,144 @@ async def delete_microzone(
     if not deleted:
         raise HTTPException(status_code=404, detail="Microzone not found")
     return {"success": True, "message": "Microzone deleted"}
+
+
+# User preferences, account summaries and data export
+
+def _preference_store_unavailable(exc: Exception) -> HTTPException:
+    logger.error("User preference store unavailable", exc_info=True)
+    return HTTPException(
+        status_code=503,
+        detail={"code": "preference_store_unavailable", "message": "Preference storage is unavailable"},
+    )
+
+
+async def _load_user_preferences(user_id: str) -> Dict[str, Any]:
+    try:
+        if _saved_parcels_use_postgres():
+            return await get_async_db().get_user_preferences(user_id)
+        return await asyncio.to_thread(get_sqlite_db().get_user_preferences, user_id)
+    except Exception as exc:
+        raise _preference_store_unavailable(exc) from exc
+
+
+async def _store_user_preferences(user_id: str, document: Dict[str, Any]) -> None:
+    try:
+        if _saved_parcels_use_postgres():
+            await get_async_db().save_user_preferences(user_id, document)
+        else:
+            await asyncio.to_thread(get_sqlite_db().save_user_preferences, user_id, document)
+    except Exception as exc:
+        raise _preference_store_unavailable(exc) from exc
+
+
+def _coerce_user_preferences(stored: Dict[str, Any]) -> UserPreferences:
+    """Read a stored document leniently so one bad legacy value cannot break the page."""
+    try:
+        return UserPreferences.model_validate(stored or {})
+    except ValidationError:
+        logger.warning("Ignoring invalid stored user preferences")
+        return UserPreferences()
+
+
+def _reject_unknown_preference_layers(preferences: UserPreferences) -> None:
+    unknown = []
+    for layer_id in preferences.default_layers:
+        try:
+            get_map_layer(layer_id)
+        except KeyError:
+            unknown.append(layer_id)
+    if unknown:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "unknown_map_layer", "message": f"Unknown map layers: {', '.join(sorted(unknown))}"},
+        )
+
+
+async def load_account_preferences(user_id: str) -> Optional[UserPreferences]:
+    """Preferences for server-rendered account pages; ``None`` when storage is down."""
+    try:
+        return _coerce_user_preferences(await _load_user_preferences(user_id))
+    except HTTPException:
+        return None
+
+
+def _municipality_code(reference: Any) -> Optional[str]:
+    """Belfiore code that prefixes every national cadastral reference."""
+    value = str(reference or "").strip().upper()
+    if len(value) >= 4 and value[0].isalpha() and value[1:4].isdigit():
+        return value[:4]
+    return None
+
+
+async def account_workspace_snapshot(user_id: str) -> Dict[str, Any]:
+    """Summarise a user's parcel shortlist for the profile page."""
+    try:
+        rows = await _saved_parcel_rows(user_id)
+    except HTTPException:
+        return {"available": False}
+    items = [_saved_parcel_row_to_response(row) for row in rows]
+    vocabulary = _saved_parcel_status_vocabulary()
+    recent = sorted(
+        items,
+        key=lambda item: item.get("updated_at") or item.get("created_at") or "",
+        reverse=True,
+    )
+    municipalities = {
+        code for code in (_municipality_code(item.get("national_reference")) for item in items) if code
+    }
+    return {
+        "available": True,
+        "summary": _saved_parcel_summary(items),
+        "status_vocabulary": vocabulary,
+        "status_labels": {str(entry["value"]): entry.get("label", entry["value"]) for entry in vocabulary},
+        "municipality_count": len(municipalities),
+        "last_activity": recent[0].get("updated_at") if recent else None,
+        "recent": recent[:5],
+    }
+
+
+@api_router.get(
+    "/user/preferences",
+    responses={401: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+)
+async def get_user_preferences(user: ClerkUser = Depends(get_current_user)):
+    """Return the authenticated user's map and interface preferences."""
+    stored = await _load_user_preferences(user.id)
+    return {"success": True, "preferences": _coerce_user_preferences(stored).model_dump()}
+
+
+@api_router.put(
+    "/user/preferences",
+    responses={401: {"model": ErrorResponse}, 422: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+)
+async def update_user_preferences(preferences: UserPreferences, user: ClerkUser = Depends(get_current_user)):
+    """Replace the authenticated user's preferences, keeping unrelated stored keys."""
+    _reject_unknown_preference_layers(preferences)
+    stored = await _load_user_preferences(user.id)
+    await _store_user_preferences(user.id, {**stored, **preferences.model_dump()})
+    return {"success": True, "preferences": preferences.model_dump()}
+
+
+@api_router.get(
+    "/user/export",
+    responses={401: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+)
+async def export_user_data(user: ClerkUser = Depends(get_current_user)):
+    """Download the authenticated user's saved parcels and preferences as JSON."""
+    rows = await _saved_parcel_rows(user.id)
+    stored = await _load_user_preferences(user.id)
+    now = datetime.now(timezone.utc)
+    payload = {
+        "exported_at": now.isoformat().replace("+00:00", "Z"),
+        "user": {"id": user.id, "email": getattr(user, "email", None) or None},
+        "preferences": _coerce_user_preferences(stored).model_dump(),
+        "saved_parcels": [_saved_parcel_row_to_response(row) for row in rows],
+    }
+    return JSONResponse(
+        content=jsonable_encoder(payload),
+        headers={"Content-Disposition": f'attachment; filename="land-registry-export-{now:%Y%m%d}.json"'},
+    )
 
 
 # User Profile and Dashboard Endpoints

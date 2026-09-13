@@ -243,6 +243,30 @@ class AsyncDatabaseConnection:
         async with self.get_connection() as conn:
             return await conn.fetchval(query, *args)
 
+    async def get_user_preferences(self, user_id: str) -> dict[str, Any]:
+        """Get one user's preference document from PostgreSQL."""
+        value = await self.fetchval(
+            "SELECT preferences FROM user_preferences WHERE user_id = $1",
+            user_id,
+        )
+        if value is None:
+            return {}
+        return json.loads(value) if isinstance(value, str) else dict(value)
+
+    async def save_user_preferences(self, user_id: str, preferences: dict[str, Any]) -> None:
+        """Upsert one user's preference document in PostgreSQL."""
+        await self.execute(
+            """
+            INSERT INTO user_preferences (user_id, preferences, updated_at)
+            VALUES ($1, $2::jsonb, CURRENT_TIMESTAMP)
+            ON CONFLICT (user_id) DO UPDATE SET
+                preferences = EXCLUDED.preferences,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            user_id,
+            json.dumps(preferences),
+        )
+
     async def get_saved_parcels(self, user_id: str) -> list[dict[str, Any]]:
         """Get saved parcels for one authenticated user from PostgreSQL."""
         rows = await self.fetch(

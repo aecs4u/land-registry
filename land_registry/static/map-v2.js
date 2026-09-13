@@ -15,6 +15,8 @@
   const PARCEL_MIN_ZOOM = 16;
   const ADMIN_SUBSTITUTE_LAYER_IDS = ['geo-boundaries', 'municipality-profiles'];
   const SEARCH_DEBOUNCE_MS = 250;
+  const LAST_VIEW_KEY = 'land-registry.map.lastView';
+  const BASEMAPS = ['light', 'dark', 'satellite'];
   const state = {
     map: null,
     catalog: [],
@@ -31,6 +33,8 @@
     shortlistStatuses: [],
     shortlistSummary: null,
     dark: false,
+    preferences: null,
+    defaultLayers: new Set(['cadastral-parcels']),
   };
 
   const $ = (id) => document.getElementById(id);
@@ -61,6 +65,7 @@
       center: Number.isFinite(lat) && Number.isFinite(lng) ? [lng, lat] : DEFAULT_CENTER,
       zoom: Number.isFinite(zoom) ? Math.min(22, Math.max(5, zoom)) : DEFAULT_ZOOM,
       parcel: params.get('parcel') || null,
+      hasView: Number.isFinite(lat) && Number.isFinite(lng),
     };
   }
 
@@ -224,6 +229,7 @@
   }
 
   function addParcelLabels() {
+    if (state.preferences?.parcel_labels === false) return;
     if (state.map.getLayer('label-cadastral-parcels')) return;
     state.map.addLayer({
       id: 'label-cadastral-parcels', type: 'symbol', source: layerSourceId({ id: 'cadastral-parcels' }), 'source-layer': 'cadastral-parcels',
@@ -260,7 +266,7 @@
       row.dataset.layerId = layer.id;
       const input = document.createElement('input');
       input.type = 'checkbox';
-      const defaults = layer.id === 'cadastral-parcels';
+      const defaults = state.defaultLayers.has(layer.id);
       input.checked = initializingLayers ? defaults : state.activeLayers.has(layer.id);
       input.disabled = Number(layer.min_zoom || 0) > 22;
       input.addEventListener('change', () => {
@@ -794,11 +800,73 @@
     }
   }
 
+  // Signed-out visitors and a slow store both fall back to built-in defaults.
+  async function loadPreferences() {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 1500);
+    try {
+      const response = await fetch('/api/v1/user/preferences', { signal: controller.signal, credentials: 'same-origin' });
+      if (!response.ok) return null;
+      const payload = await response.json();
+      return payload.preferences || null;
+    } catch (_) {
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  function readLastView() {
+    try {
+      const value = JSON.parse(window.localStorage.getItem(LAST_VIEW_KEY) || 'null');
+      if (value && Array.isArray(value.center) && value.center.length === 2 && Number.isFinite(value.zoom)) return value;
+    } catch (_) {
+      // Storage can be unavailable in private windows.
+    }
+    return null;
+  }
+
+  function rememberView() {
+    if (!state.map || state.preferences?.start_view !== 'last') return;
+    const center = state.map.getCenter();
+    try {
+      window.localStorage.setItem(LAST_VIEW_KEY, JSON.stringify({ center: [center.lng, center.lat], zoom: state.map.getZoom() }));
+    } catch (_) {
+      // Storage can be unavailable in private windows.
+    }
+  }
+
+  function centreOnUserLocation() {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (position) => state.map.flyTo({ center: [position.coords.longitude, position.coords.latitude], zoom: 15, duration: 900 }),
+      () => mapStatus('Location unavailable; showing Italy.'),
+      { enableHighAccuracy: false, maximumAge: 300000, timeout: 8000 },
+    );
+  }
+
+  function applyInitialBasemap(kind) {
+    state.dark = kind === 'dark';
+    document.body.classList.toggle('direct-map-dark', state.dark);
+    $('themeButton')?.setAttribute('aria-pressed', String(state.dark));
+    const radio = document.querySelector(`input[name="basemap"][value="${kind}"]`);
+    if (radio) radio.checked = true;
+  }
+
   async function init() {
     if (!window.maplibregl || !$('directMap')) return;
     setupControls();
     const restored = urlState();
-    state.map = new maplibregl.Map({ container: 'directMap', style: styleForBasemap('light'), center: restored.center, zoom: restored.zoom, maxBounds: ITALY_BOUNDS, minZoom: 5, maxZoom: 22, attributionControl: true });
+    state.preferences = await loadPreferences();
+    const basemap = BASEMAPS.includes(state.preferences?.default_basemap) ? state.preferences.default_basemap : 'light';
+    if (Array.isArray(state.preferences?.default_layers)) state.defaultLayers = new Set(state.preferences.default_layers);
+    applyInitialBasemap(basemap);
+    let initialView = restored;
+    if (!restored.hasView && state.preferences?.start_view === 'last') {
+      const last = readLastView();
+      if (last) initialView = { ...restored, center: last.center, zoom: Math.min(22, Math.max(5, last.zoom)) };
+    }
+    state.map = new maplibregl.Map({ container: 'directMap', style: styleForBasemap(basemap), center: initialView.center, zoom: initialView.zoom, maxBounds: ITALY_BOUNDS, minZoom: 5, maxZoom: 22, attributionControl: true });
     state.map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), 'bottom-right');
     state.map.addControl(new maplibregl.FullscreenControl(), 'bottom-right');
     state.map.on('load', async () => {
@@ -807,8 +875,10 @@
       void loadShortlist();
       void loadLayerHealth();
       if (restored.parcel) await loadParcelByReference(restored.parcel, false);
+      else if (!restored.hasView && state.preferences?.start_view === 'geolocate') centreOnUserLocation();
     });
     state.map.on('moveend', writeUrl);
+    state.map.on('moveend', rememberView);
     state.map.on('zoomend', updateParcelZoomAffordance);
     state.map.on('click', (event) => {
       const features = state.map.queryRenderedFeatures(event.point, { layers: state.map.getLayer('fill-cadastral-parcels') ? ['fill-cadastral-parcels'] : [] });

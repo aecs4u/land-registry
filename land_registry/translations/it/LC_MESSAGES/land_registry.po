@@ -900,3 +900,242 @@ msgstr "Tabella Adiacenza"
 msgid "Mapping Table"
 msgstr "Tabella Disegno"
 
+
+# Account profile and settings pages
+msgid "Account"
+msgstr "Account"
+
+msgid "Name"
+msgstr "Nome"
+
+msgid "Email"
+msgstr "Email"
+
+msgid "Your name, email address and password are managed by your sign-in provider."
+msgstr "Nome, indirizzo email e password sono gestiti dal tuo provider di accesso."
+
+msgid "Settings"
+msgstr "Impostazioni"
+
+msgid "Sign out"
+msgstr "Esci"
+
+msgid "Your workspace"
+msgstr "Il tuo spazio di lavoro"
+
+msgid "Open map"
+msgstr "Apri la mappa"
+
+msgid "Saved parcel storage is unavailable right now, so workspace figures cannot be shown. Your saved parcels are not affected."
+msgstr "L'archivio delle particelle salvate non è disponibile al momento, quindi i dati dello spazio di lavoro non possono essere mostrati. Le tue particelle salvate non sono coinvolte."
+
+msgid "No saved parcels yet."
+msgstr "Nessuna particella salvata."
+
+msgid "Select a parcel on the map and save it to start a shortlist. Saved parcels appear here with their status."
+msgstr "Seleziona una particella sulla mappa e salvala per iniziare una selezione. Le particelle salvate compaiono qui con il loro stato."
+
+msgid "Find a parcel"
+msgstr "Trova una particella"
+
+msgid "Saved parcels"
+msgstr "Particelle salvate"
+
+msgid "Active"
+msgstr "Attive"
+
+msgid "Last updated"
+msgstr "Ultimo aggiornamento"
+
+msgid "By status"
+msgstr "Per stato"
+
+msgid "Recently updated"
+msgstr "Aggiornate di recente"
+
+msgid "Saved parcel"
+msgstr "Particella salvata"
+
+msgid "Saving…"
+msgstr "Salvataggio…"
+
+msgid "Saved."
+msgstr "Salvato."
+
+msgid "Saved. Reloading in the new language…"
+msgstr "Salvato. Ricaricamento nella nuova lingua…"
+
+msgid "Could not save. Check your connection and try again."
+msgstr "Impossibile salvare. Controlla la connessione e riprova."
+
+msgid "Your session has ended. Sign in again to save."
+msgstr "La sessione è scaduta. Accedi di nuovo per salvare."
+
+msgid "Preference storage is unavailable, so defaults are shown and saving may fail."
+msgstr "L'archivio delle preferenze non è disponibile: vengono mostrati i valori predefiniti e il salvataggio potrebbe non riuscire."
+
+msgid "Settings sections"
+msgstr "Sezioni delle impostazioni"
+
+msgid "Privacy & data"
+msgstr "Privacy e dati"
+
+msgid "Sign-in & security"
+msgstr "Accesso e sicurezza"
+
+msgid "Profile"
+msgstr "Profilo"
+
+msgid "Interface language"
+msgstr "Lingua dell'interfaccia"
+
+msgid "Saved to your account and applied in this browser straight away."
+msgstr "Salvata nel tuo account e applicata subito in questo browser."
+
+msgid "Your password, two-factor authentication and active sessions are managed by your sign-in provider, not by Land Registry."
+msgstr "Password, autenticazione a due fattori e sessioni attive sono gestite dal tuo provider di accesso, non da Land Registry."
+
+msgid "Signed in as"
+msgstr "Accesso effettuato come"
+
+msgid "Sign out of this browser"
+msgstr "Esci da questo browser"
+
+msgid "What we store"
+msgstr "Cosa conserviamo"
+
+msgid "the parcels you save, with the status, priority, notes and tags you give them."
+msgstr "le particelle che salvi, con lo stato, la priorità, le note e le etichette che assegni."
+
+msgid "Preferences"
+msgstr "Preferenze"
+
+msgid "the choices on this page."
+msgstr "le scelte fatte in questa pagina."
+
+msgid "Location"
+msgstr "Posizione"
+
+msgid "not saved. Opening the map at your location only moves the view."
+msgstr "non viene salvata. Aprire la mappa sulla tua posizione sposta soltanto la vista."
+
+msgid "Map diagnostics"
+msgstr "Diagnostica della mappa"
+
+msgid "response times grouped by request type, with no coordinates, addresses or user identity."
+msgstr "tempi di risposta raggruppati per tipo di richiesta, senza coordinate, indirizzi o identità dell'utente."
+
+msgid "Your data"
+msgstr "I tuoi dati"
+
+msgid "Download your data"
+msgstr "Scarica i tuoi dati"
+
+msgid "A JSON file with your saved parcels and preferences."
+msgstr "Un file JSON con le tue particelle salvate e le tue preferenze."
+
+msgid "Download"
+msgstr "Scarica"
+
+msgid "Basemap"
+msgstr "Mappa di base"
+
+msgid "Default basemap"
+msgstr "Mappa di base predefinita"
+
+msgid "Light"
+msgstr "Chiara"
+
+msgid "Quiet streets, best for reading parcel outlines."
+msgstr "Strade discrete, ideale per leggere i contorni delle particelle."
+
+msgid "Dark"
+msgstr "Scura"
+
+msgid "Low glare for long sessions."
+msgstr "Meno abbagliante per le sessioni lunghe."
+
+msgid "Satellite"
+msgstr "Satellite"
+
+msgid "Aerial imagery for checking land use."
+msgstr "Immagini aeree per verificare l'uso del suolo."
+
+msgid "Where the map opens"
+msgstr "Dove si apre la mappa"
+
+msgid "Opening view"
+msgstr "Vista iniziale"
+
+msgid "All of Italy"
+msgstr "Tutta Italia"
+
+msgid "The whole country, ready to search."
+msgstr "L'intero Paese, pronto per la ricerca."
+
+msgid "Where I left off"
+msgstr "Dove l'ho lasciata"
+
+msgid "Remembered in this browser only."
+msgstr "Ricordata solo in questo browser."
+
+msgid "My current location"
+msgstr "La mia posizione attuale"
+
+msgid "Your browser asks for permission first. The position is used only to centre the map and is not saved to your account."
+msgstr "Il browser chiede prima il permesso. La posizione serve solo a centrare la mappa e non viene salvata nel tuo account."
+
+msgid "A shared link always opens at the place it points to."
+msgstr "Un link condiviso si apre sempre nel punto a cui rimanda."
+
+msgid "Layers shown on opening"
+msgstr "Livelli visibili all'apertura"
+
+msgid "From zoom"
+msgstr "Dallo zoom"
+
+msgid "Partial coverage"
+msgstr "Copertura parziale"
+
+msgid "Administrative boundaries appear automatically when you zoom out, so they are not listed here."
+msgstr "I confini amministrativi compaiono automaticamente quando riduci lo zoom, quindi non sono elencati qui."
+
+msgid "Parcel numbers"
+msgstr "Numeri di particella"
+
+msgid "Label parcels with their number when zoomed in close."
+msgstr "Mostra il numero delle particelle con lo zoom ravvicinato."
+
+msgid "Save map settings"
+msgstr "Salva le impostazioni della mappa"
+
+msgid "Cadastral map"
+msgstr "Mappa catastale"
+
+msgid "Analysis map"
+msgstr "Mappa di analisi"
+
+msgid "Manage your account information"
+msgstr "Gestisci le informazioni del tuo account"
+
+msgid "Manage your preferences and account settings"
+msgstr "Gestisci preferenze e impostazioni dell'account"
+
+msgid "Map and account settings"
+msgstr "Impostazioni della mappa e dell'account"
+
+# Saved-parcel shortlist default statuses
+msgid "New"
+msgstr "Nuova"
+
+msgid "Researching"
+msgstr "In analisi"
+
+msgid "Contacted"
+msgstr "Contattata"
+
+msgid "Discarded"
+msgstr "Scartata"
+
+msgid "Archived"
+msgstr "Archiviata"

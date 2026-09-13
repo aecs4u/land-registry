@@ -5,7 +5,7 @@ keeps the historical ``land_registry.models`` import path available to the
 application and its consumers.
 """
 
-from typing import Any
+from typing import Any, Literal
 
 from aecs4u_domain.real_estate.land_registry_schemas import (
     CacheMetadataBase,
@@ -44,7 +44,7 @@ from aecs4u_domain.real_estate.land_registry_schemas import (
     ZoneUpdateRequestBase,
 )
 from aecs4u_domain.real_estate.models import ParcelIdentity, ParcelVersion
-from pydantic import field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field as PydanticField, field_validator, model_validator
 from sqlmodel import Field
 
 
@@ -160,6 +160,29 @@ class SavedParcelCollectionResponse(SavedParcelCollectionResponseBase, table=Fal
     items: list[SavedParcelResponse]
     status_vocabulary: list[dict[str, Any]] = Field(default_factory=list)
     summary: dict[str, Any] = Field(default_factory=dict)
+
+
+class UserPreferences(BaseModel):
+    """Per-user interface and map defaults persisted in ``user_preferences``."""
+
+    # Stored documents may carry keys owned by other features.
+    model_config = ConfigDict(extra="ignore")
+
+    language: Literal["it", "en"] | None = None
+    default_basemap: Literal["light", "dark", "satellite"] = "light"
+    start_view: Literal["italy", "last", "geolocate"] = "italy"
+    default_layers: list[str] = PydanticField(default_factory=lambda: ["cadastral-parcels"])
+    parcel_labels: bool = True
+
+    @field_validator("default_layers")
+    @classmethod
+    def normalize_default_layers(cls, value: list[str]) -> list[str]:
+        cleaned = list(dict.fromkeys(item.strip() for item in value if item and item.strip()))
+        if len(cleaned) > 20:
+            raise ValueError("at most 20 default layers are allowed")
+        return cleaned
+
+
 ServiceUnavailableResponse = _compat_schema("ServiceUnavailableResponse", ServiceUnavailableResponseBase)
 TableDataResponse = _compat_schema("TableDataResponse", TableDataResponseBase)
 ZoneBulkVisibilityRequest = _compat_schema("ZoneBulkVisibilityRequest", ZoneBulkVisibilityRequestBase)

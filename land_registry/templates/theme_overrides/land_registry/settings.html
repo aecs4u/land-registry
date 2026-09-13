@@ -1,0 +1,205 @@
+{% extends "account/settings.html" %}
+{# Land Registry settings. Every control here is backed by
+   /api/v1/user/preferences or by a real account action; the theme's demo tabs
+   (notifications, 2FA, appearance cards, API keys, billing) have no backing
+   in this app and are emptied rather than shown as dead controls. #}
+
+{% block dashboard_header %}
+{{ super() }}
+<div id="settingsMessages" hidden
+     data-saving="{{ _('Saving…') }}"
+     data-saved="{{ _('Saved.') }}"
+     data-reloading="{{ _('Saved. Reloading in the new language…') }}"
+     data-error="{{ _('Could not save. Check your connection and try again.') }}"
+     data-signed-out="{{ _('Your session has ended. Sign in again to save.') }}"></div>
+{% if not preferences_available %}
+<div class="alert alert-warning" role="alert">
+    <i class="fas fa-exclamation-triangle me-2"></i>{{ _('Preference storage is unavailable, so defaults are shown and saving may fail.') }}
+</div>
+{% endif %}
+{% endblock %}
+
+{% block settings_sidebar %}
+{% from "components/user_card.html" import user_profile_card %}
+{{ user_profile_card(user, show_badge=False, class="mb-4") }}
+<div class="card mb-4">
+    <div class="card-body p-0">
+        <nav class="nav flex-column settings-nav" aria-label="{{ _('Settings sections') }}">
+            <a class="nav-link active" href="#general" data-bs-toggle="tab"><i class="fas fa-language me-2"></i>{{ _('Language') }}</a>
+            <a class="nav-link" href="#map-preferences" data-bs-toggle="tab"><i class="fas fa-map me-2"></i>{{ _('Map') }}</a>
+            <a class="nav-link" href="#privacy" data-bs-toggle="tab"><i class="fas fa-user-shield me-2"></i>{{ _('Privacy & data') }}</a>
+            <a class="nav-link" href="#security" data-bs-toggle="tab"><i class="fas fa-shield-alt me-2"></i>{{ _('Sign-in & security') }}</a>
+            <hr class="my-1">
+            <a class="nav-link text-muted" href="/profile">
+                <i class="fas fa-id-card me-2"></i>{{ _('Profile') }} <i class="fas fa-arrow-right ms-auto small"></i>
+            </a>
+        </nav>
+    </div>
+</div>
+{% endblock %}
+
+{% block settings_tab_general %}
+<div class="tab-pane fade show active" id="general">
+    <form class="card mb-4 js-settings-form" data-current-locale="{{ current_locale }}" novalidate>
+        <div class="card-header">
+            <h5 class="card-title mb-0">{{ _('Language') }}</h5>
+        </div>
+        <div class="card-body">
+            <label for="prefLanguage" class="form-label">{{ _('Interface language') }}</label>
+            <select class="form-select" id="prefLanguage" data-pref="language">
+                {% for code, label in supported_locales %}
+                <option value="{{ code }}"{% if code == (preferences.language or current_locale) %} selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            <p class="form-text mb-0">{{ _('Saved to your account and applied in this browser straight away.') }}</p>
+        </div>
+        <div class="card-footer d-flex align-items-center gap-3">
+            <button type="submit" class="btn btn-primary"><i class="fas fa-save me-2"></i>{{ _('Save') }}</button>
+            <span class="settings-status small" role="status" aria-live="polite"></span>
+        </div>
+    </form>
+</div>
+{% endblock %}
+
+{% block settings_tab_notifications %}{% endblock %}
+
+{% block settings_tab_security %}
+<div class="tab-pane fade" id="security">
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="card-title mb-0">{{ _('Sign-in & security') }}</h5>
+        </div>
+        <div class="card-body">
+            <p>{{ _('Your password, two-factor authentication and active sessions are managed by your sign-in provider, not by Land Registry.') }}</p>
+            <p class="text-muted small">{{ _('Signed in as') }} <strong>{{ user.email or user.id }}</strong></p>
+            <a class="btn btn-outline-danger" href="/auth/logout"><i class="fas fa-sign-out-alt me-2"></i>{{ _('Sign out of this browser') }}</a>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block settings_tab_appearance %}{% endblock %}
+
+{% block settings_tab_privacy %}
+<div class="tab-pane fade" id="privacy">
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="card-title mb-0">{{ _('What we store') }}</h5>
+        </div>
+        <div class="card-body">
+            <ul class="account-facts-list">
+                <li><strong>{{ _('Saved parcels') }}</strong> — {{ _('the parcels you save, with the status, priority, notes and tags you give them.') }}</li>
+                <li><strong>{{ _('Preferences') }}</strong> — {{ _('the choices on this page.') }}</li>
+                <li><strong>{{ _('Location') }}</strong> — {{ _('not saved. Opening the map at your location only moves the view.') }}</li>
+                <li><strong>{{ _('Map diagnostics') }}</strong> — {{ _('response times grouped by request type, with no coordinates, addresses or user identity.') }}</li>
+            </ul>
+        </div>
+    </div>
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="card-title mb-0">{{ _('Your data') }}</h5>
+        </div>
+        <div class="card-body d-flex align-items-center justify-content-between gap-3 flex-wrap">
+            <div>
+                <h6 class="mb-1">{{ _('Download your data') }}</h6>
+                <p class="text-muted small mb-0">{{ _('A JSON file with your saved parcels and preferences.') }}</p>
+            </div>
+            <a class="btn btn-outline-primary" href="/api/v1/user/export"><i class="fas fa-download me-2"></i>{{ _('Download') }}</a>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block settings_extra_tabs %}
+<div class="tab-pane fade" id="map-preferences">
+    <form class="js-settings-form" novalidate>
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="card-title mb-0">{{ _('Basemap') }}</h5>
+            </div>
+            <div class="card-body">
+                <fieldset>
+                    <legend class="visually-hidden">{{ _('Default basemap') }}</legend>
+                    <div class="account-choice-grid">
+                        {% for value, label, hint in [
+                            ('light', _('Light'), _('Quiet streets, best for reading parcel outlines.')),
+                            ('dark', _('Dark'), _('Low glare for long sessions.')),
+                            ('satellite', _('Satellite'), _('Aerial imagery for checking land use.')),
+                        ] %}
+                        <label class="account-choice">
+                            <input type="radio" name="default_basemap" value="{{ value }}" data-pref="default_basemap"{% if preferences.default_basemap == value %} checked{% endif %}>
+                            <span><strong>{{ label }}</strong><small>{{ hint }}</small></span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </fieldset>
+            </div>
+        </div>
+
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="card-title mb-0">{{ _('Where the map opens') }}</h5>
+            </div>
+            <div class="card-body">
+                <fieldset>
+                    <legend class="visually-hidden">{{ _('Opening view') }}</legend>
+                    <div class="account-choice-list">
+                        {% for value, label, hint in [
+                            ('italy', _('All of Italy'), _('The whole country, ready to search.')),
+                            ('last', _('Where I left off'), _('Remembered in this browser only.')),
+                            ('geolocate', _('My current location'), _('Your browser asks for permission first. The position is used only to centre the map and is not saved to your account.')),
+                        ] %}
+                        <label class="account-choice">
+                            <input type="radio" name="start_view" value="{{ value }}" data-pref="start_view"{% if preferences.start_view == value %} checked{% endif %}>
+                            <span><strong>{{ label }}</strong><small>{{ hint }}</small></span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </fieldset>
+                <p class="form-text mb-0">{{ _('A shared link always opens at the place it points to.') }}</p>
+            </div>
+        </div>
+
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="card-title mb-0">{{ _('Layers shown on opening') }}</h5>
+            </div>
+            <div class="card-body">
+                {% for layer in map_layers %}
+                <div class="form-check mb-2">
+                    <input class="form-check-input" type="checkbox" id="prefLayer-{{ layer.id }}" value="{{ layer.id }}" data-pref="default_layers"{% if layer.id in preferences.default_layers %} checked{% endif %}>
+                    <label class="form-check-label" for="prefLayer-{{ layer.id }}">
+                        <strong>{{ layer.title }}</strong>
+                        <span class="d-block text-muted small">{{ _('From zoom') }} {{ layer.min_zoom }}{% if layer.coverage == 'partial' %} · {{ _('Partial coverage') }}{% endif %}</span>
+                    </label>
+                </div>
+                {% endfor %}
+                <p class="form-text">{{ _('Administrative boundaries appear automatically when you zoom out, so they are not listed here.') }}</p>
+                <hr>
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="prefParcelLabels" data-pref="parcel_labels"{% if preferences.parcel_labels %} checked{% endif %}>
+                    <label class="form-check-label" for="prefParcelLabels">
+                        <strong>{{ _('Parcel numbers') }}</strong>
+                        <p class="text-muted small mb-0">{{ _('Label parcels with their number when zoomed in close.') }}</p>
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <div class="d-flex align-items-center gap-3 mb-4">
+            <button type="submit" class="btn btn-primary"><i class="fas fa-save me-2"></i>{{ _('Save map settings') }}</button>
+            <span class="settings-status small" role="status" aria-live="polite"></span>
+        </div>
+    </form>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+{{ super() }}
+<link rel="stylesheet" href="/static/account.css">
+{% endblock %}
+
+{% block extra_js %}
+{{ super() }}
+<script src="/static/account-settings.js"{% if csp_nonce %} nonce="{{ csp_nonce }}"{% endif %} defer></script>
+{% endblock %}

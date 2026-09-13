@@ -1,0 +1,100 @@
+{% extends "account/user_profile.html" %}
+{# Land Registry profile: identity from the sign-in provider plus a read-only
+   summary of the user's parcel shortlist. Invoice, website and connected-account
+   blocks are emptied because this app has no backing data for them. #}
+
+{% block profile_sidebar %}
+{% from "components/user_card.html" import user_profile_card %}
+{{ user_profile_card(user, show_badge=False, class="mb-4") }}
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="card-title mb-0"><i class="fas fa-id-badge me-2"></i>{{ _('Account') }}</h5>
+    </div>
+    <div class="card-body">
+        <dl class="account-facts mb-3">
+            <dt>{{ _('Name') }}</dt>
+            <dd>{{ user.full_name or '—' }}</dd>
+            <dt>{{ _('Email') }}</dt>
+            <dd>{{ user.email or '—' }}</dd>
+        </dl>
+        <p class="text-muted small mb-3">{{ _('Your name, email address and password are managed by your sign-in provider.') }}</p>
+        <div class="d-flex gap-2 flex-wrap">
+            <a class="btn btn-outline-primary btn-sm" href="/settings"><i class="fas fa-sliders-h me-2"></i>{{ _('Settings') }}</a>
+            <a class="btn btn-outline-danger btn-sm" href="/auth/logout"><i class="fas fa-sign-out-alt me-2"></i>{{ _('Sign out') }}</a>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block profile_form %}
+<section class="card mb-4" aria-labelledby="workspaceHeading">
+    <div class="card-header d-flex align-items-center justify-content-between gap-2">
+        <h5 class="card-title mb-0" id="workspaceHeading"><i class="fas fa-layer-group me-2"></i>{{ _('Your workspace') }}</h5>
+        <a class="btn btn-primary btn-sm" href="/map"><i class="fas fa-map me-2"></i>{{ _('Open map') }}</a>
+    </div>
+    <div class="card-body">
+        {% if not workspace.available %}
+        <p class="text-muted mb-0">{{ _('Saved parcel storage is unavailable right now, so workspace figures cannot be shown. Your saved parcels are not affected.') }}</p>
+        {% elif workspace.summary.total == 0 %}
+        <div class="account-empty">
+            <p class="mb-2"><strong>{{ _('No saved parcels yet.') }}</strong></p>
+            <p class="text-muted mb-3">{{ _('Select a parcel on the map and save it to start a shortlist. Saved parcels appear here with their status.') }}</p>
+            <a class="btn btn-outline-primary btn-sm" href="/map">{{ _('Find a parcel') }}</a>
+        </div>
+        {% else %}
+        <dl class="account-stats">
+            <div><dt>{{ _('Saved parcels') }}</dt><dd>{{ workspace.summary.total }}</dd></div>
+            <div><dt>{{ _('Active') }}</dt><dd>{{ workspace.summary.active_total }}</dd></div>
+            <div><dt>{{ _('Municipalities') }}</dt><dd>{{ workspace.municipality_count }}</dd></div>
+            <div><dt>{{ _('Last updated') }}</dt><dd class="account-stat-date">{{ workspace.last_activity[:10] if workspace.last_activity else '—' }}</dd></div>
+        </dl>
+        <h6 class="account-subheading">{{ _('By status') }}</h6>
+        <ul class="account-status-list">
+            {% for status in workspace.status_vocabulary %}
+            {% set count = workspace.summary.by_status.get(status.value|string, 0) %}
+            <li{% if not status.get('is_active', True) %} class="is-terminal"{% endif %}>
+                <span>{{ _(status.label) }}</span>
+                <progress class="account-status-bar" value="{{ count }}" max="{{ workspace.summary.total }}" aria-hidden="true"></progress>
+                <strong>{{ count }}</strong>
+            </li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+    </div>
+</section>
+
+{% if workspace.available and workspace.recent %}
+<section class="card mb-4" aria-labelledby="recentHeading">
+    <div class="card-header">
+        <h5 class="card-title mb-0" id="recentHeading"><i class="fas fa-history me-2"></i>{{ _('Recently updated') }}</h5>
+    </div>
+    <ul class="list-group list-group-flush">
+        {% for item in workspace.recent %}
+        <li class="list-group-item d-flex align-items-center justify-content-between gap-3">
+            <div class="account-recent-copy">
+                <a href="{{ '/map?parcel=' ~ (item.national_reference | urlencode) if item.national_reference else '/map' }}">
+                    <strong>{{ item.label or item.national_reference or _('Saved parcel') }}</strong>
+                </a>
+                {% if item.label and item.national_reference %}
+                <small class="d-block text-muted font-monospace">{{ item.national_reference }}</small>
+                {% endif %}
+            </div>
+            <div class="text-end flex-shrink-0">
+                <span class="badge text-bg-light border">{{ _(workspace.status_labels.get(item.status, item.status)) }}</span>
+                <small class="d-block text-muted">{{ (item.updated_at or item.created_at or '')[:10] }}</small>
+            </div>
+        </li>
+        {% endfor %}
+    </ul>
+</section>
+{% endif %}
+{% endblock %}
+
+{% block profile_invoice_data %}{% endblock %}
+{% block profile_website_preferences %}{% endblock %}
+{% block profile_connected_accounts %}{% endblock %}
+
+{% block extra_css %}
+{{ super() }}
+<link rel="stylesheet" href="/static/account.css">
+{% endblock %}

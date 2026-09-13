@@ -1,6 +1,6 @@
 from bokeh.embed import server_document
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -27,6 +27,10 @@ from land_registry.dependencies import _map_state
 from land_registry.routers.api import api_router
 from land_registry.routers.auth_pages import router as auth_pages_router
 from land_registry.routers.enrichment import enrichment_router
+from land_registry.routers.api import account_workspace_snapshot, load_account_preferences
+from land_registry.routers.auth import get_current_user_optional
+from land_registry.map_layers import map_layer_catalog
+from land_registry.models import UserPreferences
 from land_registry.s3_storage import get_s3_storage
 from land_registry.config import app_settings, panel_settings, get_panel_url, db_settings
 from land_registry.models import HealthResponse, TableDataResponse, ServiceUnavailableResponse
@@ -488,6 +492,8 @@ if _AUTH_AVAILABLE:
                 f"http://{_panel_origin}",
                 f"ws://{_panel_origin}",
                 "https://nominatim.openstreetmap.org",
+                # MapLibre fetches the direct map's satellite basemap tiles.
+                "https://server.arcgisonline.com",
             ],
             "script-src": [f"http://{_panel_origin}"],
         },
@@ -507,13 +513,14 @@ else:
     logger.warning("aecs4u-auth not installed - running without authentication")
 
 # Setup theme using aecs4u-theme — reads AECS4U_SITE_NAME, THEME_PRIMARY_COLOR etc. from env
+_theme_setup = None
 if _THEME_AVAILABLE:
     # templates_dir points at a directory containing ONLY the theme templates we
     # deliberately override, never at land_registry/templates itself: the theme
     # ships its own base.html and landing.html, and putting our templates first
     # in the search path would silently shadow them for theme-rendered pages.
     _theme_overrides_dir = Path(__file__).parent / "templates" / "theme_overrides"
-    setup_theme_from_env(
+    _theme_setup = setup_theme_from_env(
         app,
         static_url_path="/static/aecs4u-theme",
         templates_dir=_theme_overrides_dir,
@@ -819,6 +826,84 @@ async def serve_direct_map(request: Request):
         "locale": locale,
         "clerk_publishable_key": get_auth_config().clerk_publishable_key,
     })
+
+
+_ACCOUNT_LOCALES = (("it", "Italiano"), ("en", "English"))
+
+
+def _account_nav_items(gettext) -> list[dict]:
+    return [
+        {
+            "id": "land-registry",
+            "label": gettext("Land Registry"),
+            "icon": "fa-map",
+            "children": [
+                {"label": gettext("Cadastral map"), "url": "/map", "icon": "fa-map-marked-alt"},
+                {"label": gettext("Analysis map"), "url": "/map-legacy", "icon": "fa-draw-polygon"},
+            ],
+        },
+        {
+            "id": "account",
+            "label": gettext("Account"),
+            "icon": "fa-user",
+            "children": [
+                {"label": gettext("Profile"), "url": "/profile", "icon": "fa-id-card"},
+                {"label": gettext("Settings"), "url": "/settings", "icon": "fa-sliders-h"},
+            ],
+        },
+    ]
+
+
+async def _render_account_page(request: Request, user, template_name: str, title: str, **context):
+    """Render an aecs4u-theme account template, sending signed-out visitors to login."""
+    if user is None:
+        return RedirectResponse(url=f"/auth/login?next={request.url.path}", status_code=302)
+    if _theme_setup is None:
+        raise HTTPException(status_code=503, detail="Account pages require aecs4u-theme")
+    locale = detect_locale(request)
+    gettext = make_gettext(locale)
+    return _theme_setup.render(
+        template_name,
+        request,
+        user=user,
+        _=gettext,
+        locale=locale,
+        page_title=gettext(title),
+        nav_items=_account_nav_items(gettext),
+        **context,
+    )
+
+
+@app.get("/profile", response_class=HTMLResponse)
+async def account_profile(request: Request, user=Depends(get_current_user_optional)):
+    """Account identity plus a summary of the user's parcel shortlist."""
+    workspace = await account_workspace_snapshot(user.id) if user else {}
+    return await _render_account_page(
+        request, user, "land_registry/profile.html", "Profile", workspace=workspace,
+    )
+
+
+@app.get("/settings", response_class=HTMLResponse)
+async def account_settings(request: Request, user=Depends(get_current_user_optional)):
+    """Language, map defaults, privacy and sign-in settings."""
+    preferences = await load_account_preferences(user.id) if user else None
+    # Admin boundaries are managed automatically below the parcel zoom
+    # threshold, so offering them as opening defaults would fight that logic.
+    layers = [
+        layer for layer in map_layer_catalog()
+        if layer["id"] != "raster-coverage" and layer.get("role") != "admin-substitute"
+    ]
+    return await _render_account_page(
+        request,
+        user,
+        "land_registry/settings.html",
+        "Settings",
+        preferences=(preferences or UserPreferences()).model_dump(),
+        preferences_available=preferences is not None,
+        map_layers=layers,
+        supported_locales=_ACCOUNT_LOCALES,
+        current_locale=detect_locale(request),
+    )
 
 
 @app.get("/map_table")
