@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextvars
 import gettext as _gettext
+import io
 import logging
 from pathlib import Path
 from typing import Callable
@@ -34,8 +35,31 @@ _current_locale: contextvars.ContextVar[str] = contextvars.ContextVar(
 )
 
 
+def _catalog_from_po(locale: str) -> _gettext.GNUTranslations | None:
+    """Compile *locale*'s .po source in memory; .mo files are gitignored and never built at deploy."""
+    po_path = TRANSLATIONS_DIR / locale / "LC_MESSAGES" / f"{DOMAIN}.po"
+    if not po_path.exists():
+        return None
+    from babel.messages.mofile import write_mo
+    from babel.messages.pofile import read_po
+
+    with po_path.open("rb") as fh:
+        catalog = read_po(fh, locale=locale)
+    buffer = io.BytesIO()
+    write_mo(buffer, catalog)
+    buffer.seek(0)
+    return _gettext.GNUTranslations(buffer)
+
+
 def _load_translation(locale: str) -> _gettext.GNUTranslations | _gettext.NullTranslations:
-    """Load compiled .mo translation for *locale*, falling back to NullTranslations."""
+    """Load *locale* from its .po source, then a compiled .mo, else NullTranslations."""
+    try:
+        translation = _catalog_from_po(locale)
+    except Exception:
+        logger.warning("Could not read the %s translation source; trying the compiled catalog", locale, exc_info=True)
+        translation = None
+    if translation is not None:
+        return translation
     try:
         return _gettext.translation(
             DOMAIN,
