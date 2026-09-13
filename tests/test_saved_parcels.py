@@ -178,6 +178,44 @@ def test_saved_parcel_collection_contract_uses_configured_statuses_and_summary(m
     }
 
 
+def test_dpc_topojson_decoder_handles_transform_and_reversed_arcs():
+    topology = {
+        "type": "Topology",
+        "transform": {"scale": [0.1, 0.1], "translate": [12.0, 41.0]},
+        "objects": {
+            "zones": {
+                "type": "GeometryCollection",
+                "geometries": [
+                    {
+                        "type": "Polygon",
+                        "arcs": [[0]],
+                        "properties": {"Nome zona": "Quantized zone"},
+                    }
+                ],
+            }
+        },
+        "arcs": [
+            [[0, 0], [10, 0], [0, 10], [-10, 0], [0, -10]],
+        ],
+    }
+
+    features = api_router._topojson_features(topology)
+    reversed_arc = api_router._topojson_arc_points(topology, -1)
+
+    assert features == [
+        {
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                    [[12.0, 41.0], [13.0, 41.0], [13.0, 42.0], [12.0, 42.0], [12.0, 41.0]]
+                ],
+            },
+            "properties": {"Nome zona": "Quantized zone"},
+        }
+    ]
+    assert reversed_arc == [[12.0, 41.0], [12.0, 42.0], [13.0, 42.0], [13.0, 41.0], [12.0, 41.0]]
+
+
 def test_dpc_bulletin_hazard_intersects_saved_parcel_geometry(monkeypatch):
     bulletin = {
         "source": "DPC",
