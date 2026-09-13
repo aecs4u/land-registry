@@ -1,5 +1,6 @@
 """Contracts for the direct cadastral map migration target."""
 
+import re
 from pathlib import Path
 
 from land_registry.map_observability import MapMetrics, map_route_bucket
@@ -84,6 +85,24 @@ def test_direct_map_supports_selection_search_url_state_and_enrichment():
     assert 'id="shortlistStatusFilter"' in TEMPLATE
     assert 'id="shortlistHazardFilter"' in TEMPLATE
     assert "parcel-shortlist-card" in STYLES
+
+
+def test_direct_map_shortlist_opens_legacy_source_keys_by_reference():
+    helper = re.search(
+        r"function shortlistReference\(item\) \{(?P<body>.*?)\n  \}",
+        SCRIPT,
+        re.DOTALL,
+    )
+    assert helper is not None
+    body = helper.group("body")
+
+    national_reference = body.index("item.national_reference")
+    source_key = body.index("String(item.source_key || '')")
+    ref_match = body.index("sourceKey.match(/(?:^|\\|)REF=([^|]+)/)")
+    decode = body.index("decodeURIComponent(match[1])")
+    identity_fallback = body.index("item.parcel_identity_id || ''")
+
+    assert national_reference < source_key < ref_match < decode < identity_fallback
 
 
 def test_direct_map_shows_admin_substitute_below_parcel_zoom():
