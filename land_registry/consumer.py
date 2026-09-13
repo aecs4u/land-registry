@@ -70,9 +70,9 @@ async def canonical_map_layers_health() -> dict:
     """Expose the same preflight checks to embedded map consumers."""
     source = get_map_layer_source()
     if not source.available:
-        return {"available": False, "layers": source.health()}
+        return {"available": False, "layers": await source.health()}
     try:
-        return {"available": True, "layers": await asyncio.to_thread(source.health)}
+        return {"available": True, "layers": await source.health()}
     except Exception as exc:
         logger.warning("Consumer canonical layer health check failed: %s", exc)
         raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable") from exc
@@ -106,9 +106,7 @@ async def canonical_map_layer_features(
     if not source.available:
         raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable")
     try:
-        payload = await asyncio.to_thread(
-            source.read_geojson, layer.id, (west, south, east, north), min(limit, layer.max_features)
-        )
+        payload = await source.read_geojson(layer.id, (west, south, east, north), min(limit, layer.max_features))
     except Exception as exc:
         logger.warning("Consumer canonical GeoJSON failed for %s: %s", layer_id, exc)
         raise HTTPException(status_code=503, detail="Canonical PostGIS map layer unavailable") from exc
@@ -128,7 +126,7 @@ async def canonical_map_layer_feature_details(layer_id: str, feature_id: int = A
     if not source.available:
         raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable")
     try:
-        payload = await asyncio.to_thread(source.read_feature_details, layer_id, feature_id)
+        payload = await source.read_feature_details(layer_id, feature_id)
     except Exception as exc:
         logger.warning("Consumer canonical feature detail failed for %s/%s: %s", layer_id, feature_id, exc)
         raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable") from exc
@@ -150,7 +148,7 @@ async def canonical_map_layer_tile(layer_id: str, z: int, x: int, y: int) -> Res
     if not source.available:
         raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable")
     try:
-        content = await asyncio.to_thread(source.read_mvt, layer.id, z, x, y)
+        content = await source.read_mvt(layer.id, z, x, y)
     except Exception as exc:
         logger.warning("Consumer canonical tile failed for %s/%s/%s/%s: %s", layer_id, z, x, y, exc)
         raise HTTPException(status_code=503, detail="Canonical PostGIS map layer unavailable") from exc

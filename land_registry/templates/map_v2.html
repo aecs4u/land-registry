@@ -143,6 +143,13 @@
 {% endblock %}
 
 {% block extra_js %}
+<script>
+  {# Same CARTO gate as the legacy map (index.html): keyless CARTO tiles are watermarked. #}
+  window.cartoEnabled = {{ 'true' if carto_enabled else 'false' }};
+  window.cartoApiKey = {{ (carto_api_key or '') | tojson }};
+  {# Lets map-v2.js skip per-user API calls that would only return 401. #}
+  window.landRegistrySignedIn = {{ 'true' if signed_in else 'false' }};
+</script>
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="{{ asset_url('map-v2.js') }}"></script>
 {% endblock %}

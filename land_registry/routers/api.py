@@ -4293,7 +4293,7 @@ async def search_map(query: str = Query(..., min_length=2, max_length=120), limi
     if source.available and not parcel_results:
         try:
             municipalities = await asyncio.wait_for(
-                asyncio.to_thread(source.search_municipalities, normalized, limit),
+                source.search_municipalities(normalized, limit),
                 timeout=1.5,
             )
         except asyncio.TimeoutError:
@@ -4336,9 +4336,9 @@ async def get_map_layers_health():
     """Return deployment-readiness checks for every canonical map layer."""
     source = get_map_layer_source()
     if not source.available:
-        return {"available": False, "layers": source.health()}
+        return {"available": False, "layers": await source.health()}
     try:
-        return {"available": True, "layers": await asyncio.wait_for(asyncio.to_thread(source.health), timeout=5)}
+        return {"available": True, "layers": await asyncio.wait_for(source.health(), timeout=5)}
     except asyncio.TimeoutError as exc:
         logger.warning("Canonical map layer health check timed out")
         raise HTTPException(status_code=503, detail="Canonical map source health check timed out") from exc
@@ -4371,9 +4371,7 @@ async def get_map_layer_features(
     source = get_map_layer_source()
     if not source.available:
         raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable")
-    payload = await asyncio.to_thread(
-        source.read_geojson, layer.id, (west, south, east, north), min(limit, layer.max_features)
-    )
+    payload = await source.read_geojson(layer.id, (west, south, east, north), min(limit, layer.max_features))
     payload["layer"] = layer.id
     payload["truncated"] = len(payload["features"]) >= min(limit, layer.max_features)
     return payload
@@ -4390,7 +4388,7 @@ async def get_map_layer_feature_details(layer_id: str, feature_id: int = ApiPath
     if not source.available:
         raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable")
     try:
-        payload = await asyncio.to_thread(source.read_feature_details, layer_id, feature_id)
+        payload = await source.read_feature_details(layer_id, feature_id)
     except Exception as exc:
         logger.warning("Canonical map feature detail failed for %s/%s: %s", layer_id, feature_id, exc)
         raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable") from exc
@@ -4414,7 +4412,7 @@ async def get_map_layer_tile(layer_id: str, z: int, x: int, y: int):
     if not source.available:
         raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable")
     try:
-        tile_bytes = await asyncio.to_thread(source.read_mvt, layer.id, z, x, y)
+        tile_bytes = await source.read_mvt(layer.id, z, x, y)
     except Exception as exc:
         logger.warning("Canonical map layer tile failed for %s/%s/%s/%s: %s", layer_id, z, x, y, exc)
         raise HTTPException(status_code=503, detail="Canonical PostGIS map layer unavailable") from exc

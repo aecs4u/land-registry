@@ -395,7 +395,7 @@ async def lifespan(app: FastAPI):
     try:
         from land_registry.map_layers import close_map_layer_source
 
-        close_map_layer_source()
+        await close_map_layer_source()
         logger.info("Canonical map-layer database resources closed")
     except Exception as e:
         logger.error(f"Error closing canonical map-layer resources: {e}", exc_info=True)
@@ -492,8 +492,10 @@ if _AUTH_AVAILABLE:
                 f"http://{_panel_origin}",
                 f"ws://{_panel_origin}",
                 "https://nominatim.openstreetmap.org",
-                # MapLibre fetches the direct map's satellite basemap tiles.
+                # MapLibre fetches basemap raster tiles with fetch(), so the
+                # tile hosts must be allowed here, not only under img-src.
                 "https://server.arcgisonline.com",
+                "https://cartodb-basemaps-a.global.ssl.fastly.net",
             ],
             "script-src": [f"http://{_panel_origin}"],
         },
@@ -794,7 +796,7 @@ async def _serve_legacy_map_shell(request: Request):
 
 
 @app.get("/map", response_class=HTMLResponse)
-async def serve_map_shell(request: Request):
+async def serve_map_shell(request: Request, user=Depends(get_current_user_optional)):
     """Serve the direct map as the primary experience.
 
     ``?legacy=1`` remains a compatibility escape hatch for upload and
@@ -802,7 +804,7 @@ async def serve_map_shell(request: Request):
     """
     if request.query_params.get("legacy") == "1":
         return await _serve_legacy_map_shell(request)
-    return await serve_direct_map(request)
+    return await serve_direct_map(request, user)
 
 
 @app.get("/map-legacy", response_class=HTMLResponse)
@@ -812,7 +814,7 @@ async def serve_legacy_map_shell(request: Request):
 
 
 @app.get("/map-v2", response_class=HTMLResponse)
-async def serve_direct_map(request: Request):
+async def serve_direct_map(request: Request, user=Depends(get_current_user_optional)):
     """Serve the direct, vector-tile map experience.
 
     The Folium/upload compatibility page is available at ``/map-legacy`` or
@@ -824,7 +826,10 @@ async def serve_direct_map(request: Request):
         "request": request,
         "_": make_gettext(locale),
         "locale": locale,
+        "carto_enabled": map_generator.controls_manager.settings.carto_enabled,
+        "carto_api_key": map_generator.controls_manager.settings.carto_api_key,
         "clerk_publishable_key": get_auth_config().clerk_publishable_key,
+        "signed_in": user is not None,
     })
 
 

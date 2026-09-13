@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import sys
 from typing import Any, Callable
@@ -47,16 +48,24 @@ def run_preflight(
     source_factory: Callable[[], Any] = get_map_layer_source,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Run the live catalog check and return ``(health, problems)``."""
+    return asyncio.run(_run_preflight(allow_partial=allow_partial, source_factory=source_factory))
+
+
+async def _run_preflight(
+    *,
+    allow_partial: bool,
+    source_factory: Callable[[], Any],
+) -> tuple[list[dict[str, Any]], list[str]]:
     source = source_factory()
     try:
-        health = source.health()
+        health = await source.health()
         return health, evaluate_health(
             health,
             source_available=source.available,
             allow_partial=allow_partial,
         )
     finally:
-        source.close()
+        await source.close()
 
 
 def _build_parser() -> argparse.ArgumentParser:

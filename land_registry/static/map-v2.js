@@ -85,19 +85,57 @@
     return state.dark ? 'dark' : 'light';
   }
 
-  function styleForBasemap(kind) {
-    const raster = kind === 'satellite'
-      ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
-      : kind === 'dark'
-        ? 'https://cartodb-basemaps-a.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png'
-        : 'https://cartodb-basemaps-a.global.ssl.fastly.net/light_all/{z}/{x}/{y}.png';
+  // CARTO now watermarks keyless tiles ("API key required"), so light and
+  // dark use Esri's keyless canvas basemaps from the host that already serves
+  // satellite imagery.  Canvas tiles stop at z16; MapLibre overzooms past it.
+  const ESRI_TILES = 'https://server.arcgisonline.com/ArcGIS/rest/services';
+  const BASEMAP_TILES = {
+    light: {
+      base: `${ESRI_TILES}/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}`,
+      labels: `${ESRI_TILES}/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}`,
+      maxzoom: 16,
+      attribution: '© Esri, HERE, Garmin, © OpenStreetMap contributors',
+    },
+    dark: {
+      base: `${ESRI_TILES}/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}`,
+      labels: `${ESRI_TILES}/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}`,
+      maxzoom: 16,
+      attribution: '© Esri, HERE, Garmin, © OpenStreetMap contributors',
+    },
+    satellite: {
+      base: `${ESRI_TILES}/World_Imagery/MapServer/tile/{z}/{y}/{x}`,
+      labels: null,
+      maxzoom: 19,
+      attribution: '© Esri, Maxar, Earthstar Geographics',
+    },
+  };
+
+  // Same gate as the legacy map (map.js): CARTO only when an API key is
+  // configured; window.cartoEnabled/cartoApiKey come from the template.
+  function cartoTiles(kind) {
+    if (kind === 'satellite' || !(window.cartoEnabled && window.cartoApiKey)) return null;
+    const style = kind === 'dark' ? 'dark_all' : 'light_all';
     return {
-      version: 8,
-      sources: {
-        basemap: { type: 'raster', tiles: [raster], tileSize: 256, attribution: kind === 'satellite' ? '© Esri' : '© OpenStreetMap © CARTO' },
-      },
-      layers: [{ id: 'basemap', type: 'raster', source: 'basemap' }],
+      base: `https://cartodb-basemaps-a.global.ssl.fastly.net/${style}/{z}/{x}/{y}.png?api_key=${encodeURIComponent(window.cartoApiKey)}`,
+      labels: null,
+      maxzoom: 20,
+      attribution: '© OpenStreetMap contributors © CARTO',
     };
+  }
+
+  function styleForBasemap(kind) {
+    const tiles = cartoTiles(kind) || BASEMAP_TILES[kind] || BASEMAP_TILES.light;
+    const sources = {
+      basemap: { type: 'raster', tiles: [tiles.base], tileSize: 256, maxzoom: tiles.maxzoom, attribution: tiles.attribution },
+    };
+    const layers = [{ id: 'basemap', type: 'raster', source: 'basemap' }];
+    if (tiles.labels) {
+      sources['basemap-labels'] = { type: 'raster', tiles: [tiles.labels], tileSize: 256, maxzoom: tiles.maxzoom };
+      layers.push({ id: 'basemap-labels', type: 'raster', source: 'basemap-labels' });
+    }
+    // Symbol layers (parcel numbers) need glyphs; they are self-hosted under
+    // /static/fonts (Noto Sans, OFL) so no third-party font host is involved.
+    return { version: 8, glyphs: absoluteTileUrl('/static/fonts/{fontstack}/{range}.pbf'), sources, layers };
   }
 
   function layerVisibleAtZoom(layer) {
@@ -176,13 +214,20 @@
 
   function layerSourceId(layer) { return `source-${layer.id}`; }
 
+  // MapLibre fetches tiles from blob: workers, where a root-relative URL
+  // cannot resolve and no request is ever sent.  Concatenate rather than use
+  // new URL(), which would percent-encode the {z}/{x}/{y} placeholders.
+  function absoluteTileUrl(url) {
+    return url.startsWith('/') ? `${window.location.origin}${url}` : url;
+  }
+
   function addCatalogLayer(layer) {
     if (!state.map || !layer.tile_url || layer.id === 'raster-coverage') return;
     const sourceId = layerSourceId(layer);
     if (state.map.getSource(sourceId)) return;
     state.map.addSource(sourceId, {
       type: 'vector',
-      tiles: [layer.tile_url],
+      tiles: [absoluteTileUrl(layer.tile_url)],
       minzoom: Number(layer.min_zoom || 0),
       maxzoom: 22,
     });
@@ -233,7 +278,7 @@
     if (state.map.getLayer('label-cadastral-parcels')) return;
     state.map.addLayer({
       id: 'label-cadastral-parcels', type: 'symbol', source: layerSourceId({ id: 'cadastral-parcels' }), 'source-layer': 'cadastral-parcels',
-      minzoom: 17, layout: { 'text-field': ['coalesce', ['get', 'parcel'], ['get', 'canonical_reference'], ''], 'text-size': 11, 'text-allow-overlap': false, 'text-padding': 2 },
+      minzoom: 17, layout: { 'text-field': ['coalesce', ['get', 'parcel'], ['get', 'canonical_reference'], ''], 'text-font': ['noto-sans-regular'], 'text-size': 11, 'text-allow-overlap': false, 'text-padding': 2 },
       paint: { 'text-color': '#263b4d', 'text-halo-color': '#fff', 'text-halo-width': 1.5 },
     });
   }
@@ -251,7 +296,7 @@
 
   function addParcelRasterFallback() {
     if (state.map.getSource('parcel-raster-fallback')) return;
-    state.map.addSource('parcel-raster-fallback', { type: 'raster', tiles: ['/api/v1/tiles/cadastral-boundaries/{z}/{x}/{y}.png?layer=ple'], tileSize: 512, minzoom: PARCEL_MIN_ZOOM, maxzoom: 22 });
+    state.map.addSource('parcel-raster-fallback', { type: 'raster', tiles: [absoluteTileUrl('/api/v1/tiles/cadastral-boundaries/{z}/{x}/{y}.png?layer=ple')], tileSize: 512, minzoom: PARCEL_MIN_ZOOM, maxzoom: 22 });
     state.map.addLayer({ id: 'parcel-raster-fallback', type: 'raster', source: 'parcel-raster-fallback', layout: { visibility: 'visible' }, paint: { 'raster-opacity': 0.85 } });
   }
 
@@ -570,6 +615,13 @@
   async function loadShortlist() {
     const list = $('shortlistList');
     if (!list) return;
+    if (!window.landRegistrySignedIn) {
+      // Signed-out visitors have no saved parcels; don't provoke a 401.
+      $('shortlistSummary').textContent = 'Sign in to load saved parcels';
+      const next = encodeURIComponent(window.location.pathname + window.location.search);
+      list.innerHTML = `<p class="map-muted"><a href="/auth/login?next=${next}">Sign in</a> to see your saved parcels.</p>`;
+      return;
+    }
     const hazardOnly = $('shortlistHazardFilter')?.checked;
     list.innerHTML = '<p class="map-muted">Loading shortlist…</p>';
     try {
@@ -802,6 +854,7 @@
 
   // Signed-out visitors and a slow store both fall back to built-in defaults.
   async function loadPreferences() {
+    if (!window.landRegistrySignedIn) return null;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 1500);
     try {

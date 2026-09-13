@@ -20,8 +20,24 @@ def test_direct_map_has_one_authoritative_map_and_migration_escape_hatch():
     assert 'href="/map-legacy"' in TEMPLATE
     assert "uploaded-file analysis" in SCRIPT or "uploaded-file" in SCRIPT
     assert 'async def serve_map_shell' in MAIN
-    assert 'return await serve_direct_map(request)' in MAIN
+    assert 'return await serve_direct_map(request' in MAIN
     assert '@app.get("/map-legacy"' in MAIN
+
+
+def test_direct_map_resolves_tiles_and_skips_signed_out_user_calls():
+    # Root-relative tile URLs never resolve inside MapLibre's blob: workers.
+    assert "absoluteTileUrl(layer.tile_url)" in SCRIPT
+    # Same CARTO API-key gate as the legacy map; keyless CARTO is watermarked.
+    assert "window.cartoApiKey" in TEMPLATE and "window.cartoApiKey" in SCRIPT
+    assert "World_Light_Gray_Base" in SCRIPT
+    # Signed-out visitors must not request per-user endpoints (401 noise).
+    assert '"signed_in": user is not None' in MAIN
+    assert "window.landRegistrySignedIn" in TEMPLATE and "window.landRegistrySignedIn" in SCRIPT
+    # Parcel labels need glyphs; they are self-hosted, not fetched from a font CDN.
+    assert "/static/fonts/{fontstack}/{range}.pbf" in SCRIPT
+    assert "'text-font': ['noto-sans-regular']" in SCRIPT
+    assert (ROOT / "land_registry/static/fonts/noto-sans-regular/0-255.pbf").is_file()
+    assert (ROOT / "land_registry/static/fonts/OFL.txt").is_file()
 
 
 def test_direct_map_uses_catalog_vector_tiles_and_raster_fallback():

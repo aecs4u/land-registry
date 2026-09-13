@@ -8,13 +8,16 @@ viewport requests use GeoJSON for identify/popups and debugging.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
+import re
 import threading
-from contextlib import contextmanager
+import time
+from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
-from typing import Any, Optional
+from typing import Any, AsyncIterator, Optional
 
 log = logging.getLogger(__name__)
 
@@ -90,21 +93,52 @@ def _json_value(value: Any) -> Any:
     return str(value)
 
 
-class _PostgresConnectionSource:
-    """Small optional-dependency-free connection pool for map reads."""
+def _json_row(row: Any) -> dict[str, Any]:
+    return {name: _json_value(value) for name, value in row.items()}
 
-    def __init__(self, dsn: str, max_connections: int = 4):
-        dsn = dsn.replace("postgresql+asyncpg://", "postgresql://", 1)
-        if "connect_timeout=" not in dsn:
-            separator = "&" if "?" in dsn else "?"
-            dsn = f"{dsn}{separator}connect_timeout=3"
-        self.dsn = dsn
+
+_PLACEHOLDER = re.compile(r"%(s|%)")
+
+
+def _asyncpg_sql(sql: str) -> str:
+    """Translate DB-API ``%s``/``%%`` markup into asyncpg ``$n`` placeholders."""
+    index = 0
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal index
+        if match.group(1) == "%":
+            return "%"
+        index += 1
+        return f"${index}"
+
+    return _PLACEHOLDER.sub(replace, sql)
+
+
+class _AsyncpgConnectionSource:
+    """Bounded asyncpg pool for map reads.
+
+    This used to be a psycopg2 pool.  ``psycopg2-binary`` bundles its own
+    libpq and OpenSSL; next to the system OpenSSL and the copies bundled by
+    the GDAL/rasterio wheels, its TLS connection setup segfaulted the API
+    worker (SIGSEGV, not catchable) on ordinary map page loads.  asyncpg uses
+    the interpreter's ``ssl`` module, its timeouts are enforced by the event
+    loop, and ``acquire`` waits for a free connection instead of raising
+    ``PoolError`` when a burst of tile requests exceeds the pool size.
+    """
+
+    RETRY_AFTER_SECONDS = 10.0
+
+    def __init__(self, dsn: str, max_connections: int = 8, connect_timeout: float = 3.0):
+        self.dsn = dsn.replace("postgresql+asyncpg://", "postgresql://", 1)
         self.max_connections = max_connections
+        self.connect_timeout = connect_timeout
         self._pool = None
-        self._pool_lock = threading.Lock()
+        self._pool_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._lock: Optional[asyncio.Lock] = None
+        self._retry_at = 0.0
 
     @classmethod
-    def from_environment(cls) -> Optional["_PostgresConnectionSource"]:
+    def from_environment(cls) -> Optional["_AsyncpgConnectionSource"]:
         if os.getenv("AECS4U_STATS_POSTGRES_ENABLE", "").strip().lower() not in ("1", "true", "yes", "on"):
             return None
         dsn = (
@@ -116,62 +150,82 @@ class _PostgresConnectionSource:
             return None
         return cls(dsn)
 
-    def _get_pool(self):
-        if self._pool is None:
-            with self._pool_lock:
-                if self._pool is None:
-                    import psycopg2.pool
+    async def _get_pool(self):
+        loop = asyncio.get_running_loop()
+        if self._pool_loop is not loop:
+            # A pool belongs to the loop that created it.  The server has one
+            # loop; test clients and the preflight CLI each bring their own.
+            self._pool, self._pool_loop, self._lock = None, loop, asyncio.Lock()
+        if self._pool is not None:
+            return self._pool
+        async with self._lock:
+            if self._pool is None:
+                # Fail fast while the database is down instead of making every
+                # tile in a burst wait for its own connect timeout.
+                if time.monotonic() < self._retry_at:
+                    raise ConnectionError("canonical map database was unreachable moments ago")
+                import asyncpg
 
-                    self._pool = psycopg2.pool.ThreadedConnectionPool(1, self.max_connections, self.dsn)
+                try:
+                    self._pool = await asyncpg.create_pool(
+                        self.dsn,
+                        min_size=1,
+                        max_size=self.max_connections,
+                        timeout=self.connect_timeout,
+                        command_timeout=10,
+                        statement_cache_size=0,
+                        server_settings={"jit": "off", "statement_timeout": "8000"},
+                    )
+                except Exception:
+                    self._retry_at = time.monotonic() + self.RETRY_AFTER_SECONDS
+                    raise
         return self._pool
 
-    @contextmanager
-    def _connection(self):
-        pool = self._get_pool()
-        connection = pool.getconn()
-        try:
-            with connection.cursor() as cursor:
-                cursor.execute("SET jit = off")
-                cursor.execute("SET statement_timeout = 8000")
+    @asynccontextmanager
+    async def connection(self) -> AsyncIterator[Any]:
+        pool = await self._get_pool()
+        async with pool.acquire(timeout=5) as connection:
             yield connection
-        except Exception:
-            connection.rollback()
-            raise
-        finally:
-            pool.putconn(connection, close=bool(getattr(connection, "closed", 0)))
 
-    def close(self) -> None:
-        with self._pool_lock:
-            if self._pool is not None:
-                self._pool.closeall()
-                self._pool = None
+    async def close(self) -> None:
+        pool, self._pool = self._pool, None
+        if pool is None:
+            return
+        try:
+            same_loop = asyncio.get_running_loop() is self._pool_loop
+        except RuntimeError:
+            same_loop = False
+        if same_loop:
+            await pool.close()
+        else:
+            pool.terminate()
 
 
 class PostgresMapLayerSource:
     """Read-only canonical map source with its own bounded connection pool."""
 
-    def __init__(self, connection_source: Optional[_PostgresConnectionSource] = None):
+    def __init__(self, connection_source: Optional[_AsyncpgConnectionSource] = None):
         if connection_source is None:
-            connection_source = _PostgresConnectionSource.from_environment()
+            connection_source = _AsyncpgConnectionSource.from_environment()
         self.connection_source = connection_source
 
     @property
     def available(self) -> bool:
         return self.connection_source is not None
 
-    def close(self) -> None:
+    async def close(self) -> None:
         if self.connection_source is not None:
-            self.connection_source.close()
+            await self.connection_source.close()
 
-    def health(self) -> list[dict[str, Any]]:
+    async def health(self) -> list[dict[str, Any]]:
         """Return cheap relation/index readiness checks for every catalog layer."""
         if not self.connection_source:
             return [{"id": layer.id, "available": False} for layer in MAP_LAYERS]
         checks = []
-        sql = """
+        sql = _asyncpg_sql("""
             WITH relation AS (
                 SELECT %s::text AS layer_id,
-                       to_regclass(%s)::oid AS relation_oid,
+                       to_regclass(%s::text)::oid AS relation_oid,
                        %s::text AS schema_name,
                        %s::text AS table_name,
                        %s::text AS geometry_column,
@@ -203,30 +257,30 @@ class PostgresMapLayerSource:
                    ), 0)::integer AS geometry_srid
             FROM relation r
             LEFT JOIN pg_class c ON c.oid = r.relation_oid
-        """
-        with self.connection_source._connection() as connection:
-            with connection.cursor() as cursor:
-                for layer in MAP_LAYERS:
-                    schema, table = layer.table.split(".", 1)
-                    cursor.execute(sql, (layer.id, layer.table, schema, table, layer.geometry_column, layer.source_srid))
-                    row = cursor.fetchone()
-                    values = row or (layer.id, False, 0, False, False, 0)
-                    geometry_srid = int(values[5] or 0)
-                    checks.append({
-                        "id": values[0],
-                        "table": layer.table,
-                        "available": bool(values[1] and values[3] and values[4] and geometry_srid == layer.source_srid),
-                        "relation_exists": bool(values[1]),
-                        "row_estimate": max(0, int(values[2] or 0)),
-                        "geometry_column": layer.geometry_column,
-                        "geometry_column_exists": bool(values[3]),
-                        "gist_index_exists": bool(values[4]),
-                        "expected_srid": layer.source_srid,
-                        "geometry_srid": geometry_srid,
-                        "srid_matches": geometry_srid == layer.source_srid,
-                        "coverage": layer.coverage if values[1] else "unavailable",
-                        "coverage_note": layer.coverage_note,
-                    })
+        """)
+        async with self.connection_source.connection() as connection:
+            for layer in MAP_LAYERS:
+                schema, table = layer.table.split(".", 1)
+                row = await connection.fetchrow(
+                    sql, layer.id, layer.table, schema, table, layer.geometry_column, layer.source_srid
+                )
+                values = tuple(row) if row else (layer.id, False, 0, False, False, 0)
+                geometry_srid = int(values[5] or 0)
+                checks.append({
+                    "id": values[0],
+                    "table": layer.table,
+                    "available": bool(values[1] and values[3] and values[4] and geometry_srid == layer.source_srid),
+                    "relation_exists": bool(values[1]),
+                    "row_estimate": max(0, int(values[2] or 0)),
+                    "geometry_column": layer.geometry_column,
+                    "geometry_column_exists": bool(values[3]),
+                    "gist_index_exists": bool(values[4]),
+                    "expected_srid": layer.source_srid,
+                    "geometry_srid": geometry_srid,
+                    "srid_matches": geometry_srid == layer.source_srid,
+                    "coverage": layer.coverage if values[1] else "unavailable",
+                    "coverage_note": layer.coverage_note,
+                })
         return checks
 
     @staticmethod
@@ -234,51 +288,48 @@ class PostgresMapLayerSource:
         # Every identifier comes from MAP_LAYERS above, never from a request.
         return ", ".join(f"t.{column}" for column in layer.properties)
 
-    def read_mvt(self, layer_id: str, z: int, x: int, y: int) -> bytes:
+    async def read_mvt(self, layer_id: str, z: int, x: int, y: int) -> bytes:
         layer = get_map_layer(layer_id)
         if not self.connection_source:
             return b""
         columns = self._source_columns(layer)
-        if layer.source_srid == 4326:
-            # ST_AsMVTGeom performs tile clipping itself.  Avoiding the
-            # explicit ST_Intersection used for projected sources is a large
-            # win for native-WGS84 layers with many polygon features.
-            mvt_geometry = f"ST_Transform(t.{layer.geometry_column}, 3857)"
-        else:
-            mvt_geometry = (
-                f"ST_Transform(ST_Intersection(ST_Transform(t.{layer.geometry_column}, 4326), "
-                "bounds.web), 3857)"
-            )
+        # Clip to the tile (plus the MVT buffer) and simplify to ~1/4 pixel in
+        # the source SRID before transforming.  One hazard polygon has ~250k
+        # vertices; transforming and intersecting whole geometries pushed
+        # cold-cache tiles past the statement timeout.  ST_AsMVTGeom still
+        # does the exact clip in tile space.
+        tile_width = (360.0 if layer.source_srid == 4326 else 40075016.686) / (1 << z)
+        geometry = f"t.{layer.geometry_column}"
+        if layer.kind != "point":
+            padding = tile_width * 64 / 4096
+            tolerance = tile_width / 1024
+            geometry = f"ST_Simplify(ST_ClipByBox2D({geometry}, ST_Expand(bounds.source, {padding!r})), {tolerance!r}, true)"
         sql = f"""
             WITH bounds AS (
                 SELECT ST_TileEnvelope(%s, %s, %s) AS tile,
-                       ST_Transform(ST_TileEnvelope(%s, %s, %s), 4326) AS web,
                        ST_Transform(ST_Transform(ST_TileEnvelope(%s, %s, %s), 4326), {layer.source_srid}) AS source
             ), mvtgeom AS (
                 SELECT {columns},
-                       ST_AsMVTGeom(
-                           {mvt_geometry},
-                           bounds.tile, 4096, 64, true
-                       ) AS geom
+                       ST_AsMVTGeom(ST_Transform({geometry}, 3857), bounds.tile, 4096, 64, true) AS geom
                 FROM {layer.table} AS t CROSS JOIN bounds
                 WHERE t.{layer.geometry_column} && bounds.source
-                  AND ST_Intersects(t.{layer.geometry_column}, bounds.source)
                 LIMIT %s
             )
-            SELECT COALESCE(ST_AsMVT(mvtgeom, %s, 4096, 'geom'), ''::bytea)
+            SELECT COALESCE(ST_AsMVT(mvtgeom, %s::text, 4096, 'geom'), ''::bytea)
             FROM mvtgeom
             WHERE geom IS NOT NULL
         """
-        with self.connection_source._connection() as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(sql, (z, x, y, z, x, y, z, x, y, layer.max_features, layer.id))
-                return (cursor.fetchone() or (b"",))[0] or b""
+        async with self.connection_source.connection() as connection:
+            tile = await connection.fetchval(
+                _asyncpg_sql(sql), z, x, y, z, x, y, layer.max_features, layer.id
+            )
+        return tile or b""
 
-    def read_geojson(self, layer_id: str, bbox: tuple[float, float, float, float], limit: int) -> dict[str, Any]:
+    async def read_geojson(self, layer_id: str, bbox: tuple[float, float, float, float], limit: int) -> dict[str, Any]:
         layer = get_map_layer(layer_id)
         if not self.connection_source:
             return {"type": "FeatureCollection", "features": []}
-        west, south, east, north = bbox
+        west, south, east, north = (float(value) for value in bbox)
         if (east - west) * (north - south) > layer.geojson_max_area:
             return {"type": "FeatureCollection", "features": [], "zoom_required": layer.min_zoom}
         columns = self._source_columns(layer)
@@ -294,106 +345,91 @@ class PostgresMapLayerSource:
               AND ST_Intersects(t.{layer.geometry_column}, bounds.source)
             LIMIT %s
         """
+        async with self.connection_source.connection() as connection:
+            rows = await connection.fetch(
+                _asyncpg_sql(sql),
+                west, south, east, north, west, south, east, north, min(limit, layer.max_features),
+            )
         features = []
-        with self.connection_source._connection() as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(sql, (west, south, east, north, west, south, east, north, min(limit, layer.max_features)))
-                names = [column.name for column in cursor.description]
-                for row in cursor.fetchall():
-                    values = dict(zip(names, row))
-                    geometry = values.pop("geometry")
-                    feature_id = values.get(layer.id_column)
-                    features.append({
-                        "type": "Feature",
-                        "id": feature_id,
-                        "properties": {key: _json_value(values.get(key)) for key in layer.properties},
-                        "geometry": json.loads(geometry) if geometry else None,
-                    })
+        for row in rows:
+            values = dict(row)
+            geometry = values.pop("geometry")
+            features.append({
+                "type": "Feature",
+                "id": values.get(layer.id_column),
+                "properties": {key: _json_value(values.get(key)) for key in layer.properties},
+                "geometry": json.loads(geometry) if geometry else None,
+            })
         return {"type": "FeatureCollection", "features": features}
 
-    def read_feature_details(self, layer_id: str, feature_id: int) -> Optional[dict[str, Any]]:
+    async def read_feature_details(self, layer_id: str, feature_id: int) -> Optional[dict[str, Any]]:
         """Return one allow-listed feature and related maritime records."""
 
         layer = get_map_layer(layer_id)
         if not self.connection_source:
             return None
         columns = self._source_columns(layer)
-        with self.connection_source._connection() as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    f"select {columns} from {layer.table} t "
-                    f"where t.{layer.id_column} = %s limit 1",
-                    (feature_id,),
-                )
-                row = cursor.fetchone()
-                if not row:
-                    return None
-                names = [column.name for column in cursor.description]
-                properties = {name: _json_value(value) for name, value in zip(names, row)}
-                result: dict[str, Any] = {
-                    "layer": layer.id,
-                    "id": feature_id,
-                    "properties": properties,
-                    "related": {},
-                }
-                if layer_id != "maritime-concessions":
-                    return result
-
-                def related_rows() -> list[dict[str, Any]]:
-                    names = [column.name for column in cursor.description]
-                    return [
-                        {name: _json_value(value) for name, value in zip(names, row)}
-                        for row in cursor.fetchall()
-                    ]
-
-                snapshot_id = properties.get("snapshot_id")
-                idconc = properties.get("idconc")
-                cursor.execute(
-                    "select gap_id, source_row_id, idconc, institution_key, document_type, "
-                    "document_description, status, evidence, checked_at "
-                    "from demanio_marittimo.document_gaps "
-                    "where source_row_id = %s order by gap_id",
-                    (feature_id,),
-                )
-                result["related"]["document_gaps"] = related_rows()
-                cursor.execute(
-                    "select match_id, document_url, idconc, match_type, confidence, evidence, "
-                    "extraction_status, extracted_text_chars, page_count, checked_at "
-                    "from demanio_marittimo.online_document_matches "
-                    "where snapshot_id = %s and idconc = %s order by match_id",
-                    (snapshot_id, idconc),
-                )
-                matches = related_rows()
-                result["related"]["online_document_matches"] = matches
-                urls = [item["document_url"] for item in matches if item.get("document_url")]
-                if urls:
-                    cursor.execute(
-                        "select source_page_url, document_url, title, document_kind, status, "
-                        "content_type, local_path, size_bytes, sha256, discovered_at, "
-                        "downloaded_at, error from demanio_marittimo.online_documents "
-                        "where snapshot_id = %s and document_url = any(%s) "
-                        "order by document_url",
-                        (snapshot_id, urls),
-                    )
-                    result["related"]["online_documents"] = related_rows()
-                else:
-                    result["related"]["online_documents"] = []
-                cursor.execute(
-                    "select snapshot_id, package_id, reference_date, status, manifest_path, loaded_at_utc "
-                    "from demanio_marittimo.snapshots where snapshot_id = %s",
-                    (snapshot_id,),
-                )
-                result["related"]["snapshot"] = related_rows()
-                cursor.execute(
-                    "select resource_id, kind, resource_title, requested_url, final_url, "
-                    "size_bytes, sha256, qa_json from demanio_marittimo.resources "
-                    "where snapshot_id = %s order by resource_id",
-                    (snapshot_id,),
-                )
-                result["related"]["resources"] = related_rows()
+        async with self.connection_source.connection() as connection:
+            row = await connection.fetchrow(
+                _asyncpg_sql(f"select {columns} from {layer.table} t where t.{layer.id_column} = %s limit 1"),
+                feature_id,
+            )
+            if not row:
+                return None
+            result: dict[str, Any] = {
+                "layer": layer.id,
+                "id": feature_id,
+                "properties": _json_row(row),
+                "related": {},
+            }
+            if layer_id != "maritime-concessions":
                 return result
 
-    def search_municipalities(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
+            async def related_rows(sql: str, *params: Any) -> list[dict[str, Any]]:
+                return [_json_row(item) for item in await connection.fetch(_asyncpg_sql(sql), *params)]
+
+            snapshot_id = row["snapshot_id"]
+            idconc = row["idconc"]
+            result["related"]["document_gaps"] = await related_rows(
+                "select gap_id, source_row_id, idconc, institution_key, document_type, "
+                "document_description, status, evidence, checked_at "
+                "from demanio_marittimo.document_gaps "
+                "where source_row_id = %s order by gap_id",
+                feature_id,
+            )
+            matches = await related_rows(
+                "select match_id, document_url, idconc, match_type, confidence, evidence, "
+                "extraction_status, extracted_text_chars, page_count, checked_at "
+                "from demanio_marittimo.online_document_matches "
+                "where snapshot_id = %s and idconc = %s order by match_id",
+                snapshot_id,
+                idconc,
+            )
+            result["related"]["online_document_matches"] = matches
+            urls = [item["document_url"] for item in matches if item.get("document_url")]
+            result["related"]["online_documents"] = await related_rows(
+                "select source_page_url, document_url, title, document_kind, status, "
+                "content_type, local_path, size_bytes, sha256, discovered_at, "
+                "downloaded_at, error from demanio_marittimo.online_documents "
+                "where snapshot_id = %s and document_url = any(%s::text[]) "
+                "order by document_url",
+                snapshot_id,
+                urls,
+            ) if urls else []
+            result["related"]["snapshot"] = await related_rows(
+                "select snapshot_id, package_id, reference_date, status, manifest_path, loaded_at_utc "
+                "from demanio_marittimo.snapshots where snapshot_id = %s",
+                snapshot_id,
+            )
+            result["related"]["resources"] = await related_rows(
+                "select resource_id, kind, resource_title, requested_url, final_url, "
+                "size_bytes, sha256, qa_json from demanio_marittimo.resources "
+                "where snapshot_id = %s order by resource_id",
+                snapshot_id,
+            )
+            return result
+
+    async def search_municipalities(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
         """Search the allow-listed municipality profile relation.
 
         This is intentionally separate from ``read_geojson``: place search
@@ -418,14 +454,9 @@ class PostgresMapLayerSource:
             LIMIT %s
         """
         pattern = f"%{normalized}%"
-        with self.connection_source._connection() as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(sql, (pattern, pattern, min(max(int(limit), 1), 50)))
-                names = [column.name for column in cursor.description]
-                return [
-                    {name: _json_value(value) for name, value in zip(names, row)}
-                    for row in cursor.fetchall()
-                ]
+        async with self.connection_source.connection() as connection:
+            rows = await connection.fetch(_asyncpg_sql(sql), pattern, pattern, min(max(int(limit), 1), 50))
+        return [_json_row(row) for row in rows]
 
 
 _source: Optional[PostgresMapLayerSource] = None
@@ -441,9 +472,9 @@ def get_map_layer_source() -> PostgresMapLayerSource:
     return _source
 
 
-def close_map_layer_source() -> None:
+async def close_map_layer_source() -> None:
     global _source
     with _source_lock:
-        if _source is not None:
-            _source.close()
-            _source = None
+        source, _source = _source, None
+    if source is not None:
+        await source.close()
