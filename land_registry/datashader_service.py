@@ -944,10 +944,10 @@ class DatashaderTileService:
         """
         Pay datashader/numba's one-time JIT compile cost (~7s for
         Canvas.polygons/Canvas.line) with a throwaway call, so the first real
-        tile request doesn't stall. FGB bounds stay lazy: the deployed store
-        contains thousands of per-municipality files, so scanning every file
-        during application startup would make the app appear unresponsive.
-        Call this once at process startup, off the request path.
+        tile request doesn't stall. The boundary indexes are also built here:
+        the deployed store contains large per-municipality files, so doing
+        that work off the request path prevents the first cadastral tile
+        request from stalling the map. Call this once at process startup.
         """
         try:
             dummy = gpd.GeoDataFrame(
@@ -962,7 +962,9 @@ class DatashaderTileService:
         except Exception as e:
             log.warning(f"Datashader JIT warm-up failed (non-fatal): {e}")
 
-        log.info("FGB boundary index remains lazy until a boundary tile or identify request")
+        for layer_type in ("map", "ple"):
+            self._region_fgb_bounds(layer_type)
+        log.info("FGB boundary indexes warmed for map and ple layers")
 
     def _polygons_to_points(self, gdf: gpd.GeoDataFrame) -> pd.DataFrame:
         """

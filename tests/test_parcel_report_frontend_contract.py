@@ -21,7 +21,7 @@ def test_parcel_panel_exposes_report_action_and_overlay() -> None:
     assert "openParcelReport()" in MAP_SOURCE
     assert 'id="parcelReportOverlay"' in TEMPLATE_SOURCE
     assert 'id="parcelReportContent"' in TEMPLATE_SOURCE
-    assert 'src="/static/parcel-report.js"' in TEMPLATE_SOURCE
+    assert "asset_url('parcel-report.js')" in TEMPLATE_SOURCE
     assert "get('report') !== '1'" in REPORT_SOURCE
     assert "_openDeepLinkedReport" in REPORT_SOURCE
 

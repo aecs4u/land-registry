@@ -4,6 +4,15 @@ so any comune's parcels render on pan/zoom with no upload/load step first —
 this is the single biggest gap vs. Zornade and the architectural prerequisite
 several other map features build on.
 
+**Implementation status (2026-09-12):** the direct MapLibre shell is now the
+primary `/map` route. It consumes the existing allow-listed MVT catalog,
+supports lazy layers, parcel identify/detail, search, URL state, and the
+boundary-raster fallback. `/map-legacy` retains the Folium upload/analysis
+workflow. The direct panel also hands off to the existing printable report
+flow and authenticated saved-parcel API, while `/api/v1/map/metrics` records
+normalized map request health. Remaining work is production-wide parcel
+coverage/PMTiles delivery and parity for advanced drawing tools.
+
 ## Scope
 - Serve the PMTiles produced by `aecs4u_stats.cadastral` (see dependency
   below) as static files from S3/Cloud Run (or a

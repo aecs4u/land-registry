@@ -34,6 +34,7 @@ class MapLayerSpec:
     coverage_note: str = ""
     properties: tuple[str, ...] = ()
     kind: str = "polygon"
+    role: str = ""
 
     def public(self) -> dict[str, Any]:
         value = asdict(self)
@@ -49,7 +50,7 @@ class MapLayerSpec:
 # be very wide.  Raw landing relations are allowed when they have explicitly
 # prepared native geometry and map-safe indexes.
 MAP_LAYERS: tuple[MapLayerSpec, ...] = (
-    MapLayerSpec("geo-boundaries", "Administrative boundaries", "geo.geo_boundary", "geom", properties=("id", "geo_unit_id", "generalization", "source_release")),
+    MapLayerSpec("geo-boundaries", "Administrative boundaries", "geo.geo_boundary", "geom", properties=("id", "geo_unit_id", "generalization", "source_release"), role="admin-substitute"),
     MapLayerSpec("cadastral-sheets", "Cadastral sheets", "spatial.cadastral_sheet", "geom", min_zoom=10, coverage="partial", coverage_note="Canonical publication currently covers only loaded regions", properties=("id", "sheet_reference", "municipality_id", "level", "level_name", "area_sqm", "source_release")),
     MapLayerSpec("cadastral-parcels", "Cadastral parcels", "spatial.cadastral_parcel", "geom", min_zoom=14, max_features=5000, coverage="partial", coverage_note="Canonical publication currently covers only loaded regions", properties=("id", "canonical_reference", "national_cadastral_reference", "parcel", "sheet", "municipality_id", "area_sqm", "source_release")),
     MapLayerSpec("urban-sections", "Cadastral urban sections", "spatial.cadastral_urban_section", "geom", min_zoom=11, coverage="partial", coverage_note="Upstream source currently contains 1,523 of the expected 2,847 sections", properties=("id", "zoning_reference", "section", "municipality_id", "source_release")),
@@ -61,7 +62,7 @@ MAP_LAYERS: tuple[MapLayerSpec, ...] = (
     MapLayerSpec("hazard-measurements", "Hazard measurements", "facts.hazard_measurement", "geom", min_zoom=8, max_features=3000, geojson_max_area=4.0, properties=("id", "hazard_type", "metric", "value", "period", "source_release"), kind="point"),
     MapLayerSpec("raster-coverage", "Raster coverage footprints", "facts.raster_coverage", "footprint", min_zoom=5, properties=("id", "raster_asset_id", "resolution_m")),
     MapLayerSpec("mps04-points", "MPS04 seismic points", "hazards_mps04.mps04_points", "geom", id_column="point_id", min_zoom=7, max_features=3000, properties=("point_id", "grid_variant", "lon", "lat"), kind="point"),
-    MapLayerSpec("municipality-profiles", "Municipality profiles", "serving.municipality_profile", "geom", properties=("id", "geo_unit_id", "canonical_name", "istat_code", "observation_count", "tax_fact_count", "market_zone_count", "pv_observation_count")),
+    MapLayerSpec("municipality-profiles", "Municipality profiles", "serving.municipality_profile", "geom", properties=("id", "geo_unit_id", "canonical_name", "istat_code", "observation_count", "tax_fact_count", "market_zone_count", "pv_observation_count"), role="admin-substitute"),
     MapLayerSpec("market-zone-snapshots", "Market-zone snapshots", "serving.market_zone_snapshot", "geom", min_zoom=10, properties=("id", "market_zone_id", "omi_zone_key", "municipality_name", "quote_count", "latest_period")),
     MapLayerSpec("maritime-concessions", "Maritime-domain concessions", "demanio_marittimo.concessions", "geom", id_column="row_id", min_zoom=7, max_features=5000, geojson_max_area=4.0, coverage_note="MIT/SID snapshot; mixed point and polygon geometry", properties=("row_id", "idconc", "layer_kind", "geometry_type", "crs_original", "snapshot_id", "source_release")),
 )
@@ -391,6 +392,40 @@ class PostgresMapLayerSource:
                 )
                 result["related"]["resources"] = related_rows()
                 return result
+
+    def search_municipalities(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
+        """Search the allow-listed municipality profile relation.
+
+        This is intentionally separate from ``read_geojson``: place search
+        must remain useful before the map reaches parcel zoom, and it should
+        return compact centroids rather than geometry for whole areas.
+        """
+        layer = get_map_layer("municipality-profiles")
+        if not self.connection_source:
+            return []
+        normalized = str(query or "").strip()
+        if len(normalized) < 2:
+            return []
+        columns = self._source_columns(layer)
+        columns = f"{columns}, ST_Y(ST_Centroid(t.{layer.geometry_column})) AS latitude, " \
+                  f"ST_X(ST_Centroid(t.{layer.geometry_column})) AS longitude"
+        sql = f"""
+            SELECT {columns}
+            FROM {layer.table} AS t
+            WHERE t.canonical_name ILIKE %s
+               OR t.istat_code ILIKE %s
+            ORDER BY t.canonical_name ASC
+            LIMIT %s
+        """
+        pattern = f"%{normalized}%"
+        with self.connection_source._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(sql, (pattern, pattern, min(max(int(limit), 1), 50)))
+                names = [column.name for column in cursor.description]
+                return [
+                    {name: _json_value(value) for name, value in zip(names, row)}
+                    for row in cursor.fetchall()
+                ]
 
 
 _source: Optional[PostgresMapLayerSource] = None

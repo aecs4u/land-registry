@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+
+{% block title %}{{ _('Cadastral Map') }} - AECS4U{% endblock %}
+
+{% block body_class %}direct-map-page{% endblock %}
+
+{% block external_css %}
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+<link rel="stylesheet" href="{{ asset_url('map-v2.css') }}" />
+{% endblock %}
+
+{% block external_js %}{% endblock %}
+
+{% block map_js %}{% endblock %}
+
+{% block content %}
+<main class="direct-map-shell" id="directMapShell">
+  <header class="direct-map-header">
+    <a class="direct-map-brand" href="/" aria-label="AECS4U home">
+      <span class="direct-map-brand-mark" aria-hidden="true">▦</span>
+      <span>Land Registry</span>
+    </a>
+    <div class="direct-map-header-actions">
+      <button type="button" class="map-action-button" id="themeButton" title="{{ _('Toggle theme') }}" aria-label="{{ _('Toggle theme') }}" aria-pressed="false">◐</button>
+      <a class="map-action-button map-action-link" href="/map-legacy" title="{{ _('Open analysis map') }}">{{ _('Analysis map') }}</a>
+    </div>
+  </header>
+
+  <section class="direct-map-stage" aria-label="{{ _('Interactive cadastral map') }}">
+    <div id="directMap" class="direct-map" role="application" aria-label="{{ _('Interactive cadastral map') }}"></div>
+
+    <div class="map-search-card" role="search">
+      <label class="visually-hidden" for="mapSearchInput">{{ _('Search a municipality or parcel') }}</label>
+      <div class="map-search-row">
+        <span class="map-search-icon" aria-hidden="true">⌕</span>
+        <input id="mapSearchInput" type="search" autocomplete="off" spellcheck="false"
+               placeholder="{{ _('Search municipality or parcel reference') }}"
+               aria-controls="mapSearchResults" aria-expanded="false">
+        <button id="mapSearchSubmit" type="submit" title="{{ _('Search') }}" aria-label="{{ _('Search') }}">↵</button>
+      </div>
+      <div id="mapSearchStatus" class="map-search-status" aria-live="polite"></div>
+      <div id="mapSearchResults" class="map-search-results" role="listbox" hidden></div>
+    </div>
+
+    <div class="map-utility-stack" aria-label="{{ _('Map actions') }}">
+      <button type="button" class="map-round-button" id="locateButton" title="{{ _('Locate me') }}" aria-label="{{ _('Locate me') }}">⌖</button>
+      <button type="button" class="map-round-button" id="shareButton" title="{{ _('Copy map link') }}" aria-label="{{ _('Copy map link') }}">↗</button>
+      <button type="button" class="map-round-button" id="resetButton" title="{{ _('Reset view') }}" aria-label="{{ _('Reset view') }}">⌂</button>
+    </div>
+
+    <aside class="map-layers-card" id="mapLayersCard" aria-label="{{ _('Map layers') }}">
+      <div class="map-card-heading">
+        <h2>{{ _('Layers') }}</h2>
+        <button type="button" class="map-card-close" id="layersCloseButton" aria-label="{{ _('Close layers') }}">×</button>
+      </div>
+      <div class="layer-section-title">{{ _('Basemap') }}</div>
+      <div class="basemap-options" role="radiogroup" aria-label="{{ _('Basemap') }}">
+        <label><input type="radio" name="basemap" value="light" checked> <span>{{ _('Light') }}</span></label>
+        <label><input type="radio" name="basemap" value="dark"> <span>{{ _('Dark') }}</span></label>
+        <label><input type="radio" name="basemap" value="satellite"> <span>{{ _('Satellite') }}</span></label>
+      </div>
+      <div class="layer-section-title">{{ _('Overlays') }}</div>
+      <div id="mapLayerList" class="map-layer-list">
+        <p class="map-muted">{{ _('Loading layer catalog…') }}</p>
+      </div>
+      <div id="mapCoverageStatus" class="map-coverage-status" aria-live="polite"></div>
+    </aside>
+
+    <button type="button" class="layers-toggle" id="layersToggle" aria-controls="mapLayersCard" aria-expanded="false">
+      <span aria-hidden="true">☷</span> {{ _('Layers') }}
+    </button>
+
+    <aside class="parcel-shortlist-card" id="parcelShortlistCard" aria-label="{{ _('Parcel shortlist') }}">
+      <div class="map-card-heading">
+        <div>
+          <span class="map-eyebrow">{{ _('Workspace') }}</span>
+          <h2>{{ _('Shortlist') }}</h2>
+        </div>
+        <button type="button" class="secondary-action compact" id="shortlistRefreshButton">{{ _('Refresh') }}</button>
+      </div>
+      <div id="shortlistSummary" class="shortlist-summary" aria-live="polite">{{ _('Sign in to load saved parcels') }}</div>
+      <div class="shortlist-controls">
+        <label>
+          <span>{{ _('Status') }}</span>
+          <select id="shortlistStatusFilter">
+            <option value="">{{ _('All') }}</option>
+          </select>
+        </label>
+        <label>
+          <span>{{ _('Priority') }}</span>
+          <select id="shortlistPriorityFilter">
+            <option value="">{{ _('All') }}</option>
+            <option value="5">{{ _('5 high') }}</option>
+            <option value="4">4</option>
+            <option value="3">3</option>
+            <option value="2">2</option>
+            <option value="1">{{ _('1 low') }}</option>
+            <option value="0">{{ _('Unset') }}</option>
+          </select>
+        </label>
+        <label>
+          <span>{{ _('Sort') }}</span>
+          <select id="shortlistSort">
+            <option value="recency">{{ _('Recent') }}</option>
+            <option value="priority">{{ _('Priority') }}</option>
+            <option value="status">{{ _('Status') }}</option>
+          </select>
+        </label>
+        <label class="shortlist-hazard-filter">
+          <input type="checkbox" id="shortlistHazardFilter">
+          <span>{{ _('Active hazard only') }}</span>
+        </label>
+      </div>
+      <div id="shortlistList" class="shortlist-list" role="list">
+        <p class="map-muted">{{ _('No shortlist loaded yet.') }}</p>
+      </div>
+    </aside>
+
+    <div class="map-status-pill" id="mapStatus" aria-live="polite"></div>
+
+    <aside class="parcel-detail-card" id="directParcelPanel" aria-labelledby="directParcelTitle" hidden>
+      <div class="map-card-heading">
+        <div>
+          <span class="map-eyebrow">{{ _('Selected parcel') }}</span>
+          <h2 id="directParcelTitle">{{ _('Parcel details') }}</h2>
+        </div>
+        <button type="button" class="map-card-close" id="parcelCloseButton" aria-label="{{ _('Close parcel details') }}">×</button>
+      </div>
+      <div id="directParcelContent" class="parcel-detail-content"></div>
+      <div class="parcel-detail-actions">
+        <button type="button" id="parcelSaveButton" class="secondary-action">{{ _('Save parcel') }}</button>
+        <button type="button" id="parcelShareButton" class="secondary-action">{{ _('Copy link') }}</button>
+        <button type="button" id="parcelClearButton" class="secondary-action">{{ _('Clear selection') }}</button>
+        <a id="legacyAnalysisLink" class="secondary-action" href="/map-legacy">{{ _('Open analysis') }}</a>
+        <a id="parcelReportLink" class="secondary-action" href="/map-legacy?report=1">{{ _('Print report') }}</a>
+      </div>
+    </aside>
+
+    <div class="map-help-note" id="mapHelpNote">{{ _('Zoom in to see cadastral parcels') }}</div>
+  </section>
+</main>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="{{ asset_url('map-v2.js') }}"></script>
+{% endblock %}

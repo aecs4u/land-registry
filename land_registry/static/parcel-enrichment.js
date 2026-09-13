@@ -10,6 +10,22 @@
 (function () {
     const SECTIONS_CONTAINER_ID = 'parcelEnrichmentSections';
     const INDICATOR_PREVIEW_LIMIT = 4;
+    const PANEL_BENCHMARKS = {
+        population_density_per_km2: {
+            label: 'Italia',
+            value: 196,
+            unit: 'residenti/km²',
+            year: 2021,
+            dataset_version: 'ISTAT_POP_2021',
+        },
+        average_income_eur: {
+            label: 'Italia',
+            value: 23000,
+            unit: '€/contribuente',
+            year: 2022,
+            dataset_version: 'MEF_IRPEF_2022',
+        },
+    };
     // A database connection can outlive the browser request when a local
     // PostGIS instance is restarting. Never leave the panel's scaffold in a
     // permanent spinner state while waiting for an optional enrichment.
@@ -47,6 +63,77 @@
         if (value === null || value === undefined || value === '') return '—';
         const number = Number(value);
         return Number.isFinite(number) ? `${(number * 100).toLocaleString('it-IT', { maximumFractionDigits: 1 })}%` : '—';
+    }
+
+    function _parseDateTime(value) {
+        if (!value) return null;
+        const parsed = value instanceof Date ? value : new Date(value);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+
+    function _parseFireObservationTime(detection) {
+        const explicit = detection && (
+            detection.observed_at
+            || detection.observation_time
+            || detection.detected_at
+            || detection.timestamp
+        );
+        const explicitDate = _parseDateTime(explicit);
+        if (explicitDate) return explicitDate;
+
+        const acqDate = detection && detection.acq_date;
+        if (!acqDate) return null;
+        const acqTime = String((detection && detection.acq_time) || '').replace(/\D/g, '').padStart(4, '0').slice(0, 4);
+        if (acqTime && /^\d{4}$/.test(acqTime)) {
+            return _parseDateTime(`${acqDate}T${acqTime.slice(0, 2)}:${acqTime.slice(2)}:00Z`);
+        }
+        return _parseDateTime(`${acqDate}T00:00:00Z`);
+    }
+
+    function _relativeAge(value, now = new Date()) {
+        const date = _parseDateTime(value);
+        if (!date) return '';
+        const elapsedMs = Math.max(0, now.getTime() - date.getTime());
+        const minutes = Math.floor(elapsedMs / 60000);
+        if (minutes < 1) return 'meno di 1 min fa';
+        if (minutes < 90) return `${minutes} min fa`;
+        const hours = Math.floor(minutes / 60);
+        if (hours < 48) return `${hours} ore fa`;
+        const days = Math.floor(hours / 24);
+        return `${days} giorni fa`;
+    }
+
+    function _formatDateTime(value) {
+        const date = _parseDateTime(value);
+        if (!date) return '';
+        return date.toLocaleString('it-IT', {
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit',
+        });
+    }
+
+    function _feedRefreshValue(data) {
+        if (!data) return null;
+        return data.feed_refreshed_at
+            || data.last_refreshed_at
+            || data.refreshed_at
+            || data.source_refreshed_at
+            || data.feed_updated_at
+            || data.source_updated_at
+            || data.updated_at
+            || data.fetched_at
+            || data.generated_at
+            || data.issued_at
+            || data.published_at
+            || null;
+    }
+
+    function _feedRefreshNote(data) {
+        const value = _feedRefreshValue(data);
+        if (!value) return '<div class="enrichment-feed-refresh">Ultimo refresh feed: non dichiarato dal provider</div>';
+        const date = _parseDateTime(value);
+        const label = date ? `${_formatDateTime(date)} (${_relativeAge(date)})` : String(value);
+        return `<div class="enrichment-feed-refresh">Ultimo refresh feed: ${_escapeHtml(label)}</div>`;
     }
 
     function _indicatorLabel(code) {
@@ -167,8 +254,48 @@
         return `<div class="enrichment-empty text-muted">${message}</div>`;
     }
 
-    function _sourceFootnote(source) {
-        return source ? `<div class="enrichment-source">${source}</div>` : '';
+    function _formatConfidence(value) {
+        if (value === null || value === undefined || value === '') return '';
+        const number = Number(value);
+        if (!Number.isFinite(number)) return String(value);
+        const percent = number <= 1 ? number * 100 : number;
+        return `${percent.toLocaleString('it-IT', { maximumFractionDigits: 1 })}%`;
+    }
+
+    function _modelMetadataChips(metadata) {
+        if (!metadata) return '';
+        const chips = [];
+        const confidence = _formatConfidence(metadata.confidence);
+        if (confidence) chips.push(['Confidenza', confidence]);
+        if (metadata.spatial_resolution) chips.push(['Risoluzione', metadata.spatial_resolution]);
+        if (metadata.spatial_resolution_m != null) chips.push(['Risoluzione', `${_formatNumber(metadata.spatial_resolution_m, 0)} m`]);
+        if (!chips.length) return '';
+        return `<div class="enrichment-model-metadata">${chips.map(([label, value]) => `<span class="enrichment-confidence-chip"><strong>${_escapeHtml(label)}</strong> ${_escapeHtml(value)}</span>`).join('')}</div>`;
+    }
+
+    function _benchmarkInline(benchmark, formatter = null) {
+        if (!benchmark || benchmark.value === null || benchmark.value === undefined || benchmark.value === '') return '';
+        const value = formatter ? formatter(benchmark.value) : _formatNumber(benchmark.value, 1);
+        const label = [benchmark.label || 'Benchmark', benchmark.year || ''].filter(Boolean).join(' ');
+        const unit = benchmark.unit && !String(value).includes(String(benchmark.unit)) ? ` ${benchmark.unit}` : '';
+        return `<small class="enrichment-benchmark">Benchmark ${_escapeHtml(label)}: <strong>${_escapeHtml(value)}${_escapeHtml(unit)}</strong></small>`;
+    }
+
+    function _median(values) {
+        const numbers = values.map(Number).filter(Number.isFinite).sort((a, b) => a - b);
+        if (!numbers.length) return null;
+        const middle = Math.floor(numbers.length / 2);
+        return numbers.length % 2 ? numbers[middle] : (numbers[middle - 1] + numbers[middle]) / 2;
+    }
+
+    function _sourceFootnote(source, metadata) {
+        const provenance = metadata ? [
+            metadata.dataset_version ? `Dataset: ${metadata.dataset_version}` : '',
+            metadata.model_version ? `Modello: ${metadata.model_version}` : '',
+            metadata.match_method ? `Match: ${metadata.match_method}` : '',
+        ].filter(Boolean).join(' · ') : '';
+        if (!source && !provenance) return '';
+        return `<div class="enrichment-source">${_escapeHtml(source || '')}${source && provenance ? '<br>' : ''}${_escapeHtml(provenance)}</div>`;
     }
 
     function _requestStatusLabel(requestResult) {
@@ -214,7 +341,7 @@
             ${data.pec_email ? `<div class="enrichment-row"><span>PEC</span><strong><a href="mailto:${_escapeHtml(data.pec_email)}">${_escapeHtml(data.pec_email)}</a></strong></div>` : ''}
             ${data.website ? `<div class="enrichment-row"><span>Sito web</span><strong>${link(data.website, 'Apri sito')}</strong></div>` : ''}
             ${data.wikipedia_url ? `<div class="enrichment-row"><span>Wikipedia</span><strong>${link(data.wikipedia_url, 'Apri pagina')}</strong></div>` : ''}
-            ${_sourceFootnote(data.source)}
+            ${_sourceFootnote(data.source, data)}
         `;
     }
 
@@ -466,6 +593,18 @@
             return quotes[Number(select.value)] || quotes[0];
         }
 
+        function quoteBenchmark() {
+            const midpoint = _median(quotes.map((quote) => (Number(quote.prezzo_min) + Number(quote.prezzo_max)) / 2));
+            if (midpoint == null) return null;
+            const years = quotes.map((quote) => Number(quote.anno)).filter(Number.isFinite);
+            return {
+                label: 'mediana quotazioni comune',
+                value: midpoint,
+                unit: '€/m²',
+                year: years.length ? Math.max(...years) : null,
+            };
+        }
+
         function scheduleServerEstimate(quote, area) {
             const token = ++estimateRequestToken;
             if (estimateTimer) clearTimeout(estimateTimer);
@@ -491,8 +630,9 @@
         function updateEstimate() {
             const quote = selectedQuote();
             const range = _estimateOmiRange(quote, areaInput.value);
+            const saleBenchmark = quoteBenchmark();
             quoteEl.innerHTML = `
-                <div class="enrichment-row"><span>Compravendita</span><strong>${_formatNumber(quote.prezzo_min)}–${_formatNumber(quote.prezzo_max)} €/m²</strong></div>
+                <div class="enrichment-row"><span>Compravendita</span><strong>${_formatNumber(quote.prezzo_min)}–${_formatNumber(quote.prezzo_max)} €/m²${_benchmarkInline(saleBenchmark, (value) => `${_formatNumber(value)} €/m²`)}</strong></div>
                 ${quote.locazione_min != null ? `<div class="enrichment-row"><span>Locazione</span><strong>${_formatNumber(quote.locazione_min, 2)}–${_formatNumber(quote.locazione_max, 2)} €/m²/mese</strong></div>` : ''}`;
             estimateEl.innerHTML = range
                 ? `<span>Valore indicativo</span><strong>${_formatCurrency(range.min)} – ${_formatCurrency(range.max)}</strong><small class="omi-estimate-status">Anteprima locale</small>`
@@ -519,6 +659,9 @@
 
     function _renderIncome(data) {
         if (!data) return _emptyState('Nessun dato IRPEF disponibile per questo comune.');
+        const benchmark = data.benchmark_average_income_eur
+            || (data.benchmarks && data.benchmarks.average_income_eur)
+            || PANEL_BENCHMARKS.average_income_eur;
         const brackets = (data.income_distribution || []).map(b => `
             <div class="enrichment-bracket-row">
                 <span class="enrichment-bracket-label">${b.bracket}</span>
@@ -529,13 +672,13 @@
             </div>`).join('');
         return `
             <div class="enrichment-row"><span>Contribuenti</span><strong>${(data.taxpayers || 0).toLocaleString('it-IT')}</strong></div>
-            <div class="enrichment-row"><span>Reddito medio</span><strong>€ ${data.mean_taxable_income_eur != null ? Math.round(data.mean_taxable_income_eur).toLocaleString('it-IT') : '—'}</strong></div>
+            <div class="enrichment-row"><span>Reddito medio</span><strong>€ ${data.mean_taxable_income_eur != null ? Math.round(data.mean_taxable_income_eur).toLocaleString('it-IT') : '—'}${_benchmarkInline(benchmark, (value) => `€ ${Math.round(Number(value)).toLocaleString('it-IT')}`)}</strong></div>
             <div class="enrichment-brackets">${brackets}</div>
-            ${_sourceFootnote(data.source)}
+            ${_sourceFootnote(data.source, data)}
         `;
     }
 
-    function _renderCensus(feature) {
+    function _renderCensus(feature, metadata = null) {
         const props = feature && feature.properties;
         if (!props) return _emptyState('Sezione di censimento non disponibile per questa particella.');
         const ratios = props.ratios || {};
@@ -543,9 +686,17 @@
         const households = props.pf1 ?? props.fam21;
         const dwellings = props.a8 ?? props.abi21;
         const buildings = props.e3 ?? props.edi21;
+        const areaSqm = Number(props.area_sqm ?? props.area_m2 ?? props.shape_area);
+        const populationNumber = Number(population);
+        const density = Number.isFinite(areaSqm) && areaSqm > 0 && Number.isFinite(populationNumber)
+            ? populationNumber / (areaSqm / 1000000)
+            : null;
+        const densityBenchmark = (metadata && metadata.benchmarks && metadata.benchmarks.population_density_per_km2)
+            || PANEL_BENCHMARKS.population_density_per_km2;
         return `
             <div class="enrichment-row"><span>Sezione 2021</span><strong>${_escapeHtml(props.sez21_id || '—')}</strong></div>
             <div class="enrichment-row"><span>Residenti</span><strong>${_formatNumber(population)}</strong></div>
+            ${density != null ? `<div class="enrichment-row"><span>Densità sezione</span><strong>${_formatNumber(density, 1)} residenti/km²${_benchmarkInline(densityBenchmark, (value) => `${_formatNumber(value, 0)} residenti/km²`)}</strong></div>` : ''}
             <div class="enrichment-row"><span>Famiglie</span><strong>${_formatNumber(households)}</strong></div>
             <div class="enrichment-row"><span>Abitazioni</span><strong>${_formatNumber(dwellings)}</strong></div>
             <div class="enrichment-row"><span>Edifici residenziali</span><strong>${_formatNumber(buildings)}</strong></div>
@@ -554,7 +705,8 @@
             <div class="enrichment-row"><span>Residenti stranieri</span><strong>${_formatPercent(ratios.foreign_resident_share)}</strong></div>
             <div class="enrichment-row"><span>Abitazioni non occupate</span><strong>${_formatPercent(ratios.vacancy_rate)}</strong></div>
             <div class="enrichment-row"><span>Componenti per famiglia</span><strong>${_formatNumber(ratios.avg_household_size, 2)}</strong></div>
-            ${_sourceFootnote('ISTAT Basi Territoriali 2021 via aecs4u-stats')}
+            ${_modelMetadataChips(metadata)}
+            ${_sourceFootnote((metadata && metadata.source) || 'ISTAT Basi Territoriali 2021 via aecs4u-stats', metadata)}
         `;
     }
 
@@ -654,21 +806,32 @@
     }
 
     function _renderFires(data) {
-        if (!data || !data.count) return _emptyState('Nessun incendio attivo rilevato nelle vicinanze (25 km).');
+        if (!data || !data.count) {
+            return _emptyState('Nessun incendio attivo rilevato nelle vicinanze (25 km).')
+                + (data ? _feedRefreshNote(data) + _sourceFootnote(data.source) : '');
+        }
         const sorted = (data.detections || []).slice().sort((a, b) => {
             const da = `${a.acq_date || ''}${a.acq_time || ''}`;
             const db = `${b.acq_date || ''}${b.acq_time || ''}`;
             return db.localeCompare(da);
         });
-        const rows = sorted.slice(0, 5).map(d => `
-            <div class="enrichment-row">
-                <span>${d.acq_date || '—'}${d.acq_time ? ' · ' + d.acq_time.slice(0, 2) + ':' + d.acq_time.slice(2) : ''}</span>
-                <strong title="Potenza radiativa del fuoco">${d.frp != null ? d.frp + ' MW' : '—'}</strong>
-            </div>`).join('');
+        const rows = sorted.slice(0, 5).map(d => {
+            const observedAt = _parseFireObservationTime(d);
+            const displayTime = observedAt
+                ? _formatDateTime(observedAt)
+                : `${d.acq_date || '—'}${d.acq_time ? ' · ' + d.acq_time.slice(0, 2) + ':' + d.acq_time.slice(2) : ''}`;
+            const age = observedAt ? _relativeAge(observedAt) : '';
+            return `
+                <div class="enrichment-row">
+                    <span>${_escapeHtml(displayTime)}${age ? ` <small class="enrichment-observation-age">${_escapeHtml(age)}</small>` : ''}</span>
+                    <strong title="Potenza radiativa del fuoco">${d.frp != null ? _escapeHtml(d.frp + ' MW') : '—'}</strong>
+                </div>`;
+        }).join('');
         return `
             <div class="enrichment-row"><span>Rilevamenti (25 km)</span><strong>${data.count}</strong></div>
             ${rows}
             ${data.count > 5 ? `<div class="enrichment-empty text-muted">+ altri ${data.count - 5}</div>` : ''}
+            ${_feedRefreshNote(data)}
             ${_sourceFootnote(data.source)}
         `;
     }
@@ -706,7 +869,7 @@
     function _renderBulletin(bulletinData, muniName) {
         if (!bulletinData) return _emptyState('Bollettino Protezione Civile non disponibile.');
         const zone = _findBulletinZone(bulletinData, muniName);
-        if (!zone) return _emptyState('Comune non trovato nel bollettino odierno.');
+        if (!zone) return _emptyState('Comune non trovato nel bollettino odierno.') + _feedRefreshNote(bulletinData);
         const risks = [
             ['Idraulico', zone['Per rischio idraulico']],
             ['Temporali', zone['Per rischio temporali']],
@@ -719,7 +882,8 @@
         return `
             <div class="enrichment-row"><span>Zona</span><strong>${zone['Nome zona'] || '—'}</strong></div>
             ${rows}
-            ${_sourceFootnote(bulletinData.source)}
+            ${_feedRefreshNote(bulletinData)}
+            ${_sourceFootnote(bulletinData.source, bulletinData)}
         `;
     }
 
@@ -895,7 +1059,8 @@
                     ? Promise.resolve({ ok: true, data: readModel.census })
                     : _fetchJson(`/api/v1/enrichment/census/at-point?lat=${centroid.lat}&lng=${centroid.lng}`))
                     .then(r => {
-                        if (renderToken === activeRenderToken) censusEl.querySelector('.enrichment-card-body').innerHTML = _renderCensus(r.ok ? r.data : null);
+                        const populationBlock = readModel && readModel.blocks && readModel.blocks.population;
+                        if (renderToken === activeRenderToken) censusEl.querySelector('.enrichment-card-body').innerHTML = _renderCensus(r.ok ? r.data : null, populationBlock);
                     })
             );
         } else if (censusEl) {

@@ -271,8 +271,8 @@ class AsyncDatabaseConnection:
             INSERT INTO saved_parcels (
                 user_id, source, source_key, national_reference,
                 parcel_identity_id, parcel_version_id, dataset_version,
-                label, notes, geometry
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CAST($10 AS jsonb))
+                label, notes, status, priority, tags, geometry
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CAST($12 AS jsonb), CAST($13 AS jsonb))
             RETURNING id
             """,
             user_id,
@@ -284,13 +284,16 @@ class AsyncDatabaseConnection:
             parcel.get("dataset_version"),
             parcel.get("label"),
             parcel.get("notes"),
+            parcel.get("status") or "new",
+            parcel.get("priority"),
+            json.dumps(parcel.get("tags") or []),
             json.dumps(parcel["geometry"]) if parcel.get("geometry") is not None else None,
         )
         return int(row["id"])
 
     async def update_saved_parcel(self, parcel_id: int, user_id: str, **fields: Any) -> bool:
         """Update allowed saved-parcel fields while enforcing ownership."""
-        allowed = {"parcel_version_id", "dataset_version", "label", "notes"}
+        allowed = {"parcel_version_id", "dataset_version", "label", "notes", "status", "priority", "tags"}
         updates = [(name, value) for name, value in fields.items() if name in allowed and value is not None]
         if not updates:
             return False
@@ -300,8 +303,11 @@ class AsyncDatabaseConnection:
         for name, value in updates:
             if name == "parcel_version_id":
                 value = UUID(str(value))
+            elif name == "tags":
+                value = json.dumps(value)
             params.append(value)
-            assignments.append(f"{name} = ${len(params)}")
+            cast = "::jsonb" if name == "tags" else ""
+            assignments.append(f"{name} = ${len(params)}{cast}")
 
         id_position = len(params) + 1
         user_position = id_position + 1
@@ -398,6 +404,9 @@ async def init_database():
             dataset_version VARCHAR(128),
             label VARCHAR(255),
             notes TEXT,
+            status VARCHAR(64) NOT NULL DEFAULT 'new',
+            priority INTEGER,
+            tags JSONB DEFAULT '[]',
             geometry JSONB,
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -416,6 +425,18 @@ async def init_database():
     """)
 
     await async_db.execute("""
+        ALTER TABLE saved_parcels ADD COLUMN IF NOT EXISTS status VARCHAR(64) NOT NULL DEFAULT 'new'
+    """)
+
+    await async_db.execute("""
+        ALTER TABLE saved_parcels ADD COLUMN IF NOT EXISTS priority INTEGER
+    """)
+
+    await async_db.execute("""
+        ALTER TABLE saved_parcels ADD COLUMN IF NOT EXISTS tags JSONB DEFAULT '[]'
+    """)
+
+    await async_db.execute("""
         CREATE INDEX IF NOT EXISTS idx_saved_maps_user_id ON saved_maps(user_id)
     """)
 
@@ -425,6 +446,14 @@ async def init_database():
 
     await async_db.execute("""
         CREATE INDEX IF NOT EXISTS idx_saved_parcels_identity ON saved_parcels(parcel_identity_id)
+    """)
+
+    await async_db.execute("""
+        CREATE INDEX IF NOT EXISTS idx_saved_parcels_status ON saved_parcels(user_id, status)
+    """)
+
+    await async_db.execute("""
+        CREATE INDEX IF NOT EXISTS idx_saved_parcels_priority ON saved_parcels(user_id, priority)
     """)
 
     await async_db.execute("""

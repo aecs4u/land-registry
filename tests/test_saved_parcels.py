@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from land_registry.models import SavedParcelCreateRequest, SavedParcelUpdateRequest
 from land_registry.parcel_identity import build_source_key, parcel_identity_id, parcel_version_id
+from land_registry.routers import api as api_router
 from land_registry.sqlite_db import SQLiteDatabase
 
 
@@ -43,6 +44,44 @@ def test_saved_parcel_schema_and_crud_are_user_scoped(db):
     assert db.update_saved_parcel(saved_id, "user-a", label="Updated parcel") is True
     assert db.get_saved_parcel(saved_id, "user-a")["label"] == "Updated parcel"
     assert db.delete_saved_parcel(saved_id, "user-a") is True
+
+
+def test_saved_parcel_shortlist_metadata_round_trips(db):
+    parcel = {
+        "source": "catasto",
+        "source_key": "CATASTO|REF=RM-SHORTLIST",
+        "national_reference": "RM-SHORTLIST",
+        "parcel_identity_id": "8e52ec0f-3a0f-5b20-af70-4ce7fb5c94b5",
+        "parcel_version_id": None,
+        "dataset_version": None,
+        "label": "Shortlist parcel",
+        "notes": "Call owner",
+        "status": "researching",
+        "priority": 5,
+        "tags": ["urgent", "coastal"],
+        "geometry": {"type": "Point", "coordinates": [12.5, 41.9]},
+    }
+
+    saved_id = db.save_parcel("user-a", parcel)
+    saved = db.get_saved_parcel(saved_id, "user-a")
+
+    assert saved["status"] == "researching"
+    assert saved["priority"] == 5
+    assert saved["tags"] == '["urgent", "coastal"]'
+
+    assert db.update_saved_parcel(
+        saved_id,
+        "user-a",
+        status="contacted",
+        priority=3,
+        notes="Left voicemail",
+        tags=["owner", "follow-up"],
+    )
+    updated = db.get_saved_parcel(saved_id, "user-a")
+    assert updated["status"] == "contacted"
+    assert updated["priority"] == 3
+    assert updated["notes"] == "Left voicemail"
+    assert updated["tags"] == '["owner", "follow-up"]'
 
 
 def test_saved_parcel_request_requires_non_snapshot_identity():
@@ -85,3 +124,46 @@ def test_saved_parcel_request_preserves_legacy_reference():
 def test_saved_parcel_update_requires_a_mutable_field():
     with pytest.raises(ValidationError):
         SavedParcelUpdateRequest()
+
+
+def test_saved_parcel_update_accepts_shortlist_only_metadata():
+    request = SavedParcelUpdateRequest(status="researching", priority=4, tags="solar, follow-up")
+
+    assert request.status == "researching"
+    assert request.priority == 4
+    assert request.tags == ["solar", "follow-up"]
+
+
+def test_dpc_bulletin_hazard_intersects_saved_parcel_geometry(monkeypatch):
+    bulletin = {
+        "source": "DPC",
+        "stamp": "Bollettino 2026-09-13 12:00",
+        "today_zones": {
+            "type": "Topology",
+            "objects": {
+                "zones": {
+                    "type": "GeometryCollection",
+                    "geometries": [
+                        {
+                            "type": "Polygon",
+                            "arcs": [[0]],
+                            "properties": {
+                                "Nome zona": "Zona test",
+                                "Rappresentata nella mappa": "ALLERTA GIALLA",
+                            },
+                        }
+                    ],
+                }
+            },
+            "arcs": [
+                [[12.0, 41.0], [13.0, 41.0], [13.0, 42.0], [12.0, 42.0], [12.0, 41.0]]
+            ],
+        },
+    }
+    monkeypatch.setattr(api_router.stats_service, "get_criticality_bulletin", lambda: bulletin)
+
+    hazard = api_router._active_bulletin_hazard({"type": "Point", "coordinates": [12.5, 41.5]})
+
+    assert hazard["type"] == "dpc_criticality"
+    assert hazard["zone"] == "Zona test"
+    assert hazard["issue_time"] == "Bollettino 2026-09-13 12:00"

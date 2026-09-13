@@ -36,3 +36,11 @@ def test_panel_limits_indicator_preview_and_ignores_stale_results() -> None:
     assert "INDICATOR_PREVIEW_LIMIT = 4" in PANEL_SOURCE
     assert "renderToken !== activeRenderToken" in PANEL_SOURCE
     assert "Promise.allSettled(tasks)" in PANEL_SOURCE
+
+
+def test_panel_renders_live_hazard_observation_age_and_feed_refresh() -> None:
+    assert "_parseFireObservationTime" in PANEL_SOURCE
+    assert "_relativeAge(observedAt)" in PANEL_SOURCE
+    assert "enrichment-observation-age" in PANEL_SOURCE
+    assert "_feedRefreshNote(data)" in PANEL_SOURCE
+    assert "Ultimo refresh feed" in PANEL_SOURCE

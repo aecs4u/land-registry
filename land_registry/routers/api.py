@@ -33,7 +33,7 @@ from land_registry.map import (
 from land_registry.s3_storage import get_s3_storage, S3Settings, configure_s3_storage
 from land_registry.file_availability_db import file_availability_db
 from land_registry.config import (
-    s3_settings, get_cadastral_structure_path, cadastral_settings, get_cadastral_data_root, db_settings as app_db_settings
+    s3_settings, cadastral_settings, get_cadastral_data_root, db_settings as app_db_settings
 )
 from land_registry.database import get_async_db
 from land_registry.spatialite import load_layer as load_spatialite_layer
@@ -44,7 +44,6 @@ from land_registry.models import (
     ComuniSearchResponse,
     ErrorResponse,
     GeoJSONFeatureCollection,
-    LineageMetadata,
     SavedParcelCollectionResponse,
     SavedParcelCreateRequest,
     SavedParcelUpdateRequest,
@@ -63,6 +62,8 @@ from land_registry.map_layers import (
     get_map_layer_source,
     map_layer_catalog,
 )
+from land_registry.map_observability import map_metrics
+from land_registry import stats_service
 # Import proper JWT verification from aecs4u-auth
 from land_registry.routers.auth import (
     get_current_user,
@@ -2364,6 +2365,269 @@ from land_registry.zone_rules import (
 )
 
 
+DEFAULT_SAVED_PARCEL_STATUS_VOCABULARY: list[dict[str, Any]] = [
+    {"value": "new", "label": "New", "category": "initial", "is_initial": True, "is_active": True},
+    {"value": "researching", "label": "Researching", "category": "active", "is_active": True},
+    {"value": "contacted", "label": "Contacted", "category": "active", "is_active": True},
+    {"value": "discarded", "label": "Discarded", "category": "terminal", "is_active": False},
+    {"value": "archived", "label": "Archived", "category": "terminal", "is_active": False},
+]
+
+
+def _saved_parcel_status_vocabulary() -> list[dict[str, Any]]:
+    """Return the product-configured shortlist lifecycle vocabulary."""
+    configured = os.getenv("SAVED_PARCEL_STATUS_VOCABULARY_JSON")
+    if configured:
+        try:
+            values = json.loads(configured)
+            if isinstance(values, list) and values:
+                return [item for item in values if isinstance(item, dict) and item.get("value")]
+        except json.JSONDecodeError:
+            logger.warning("Invalid SAVED_PARCEL_STATUS_VOCABULARY_JSON; using defaults")
+    return DEFAULT_SAVED_PARCEL_STATUS_VOCABULARY
+
+
+def _saved_parcel_initial_status() -> str:
+    for status in _saved_parcel_status_vocabulary():
+        if status.get("is_initial"):
+            return str(status["value"])
+    return str(_saved_parcel_status_vocabulary()[0]["value"])
+
+
+def _ensure_saved_parcel_status(value: Optional[str]) -> str:
+    status = (value or _saved_parcel_initial_status()).strip()
+    allowed = {str(item["value"]) for item in _saved_parcel_status_vocabulary()}
+    if status not in allowed:
+        raise HTTPException(status_code=422, detail=f"Unknown saved-parcel status: {status}")
+    return status
+
+
+def _saved_parcel_tags(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            parsed = []
+        value = parsed
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item).strip()]
+
+
+def _saved_parcel_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
+    vocabulary = _saved_parcel_status_vocabulary()
+    active_statuses = {str(item["value"]) for item in vocabulary if item.get("is_active", True)}
+    by_status = {str(item["value"]): 0 for item in vocabulary}
+    for item in items:
+        status = str(item.get("status") or _saved_parcel_initial_status())
+        by_status[status] = by_status.get(status, 0) + 1
+    return {
+        "total": len(items),
+        "by_status": by_status,
+        "active_total": sum(count for status, count in by_status.items() if status in active_statuses),
+    }
+
+
+def _geometry_centroid_lat_lng(geometry: Any) -> Optional[tuple[float, float]]:
+    if not geometry:
+        return None
+    try:
+        geom_type = geometry.get("type")
+        coords = geometry.get("coordinates")
+        if geom_type == "Point" and isinstance(coords, list) and len(coords) >= 2:
+            return float(coords[1]), float(coords[0])
+        from shapely.geometry import shape
+
+        centroid = shape(geometry).centroid
+        if centroid.is_empty:
+            return None
+        return float(centroid.y), float(centroid.x)
+    except Exception:
+        return None
+
+
+def _feed_issue_time(payload: Optional[dict[str, Any]]) -> Optional[str]:
+    if not payload:
+        return None
+    for key in (
+        "feed_refreshed_at",
+        "last_refreshed_at",
+        "refreshed_at",
+        "source_refreshed_at",
+        "feed_updated_at",
+        "source_updated_at",
+        "updated_at",
+        "fetched_at",
+        "generated_at",
+        "issued_at",
+        "published_at",
+        "stamp",
+        "name",
+    ):
+        value = payload.get(key)
+        if value:
+            return str(value)
+    detections = payload.get("detections")
+    if detections:
+        first = detections[0]
+        return str(first.get("observed_at") or first.get("timestamp") or first.get("acq_date") or "")
+    return None
+
+
+def _criticality_rank(properties: dict[str, Any]) -> int:
+    text = " ".join(
+        str(properties.get(key) or "")
+        for key in (
+            "Rappresentata nella mappa",
+            "Per rischio idraulico",
+            "Per rischio temporali",
+            "Per rischio idrogeologico",
+        )
+    ).upper()
+    if "ROSSA" in text:
+        return 4
+    if "ARANCIONE" in text:
+        return 3
+    if "GIALLA" in text:
+        return 2
+    return 0
+
+
+def _topojson_arc_points(topology: dict[str, Any], arc_index: int) -> list[list[float]]:
+    arcs = topology.get("arcs") or []
+    index = ~arc_index if arc_index < 0 else arc_index
+    if index < 0 or index >= len(arcs):
+        return []
+    points = arcs[index]
+    transform = topology.get("transform") or {}
+    scale = transform.get("scale")
+    translate = transform.get("translate")
+    decoded: list[list[float]] = []
+    x = y = 0.0
+    for point in points:
+        if not isinstance(point, list) or len(point) < 2:
+            continue
+        if scale and translate:
+            x += float(point[0])
+            y += float(point[1])
+            decoded.append([x * float(scale[0]) + float(translate[0]), y * float(scale[1]) + float(translate[1])])
+        else:
+            decoded.append([float(point[0]), float(point[1])])
+    if arc_index < 0:
+        decoded.reverse()
+    return decoded
+
+
+def _topojson_join_arcs(topology: dict[str, Any], arc_indexes: list[int]) -> list[list[float]]:
+    coords: list[list[float]] = []
+    for arc_index in arc_indexes:
+        points = _topojson_arc_points(topology, arc_index)
+        if coords and points and coords[-1] == points[0]:
+            points = points[1:]
+        coords.extend(points)
+    return coords
+
+
+def _topojson_geometry_to_geojson(topology: dict[str, Any], geometry: dict[str, Any]) -> Optional[dict[str, Any]]:
+    geom_type = geometry.get("type")
+    if geom_type == "Polygon":
+        return {
+            "type": "Polygon",
+            "coordinates": [
+                _topojson_join_arcs(topology, ring)
+                for ring in geometry.get("arcs", [])
+                if isinstance(ring, list)
+            ],
+        }
+    if geom_type == "MultiPolygon":
+        return {
+            "type": "MultiPolygon",
+            "coordinates": [
+                [
+                    _topojson_join_arcs(topology, ring)
+                    for ring in polygon
+                    if isinstance(ring, list)
+                ]
+                for polygon in geometry.get("arcs", [])
+                if isinstance(polygon, list)
+            ],
+        }
+    if geom_type in {"Point", "MultiPoint", "LineString", "MultiLineString"}:
+        return {"type": geom_type, "coordinates": geometry.get("coordinates")}
+    return None
+
+
+def _topojson_features(topology: dict[str, Any]) -> list[dict[str, Any]]:
+    if not topology or not topology.get("objects"):
+        return []
+    features: list[dict[str, Any]] = []
+    objects = topology.get("objects") or {}
+    for obj in objects.values():
+        geometries = obj.get("geometries", []) if obj.get("type") == "GeometryCollection" else [obj]
+        for geometry in geometries:
+            geojson = _topojson_geometry_to_geojson(topology, geometry)
+            if geojson:
+                features.append({"geometry": geojson, "properties": geometry.get("properties") or {}})
+    return features
+
+
+def _active_bulletin_hazard(geometry: dict[str, Any]) -> Optional[dict[str, Any]]:
+    bulletin = stats_service.get_criticality_bulletin()
+    topology = bulletin and bulletin.get("today_zones")
+    if not topology:
+        return None
+    try:
+        from shapely.geometry import shape
+
+        parcel_geom = shape(geometry)
+        for feature in _topojson_features(topology):
+            properties = feature.get("properties") or {}
+            rank = _criticality_rank(properties)
+            if rank < 2:
+                continue
+            zone_geom = shape(feature["geometry"])
+            if parcel_geom.intersects(zone_geom):
+                return {
+                    "type": "dpc_criticality",
+                    "label": properties.get("Rappresentata nella mappa") or "DPC active criticality warning",
+                    "zone": properties.get("Nome zona"),
+                    "issue_time": _feed_issue_time(bulletin),
+                    "source": bulletin.get("source"),
+                }
+    except Exception:
+        logger.debug("Unable to evaluate DPC bulletin hazard for saved parcel", exc_info=True)
+    return None
+
+
+async def _saved_parcel_active_hazard(row: Dict[str, Any]) -> Optional[dict[str, Any]]:
+    geometry = row.get("geometry")
+    if isinstance(geometry, str):
+        try:
+            geometry = json.loads(geometry)
+        except json.JSONDecodeError:
+            geometry = None
+    if geometry:
+        bulletin_hazard = await asyncio.to_thread(_active_bulletin_hazard, geometry)
+        if bulletin_hazard:
+            return bulletin_hazard
+    centroid = _geometry_centroid_lat_lng(geometry)
+    if not centroid:
+        return None
+    lat, lng = centroid
+    fires = await asyncio.to_thread(stats_service.get_active_fires, 25.0, lat, lng)
+    if fires and fires.get("count"):
+        return {
+            "type": "firms_fire",
+            "label": "Active FIRMS fire detection within 25 km",
+            "count": fires.get("count"),
+            "issue_time": _feed_issue_time(fires),
+            "source": fires.get("source"),
+        }
+    return None
+
+
 def _saved_parcel_row_to_response(row: Dict[str, Any]) -> Dict[str, Any]:
     """Convert a persistence row into the stable saved-parcel contract."""
     geometry = row.get("geometry")
@@ -2398,6 +2662,10 @@ def _saved_parcel_row_to_response(row: Dict[str, Any]) -> Dict[str, Any]:
         "dataset_version": row.get("dataset_version"),
         "label": row.get("label"),
         "notes": row.get("notes"),
+        "status": row.get("status") or _saved_parcel_initial_status(),
+        "priority": row.get("priority"),
+        "tags": _saved_parcel_tags(row.get("tags")),
+        "active_hazard": row.get("active_hazard"),
         "geometry": geometry,
         "created_at": _contract_timestamp(row.get("created_at")),
         "updated_at": _contract_timestamp(row.get("updated_at")),
@@ -2449,6 +2717,9 @@ def _saved_parcel_payload(request: SavedParcelCreateRequest) -> Dict[str, Any]:
         "dataset_version": request.dataset_version,
         "label": request.label,
         "notes": request.notes,
+        "status": _ensure_saved_parcel_status(request.status),
+        "priority": request.priority,
+        "tags": request.tags or [],
         "geometry": request.geometry,
     }
 
@@ -2475,6 +2746,19 @@ async def _saved_parcel_rows(user_id: str) -> list[Dict[str, Any]]:
         raise _saved_parcel_store_unavailable(exc) from exc
 
 
+async def _saved_parcel_response_items(rows: list[Dict[str, Any]], active_hazard_only: bool = False) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        enriched = dict(row)
+        if active_hazard_only:
+            hazard = await _saved_parcel_active_hazard(enriched)
+            if not hazard:
+                continue
+            enriched["active_hazard"] = hazard
+        items.append(_saved_parcel_row_to_response(enriched))
+    return items
+
+
 async def _saved_parcel_row(saved_parcel_id: int, user_id: str) -> Optional[Dict[str, Any]]:
     try:
         if _saved_parcels_use_postgres():
@@ -2489,11 +2773,20 @@ async def _saved_parcel_row(saved_parcel_id: int, user_id: str) -> Optional[Dict
     response_model=SavedParcelCollectionResponse,
     responses={401: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
 )
-async def list_saved_parcels(user: ClerkUser = Depends(get_current_user)):
+async def list_saved_parcels(
+    active_hazard: bool = Query(False, description="Return only shortlist entries with a current active hazard signal"),
+    user: ClerkUser = Depends(get_current_user),
+):
     """List the authenticated user's parcel references and observed versions."""
     rows = await _saved_parcel_rows(user.id)
-    items = [_saved_parcel_row_to_response(row) for row in rows]
-    return {"success": True, "total": len(items), "items": items}
+    items = await _saved_parcel_response_items(rows, active_hazard_only=active_hazard)
+    return {
+        "success": True,
+        "total": len(items),
+        "items": items,
+        "status_vocabulary": _saved_parcel_status_vocabulary(),
+        "summary": _saved_parcel_summary(items),
+    }
 
 
 @api_router.post(
@@ -2561,6 +2854,8 @@ async def update_saved_parcel(
         raise HTTPException(status_code=404, detail="Saved parcel not found")
 
     fields = request.model_dump(exclude_none=True)
+    if "status" in fields:
+        fields["status"] = _ensure_saved_parcel_status(fields["status"])
     if request.dataset_version and saved.get("parcel_identity_id"):
         try:
             fields["parcel_version_id"] = str(
@@ -3776,6 +4071,109 @@ def get_datashader_service():
 # Canonical PostGIS map layers
 # ============================================================================
 
+@api_router.get("/map/search")
+async def search_map(query: str = Query(..., min_length=2, max_length=120), limit: int = Query(20, ge=1, le=50)):
+    """Search stable parcel references and canonical municipality profiles.
+
+    Place-name search is deliberately backed by the allow-listed profile
+    relation.  Exact parcel references use the shared cadastral adapter, so
+    the direct map works without loading a user file first.
+    """
+    normalized = query.strip()
+    lookup_reference = normalized.upper()
+    parcel_results: list[dict[str, Any]] = []
+    if "_" in lookup_reference and "." in lookup_reference:
+        try:
+            parcel = await asyncio.wait_for(
+                asyncio.to_thread(stats_service.get_parcel_by_reference, lookup_reference),
+                timeout=3,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Map parcel search timed out")
+            parcel = None
+        except Exception as exc:
+            logger.warning("Map parcel search failed: %s", exc)
+            parcel = None
+        if parcel:
+            properties = (parcel.get("properties") or {}) if isinstance(parcel, dict) else {}
+            parcel_results.append({
+                "kind": "parcel",
+                "label": normalized,
+                "reference": lookup_reference,
+                "municipality_name": properties.get("municipality_name") or properties.get("municipality"),
+                "sheet": properties.get("sheet") or properties.get("sheet_number") or properties.get("foglio"),
+            })
+
+    # Also accept the compact component form used by cadastral finders:
+    # ``H501 000100 42`` (comune code, foglio, particella).  Keep the parser
+    # intentionally strict so free-form place names cannot become database
+    # filters.
+    component_match = re.fullmatch(
+        r"([A-Z]\d{3})[\s_/-]+(\d+)[\s./-]+(\d+)", lookup_reference
+    )
+    if component_match and not parcel_results:
+        comune, foglio, particella = component_match.groups()
+        try:
+            collection = await asyncio.wait_for(
+                asyncio.to_thread(
+                    stats_service.get_parcels,
+                    comune,
+                    foglio,
+                    particella,
+                    limit,
+                    0,
+                    True,
+                ),
+                timeout=3,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Map component parcel search timed out")
+            collection = None
+        except Exception as exc:
+            logger.warning("Map component parcel search failed: %s", exc)
+            collection = None
+        for feature in (collection or {}).get("features", []) if isinstance(collection, dict) else []:
+            properties = feature.get("properties") or {}
+            reference = (
+                properties.get("national_reference")
+                or properties.get("NATIONALCADASTRALREFERENCE")
+                or properties.get("national_cadastral_reference")
+            )
+            if reference:
+                parcel_results.append({
+                    "kind": "parcel",
+                    "label": reference,
+                    "reference": reference,
+                    "municipality_name": properties.get("municipality_name") or properties.get("municipality"),
+                    "sheet": properties.get("sheet") or properties.get("sheet_number") or properties.get("foglio"),
+                })
+
+    municipalities: list[dict[str, Any]] = []
+    source = get_map_layer_source()
+    if source.available and not parcel_results:
+        try:
+            municipalities = await asyncio.wait_for(
+                asyncio.to_thread(source.search_municipalities, normalized, limit),
+                timeout=1.5,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Map municipality search timed out")
+        except Exception as exc:
+            logger.warning("Map municipality search failed: %s", exc)
+
+    return {
+        "query": normalized,
+        "results": parcel_results + [
+            {
+                "kind": "municipality",
+                "label": item.get("canonical_name") or item.get("istat_code") or "Municipality",
+                "municipality": item,
+            }
+            for item in municipalities
+        ],
+        "source": "aecs4u-stats canonical map source",
+    }
+
 @api_router.get("/map/layers")
 async def get_map_layers():
     """Return the allow-listed canonical spatial layers and their contracts."""
@@ -3787,6 +4185,12 @@ async def get_map_layers():
     }
 
 
+@api_router.get("/map/metrics")
+async def get_map_metrics():
+    """Return privacy-preserving diagnostics for the map request pipeline."""
+    return map_metrics.snapshot()
+
+
 @api_router.get("/map/layers/health")
 async def get_map_layers_health():
     """Return deployment-readiness checks for every canonical map layer."""
@@ -3794,7 +4198,10 @@ async def get_map_layers_health():
     if not source.available:
         return {"available": False, "layers": source.health()}
     try:
-        return {"available": True, "layers": await asyncio.to_thread(source.health)}
+        return {"available": True, "layers": await asyncio.wait_for(asyncio.to_thread(source.health), timeout=5)}
+    except asyncio.TimeoutError as exc:
+        logger.warning("Canonical map layer health check timed out")
+        raise HTTPException(status_code=503, detail="Canonical map source health check timed out") from exc
     except Exception as exc:
         logger.warning("Canonical map layer health check failed: %s", exc)
         raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable") from exc

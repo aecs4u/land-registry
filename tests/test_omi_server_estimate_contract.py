@@ -42,6 +42,7 @@ def omi_rows() -> list[dict]:
 
 
 def test_estimate_selects_one_exact_quote_and_returns_versioned_range(monkeypatch, omi_rows) -> None:
+    monkeypatch.setattr(stats_service, "_fast_omi_quotes", lambda comune, zona=None, **kwargs: omi_rows)
     monkeypatch.setattr(stats_service, "quotes_for_comune", lambda comune, zona=None: omi_rows)
 
     result = stats_service.estimate_omi_value(
@@ -54,12 +55,15 @@ def test_estimate_selects_one_exact_quote_and_returns_versioned_range(monkeypatc
 
     assert result is not None
     assert result["methodology"] == "omi-area-range-v1"
+    assert result["model_version"] == "omi-area-range-v1"
+    assert result["dataset_version"] == "OMI_2025-S2"
     assert result["value_range_eur"] == {"min": 140000.0, "max": 190000.0}
     assert result["quote"]["anno"] == 2025
     assert "Non è una perizia" in result["disclaimer"]
 
 
 def test_estimate_rejects_ambiguous_or_invalid_inputs(monkeypatch, omi_rows) -> None:
+    monkeypatch.setattr(stats_service, "_fast_omi_quotes", lambda comune, zona=None, **kwargs: omi_rows)
     monkeypatch.setattr(stats_service, "quotes_for_comune", lambda comune, zona=None: omi_rows)
 
     assert stats_service.estimate_omi_value("C773", "B1", "20", 100) is None

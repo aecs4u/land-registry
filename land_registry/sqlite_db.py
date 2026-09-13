@@ -108,6 +108,9 @@ class SQLiteDatabase:
                     dataset_version TEXT,
                     label TEXT,
                     notes TEXT,
+                    status TEXT NOT NULL DEFAULT 'new',
+                    priority INTEGER,
+                    tags TEXT DEFAULT '[]',
                     geometry TEXT,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -186,6 +189,8 @@ class SQLiteDatabase:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_saved_maps_user_id ON saved_maps(user_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_saved_parcels_user_id ON saved_parcels(user_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_saved_parcels_identity ON saved_parcels(parcel_identity_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_saved_parcels_status ON saved_parcels(user_id, status)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_saved_parcels_priority ON saved_parcels(user_id, priority)")
             cursor.execute(
                 """
                 CREATE UNIQUE INDEX IF NOT EXISTS uq_saved_parcels_identity_dataset
@@ -322,14 +327,30 @@ class SQLiteDatabase:
                         dataset_version TEXT,
                         label TEXT,
                         notes TEXT,
+                        status TEXT NOT NULL DEFAULT 'new',
+                        priority INTEGER,
+                        tags TEXT DEFAULT '[]',
                         geometry TEXT,
                         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                         updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
                         UNIQUE(user_id, parcel_identity_id, dataset_version)
                     )
                 """)
+                cursor.execute("PRAGMA table_info(saved_parcels)")
+                saved_parcel_columns = {row['name'] for row in cursor.fetchall()}
+                if 'status' not in saved_parcel_columns:
+                    cursor.execute("ALTER TABLE saved_parcels ADD COLUMN status TEXT NOT NULL DEFAULT 'new'")
+                    logger.info("Added 'status' column to saved_parcels")
+                if 'priority' not in saved_parcel_columns:
+                    cursor.execute("ALTER TABLE saved_parcels ADD COLUMN priority INTEGER")
+                    logger.info("Added 'priority' column to saved_parcels")
+                if 'tags' not in saved_parcel_columns:
+                    cursor.execute("ALTER TABLE saved_parcels ADD COLUMN tags TEXT DEFAULT '[]'")
+                    logger.info("Added 'tags' column to saved_parcels")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_saved_parcels_user_id ON saved_parcels(user_id)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_saved_parcels_identity ON saved_parcels(parcel_identity_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_saved_parcels_status ON saved_parcels(user_id, status)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_saved_parcels_priority ON saved_parcels(user_id, priority)")
                 cursor.execute(
                     """
                     CREATE UNIQUE INDEX IF NOT EXISTS uq_saved_parcels_identity_dataset
@@ -564,8 +585,8 @@ class SQLiteDatabase:
             INSERT INTO saved_parcels (
                 user_id, source, source_key, national_reference,
                 parcel_identity_id, parcel_version_id, dataset_version,
-                label, notes, geometry
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                label, notes, status, priority, tags, geometry
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 user_id,
@@ -577,6 +598,9 @@ class SQLiteDatabase:
                 parcel.get("dataset_version"),
                 parcel.get("label"),
                 parcel.get("notes"),
+                parcel.get("status") or "new",
+                parcel.get("priority"),
+                json.dumps(parcel.get("tags") or []),
                 json.dumps(parcel["geometry"]) if parcel.get("geometry") is not None else None,
             ),
         )
@@ -590,13 +614,13 @@ class SQLiteDatabase:
 
     def update_saved_parcel(self, parcel_id: int, user_id: str, **fields: Any) -> bool:
         """Update allowed saved-parcel fields while enforcing ownership."""
-        allowed = {"parcel_version_id", "dataset_version", "label", "notes"}
+        allowed = {"parcel_version_id", "dataset_version", "label", "notes", "status", "priority", "tags"}
         updates = [(name, value) for name, value in fields.items() if name in allowed and value is not None]
         if not updates:
             return False
 
         assignments = [f"{name} = ?" for name, _ in updates]
-        params = [value for _, value in updates]
+        params = [json.dumps(value) if name == "tags" else value for name, value in updates]
         assignments.append("updated_at = CURRENT_TIMESTAMP")
         params.extend([parcel_id, user_id])
         with self.get_connection() as conn:

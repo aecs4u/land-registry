@@ -60,6 +60,77 @@
         return `<span class="enrichment-legend-item"><span class="enrichment-legend-dot" style="background:${color}"></span>${label}</span>`;
     }
 
+    function _parseLiveDateTime(value) {
+        if (!value) return null;
+        const parsed = value instanceof Date ? value : new Date(value);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+
+    function _parseFireObservationTime(detection) {
+        const explicit = detection && (
+            detection.observed_at
+            || detection.observation_time
+            || detection.detected_at
+            || detection.timestamp
+        );
+        const explicitDate = _parseLiveDateTime(explicit);
+        if (explicitDate) return explicitDate;
+
+        const acqDate = detection && detection.acq_date;
+        if (!acqDate) return null;
+        const acqTime = String((detection && detection.acq_time) || '').replace(/\D/g, '').padStart(4, '0').slice(0, 4);
+        if (acqTime && /^\d{4}$/.test(acqTime)) {
+            return _parseLiveDateTime(`${acqDate}T${acqTime.slice(0, 2)}:${acqTime.slice(2)}:00Z`);
+        }
+        return _parseLiveDateTime(`${acqDate}T00:00:00Z`);
+    }
+
+    function _relativeAge(value, now = new Date()) {
+        const date = _parseLiveDateTime(value);
+        if (!date) return '';
+        const elapsedMs = Math.max(0, now.getTime() - date.getTime());
+        const minutes = Math.floor(elapsedMs / 60000);
+        if (minutes < 1) return 'meno di 1 min fa';
+        if (minutes < 90) return `${minutes} min fa`;
+        const hours = Math.floor(minutes / 60);
+        if (hours < 48) return `${hours} ore fa`;
+        const days = Math.floor(hours / 24);
+        return `${days} giorni fa`;
+    }
+
+    function _formatLiveDateTime(value) {
+        const date = _parseLiveDateTime(value);
+        if (!date) return '';
+        return date.toLocaleString('it-IT', {
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit',
+        });
+    }
+
+    function _liveFeedRefreshValue(data) {
+        if (!data) return null;
+        return data.feed_refreshed_at
+            || data.last_refreshed_at
+            || data.refreshed_at
+            || data.source_refreshed_at
+            || data.feed_updated_at
+            || data.source_updated_at
+            || data.updated_at
+            || data.fetched_at
+            || data.generated_at
+            || data.issued_at
+            || data.published_at
+            || null;
+    }
+
+    function _liveFeedRefreshText(data) {
+        const value = _liveFeedRefreshValue(data);
+        if (!value) return 'Ultimo refresh feed: non dichiarato dal provider';
+        const date = _parseLiveDateTime(value);
+        const label = date ? `${_formatLiveDateTime(date)} (${_relativeAge(date)})` : String(value);
+        return `Ultimo refresh feed: ${label}`;
+    }
+
     // ---- Canonical aecs4u-stats layers --------------------------------
     //
     // The catalog is server-owned: the browser never chooses a table name.
@@ -421,15 +492,30 @@
             const lat = Number(d.latitude), lng = Number(d.longitude);
             if (Number.isNaN(lat) || Number.isNaN(lng)) return;
             const color = _fireColor(d.confidence);
+            const observedAt = _parseFireObservationTime(d);
+            const age = observedAt ? _relativeAge(observedAt) : '';
+            const observedLabel = observedAt ? _formatLiveDateTime(observedAt) : (d.acq_date || '—');
+            const fireRefreshText = _liveFeedRefreshText(data);
             L.circleMarker([lat, lng], {
                 radius: 5,
                 color,
                 fillColor: color,
                 fillOpacity: 0.85,
                 weight: 1,
-            }).bindTooltip(`${d.acq_date || ''}${d.frp ? ' · ' + d.frp + ' MW' : ''}`).addTo(firesLayerGroup);
+            }).bindTooltip(`${age || observedLabel}${d.frp ? ' · ' + d.frp + ' MW' : ''}`)
+                .bindPopup(`
+                    <div class="fires-popup">
+                        <strong>Rilevamento FIRMS</strong>
+                        <div><b>Osservazione:</b> ${_escapeHtml(observedLabel)}${age ? ` (${_escapeHtml(age)})` : ''}</div>
+                        <div><b>FRP:</b> ${d.frp != null ? _escapeHtml(d.frp + ' MW') : '—'}</div>
+                        <div>${_escapeHtml(fireRefreshText)}</div>
+                    </div>`)
+                .addTo(firesLayerGroup);
         });
-        if (countEl) countEl.textContent = data.count ? `(${data.count})` : '(0)';
+        if (countEl) {
+            countEl.textContent = data.count ? `(${data.count})` : '(0)';
+            countEl.title = _liveFeedRefreshText(data);
+        }
     }
 
     function toggleFiresLayer() {
@@ -480,7 +566,7 @@
         ].map(_bulletinSeverity).sort((a, b) => b.rank - a.rank)[0] || BULLETIN_LEVELS.unknown;
     }
 
-    function _bulletinPopup(properties) {
+    function _bulletinPopup(properties, data) {
         const props = properties || {};
         const severity = _bulletinFeatureSeverity(props);
         const rows = [
@@ -493,6 +579,7 @@
                 <strong>${_escapeHtml(props['Nome zona'] || 'Zona di allerta')}</strong>
                 <div style="color:${severity.color};font-weight:600">${severity.label}</div>
                 ${rows}
+                <div>${_escapeHtml(_liveFeedRefreshText(data))}</div>
             </div>`;
     }
 
@@ -501,11 +588,14 @@
         if (!legendEl) return;
         const levels = ['red', 'orange', 'yellow', 'green'];
         const issue = data && (data.name || data.stamp);
+        const feedRefresh = data ? _liveFeedRefreshText(data) : '';
         legendEl.innerHTML = levels.map((key) => {
             const level = BULLETIN_LEVELS[key];
             return _legendItem(level.color, level.label);
         }).join('') + (issue
-            ? `<span class="enrichment-legend-meta">${_escapeHtml(issue)} · ${zoneCount} zone</span>`
+            ? `<span class="enrichment-legend-meta">${_escapeHtml(issue)} · ${zoneCount} zone · ${_escapeHtml(feedRefresh)}</span>`
+            : feedRefresh
+                ? `<span class="enrichment-legend-meta">${zoneCount} zone · ${_escapeHtml(feedRefresh)}</span>`
             : '');
     }
 
@@ -548,7 +638,7 @@
                 const props = feature.properties || {};
                 const severity = _bulletinFeatureSeverity(props);
                 layer.bindTooltip(`${_escapeHtml(props['Nome zona'] || 'Zona')} · ${severity.label}`);
-                layer.bindPopup(_bulletinPopup(props), { maxWidth: 360 });
+                layer.bindPopup(_bulletinPopup(props, data), { maxWidth: 360 });
                 layer.on('mouseover', () => layer.setStyle({ weight: 3, fillOpacity: 0.5 }));
                 layer.on('mouseout', () => zoneLayer.resetStyle(layer));
             },

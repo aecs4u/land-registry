@@ -19,6 +19,12 @@ STATS_FILE = (
     / "land_registry"
     / "stats_service.py"
 )
+STYLES_FILE = (
+    Path(__file__).resolve().parents[1]
+    / "land_registry"
+    / "static"
+    / "styles.css"
+)
 
 
 def test_census_at_point_route_precedes_dynamic_census_route() -> None:
@@ -65,12 +71,25 @@ def test_parcel_panel_requests_all_socioeconomic_sources() -> None:
 
 def test_census_card_surfaces_derived_rates_and_resolution() -> None:
     source = STATIC_FILE.read_text(encoding="utf-8")
+    styles = STYLES_FILE.read_text(encoding="utf-8")
 
     assert "employment_rate_working_age" in source
     assert "education_tertiary_rate" in source
     assert "foreign_resident_share" in source
     assert "vacancy_rate" in source
     assert "ISTAT Basi Territoriali 2021" in source
+    assert "_modelMetadataChips" in source
+    assert "enrichment-confidence-chip" in source
+    assert "spatial_resolution" in source
+    assert "dataset_version" in source
+    assert "model_version" in source
+    assert ".enrichment-confidence-chip" in styles
+    assert "PANEL_BENCHMARKS" in source
+    assert "_benchmarkInline" in source
+    assert "population_density_per_km2" in source
+    assert "Densità sezione" in source
+    assert "Benchmark" in source
+    assert ".enrichment-benchmark" in styles
 
 
 def test_municipality_card_surfaces_extended_istat_profile() -> None:
@@ -128,6 +147,20 @@ def test_read_model_declares_reference_catalog_blocks() -> None:
         assert f'"{block}"' in stats_source
     assert "available" in panel_source
     assert "match_method" in stats_source
+    assert "dataset_version" in stats_source
+    assert "model_version" in stats_source
+    assert "spatial_resolution" in stats_source
+    assert "ISTAT census section 2021" in stats_source
+    assert "centroid_to_census_section_v1" in stats_source
+    assert "benchmarks" in stats_source
+    assert "average_income_eur" in stats_source
+    assert "population_density_per_km2" in stats_source
+    assert "ADE_INSPIRE_CADASTRAL_EXTRACT" in stats_source
+    assert "_income_dataset_version" in stats_source
+    assert "_valuation_dataset_version" in stats_source
+    assert "MEF_IRPEF_" in stats_source
+    assert "omi-zone-centroid-match-v1" in stats_source
+    assert "_sourceFootnote(data.source, data)" in panel_source
 
 
 def test_province_level_cards_disclose_their_resolution() -> None:

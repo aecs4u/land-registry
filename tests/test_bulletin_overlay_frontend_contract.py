@@ -41,3 +41,11 @@ def test_overlay_ignores_superseded_fetches_and_cleans_up() -> None:
     assert "bulletinFetchToken" in LAYER_SOURCE
     assert "!bulletinActive" in LAYER_SOURCE
     assert "map.removeLayer(bulletinLayerGroup)" in LAYER_SOURCE
+
+
+def test_live_hazard_overlays_expose_age_and_feed_refresh_metadata() -> None:
+    assert "_parseFireObservationTime" in LAYER_SOURCE
+    assert "_relativeAge" in LAYER_SOURCE
+    assert "_liveFeedRefreshText(data)" in LAYER_SOURCE
+    assert "Ultimo refresh feed" in LAYER_SOURCE
+    assert "bindPopup(_bulletinPopup(props, data)" in LAYER_SOURCE

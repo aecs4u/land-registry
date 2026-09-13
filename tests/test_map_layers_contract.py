@@ -39,6 +39,9 @@ def test_catalog_ids_are_safe_and_have_feature_ids():
     assert get_map_layer("cadastral-parcels").coverage == "partial"
     assert "expected 2,847" in get_map_layer("urban-sections").coverage_note
     assert get_map_layer("maritime-concessions").id_column == "row_id"
+    assert get_map_layer("geo-boundaries").role == "admin-substitute"
+    assert get_map_layer("municipality-profiles").role == "admin-substitute"
+    assert get_map_layer("geo-boundaries").public()["role"] == "admin-substitute"
 
 
 class _Cursor:
@@ -118,6 +121,21 @@ def test_geojson_query_transforms_projected_census_geometry():
     assert result["features"][0]["properties"]["pop21"] == 100
     assert "32632" in cursor.sql
     assert "ST_AsGeoJSON" in cursor.sql
+
+
+def test_municipality_search_returns_compact_profiles_with_centroids():
+    cursor = _Cursor(rows=[("1", "Roma", "058091", "2025", 41.9, 12.5)])
+    cursor.description = [type("Column", (), {"name": name})() for name in (
+        "id", "canonical_name", "istat_code", "source_release", "latitude", "longitude"
+    )]
+    source = PostgresMapLayerSource(_ConnectionSource(cursor))
+
+    result = source.search_municipalities("Roma", 20)
+
+    assert result[0]["canonical_name"] == "Roma"
+    assert result[0]["latitude"] == 41.9
+    assert "ILIKE" in cursor.sql
+    assert "ST_Y(ST_Centroid" in cursor.sql
 
 
 def test_health_contract_checks_geometry_srid():

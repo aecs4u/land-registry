@@ -16,7 +16,7 @@ see that pipeline doc §3).
 ## Features
 
 - **File Upload Support**: Upload and process QPKG (QGIS project packages) or GPKG files
-- **Interactive Mapping**: Leaflet-based map interface with drawing tools
+- **Interactive Mapping**: MapLibre cadastral explorer with a Leaflet/Folium analysis compatibility workflow
 - **Spatial Analysis**: Find adjacent polygons using spatial relationships
 - **Cadastral Data Integration**: Direct loading from structured Italian cadastral database with S3 support
 - **Drawing Tools**: Create and save new polygons and circles as GeoJSON
@@ -127,7 +127,8 @@ The data were extracted from [servizio cartografico dell'Agenzia delle Entrate](
 
 ### Pages
 - `GET /` - Redirects to `/map`
-- `GET /map` - Main map application (Folium iframe + sidebar + Panel dashboards)
+- `GET /map` - Primary direct MapLibre cadastral map
+- `GET /map-legacy` - Folium upload, drawing, and spatial-analysis compatibility map
 - `GET /landing` - Feature summary landing page
 - `GET /cadastral-data` - Browse Italian cadastral data hierarchy
 - `GET /map_table` - Standalone tabulator table view (Panel-embedded)
@@ -156,6 +157,12 @@ The data were extracted from [servizio cartografico dell'Agenzia delle Entrate](
 ### High-Performance Visualization
 - `GET /api/v1/tiles/datashader/{z}/{x}/{y}.png` - Datashader rasterized tiles
 - `GET /api/v1/datashader/heatmap/{region}` - Full-region density heatmap
+
+### Direct Map
+- `GET /api/v1/map/layers` - Allow-listed canonical map-layer catalog
+- `GET /api/v1/map/layers/health` - Layer availability and coverage checks
+- `GET /api/v1/map/search` - Municipality and cadastral parcel search
+- `GET /api/v1/map/metrics` - Privacy-preserving map request diagnostics
 
 ### Health & Monitoring
 - `GET /health` - Application health check
@@ -195,7 +202,7 @@ uv run flake8
 - **Configuration**: Pydantic Settings for environment-aware configuration
 
 ### Frontend Technologies
-- **Mapping**: Leaflet.js with extensive plugin ecosystem
+- **Mapping**: MapLibre GL JS for the primary explorer, with Leaflet/Folium retained for advanced analysis
   - Leaflet Draw for polygon/circle creation
   - Leaflet Measure for distance/area measurement
   - Leaflet Control Geocoder for address search
@@ -243,6 +250,7 @@ land_registry/
 ├── datashader_service.py          # Server-side tile generation (large datasets)
 ├── dashboard.py                   # Panel/Bokeh dashboard (Tabulator table)
 ├── shared_state.py                # SharedState: FastAPI ↔ Panel data bridge
+├── map_observability.py           # Bounded map request metrics and latency buckets
 ├── file_availability_db.py        # SQLite cache for S3 file availability
 ├── s3_storage.py                  # S3 client for cadastral files (production)
 ├── gcs_storage.py                 # GCS client (aecs4u-storage integration)
@@ -261,7 +269,8 @@ land_registry/
 │   └── tabulator.html             # Standalone Panel table view
 └── static/
     ├── map.js                     # Client-side map logic, Canvas fallback, zone management
-    ├── folium-interface.js        # Folium iframe interaction, progressive loading
+    ├── map-v2.js                  # Primary direct MapLibre map and parcel workflow
+    ├── folium-interface.js        # Legacy Folium interaction, progressive loading
     ├── webgl-renderer.js          # Optional legacy GPU renderer
     ├── progressive-loader.js      # NDJSON stream consumer
     ├── table-manager.js           # Tabulator table management

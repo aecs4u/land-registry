@@ -151,11 +151,80 @@ _PARCEL_DETAIL_BLOCKS = (
     "cultural_heritage", "solar", "poi", "nightlights", "opendata", "pvp",
 )
 
+_PARCEL_BENCHMARKS = {
+    "population_density_per_km2": {
+        "label": "Italia, densità popolazione",
+        "value": 196,
+        "unit": "residenti/km²",
+        "year": 2021,
+        "dataset_version": "ISTAT_POP_2021",
+    },
+    "average_income_eur": {
+        "label": "Italia, reddito imponibile medio",
+        "value": 23000,
+        "unit": "€/contribuente",
+        "year": 2022,
+        "dataset_version": "MEF_IRPEF_2022",
+    },
+}
+
+
+def _omi_period_dataset_version(omi: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """Return the newest OMI quote period present in a quote payload."""
+    quotes = (omi or {}).get("quotes") or []
+    periods: list[str] = []
+    for quote in quotes:
+        period = quote.get("period")
+        if period:
+            periods.append(str(period))
+            continue
+        year = quote.get("anno")
+        semester = quote.get("semestre")
+        if year and semester:
+            periods.append(f"{year}-S{semester}")
+    return f"OMI_{max(periods)}" if periods else None
+
+
+def _valuation_dataset_version(
+    omi: Optional[Dict[str, Any]],
+    postgres_omi: Optional[Dict[str, Any]],
+) -> Optional[str]:
+    """Prefer explicit OMI release IDs, then fall back to the quote period."""
+    for candidate in (
+        (postgres_omi or {}).get("dataset_release_id"),
+        (postgres_omi or {}).get("source_release"),
+        (postgres_omi or {}).get("latest_period"),
+        (omi or {}).get("dataset_version"),
+        _omi_period_dataset_version(omi),
+    ):
+        if candidate:
+            text = str(candidate)
+            return text if text.startswith("OMI_") else f"OMI_{text}"
+    return None
+
+
+def _income_dataset_version(economics: Optional[Dict[str, Any]]) -> Optional[str]:
+    year = (economics or {}).get("tax_year")
+    return f"MEF_IRPEF_{year}" if year else None
+
+
+def _parcel_source_release(props: Dict[str, Any]) -> Optional[str]:
+    for key in ("source_release", "dataset_version", "SOURCE_RELEASE"):
+        if props.get(key):
+            return str(props[key])
+    return None
+
 
 def _detail_block(
     data: Any = None,
     *,
     source: Optional[str] = None,
+    dataset_version: Optional[str] = None,
+    model_version: Optional[str] = None,
+    spatial_resolution: Optional[str] = None,
+    spatial_resolution_m: Optional[float] = None,
+    confidence: Optional[float] = None,
+    benchmarks: Optional[Dict[str, Any]] = None,
     match_method: Optional[str] = None,
     available: Optional[bool] = None,
 ) -> Dict[str, Any]:
@@ -165,12 +234,17 @@ def _detail_block(
         "available": is_available,
         "data": data if is_available else None,
         "source": source,
-        "data_vintage": None,
+        "dataset_version": dataset_version,
+        "model_version": model_version,
+        "data_vintage": dataset_version,
         "updated_at": None,
         "match_method": match_method,
         "match_distance_m": None,
         "coverage_status": "full" if is_available else "not_available",
-        "confidence": None,
+        "confidence": confidence,
+        "spatial_resolution": spatial_resolution,
+        "spatial_resolution_m": spatial_resolution_m,
+        "benchmarks": benchmarks or {},
         "license": None,
     }
 
@@ -1167,6 +1241,7 @@ class _AsyncPostgresSource:
             "comune": cadastral_code,
             "zona": None,
             "quotes": quotes,
+            "dataset_version": _omi_period_dataset_version({"quotes": quotes}),
             "source": "Agenzia delle Entrate OMI via aecs4u-stats PostgreSQL via asyncpg",
         }
 
@@ -1214,6 +1289,7 @@ class _AsyncPostgresSource:
             "taxpayers": _postgres_scalar(taxpayers),
             "mean_taxable_income_eur": round(mean_income, 2) if mean_income is not None else None,
             "income_distribution": distribution,
+            "dataset_version": f"MEF_IRPEF_{latest_year}",
             "source": "MEF/IRPEF via aecs4u-stats PostgreSQL via asyncpg",
         }
 
@@ -1690,6 +1766,7 @@ class _PostgresStatsSource(_PostgresPoiSource):
             "comune": cadastral_code,
             "zona": None,
             "quotes": quotes,
+            "dataset_version": _omi_period_dataset_version({"quotes": quotes}),
             "source": "Agenzia delle Entrate OMI via aecs4u-stats PostgreSQL",
         }
 
@@ -1743,6 +1820,7 @@ class _PostgresStatsSource(_PostgresPoiSource):
             "taxpayers": _postgres_scalar(taxpayers),
             "mean_taxable_income_eur": round(mean_income, 2) if mean_income is not None else None,
             "income_distribution": distribution,
+            "dataset_version": f"MEF_IRPEF_{latest_year}",
             "source": "MEF/IRPEF via aecs4u-stats PostgreSQL",
         }
 
@@ -1906,7 +1984,7 @@ class _PostgresStatsSource(_PostgresPoiSource):
                     # the fixed CRS keeps the GiST candidate filter usable.
                     cursor.execute(
                         f"""
-                        SELECT s.*
+                        SELECT s.*, ST_Area(s.geom)::double precision AS area_sqm
                         FROM census_sections.sections s
                         WHERE s.procom = %s
                           AND s.geom && ST_Transform({point_sql}, 32632)
@@ -3885,6 +3963,7 @@ def get_omi_quotes(
         "comune": comune,
         "zona": zona,
         "quotes": rows,
+        "dataset_version": _omi_period_dataset_version({"quotes": rows}),
         "source": "Agenzia delle Entrate OMI via aecs4u-stats",
     }
 
@@ -3973,6 +4052,8 @@ def estimate_omi_value(
 
     return {
         "methodology": "omi-area-range-v1",
+        "model_version": "omi-area-range-v1",
+        "dataset_version": _omi_period_dataset_version({"quotes": [quote]}),
         "input": {
             "comune": comune,
             "zona": zona.strip().upper(),
@@ -4086,7 +4167,10 @@ def get_income_profile(
                 "Postgres IRPEF lookup failed; using local MEF fallback",
                 exc_info=True,
             )
-    return income_by_cadastral_code(cadastral_code, year=year, db_path=_mef_sqlite_path())
+    result = income_by_cadastral_code(cadastral_code, year=year, db_path=_mef_sqlite_path())
+    if result is not None and result.get("year") and not result.get("dataset_version"):
+        result["dataset_version"] = f"MEF_IRPEF_{result['year']}"
+    return result
 
 
 def get_environmental_risks(istat_code: int | str) -> Optional[Dict[str, Any]]:
@@ -4710,6 +4794,7 @@ def _census_section_for_parcel(
                 if hasattr(value, "item"):
                     value = value.item()
                 props[name] = value
+            props.setdefault("area_sqm", round(float(geometry.area), 2))
             props["ratios"] = {
                 "education_tertiary_rate": round(props["p90"] / props["p83"], 4)
                 if props.get("p90") is not None and props.get("p83") not in (None, 0) else None,
@@ -4809,6 +4894,11 @@ def _build_parcel_enrichment(
 
     postgres_omi = (postgres_context or {}).get("omi")
     postgres_census = (postgres_context or {}).get("census")
+    census_dataset_version = (
+        ((postgres_census or {}).get("properties") or {}).get("source_release")
+        or "ISTAT_BASI_TERRITORIALI_2021"
+    )
+    parcel_dataset_version = _parcel_source_release(props) or "ADE_INSPIRE_CADASTRAL_EXTRACT"
     if postgres_omi and postgres_omi.get("omi_zone_key"):
         omi_zone = {
             "province": (municipality or {}).get("province_sigla"),
@@ -4862,6 +4952,7 @@ def _build_parcel_enrichment(
         "basic": _detail_block(
             parcel,
             source="Agenzia delle Entrate INSPIRE cadastral extract",
+            dataset_version=parcel_dataset_version,
             match_method="parcel_reference",
         ),
         "cadastral": _detail_block(
@@ -4876,23 +4967,39 @@ def _build_parcel_enrichment(
                 ),
             },
             source="Agenzia delle Entrate / ISTAT",
+            dataset_version=parcel_dataset_version,
             match_method="parcel_reference",
         ),
         "population": _detail_block(
             census,
             source="ISTAT Permanent Census 2021 via aecs4u-stats PostgreSQL"
             if postgres_census else "ISTAT Basi Territoriali 2021",
+            dataset_version=census_dataset_version,
+            model_version="centroid_to_census_section_v1",
+            spatial_resolution="ISTAT census section 2021",
+            benchmarks={
+                "population_density_per_km2": _PARCEL_BENCHMARKS["population_density_per_km2"],
+            },
             match_method="centroid",
         ),
         "demographics": _detail_block(
             census,
             source="ISTAT Permanent Census 2021 via aecs4u-stats PostgreSQL"
             if postgres_census else "ISTAT Basi Territoriali 2021",
+            dataset_version=census_dataset_version,
+            spatial_resolution="ISTAT census section 2021",
+            benchmarks={
+                "population_density_per_km2": _PARCEL_BENCHMARKS["population_density_per_km2"],
+            },
             match_method="centroid",
         ),
         "economics": _detail_block(
             economics,
             source="MEF/IRPEF facts via aecs4u-stats PostgreSQL",
+            dataset_version=_income_dataset_version(economics),
+            benchmarks={
+                "average_income_eur": _PARCEL_BENCHMARKS["average_income_eur"],
+            },
             match_method="municipality",
         ),
         "buildings": _detail_block(
@@ -4921,6 +5028,8 @@ def _build_parcel_enrichment(
             },
             source="Agenzia delle Entrate OMI via aecs4u-stats PostgreSQL"
             if postgres_omi else "Agenzia delle Entrate OMI",
+            dataset_version=_valuation_dataset_version(omi, postgres_omi),
+            model_version="omi-zone-centroid-match-v1",
             match_method="centroid",
         ),
     })

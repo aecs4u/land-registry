@@ -22,9 +22,12 @@ Land Registry Viewer for Italian cadastral (land registry) data. Supports file u
 ### Frontend
 
 - **land_registry/templates/base.html** - Base template with all JS/CSS dependencies
-- **land_registry/templates/index.html** - Main map page (extends base.html)
-- **land_registry/static/map.js** - Client-side map logic, Canvas fallback, zone management
-- **land_registry/static/folium-interface.js** - Folium iframe map interaction, cadastral selection, progressive loading
+- **land_registry/templates/index.html** - Legacy Folium upload/analysis page (`/map-legacy`)
+- **land_registry/templates/map_v2.html** - Primary direct vector-tile map page (`/map`)
+- **land_registry/static/map.js** - Legacy client-side map logic, Canvas fallback, zone management
+- **land_registry/static/map-v2.js** - Primary MapLibre map, catalog layers, parcel search and selection
+- **land_registry/map_observability.py** - Privacy-preserving map route metrics and latency buckets
+- **land_registry/static/folium-interface.js** - Legacy Folium map interaction, cadastral selection, progressive loading
 - **land_registry/static/webgl-renderer.js** - Optional legacy GPU renderer for explicit integrations
 - **land_registry/static/progressive-loader.js** - NDJSON stream consumer for incremental layer rendering
 - **land_registry/static/table-manager.js** - Tabulator table management
@@ -33,8 +36,12 @@ Land Registry Viewer for Italian cadastral (land registry) data. Supports file u
 
 ### Map Architecture (Important)
 
-The map uses a **Folium iframe** pattern, not a direct Leaflet instance:
-1. Server generates Folium HTML → embedded as `<iframe srcdoc="...">`
+The primary `/map` experience is a direct MapLibre map. It consumes the
+allow-listed map catalog and MVT endpoints, loads optional layers lazily, and
+uses `/map-legacy` for the complete Folium upload/analysis compatibility flow.
+
+The compatibility map uses the Folium-rendered Leaflet pattern:
+1. Server generates Folium HTML → embedded in the legacy page
 2. The Leaflet map instance is accessed via `window[mapId]` where `mapId` comes from `.leaflet-container` elements
 3. **`window.map` is often null** — use the Folium map pattern (`getFoliumMapInstance()`) when adding layers dynamically
 4. `map.js` functions like `addGeoJsonToMap()` only work when a client-side map div exists (not in Folium mode)
@@ -83,6 +90,8 @@ The dev server runs on **port 8000**. Panel/Bokeh dashboard runs on **port 5006*
 - `POST /api/v1/generate-map/` - Generate static Folium map from uploads
 
 ### Cadastral Data Loading
+- `GET /api/v1/map/search` - Search canonical municipalities and exact parcel references
+- `GET /api/v1/map/metrics` - Privacy-preserving map request diagnostics
 - `GET /api/v1/get-cadastral-structure/` - Load Italian cadastral hierarchy (cached)
 - `POST /api/v1/load-cadastral-files/` - Load multiple cadastral files (parallel, returns all at once)
 - `POST /api/v1/load-cadastral-files-stream/` - **Streaming** loader (NDJSON, progressive rendering)
