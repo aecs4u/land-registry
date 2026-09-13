@@ -1,5 +1,6 @@
 """Persistence and validation tests for version-aware saved parcels."""
 
+import json
 import sqlite3
 
 import pytest
@@ -132,6 +133,49 @@ def test_saved_parcel_update_accepts_shortlist_only_metadata():
     assert request.status == "researching"
     assert request.priority == 4
     assert request.tags == ["solar", "follow-up"]
+
+
+def test_saved_parcel_collection_contract_uses_configured_statuses_and_summary(monkeypatch):
+    monkeypatch.setenv(
+        "SAVED_PARCEL_STATUS_VOCABULARY_JSON",
+        json.dumps(
+            [
+                {"value": "triage", "label": "Triage", "is_initial": True, "is_active": True},
+                {"value": "discarded", "label": "Discarded", "is_active": False},
+            ]
+        ),
+    )
+    row = {
+        "id": 42,
+        "source": "catasto",
+        "source_key": "CATASTO|REF=RM-LEGACY",
+        "national_reference": None,
+        "parcel_identity_id": "8e52ec0f-3a0f-5b20-af70-4ce7fb5c94b5",
+        "parcel_version_id": None,
+        "dataset_version": None,
+        "label": "Legacy saved parcel",
+        "notes": "Needs review",
+        "status": None,
+        "priority": 2,
+        "tags": '["legacy", "review"]',
+        "geometry": '{"type": "Point", "coordinates": [12.5, 41.9]}',
+        "created_at": "2026-09-13 10:00:00",
+        "updated_at": "2026-09-13T11:00:00Z",
+    }
+
+    item = api_router._saved_parcel_row_to_response(row)
+    summary = api_router._saved_parcel_summary([item, {"status": "discarded"}])
+
+    assert item["status"] == "triage"
+    assert item["tags"] == ["legacy", "review"]
+    assert item["geometry"] == {"type": "Point", "coordinates": [12.5, 41.9]}
+    assert item["created_at"] == "2026-09-13T10:00:00Z"
+    assert item["updated_at"] == "2026-09-13T11:00:00Z"
+    assert summary == {
+        "total": 2,
+        "by_status": {"triage": 1, "discarded": 1},
+        "active_total": 1,
+    }
 
 
 def test_dpc_bulletin_hazard_intersects_saved_parcel_geometry(monkeypatch):
