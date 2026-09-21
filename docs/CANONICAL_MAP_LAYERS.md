@@ -9,8 +9,8 @@ readiness is exposed at `GET /api/v1/map/layers/health`.
 Apply the aecs4u-stats serving migrations, then configure the map process with:
 
 ```dotenv
-AECS4U_STATS_POSTGRES_DSN=postgresql://…/aecs4u-stats
-AECS4U_STATS_POSTGRES_ENABLE=1
+STATS_POSTGRES_DSN=postgresql://…/aecs4u-stats
+STATS_POSTGRES_ENABLE=1
 ```
 
 The application role only needs `SELECT` on the canonical and serving

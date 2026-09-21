@@ -895,7 +895,7 @@ class _PostgresPoiSource:
         if not _postgres_stats_enabled():
             return None
         dsn = (
-            os.getenv("AECS4U_STATS_POSTGRES_DSN")
+            os.getenv("STATS_POSTGRES_DSN")
             or os.getenv("AECS4U_STATS_DATABASE_URL")
             or os.getenv("AECS4U_STATS_SPATIAL_DATABASE_URL")
         )
@@ -987,12 +987,12 @@ def _postgres_stats_enabled() -> bool:
     thread-join timeout, nor ``asyncio.wait_for`` can recover from it
     (consistent with the call never releasing the GIL). Defaulting to
     "DSN configured -> enabled" silently reintroduces that freeze on every
-    request the moment ``AECS4U_STATS_POSTGRES_DSN`` is set, e.g. via
-    ``.env``. Require an explicit ``AECS4U_STATS_POSTGRES_ENABLE=1`` until
+    request the moment ``STATS_POSTGRES_DSN`` is set, e.g. via
+    ``.env``. Require an explicit ``STATS_POSTGRES_ENABLE=1`` until
     that's diagnosed/fixed, or Postgres access is moved behind real process
     isolation (a subprocess that can be SIGKILLed).
     """
-    return os.getenv("AECS4U_STATS_POSTGRES_ENABLE", "").strip().lower() in ("1", "true", "yes", "on")
+    return os.getenv("STATS_POSTGRES_ENABLE", "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def _postgres_stats_dsn() -> Optional[str]:
@@ -1004,7 +1004,7 @@ def _postgres_stats_dsn() -> Optional[str]:
     """
     if not _postgres_stats_enabled():
         return None
-    dsn = os.getenv("AECS4U_STATS_POSTGRES_DSN")
+    dsn = os.getenv("STATS_POSTGRES_DSN")
     if not dsn or not dsn.startswith(("postgres://", "postgresql://", "postgresql+")):
         return None
     return dsn
@@ -3774,7 +3774,7 @@ def get_pois_near(
     POIs around a point, grouped by category with ``distance_km``, nearest-first.
 
     Prefers the aecs4u-stats PostGIS ``facts.poi`` table when configured
-    (``AECS4U_STATS_POSTGRES_DSN``), falling back to the local OSM POI
+    (``STATS_POSTGRES_DSN``), falling back to the local OSM POI
     SQLite store, and finally to an empty result when neither is available.
     """
     postgres_source = _get_postgres_poi_source() if use_postgres else None

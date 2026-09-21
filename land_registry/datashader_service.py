@@ -97,14 +97,14 @@ class PostgresCadastralBoundarySource:
         # connect_timeout/statement_timeout, thread-join timeouts, and
         # asyncio.wait_for alike (consistent with the call never releasing
         # the GIL). Treating a configured DSN as authoritative silently
-        # reintroduces that freeze the moment AECS4U_STATS_POSTGRES_DSN is
-        # set (e.g. via .env) — require explicit AECS4U_STATS_POSTGRES_ENABLE=1
+        # reintroduces that freeze the moment STATS_POSTGRES_DSN is
+        # set (e.g. via .env) — require explicit STATS_POSTGRES_ENABLE=1
         # until that's diagnosed/fixed, or Postgres access is moved behind
         # real process isolation (a subprocess that can be SIGKILLed).
-        if os.getenv("AECS4U_STATS_POSTGRES_ENABLE", "").strip().lower() not in ("1", "true", "yes", "on"):
+        if os.getenv("STATS_POSTGRES_ENABLE", "").strip().lower() not in ("1", "true", "yes", "on"):
             return None
         dsn = (
-            os.getenv("AECS4U_STATS_POSTGRES_DSN")
+            os.getenv("STATS_POSTGRES_DSN")
             or os.getenv("AECS4U_STATS_DATABASE_URL")
             or os.getenv("AECS4U_STATS_SPATIAL_DATABASE_URL")
             or os.getenv("DATABASE_URL")

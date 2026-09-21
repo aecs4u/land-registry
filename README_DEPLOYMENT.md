@@ -130,8 +130,12 @@ make test-html
 gcloud secrets create s3-access-key --data-file=- <<< "your-access-key"
 gcloud secrets create s3-secret-key --data-file=- <<< "your-secret-key"
 
-# Store the canonical aecs4u-stats PostGIS DSN used by map layers
-gcloud secrets create AECS4U_STATS_POSTGRES_DSN --data-file=- <<< "postgresql://..."
+# Store the canonical aecs4u-stats PostGIS DSN used by map layers. It is one
+# DSN for a shared database rather than an app-specific value, so unlike the
+# per-app secrets it is not prefixed with the app name; the workflow maps it to
+# the STATS_POSTGRES_DSN environment variable. Grant the secretAccessor role to
+# each service account that reads it.
+gcloud secrets create STATS_POSTGRES_DSN --data-file=- <<< "postgresql://..."
 
 # Grant Cloud Run access to secrets
 gcloud projects add-iam-policy-binding PROJECT_ID \
@@ -139,7 +143,7 @@ gcloud projects add-iam-policy-binding PROJECT_ID \
     --role="roles/secretmanager.secretAccessor"
 ```
 
-The Cloud Run deployment workflow enables `AECS4U_STATS_POSTGRES_ENABLE=1`,
+The Cloud Run deployment workflow enables `STATS_POSTGRES_ENABLE=1`,
 injects this DSN as a secret, and verifies all 15 canonical map layers after
 deployment. The database role needs `SELECT` on the canonical and serving
 relations plus network access from Cloud Run.

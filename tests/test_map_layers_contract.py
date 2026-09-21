@@ -366,8 +366,8 @@ def test_unknown_layer_is_rejected():
 
 
 def test_environment_accepts_sqlalchemy_postgres_dsn(monkeypatch):
-    monkeypatch.setenv("AECS4U_STATS_POSTGRES_ENABLE", "1")
-    monkeypatch.setenv("AECS4U_STATS_POSTGRES_DSN", "postgresql+asyncpg://user:pass@localhost/db")
+    monkeypatch.setenv("STATS_POSTGRES_ENABLE", "1")
+    monkeypatch.setenv("STATS_POSTGRES_DSN", "postgresql+asyncpg://user:pass@localhost/db")
     source = _AsyncpgConnectionSource.from_environment()
     assert source is not None
     assert source.dsn.startswith("postgresql://")
