@@ -122,4 +122,4 @@ jobs:
           URL="${{ steps.deploy.outputs.url }}"
           curl --fail --silent --show-error --max-time 30 \
             "$URL/api/v1/map/layers/health" > /tmp/canonical-map-health.json
-          python -c 'import json; d=json.load(open("/tmp/canonical-map-health.json")); print(f"map health endpoint passed; postgis_available={d.get(\"available\")}, layers={len(d.get(\"layers\", []))}")'
+          python -c 'import json; d=json.load(open("/tmp/canonical-map-health.json")); print("map health endpoint passed; postgis_available=", d.get("available"), "layers=", len(d.get("layers", [])))'
