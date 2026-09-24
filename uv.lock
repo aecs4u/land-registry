@@ -42,8 +42,8 @@ dependencies = [
 
 [[package]]
 name = "aecs4u-domain"
-version = "0.14.0"
-source = { git = "https://github.com/aecs4u/aecs4u-domain.git?branch=main#5c885c85ef69c704fbac87c71c98b1551066a143" }
+version = "0.15.1"
+source = { git = "https://github.com/aecs4u/aecs4u-domain.git?branch=main#2eb725a1f835e81053ddff20f9c35202abf6c38a" }
 dependencies = [
     { name = "humanize" },
     { name = "pydantic" },
