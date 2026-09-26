@@ -1,61 +1,135 @@
 :root {
-  --direct-map-bg: #f5f7fa;
-  --direct-map-panel: rgba(255, 255, 255, .96);
-  --direct-map-border: #dce3eb;
-  --direct-map-text: #17212b;
-  --direct-map-muted: #64748b;
-  --direct-map-accent: #1a5490;
-  --direct-map-selection: #f08a24;
-  --direct-map-shadow: 0 10px 30px rgba(15, 35, 55, .14);
+  /* Map-specific aliases keep the component rules readable while taking
+     their palette, typography and spacing from aecs4u-theme. */
+  --direct-map-bg: var(--color-bg-secondary);
+  --direct-map-panel: var(--color-bg-primary);
+  --direct-map-border: var(--color-border-light);
+  --direct-map-text: var(--color-text-primary);
+  --direct-map-muted: var(--color-text-secondary);
+  --direct-map-accent: var(--color-primary-600);
+  --direct-map-accent-soft: color-mix(in srgb, var(--direct-map-accent) 10%, transparent);
+  --direct-map-accent-ring: color-mix(in srgb, var(--direct-map-accent) 45%, transparent);
+  --direct-map-selection: var(--color-warning-500);
+  --direct-map-shadow: var(--shadow-lg);
 }
 
-body.direct-map-page { overflow: hidden; }
-.direct-map-shell { height: 100vh; display: flex; flex-direction: column; background: var(--direct-map-bg); color: var(--direct-map-text); }
-.direct-map-header { height: 58px; flex: 0 0 58px; padding: 0 20px; display: flex; align-items: center; justify-content: space-between; background: var(--direct-map-panel); border-bottom: 1px solid var(--direct-map-border); z-index: 5; }
-.direct-map-brand, .map-action-link { color: inherit; text-decoration: none; }
-.direct-map-brand { display: flex; gap: 9px; align-items: center; font-weight: 700; letter-spacing: .01em; }
-.direct-map-brand-mark { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 5px; color: white; background: var(--direct-map-accent); font-size: 21px; }
-.direct-map-header-actions { display: flex; gap: 8px; align-items: center; }
-.map-action-button, .map-round-button, .layers-toggle, .secondary-action { border: 1px solid var(--direct-map-border); border-radius: 7px; background: var(--direct-map-panel); color: inherit; cursor: pointer; font: inherit; }
+/* The theme owns the fixed navbar/sidebar. Make the map occupy the remaining
+   viewport inside .main-content and suppress the generic footer on this page.
+   The explicit column flex chain is important: the theme's main element is a
+   flex item in the body, but is not itself a flex container by default. */
+#main-content:has(.direct-map-shell) { height: calc(100vh - var(--header-height)); min-height: 0; display: flex; flex-direction: column; margin-top: var(--header-height); overflow: hidden; padding: 0; }
+#main-content:has(.direct-map-shell) + .site-footer { display: none; }
+.direct-map-shell { flex: 1 1 auto; height: auto; min-height: 0; display: flex; flex-direction: column; background: var(--direct-map-bg); color: var(--direct-map-text); font-family: var(--font-sans); }
+.map-action-button, .map-round-button, .layers-toggle, .shortlist-toggle, .secondary-action { border: 1px solid var(--direct-map-border); border-radius: 7px; background: var(--direct-map-panel); color: inherit; cursor: pointer; font: inherit; }
 .map-action-button { padding: 7px 11px; }
-.map-action-button:hover, .map-round-button:hover, .layers-toggle:hover { border-color: var(--direct-map-accent); color: var(--direct-map-accent); }
+.map-round-button:hover, .layers-toggle:hover, .shortlist-toggle:hover { border-color: var(--direct-map-accent); color: var(--direct-map-accent); }
 .direct-map-stage { position: relative; flex: 1; min-height: 0; }
 .direct-map { position: absolute; inset: 0; }
-.map-search-card, .map-layers-card, .parcel-detail-card, .parcel-shortlist-card, .map-status-pill, .map-help-note, .layers-toggle { position: absolute; z-index: 2; box-shadow: var(--direct-map-shadow); }
-.map-search-card { top: 18px; left: 20px; width: min(440px, calc(100% - 40px)); padding: 8px; border: 1px solid var(--direct-map-border); border-radius: 9px; background: var(--direct-map-panel); }
+.map-search-card, .map-layers-card, .parcel-detail-card, .parcel-shortlist-card, .map-table-card, .map-status-pill, .map-help-note, .layers-toggle { position: absolute; z-index: 2; box-shadow: var(--direct-map-shadow); }
+/* Above the other floating cards (z-index 2): the results list expands
+   downward and must never be clipped behind the shortlist panel that sits
+   just below it at the same left edge. */
+.map-search-card { top: 18px; left: 20px; z-index: 3; width: min(440px, calc(100% - 40px)); padding: 8px; border: 1px solid var(--direct-map-border); border-radius: 9px; background: var(--direct-map-panel); }
 .map-search-row { display: flex; align-items: center; gap: 7px; }
 .map-search-icon { color: var(--direct-map-muted); font-size: 23px; line-height: 1; }
-.map-search-row input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: inherit; font: inherit; padding: 7px 2px; }
+.map-search-row input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: inherit; font: inherit; padding: 7px 2px; overflow: hidden; text-overflow: ellipsis; }
 .map-search-row button { width: 32px; height: 32px; border: 0; border-radius: 6px; background: var(--direct-map-accent); color: white; cursor: pointer; }
 .map-search-status { min-height: 0; color: var(--direct-map-muted); font-size: 12px; padding: 2px 27px; }
 .map-search-results { max-height: 290px; overflow: auto; border-top: 1px solid var(--direct-map-border); margin-top: 5px; padding-top: 4px; }
 .map-search-result { display: block; width: 100%; border: 0; border-radius: 5px; background: transparent; color: inherit; cursor: pointer; text-align: left; padding: 9px; }
-.map-search-result:hover, .map-search-result:focus { background: rgba(26, 84, 144, .1); outline: 0; }
+.map-search-result:hover, .map-search-result:focus { background: var(--direct-map-accent-soft); outline: 0; }
 .map-search-result small { display: block; color: var(--direct-map-muted); margin-top: 2px; }
 .map-utility-stack { position: absolute; right: 15px; top: 18px; z-index: 2; display: grid; gap: 7px; }
 .map-round-button { width: 38px; height: 38px; font-size: 18px; }
-.map-layers-card { top: 18px; right: 65px; width: 292px; max-height: calc(100% - 36px); overflow: auto; padding: 15px; border: 1px solid var(--direct-map-border); border-radius: 9px; background: var(--direct-map-panel); }
+.map-layers-card { top: 70px; right: 65px; width: 292px; max-height: calc(100% - 88px); overflow: auto; padding: 15px; border: 1px solid var(--direct-map-border); border-radius: 9px; background: var(--direct-map-panel); }
 .map-card-heading { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
 .map-card-heading h2 { margin: 2px 0 12px; font-size: 18px; }
+.map-card-heading-actions { display: flex; align-items: center; gap: 8px; }
 .map-card-close { border: 0; background: transparent; color: var(--direct-map-muted); cursor: pointer; font-size: 23px; line-height: 1; padding: 0 2px; }
-.layer-section-title, .map-eyebrow { color: var(--direct-map-muted); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+/* The shortlist stays open inline on desktop/tablet (no toggle to reopen
+   it there), so only expose the close action once .shortlist-toggle exists
+   to bring it back, below 700px. */
+.shortlist-close-button { display: none; }
+.layer-section-title, .map-eyebrow { color: var(--direct-map-muted); font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .basemap-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin: 8px 0 17px; }
 .basemap-options label { border: 1px solid var(--direct-map-border); border-radius: 5px; cursor: pointer; font-size: 12px; padding: 7px 5px; text-align: center; }
 .basemap-options input { position: absolute; opacity: 0; }
-.basemap-options label:has(input:checked) { border-color: var(--direct-map-accent); color: var(--direct-map-accent); background: rgba(26, 84, 144, .08); }
+.basemap-options label:has(input:checked) { border-color: var(--direct-map-accent); color: var(--direct-map-accent); background: var(--direct-map-accent-soft); }
 .map-layer-list { display: grid; gap: 6px; margin-top: 8px; }
 .map-layer-row { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; padding: 5px 0; }
 .map-layer-row input { margin-top: 2px; }
+.map-layer-row > span { min-width: 0; }
+.map-layer-row strong, .map-layer-meta { display: block; }
 .map-layer-swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin: 0 5px 1px 0; }
-.map-layer-meta, .map-muted { color: var(--direct-map-muted); font-size: 11px; margin: 2px 0 0; }
-.map-coverage-status { border-top: 1px solid var(--direct-map-border); color: var(--direct-map-muted); font-size: 11px; margin-top: 13px; padding-top: 10px; }
-.layers-toggle { right: 65px; top: 18px; padding: 9px 12px; }
-.parcel-detail-card { top: 18px; right: 20px; width: min(360px, calc(100% - 40px)); max-height: calc(100% - 36px); overflow: auto; padding: 17px; border: 1px solid var(--direct-map-border); border-radius: 9px; background: var(--direct-map-panel); }
+.map-layer-meta, .map-muted { color: var(--direct-map-muted); font-size: 12px; margin: 2px 0 0; }
+.map-coverage-status { border-top: 1px solid var(--direct-map-border); color: var(--direct-map-muted); font-size: 12px; margin-top: 13px; padding-top: 10px; }
+.map-live-layers { display: grid; gap: 6px; margin-top: 8px; }
+.map-live-layer-row { display: flex; align-items: center; gap: 6px; }
+.map-live-toggle { flex: 1; text-align: left; padding: 7px 9px; font-size: 12px; }
+.map-live-toggle.active { border-color: var(--direct-map-accent); color: var(--direct-map-accent); background: var(--direct-map-accent-soft); }
+.enrichment-legend { display: flex; flex-wrap: wrap; gap: 6px 10px; margin: 4px 0 2px; }
+.enrichment-legend-item { display: inline-flex; align-items: center; gap: 4px; color: var(--direct-map-muted); font-size: 12px; }
+.enrichment-legend-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+.enrichment-legend-meta { color: var(--direct-map-muted); font-size: 12px; }
+.fires-popup, .bulletin-popup { font-size: 12px; line-height: 1.5; }
+.parcel-adjacent-results { margin-top: 10px; }
+.parcel-adjacent-results button { margin: 0 5px 5px 0; }
+.parcel-all-attributes { border-top: 1px solid var(--direct-map-border); margin-top: 13px; padding-top: 8px; }
+.parcel-all-attributes summary { cursor: pointer; font-weight: 600; font-size: 12px; }
+.parcel-all-attributes table { margin-top: 8px; }
+.map-market-filters { display: grid; gap: 7px; margin-top: 6px; }
+.map-market-filters label { color: var(--direct-map-muted); display: grid; gap: 3px; font-size: 12px; }
+.map-market-filters select, .map-market-filters input[type="number"] { border: 1px solid var(--direct-map-border); border-radius: 6px; background: var(--direct-map-panel); color: var(--direct-map-text); font: inherit; padding: 5px; }
+.map-market-filters select[multiple] { min-height: 76px; }
+.sales-popup { font-size: 12px; line-height: 1.55; min-width: 230px; }
+.sales-popup > strong { display: block; font-size: 14px; margin-bottom: 6px; }
+.map-popup-label { color: var(--direct-map-muted); display: inline-block; min-width: 92px; }
+.sales-popup-actions { display: flex; flex-wrap: wrap; gap: 6px; border-top: 1px solid var(--direct-map-border); margin-top: 8px; padding-top: 7px; }
+.sales-popup-actions a { color: var(--direct-map-accent); font-weight: 600; }
+.poi-explorer-modal { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: rgba(15, 23, 42, .58); padding: 24px; }
+.poi-explorer-modal[hidden] { display: none; }
+.poi-explorer-dialog { width: min(960px, 100%); height: min(680px, 100%); overflow: hidden; border: 1px solid var(--direct-map-border); border-radius: 10px; background: var(--direct-map-panel); box-shadow: var(--direct-map-shadow); }
+.poi-explorer-toolbar { display: flex; align-items: center; justify-content: space-between; height: 42px; padding: 0 12px; }
+.poi-explorer-dialog iframe { display: block; width: 100%; height: calc(100% - 42px); border: 0; }
+/* right: 60px keeps the bottom-right MapLibre controls clickable; z-index 4
+   lifts the table above the other floating cards and the signed-out shortlist
+   chip (z-index 3), which otherwise covered its pagination row. */
+.map-table-card { z-index: 4; left: 20px; right: 60px; bottom: 60px; max-height: 42%; overflow: auto; padding: 12px 15px 15px; border: 1px solid var(--direct-map-border); border-radius: 9px; background: var(--direct-map-panel); }
+.map-table-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+.map-table-toolbar select, .map-table-toolbar input { border: 1px solid var(--direct-map-border); border-radius: 6px; background: var(--direct-map-panel); color: var(--direct-map-text); font: inherit; padding: 5px 7px; }
+.map-table-scroll { overflow: auto; max-height: calc(42vh - 90px); }
+/* Only the rows scroll; the toolbar and pagination stay in view instead of
+   being pushed below the card's own scroll area. */
+.map-table-card:not([hidden]) { display: flex; flex-direction: column; overflow: hidden; }
+.map-table-card:not([hidden]) .map-table-scroll { flex: 1 1 auto; min-height: 0; max-height: none; }
+.map-attribute-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.map-attribute-table th, .map-attribute-table td { border-bottom: 1px solid var(--direct-map-border); padding: 5px 8px; text-align: left; white-space: nowrap; }
+.map-attribute-table tbody tr { cursor: pointer; }
+.map-attribute-table tbody tr:hover { background: var(--direct-map-accent-soft); }
+.map-table-pagination { display: flex; gap: 8px; align-items: center; margin-top: 8px; font-size: 12px; color: var(--direct-map-muted); }
+.layers-toggle { right: 65px; top: 18px; padding: 9px 12px; z-index: 3; }
+.map-mobile-action-bar { display: contents; }
+/* Only meaningful once .parcel-shortlist-card becomes an opt-in bottom sheet
+   below 700px (see media query below); the shortlist is already visible
+   inline on desktop/tablet, so this stays hidden there. */
+.shortlist-toggle { display: none; padding: 9px 12px; }
+.shortlist-toggle.is-collapsible, .shortlist-toggle.is-signed-out {
+  display: inline-flex; align-items: center; gap: 6px;
+  position: absolute; left: 20px; bottom: 64px; z-index: 3;
+}
+.shortlist-toggle.is-signed-out { max-width: min(360px, calc(100% - 90px)); white-space: normal; }
+.direct-map-shell:has(.shortlist-toggle.is-signed-out) .parcel-shortlist-card { display: none; }
+.map-layer-row input[type="checkbox"], .shortlist-hazard-filter input[type="checkbox"] { min-width: 24px; min-height: 24px; }
+.map-layer-meta, .map-muted, .map-coverage-status, .enrichment-legend-item, .enrichment-legend-meta { font-size: 12px; }
+.map-market-filters label, .shortlist-controls label { font-size: 12px; }
+.shortlist-badges span, .parcel-block-chips span, .parcel-detail-table th { font-size: 12px; }
+.map-round-button, .map-card-close, .shortlist-item-actions button, .secondary-action.compact { min-width: 24px; min-height: 24px; }
+.parcel-detail-card { top: 18px; right: 65px; width: min(360px, calc(100% - 40px)); max-height: calc(100% - 36px); overflow: auto; padding: 17px; border: 1px solid var(--direct-map-border); border-radius: 9px; background: var(--direct-map-panel); }
 .parcel-shortlist-card { top: 126px; left: 20px; width: min(360px, calc(100% - 40px)); max-height: calc(100% - 164px); overflow: auto; padding: 14px; border: 1px solid var(--direct-map-border); border-radius: 9px; background: var(--direct-map-panel); }
-.secondary-action.compact { padding: 5px 8px; font-size: 11px; }
-.shortlist-summary { color: var(--direct-map-muted); font-size: 11px; margin: -4px 0 10px; }
+.secondary-action.compact { padding: 5px 8px; font-size: 12px; }
+.shortlist-summary { color: var(--direct-map-muted); font-size: 12px; margin: -4px 0 10px; }
 .shortlist-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-bottom: 10px; }
-.shortlist-controls label { color: var(--direct-map-muted); display: grid; gap: 3px; font-size: 10.5px; }
+.shortlist-controls label { color: var(--direct-map-muted); display: grid; gap: 3px; font-size: 12px; }
 .shortlist-controls select { border: 1px solid var(--direct-map-border); border-radius: 6px; background: var(--direct-map-panel); color: var(--direct-map-text); font: inherit; padding: 5px; }
 .shortlist-hazard-filter { grid-column: 1 / -1; align-items: center; display: flex !important; grid-template-columns: none; gap: 6px !important; }
 .shortlist-list { display: grid; gap: 7px; }
@@ -64,49 +138,116 @@ body.direct-map-page { overflow: hidden; }
 .shortlist-item strong { display: block; overflow-wrap: anywhere; }
 .shortlist-item small { color: var(--direct-map-muted); display: block; margin-top: 2px; }
 .shortlist-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-.shortlist-badges span { border: 1px solid var(--direct-map-border); border-radius: 999px; color: var(--direct-map-muted); font-size: 10px; padding: 2px 6px; }
+.shortlist-badges span { border: 1px solid var(--direct-map-border); border-radius: 999px; color: var(--direct-map-muted); font-size: 12px; padding: 2px 6px; }
 .shortlist-item-actions { display: flex; gap: 6px; margin-top: 7px; }
-.shortlist-item-actions button { border: 1px solid var(--direct-map-border); border-radius: 6px; background: transparent; color: inherit; cursor: pointer; font: inherit; font-size: 11px; padding: 5px 7px; }
+.shortlist-item-actions button { border: 1px solid var(--direct-map-border); border-radius: 6px; background: transparent; color: inherit; cursor: pointer; font: inherit; font-size: 12px; padding: 5px 7px; }
 .shortlist-hazard { color: #b42318; font-weight: 700; }
 .parcel-detail-content { font-size: 13px; }
 .parcel-hero { border-left: 4px solid var(--direct-map-selection); padding-left: 10px; margin: 3px 0 15px; }
 .parcel-hero strong { display: block; font-size: 19px; }
 .parcel-kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
 .parcel-kpi { border: 1px solid var(--direct-map-border); border-radius: 6px; padding: 8px; }
-.parcel-kpi span { display: block; color: var(--direct-map-muted); font-size: 11px; }
+.parcel-kpi span { display: block; color: var(--direct-map-muted); font-size: 12px; }
 .parcel-kpi strong { display: block; margin-top: 3px; }
 .parcel-detail-table { width: 100%; border-collapse: collapse; }
 .parcel-detail-table th, .parcel-detail-table td { border-bottom: 1px solid var(--direct-map-border); padding: 7px 0; text-align: left; vertical-align: top; }
-.parcel-detail-table th { color: var(--direct-map-muted); font-size: 11px; font-weight: 600; padding-right: 10px; }
+.parcel-detail-table th { color: var(--direct-map-muted); font-size: 12px; font-weight: 600; padding-right: 10px; }
 .parcel-detail-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 15px; }
 .parcel-enrichment { border-top: 1px solid var(--direct-map-border); margin-top: 13px; padding-top: 5px; }
 .parcel-enrichment details { border-bottom: 1px solid var(--direct-map-border); padding: 8px 0; }
 .parcel-enrichment summary { cursor: pointer; font-weight: 600; }
-.parcel-enrichment p { color: var(--direct-map-muted); font-size: 11px; margin: 6px 0 2px; }
+.parcel-enrichment p { color: var(--direct-map-muted); font-size: 12px; margin: 6px 0 2px; }
 .parcel-block-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
-.parcel-block-chips span { border: 1px solid var(--direct-map-border); border-radius: 999px; color: var(--direct-map-muted); font-size: 10.5px; line-height: 1; padding: 4px 6px; }
+.parcel-block-chips span { border: 1px solid var(--direct-map-border); border-radius: 999px; color: var(--direct-map-muted); font-size: 12px; line-height: 1; padding: 4px 6px; }
 .parcel-block-chips strong { color: var(--direct-map-text); }
-.parcel-block-benchmarks { display: grid; gap: 3px; margin-top: 7px; color: var(--direct-map-muted); font-size: 10.5px; }
+.parcel-block-benchmarks { display: grid; gap: 3px; margin-top: 7px; color: var(--direct-map-muted); font-size: 12px; }
 .parcel-block-benchmarks strong { color: var(--direct-map-text); }
 .parcel-block-provenance { border-top: 1px dashed var(--direct-map-border); padding-top: 6px; }
 .parcel-enrichment dl { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 10px; margin: 8px 0 0; }
-.parcel-enrichment dt { color: var(--direct-map-muted); font-size: 11px; }
-.parcel-enrichment dd { margin: 0; overflow-wrap: anywhere; text-align: right; font-size: 11px; }
+.parcel-enrichment dt { color: var(--direct-map-muted); font-size: 12px; }
+.parcel-enrichment dd { margin: 0; overflow-wrap: anywhere; text-align: right; font-size: 12px; }
 .secondary-action { display: inline-block; padding: 7px 10px; font-size: 12px; text-decoration: none; }
 .map-status-pill { bottom: 18px; left: 20px; padding: 7px 11px; border: 1px solid var(--direct-map-border); border-radius: 99px; background: var(--direct-map-panel); color: var(--direct-map-muted); font-size: 12px; }
 .map-status-pill.is-error { color: #b42318; border-color: #e5a39e; }
-.map-help-note { right: 20px; bottom: 18px; padding: 7px 11px; border: 1px solid var(--direct-map-border); border-radius: 6px; background: var(--direct-map-panel); color: var(--direct-map-muted); font-size: 12px; }
+/* Centred so it never covers the basemap attribution in the bottom-right. */
+.map-help-note { left: 50%; transform: translateX(-50%); bottom: 50px; padding: 7px 11px; border: 1px solid var(--direct-map-border); border-radius: 6px; background: var(--direct-map-panel); color: var(--direct-map-muted); font-size: 12px; }
 .maplibregl-ctrl-group { box-shadow: var(--direct-map-shadow); }
-.maplibregl-canvas:focus { outline: 3px solid rgba(26, 84, 144, .45); outline-offset: -3px; }
-.direct-map-shell button:focus-visible, .direct-map-shell input:focus-visible, .direct-map-shell a:focus-visible { outline: 3px solid rgba(26, 84, 144, .45); outline-offset: 2px; }
-body.direct-map-dark { --direct-map-bg: #101820; --direct-map-panel: rgba(27, 38, 48, .97); --direct-map-border: #40505e; --direct-map-text: #eef3f7; --direct-map-muted: #a7b4bf; --direct-map-accent: #7cb7ed; --direct-map-selection: #ffc15c; --direct-map-shadow: 0 10px 30px rgba(0, 0, 0, .35); }
-body.direct-map-dark .shortlist-item { background: rgba(15, 23, 42, .45); }
+/* MapLibre's stylesheet hard-codes a white popup while its content inherits
+   the theme text colour, which made dark-mode popups white-on-white. */
+.direct-map .maplibregl-popup-content { background: var(--direct-map-panel); color: var(--direct-map-text); border: 1px solid var(--direct-map-border); box-shadow: var(--direct-map-shadow); }
+.direct-map .maplibregl-popup-anchor-top .maplibregl-popup-tip, .direct-map .maplibregl-popup-anchor-top-left .maplibregl-popup-tip, .direct-map .maplibregl-popup-anchor-top-right .maplibregl-popup-tip { border-bottom-color: var(--direct-map-panel); }
+.direct-map .maplibregl-popup-anchor-bottom .maplibregl-popup-tip, .direct-map .maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip, .direct-map .maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip { border-top-color: var(--direct-map-panel); }
+.direct-map .maplibregl-popup-anchor-left .maplibregl-popup-tip { border-right-color: var(--direct-map-panel); }
+.direct-map .maplibregl-popup-anchor-right .maplibregl-popup-tip { border-left-color: var(--direct-map-panel); }
+.direct-map .maplibregl-popup-close-button { color: var(--direct-map-muted); font-size: 18px; min-width: 24px; min-height: 24px; }
+.direct-map .maplibregl-popup-close-button:hover { color: var(--direct-map-text); background: var(--direct-map-accent-soft); }
+.maplibregl-canvas:focus { outline: 3px solid var(--direct-map-accent-ring); outline-offset: -3px; }
+.direct-map-shell button:focus-visible, .direct-map-shell input:focus-visible, .direct-map-shell a:focus-visible { outline: 3px solid var(--direct-map-accent-ring); outline-offset: 2px; }
+[data-bs-theme="dark"] {
+  --direct-map-bg: var(--color-bg-secondary);
+  --direct-map-panel: var(--color-bg-primary);
+  --direct-map-border: var(--color-border-light);
+  --direct-map-text: var(--color-text-primary);
+  --direct-map-muted: var(--color-text-secondary);
+  --direct-map-accent: var(--color-primary-400);
+  --direct-map-accent-soft: color-mix(in srgb, var(--direct-map-accent) 10%, transparent);
+  --direct-map-accent-ring: color-mix(in srgb, var(--direct-map-accent) 45%, transparent);
+  --direct-map-selection: var(--color-warning-500);
+  --direct-map-shadow: var(--shadow-lg);
+}
+body.direct-map-dark .shortlist-item { background: var(--color-bg-tertiary); }
+
+/* Compatibility shell for environments where aecs4u-theme is unavailable.
+   The primary /map route extends the theme package; this keeps the documented
+   fallback template usable without changing the migrated layout. */
+body.direct-map-page { overflow: hidden; min-height: 100vh; }
+body.direct-map-page > .direct-map-shell { height: 100vh; flex: 0 0 100vh; }
+.direct-map-header { height: 58px; flex: 0 0 58px; padding: 0 20px; display: flex; align-items: center; justify-content: space-between; background: var(--direct-map-panel); border-bottom: 1px solid var(--direct-map-border); z-index: 5; }
+.direct-map-brand, .map-action-link { color: inherit; text-decoration: none; }
+.direct-map-brand { display: flex; gap: 9px; align-items: center; font-weight: 700; letter-spacing: .01em; }
+.direct-map-brand-mark { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 5px; color: white; background: var(--direct-map-accent); font-size: 21px; }
+.direct-map-header-actions { display: flex; gap: 8px; align-items: center; }
+
 @media (max-width: 700px) {
+  /* Reserve the right edge for the utility stack instead of allowing it to
+     cover the search submit target. */
+  .map-search-card { left: 12px; width: calc(100% - 90px); }
   .direct-map-header { padding: 0 12px; }
-  .map-action-link { font-size: 12px; }
-  .map-layers-card { top: 70px; right: 12px; width: calc(100% - 24px); max-height: 55%; }
-  .layers-toggle { right: 12px; top: 18px; }
-  .parcel-shortlist-card { display: none; }
+  .map-action-link { font-size: 12px; white-space: nowrap; flex: 0 0 auto; }
+  #auth-widget a, #auth-widget button { white-space: nowrap; min-width: max-content; }
+  /* The search card occupies the first row and the action stack occupies the
+     right edge. Put Layers below that stack so all controls retain a full,
+     non-overlapping pointer target on narrow screens. */
+  /* right: 60px clears the utility stack (right 15px + 38px wide, down to
+     ~340px), which the toggle and open panel used to cover. */
+  .map-layers-card { top: 268px; right: 60px; width: calc(100% - 72px); max-height: calc(100% - 288px); }
+  .map-mobile-action-bar { display: flex; position: absolute; left: 12px; right: 60px; bottom: 56px; z-index: 3; gap: 8px; align-items: center; }
+  .map-mobile-action-bar .layers-toggle, .map-mobile-action-bar .shortlist-toggle { position: static; display: inline-flex; align-items: center; gap: 6px; box-shadow: var(--direct-map-shadow); }
+  .map-mobile-action-bar .shortlist-toggle { margin-left: auto; }
+  /* Sit above the full-width attribution bar instead of on top of it. */
+  .map-status-pill { left: 12px; bottom: 132px; }
+  /* The shortlist card's desktop position (left column, below the search
+     card) has no room on narrow screens. Hide it by default and surface it
+     through .shortlist-toggle as a bottom-sheet instead, so the workspace
+     stays reachable rather than disappearing outright. */
+  .parcel-shortlist-card { display: none; top: auto; left: 0; right: 0; bottom: 0; width: 100%; max-height: 70%; border-radius: 12px 12px 0 0; z-index: 4; }
+  .parcel-shortlist-card.mobile-open { display: flex; flex-direction: column; }
+  /* Mirrors .layers-toggle's row so it clears both the search card above
+     and the status pill/help note reserved along the bottom edge. */
+  .shortlist-toggle { display: inline-flex; align-items: center; gap: 6px; position: absolute; left: 12px; top: 216px; z-index: 2; }
+  .shortlist-close-button { display: inline-block; }
   .parcel-detail-card { top: auto; bottom: 0; right: 0; width: 100%; max-height: 62%; border-radius: 12px 12px 0 0; }
+  .map-table-card { left: 0; right: 0; bottom: 0; width: 100%; max-height: 70%; border-radius: 12px 12px 0 0; }
   .map-help-note { display: none; }
+}
+
+@media (max-width: 991.98px) {
+  #main-content:has(.direct-map-shell) { margin-left: 0 !important; }
+}
+
+@media (min-width: 701px) and (max-width: 1024px) {
+  .map-search-card { width: min(360px, calc(100% - 90px)); }
+  .parcel-detail-card { top: auto; bottom: 18px; right: 60px; width: min(480px, calc(100% - 90px)); max-height: 48%; }
+  .parcel-shortlist-card { top: 72px; left: 20px; width: min(360px, calc(100% - 90px)); max-height: calc(100% - 160px); }
+  .map-layers-card { right: 65px; max-height: calc(100% - 88px); }
 }

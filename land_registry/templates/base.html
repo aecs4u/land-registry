@@ -72,8 +72,7 @@
     <script src="https://unpkg.com/leaflet-search@4.0.0/dist/leaflet-search.min.js" defer></script>
     <script src="https://cdn.jsdelivr.net/npm/leaflet-mouse-position@1.2.0/src/L.Control.MousePosition.js" defer></script>
     {% else %}
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js" defer></script>
-    <script src="https://cdn.jsdelivr.net/npm/leaflet.vectorgrid@1.3.0/dist/Leaflet.VectorGrid.bundled.js" defer></script>
+    <!-- Leaflet vector fallback is lazy-loaded by map-v2.js only if WebGL is unavailable. -->
     <!-- Parses the Civil Protection bulletin's TopoJSON in enrichment-layers.js -->
     <script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js" defer></script>
     {% endif %}

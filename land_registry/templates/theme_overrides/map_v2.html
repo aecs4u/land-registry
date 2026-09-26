@@ -1,43 +1,62 @@
 {% extends "base.html" %}
 
-{% block title %}{{ _('Cadastral Map') }} - AECS4U{% endblock %}
+{% block title %}{{ _('Cadastral Map') }} - {{ site_name }}{% endblock %}
 
-{% block body_class %}direct-map-page{% endblock %}
+{% block extra_head %}
+{{ super() }}
+{% if map_fonts_css %}<link rel="stylesheet" href="{{ map_fonts_css }}">{% endif %}
+{% endblock %}
 
-{% block external_css %}
+{% block styles %}
+{{ super() }}
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
 <link rel="stylesheet" href="{{ asset_url('map-v2.css') }}" />
 {% endblock %}
 
-{% block external_js %}{% endblock %}
-
-{% block map_js %}{% endblock %}
+{% block sidebar_content %}
+<div class="sidebar-group" data-group="land-registry">
+  <button class="sidebar-group-header" type="button" aria-label="{{ _('Land Registry') }}" aria-expanded="true" data-target="sidebar-group-land-registry">
+    <span class="sidebar-group-label"><i class="fas fa-map" aria-hidden="true"></i>{{ _('Land Registry') }}</span>
+    <i class="fas fa-chevron-down toggle-icon ms-auto" aria-hidden="true"></i>
+  </button>
+  <div class="sidebar-group-content" id="sidebar-group-land-registry" role="group">
+    <div class="nav-item">
+      <a class="nav-link active" href="/map" aria-current="page">
+        <i class="fas fa-map-marked-alt" aria-hidden="true"></i><span>{{ _('Cadastral map') }}</span>
+      </a>
+    </div>
+    <div class="nav-item">
+      <a class="nav-link" href="/map-legacy">
+        <i class="fas fa-draw-polygon" aria-hidden="true"></i><span>{{ _('Analysis map') }}</span>
+      </a>
+    </div>
+  </div>
+</div>
+<div class="sidebar-group" data-group="account">
+  <button class="sidebar-group-header" type="button" aria-label="{{ _('Account') }}" aria-expanded="true" data-target="sidebar-group-account">
+    <span class="sidebar-group-label"><i class="fas fa-user" aria-hidden="true"></i>{{ _('Account') }}</span>
+    <i class="fas fa-chevron-down toggle-icon ms-auto" aria-hidden="true"></i>
+  </button>
+  <div class="sidebar-group-content" id="sidebar-group-account" role="group">
+    <div class="nav-item"><a class="nav-link" href="/profile"><i class="fas fa-id-card" aria-hidden="true"></i><span>{{ _('Profile') }}</span></a></div>
+    <div class="nav-item"><a class="nav-link" href="/settings"><i class="fas fa-sliders-h" aria-hidden="true"></i><span>{{ _('Settings') }}</span></a></div>
+  </div>
+</div>
+{% endblock %}
 
 {% block content %}
-<main class="direct-map-shell" id="directMapShell">
-  <header class="direct-map-header">
-    <a class="direct-map-brand" href="/" aria-label="AECS4U home">
-      <span class="direct-map-brand-mark" aria-hidden="true">▦</span>
-      <span>Land Registry</span>
-    </a>
-    <div class="direct-map-header-actions">
-      <button type="button" class="map-action-button" id="themeButton" title="{{ _('Toggle theme') }}" aria-label="{{ _('Toggle theme') }}" aria-pressed="false">◐</button>
-      <a class="map-action-button map-action-link" href="/map-legacy" title="{{ _('Open analysis map') }}">{{ _('Analysis map') }}</a>
-      <a class="map-action-button map-action-link" href="/settings" title="{{ _('Map and account settings') }}">{{ _('Settings') }}</a>
-    </div>
-  </header>
-
+<div class="direct-map-shell" id="directMapShell">
   <section class="direct-map-stage" aria-labelledby="directMapHeading">
     <h1 id="directMapHeading" class="visually-hidden">{{ _('Cadastral map') }}</h1>
     <div class="map-search-card" role="search">
       <label class="visually-hidden" for="mapSearchInput">{{ _('Search a municipality or parcel') }}</label>
       <form class="map-search-row" id="mapSearchForm">
-        <span class="map-search-icon" aria-hidden="true">⌕</span>
+        <span class="map-search-icon" aria-hidden="true"><i class="fas fa-search"></i></span>
         <input id="mapSearchInput" type="search" autocomplete="off" spellcheck="false"
                placeholder="{{ _('Search municipality or parcel reference') }}"
                role="combobox" aria-autocomplete="list" aria-haspopup="listbox"
                aria-controls="mapSearchResults" aria-expanded="false">
-        <button id="mapSearchSubmit" type="submit" title="{{ _('Search') }}" aria-label="{{ _('Search') }}">↵</button>
+        <button id="mapSearchSubmit" type="submit" class="btn btn-primary" title="{{ _('Search') }}" aria-label="{{ _('Search') }}"><i class="fas fa-arrow-right" aria-hidden="true"></i></button>
       </form>
       <div id="mapSearchStatus" class="map-search-status" aria-live="polite"></div>
       <div id="mapSearchResults" class="map-search-results" role="listbox" hidden></div>
@@ -46,12 +65,12 @@
     <div id="directMap" class="direct-map" role="region" aria-label="{{ _('Interactive cadastral map') }}"></div>
 
     <div class="map-utility-stack" aria-label="{{ _('Map actions') }}">
-      <button type="button" class="map-round-button" id="locateButton" title="{{ _('Locate me') }}" aria-label="{{ _('Locate me') }}">⌖</button>
-      <button type="button" class="map-round-button" id="shareButton" title="{{ _('Copy map link') }}" aria-label="{{ _('Copy map link') }}">↗</button>
-      <button type="button" class="map-round-button" id="resetButton" title="{{ _('Reset view') }}" aria-label="{{ _('Reset view') }}">⌂</button>
-      <button type="button" class="map-round-button" id="tableToggle" title="{{ _('Attribute table') }}" aria-label="{{ _('Attribute table') }}" aria-controls="mapTableCard" aria-expanded="false">▤</button>
-      <button type="button" class="map-round-button" id="googleMapsButton" title="{{ _('Open Google Maps') }}" aria-label="{{ _('Open Google Maps') }}">G</button>
-      <button type="button" class="map-round-button" id="streetViewButton" title="{{ _('Open Street View') }}" aria-label="{{ _('Open Street View') }}">S</button>
+      <button type="button" class="map-round-button btn btn-light" id="locateButton" title="{{ _('Locate me') }}" aria-label="{{ _('Locate me') }}"><i class="fas fa-location-arrow" aria-hidden="true"></i></button>
+      <button type="button" class="map-round-button btn btn-light" id="shareButton" title="{{ _('Copy map link') }}" aria-label="{{ _('Copy map link') }}"><i class="fas fa-share-alt" aria-hidden="true"></i></button>
+      <button type="button" class="map-round-button btn btn-light" id="resetButton" title="{{ _('Reset view') }}" aria-label="{{ _('Reset view') }}"><i class="fas fa-home" aria-hidden="true"></i></button>
+      <button type="button" class="map-round-button btn btn-light" id="tableToggle" title="{{ _('Attribute table') }}" aria-label="{{ _('Attribute table') }}" aria-controls="mapTableCard" aria-expanded="false"><i class="fas fa-table" aria-hidden="true"></i></button>
+      <button type="button" class="map-round-button btn btn-light" id="googleMapsButton" title="{{ _('Open Google Maps') }}" aria-label="{{ _('Open Google Maps') }}"><i class="fas fa-map-marker-alt" aria-hidden="true"></i></button>
+      <button type="button" class="map-round-button btn btn-light" id="streetViewButton" title="{{ _('Open Street View') }}" aria-label="{{ _('Open Street View') }}"><i class="fas fa-street-view" aria-hidden="true"></i></button>
     </div>
 
     <aside class="map-table-card" id="mapTableCard" aria-label="{{ _('Attribute table') }}" hidden>
@@ -61,18 +80,18 @@
       </div>
       <div class="map-table-toolbar">
         <label class="visually-hidden" for="mapTableLayerSelect">{{ _('Layer') }}</label>
-        <select id="mapTableLayerSelect"></select>
-        <input type="search" id="mapTableFilter" placeholder="{{ _('Filter…') }}">
-        <button type="button" class="secondary-action compact" id="mapTableRefreshButton">{{ _('Refresh') }}</button>
+        <select id="mapTableLayerSelect" class="form-select form-select-sm"></select>
+        <input type="search" id="mapTableFilter" class="form-control form-control-sm" placeholder="{{ _('Filter…') }}">
+        <button type="button" class="secondary-action compact btn btn-outline-secondary" id="mapTableRefreshButton">{{ _('Refresh') }}</button>
         <span id="mapTableStatus" class="map-layer-meta" aria-live="polite"></span>
       </div>
       <div class="map-table-scroll">
         <table class="map-attribute-table"><thead id="mapTableHead"></thead><tbody id="mapTableBody"></tbody></table>
       </div>
       <div class="map-table-pagination">
-        <button type="button" class="secondary-action compact" id="mapTablePrevButton">{{ _('Prev') }}</button>
+        <button type="button" class="secondary-action compact btn btn-outline-secondary" id="mapTablePrevButton">{{ _('Prev') }}</button>
         <span id="mapTablePageInfo"></span>
-        <button type="button" class="secondary-action compact" id="mapTableNextButton">{{ _('Next') }}</button>
+        <button type="button" class="secondary-action compact btn btn-outline-secondary" id="mapTableNextButton">{{ _('Next') }}</button>
       </div>
     </aside>
 
@@ -88,39 +107,37 @@
         <label><input type="radio" name="basemap" value="satellite"> <span>{{ _('Satellite') }}</span></label>
       </div>
       <div class="layer-section-title">{{ _('Overlays') }}</div>
-      <div id="mapLayerList" class="map-layer-list">
-        <p class="map-muted">{{ _('Loading layer catalog…') }}</p>
-      </div>
+      <div id="mapLayerList" class="map-layer-list"><p class="map-muted">{{ _('Loading layer catalog…') }}</p></div>
       <div id="mapCoverageStatus" class="map-coverage-status" aria-live="polite"></div>
 
       <div class="layer-section-title">{{ _('Live layers') }}</div>
       <div class="map-live-layers" id="mapLiveLayers">
         <div class="map-live-layer-row">
-          <button type="button" class="map-live-toggle" id="toggleEnrichmentPois" aria-pressed="false"
+          <button type="button" class="map-live-toggle btn btn-outline-secondary" id="toggleEnrichmentPois" aria-pressed="false"
                   title="{{ _('Points of interest near the map center (schools, shops, hospitals…)') }}">
             {{ _('Points of Interest') }}
           </button>
-          <button type="button" class="secondary-action compact" id="openPoiExplorer">{{ _('Explorer') }}</button>
+          <button type="button" class="secondary-action compact btn btn-outline-secondary" id="openPoiExplorer">{{ _('Explorer') }}</button>
         </div>
         <div class="map-market-filters">
           <label><span>{{ _('POI radius') }}</span><select id="poiRadius"><option value="1">1 km</option><option value="2" selected>2 km</option><option value="5">5 km</option><option value="10">10 km</option></select></label>
           <label><span>{{ _('POI categories') }}</span><select id="poiCategories" multiple size="3" aria-label="{{ _('POI categories') }}"></select></label>
         </div>
-        <div class="map-live-layer-row"><button type="button" class="secondary-action compact" id="poiExportJson">JSON</button><button type="button" class="secondary-action compact" id="poiExportPdf">PDF</button></div>
+        <div class="map-live-layer-row"><button type="button" class="secondary-action compact btn btn-outline-secondary" id="poiExportJson">JSON</button><button type="button" class="secondary-action compact btn btn-outline-secondary" id="poiExportPdf">PDF</button></div>
         <div id="enrichmentPoiLegend" class="enrichment-legend"></div>
         <div class="map-live-layer-row">
-          <button type="button" class="map-live-toggle" id="toggleEnrichmentFires" aria-pressed="false"
+          <button type="button" class="map-live-toggle btn btn-outline-secondary" id="toggleEnrichmentFires" aria-pressed="false"
                   title="{{ _('Active fire detections nationwide (NASA FIRMS)') }}">
             {{ _('Active Fires') }} <span id="enrichmentFiresCount"></span>
           </button>
-          <button type="button" class="secondary-action compact" id="refreshFiresButton">{{ _('Refresh') }}</button>
+          <button type="button" class="secondary-action compact btn btn-outline-secondary" id="refreshFiresButton">{{ _('Refresh') }}</button>
         </div>
         <div class="map-live-layer-row">
-          <button type="button" class="map-live-toggle" id="toggleEnrichmentBulletin" aria-pressed="false"
+          <button type="button" class="map-live-toggle btn btn-outline-secondary" id="toggleEnrichmentBulletin" aria-pressed="false"
                   title="{{ _('Civil Protection hydrogeological and hydraulic alert zones for today') }}">
             {{ _('Civil Protection Alerts') }} <span id="enrichmentBulletinCount"></span>
           </button>
-          <button type="button" class="secondary-action compact" id="refreshBulletinButton">{{ _('Refresh') }}</button>
+          <button type="button" class="secondary-action compact btn btn-outline-secondary" id="refreshBulletinButton">{{ _('Refresh') }}</button>
         </div>
         <div id="enrichmentBulletinLegend" class="enrichment-legend"></div>
       </div>
@@ -128,8 +145,8 @@
       <div class="layer-section-title">{{ _('Market') }}</div>
       <div class="map-live-layers" id="mapSalesLayer">
         <div class="map-live-layer-row">
-          <button type="button" class="map-live-toggle" id="toggleSalesLayer" aria-pressed="false">{{ _('Sales') }} <span id="salesCount"></span></button>
-          <button type="button" class="secondary-action compact" id="refreshSalesButton">{{ _('Refresh') }}</button>
+          <button type="button" class="map-live-toggle btn btn-outline-secondary" id="toggleSalesLayer" aria-pressed="false">{{ _('Sales') }} <span id="salesCount"></span></button>
+          <button type="button" class="secondary-action compact btn btn-outline-secondary" id="refreshSalesButton">{{ _('Refresh') }}</button>
         </div>
         <div class="map-market-filters">
           <label><span>{{ _('Sort sales') }}</span><select id="salesSort"><option value="saleability_desc">{{ _('Saleability') }}</option><option value="price_asc">{{ _('Price: low to high') }}</option><option value="deadline_asc">{{ _('Auction date') }}</option></select></label>
@@ -141,7 +158,7 @@
       </div>
       <div class="map-live-layers" id="mapMarketLayer">
         <div class="map-live-layer-row">
-          <button type="button" class="map-live-toggle" id="toggleAuctionLayer" aria-pressed="false">
+          <button type="button" class="map-live-toggle btn btn-outline-secondary" id="toggleAuctionLayer" aria-pressed="false">
             {{ _('Auction listings') }} <span id="auctionCount"></span>
           </button>
         </div>
@@ -162,103 +179,69 @@
     </aside>
 
     <div class="map-mobile-action-bar">
-      <button type="button" class="layers-toggle" id="layersToggle" aria-controls="mapLayersCard" aria-expanded="false">
-        <span aria-hidden="true">☷</span> {{ _('Layers') }}
+      <button type="button" class="layers-toggle btn btn-light" id="layersToggle" aria-controls="mapLayersCard" aria-expanded="false">
+        <i class="fas fa-layer-group" aria-hidden="true"></i> {{ _('Layers') }}
       </button>
-      <button type="button" class="shortlist-toggle" id="shortlistToggle" aria-controls="parcelShortlistCard" aria-expanded="false">
-        <span aria-hidden="true">☰</span> {{ _('Shortlist') }}
+
+      <button type="button" class="shortlist-toggle btn btn-light" id="shortlistToggle" aria-controls="parcelShortlistCard" aria-expanded="false">
+        <i class="fas fa-list-check" aria-hidden="true"></i> {{ _('Shortlist') }}
       </button>
     </div>
 
     <aside class="parcel-shortlist-card" id="parcelShortlistCard" aria-label="{{ _('Parcel shortlist') }}">
       <div class="map-card-heading">
-        <div>
-          <span class="map-eyebrow">{{ _('Workspace') }}</span>
-          <h2>{{ _('Shortlist') }}</h2>
-        </div>
+        <div><span class="map-eyebrow">{{ _('Workspace') }}</span><h2>{{ _('Shortlist') }}</h2></div>
         <div class="map-card-heading-actions">
-          <button type="button" class="secondary-action compact" id="shortlistRefreshButton">{{ _('Refresh') }}</button>
+          <button type="button" class="secondary-action compact btn btn-outline-secondary" id="shortlistRefreshButton">{{ _('Refresh') }}</button>
           <button type="button" class="map-card-close shortlist-close-button" id="shortlistCloseButton" aria-label="{{ _('Close shortlist') }}">×</button>
         </div>
       </div>
       <div id="shortlistSummary" class="shortlist-summary" aria-live="polite">{{ _('Sign in to load saved parcels') }}</div>
       <div class="shortlist-controls">
-        <label>
-          <span>{{ _('Status') }}</span>
-          <select id="shortlistStatusFilter">
-            <option value="">{{ _('All') }}</option>
-          </select>
-        </label>
-        <label>
-          <span>{{ _('Priority') }}</span>
-          <select id="shortlistPriorityFilter">
-            <option value="">{{ _('All') }}</option>
-            <option value="5">{{ _('5 high') }}</option>
-            <option value="4">4</option>
-            <option value="3">3</option>
-            <option value="2">2</option>
-            <option value="1">{{ _('1 low') }}</option>
-            <option value="0">{{ _('Unset') }}</option>
-          </select>
-        </label>
-        <label>
-          <span>{{ _('Sort') }}</span>
-          <select id="shortlistSort">
-            <option value="recency">{{ _('Recent') }}</option>
-            <option value="priority">{{ _('Priority') }}</option>
-            <option value="status">{{ _('Status') }}</option>
-          </select>
-        </label>
-        <label class="shortlist-hazard-filter">
-          <input type="checkbox" id="shortlistHazardFilter">
-          <span>{{ _('Active hazard only') }}</span>
-        </label>
+        <label><span>{{ _('Status') }}</span><select id="shortlistStatusFilter"><option value="">{{ _('All') }}</option></select></label>
+        <label><span>{{ _('Priority') }}</span><select id="shortlistPriorityFilter"><option value="">{{ _('All') }}</option><option value="5">{{ _('5 high') }}</option><option value="4">4</option><option value="3">3</option><option value="2">2</option><option value="1">{{ _('1 low') }}</option><option value="0">{{ _('Unset') }}</option></select></label>
+        <label><span>{{ _('Sort') }}</span><select id="shortlistSort"><option value="recency">{{ _('Recent') }}</option><option value="priority">{{ _('Priority') }}</option><option value="status">{{ _('Status') }}</option></select></label>
+        <label class="shortlist-hazard-filter"><input type="checkbox" id="shortlistHazardFilter"><span>{{ _('Active hazard only') }}</span></label>
       </div>
-      <div id="shortlistList" class="shortlist-list" role="list">
-        <p class="map-muted">{{ _('No shortlist loaded yet.') }}</p>
-      </div>
+      <div id="shortlistList" class="shortlist-list" role="list"><p class="map-muted">{{ _('No shortlist loaded yet.') }}</p></div>
     </aside>
 
     <div class="map-status-pill" id="mapStatus" aria-live="polite"></div>
 
     <aside class="parcel-detail-card" id="directParcelPanel" aria-labelledby="directParcelTitle" hidden>
       <div class="map-card-heading">
-        <div>
-          <span class="map-eyebrow">{{ _('Selected parcel') }}</span>
-          <h2 id="directParcelTitle">{{ _('Parcel details') }}</h2>
-        </div>
+        <div><span class="map-eyebrow">{{ _('Selected parcel') }}</span><h2 id="directParcelTitle">{{ _('Parcel details') }}</h2></div>
         <button type="button" class="map-card-close" id="parcelCloseButton" aria-label="{{ _('Close parcel details') }}">×</button>
       </div>
       <div id="directParcelContent" class="parcel-detail-content"></div>
       <div class="parcel-detail-actions">
-        <button type="button" id="parcelSaveButton" class="secondary-action">{{ _('Save parcel') }}</button>
-        <button type="button" id="parcelAdjacentButton" class="secondary-action">{{ _('Find adjacent parcels') }}</button>
-        <button type="button" id="parcelShareButton" class="secondary-action">{{ _('Copy link') }}</button>
-        <button type="button" id="parcelClearButton" class="secondary-action">{{ _('Clear selection') }}</button>
-        <a id="legacyAnalysisLink" class="secondary-action" href="/map-legacy">{{ _('Open analysis') }}</a>
-        <a id="parcelReportLink" class="secondary-action" href="/map-legacy?report=1">{{ _('Print report') }}</a>
+        <button type="button" id="parcelSaveButton" class="secondary-action btn btn-outline-primary">{{ _('Save parcel') }}</button>
+        <button type="button" id="parcelAdjacentButton" class="secondary-action btn btn-outline-secondary">{{ _('Find adjacent parcels') }}</button>
+        <button type="button" id="parcelShareButton" class="secondary-action btn btn-outline-secondary">{{ _('Copy link') }}</button>
+        <button type="button" id="parcelClearButton" class="secondary-action btn btn-outline-secondary">{{ _('Clear selection') }}</button>
+        <a id="legacyAnalysisLink" class="secondary-action btn btn-outline-secondary" href="/map-legacy">{{ _('Open analysis') }}</a>
+        <a id="parcelReportLink" class="secondary-action btn btn-outline-secondary" href="/map-legacy?report=1">{{ _('Print report') }}</a>
       </div>
       <div id="parcelAdjacentResults" class="parcel-adjacent-results" aria-live="polite"></div>
     </aside>
 
     <div class="map-help-note" id="mapHelpNote">{{ _('Zoom in to see cadastral parcels') }}</div>
   </section>
-</main>
+</div>
 {% endblock %}
 
 {% block i18n_data %}<script>window._i18n = {{ i18n_strings | tojson }};</script>{% endblock %}
 
 {% block extra_js %}
 <script>
-  {# Same CARTO gate as the legacy map (index.html): keyless CARTO tiles are watermarked. #}
   window.cartoEnabled = {{ 'true' if carto_enabled else 'false' }};
   window.cartoApiKey = {{ (carto_api_key or '') | tojson }};
-  {# Lets map-v2.js skip per-user API calls that would only return 401. #}
   window.landRegistrySignedIn = {{ 'true' if signed_in else 'false' }};
   window.salesMapPointsUrl = {{ sales_map_points_url | tojson }};
   window.salesGeoLayersUrl = {{ (sales_geo_layers_url or '') | tojson }};
 </script>
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js" defer></script>
 {# Only used for the Civil Protection bulletin overlay, which is published as TopoJSON. #}
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js" defer></script>
 <script src="{{ asset_url('map-v2.js') }}" defer></script>
 {% endblock %}

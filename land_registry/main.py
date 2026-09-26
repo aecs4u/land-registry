@@ -339,6 +339,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Could not schedule datashader JIT warm-up (non-fatal): {e}")
 
+    try:
+        from land_registry.map_layers import warm_map_search_source
+
+        asyncio.create_task(warm_map_search_source())
+    except Exception as e:
+        logger.warning(f"Could not schedule map search pool warm-up (non-fatal): {e}")
+
     logger.info(f"Application startup complete - Panel server ready at {PANEL_DASHBOARD_URL}")
 
     yield
@@ -448,6 +455,35 @@ class _CadastralTileCorpMiddleware:
 
 
 app.add_middleware(_CadastralTileCorpMiddleware)
+
+
+class _MapPermissionsPolicyMiddleware:
+    """Allow the map's explicit Locate action to use same-origin geolocation.
+
+    aecs4u-auth intentionally disables geolocation globally. The direct map is
+    the one page that presents a user-initiated location control, so narrow the
+    exception to its HTML routes while keeping all other features disabled.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope["path"] in {"/map", "/map-v2"}:
+            async def send_wrapper(message):
+                if message["type"] == "http.response.start":
+                    headers = [
+                        (key, value) for key, value in message["headers"]
+                        if key.lower() != b"permissions-policy"
+                    ]
+                    headers.append((b"permissions-policy", b"geolocation=(self), microphone=(), camera=(), payment=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=()"))
+                    message["headers"] = headers
+                await send(message)
+            await self.app(scope, receive, send_wrapper)
+            return
+        await self.app(scope, receive, send)
+
+
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
 app.add_middleware(MapMetricsMiddleware, metrics=map_metrics)
 
@@ -532,6 +568,11 @@ else:
 
 # Locale detection middleware (cookie → Accept-Language → default 'it')
 app.add_middleware(LocaleMiddleware)
+
+# This must be registered after setup_auth() and the other middleware: Starlette
+# places later registrations outermost, allowing this narrow map exception to
+# replace aecs4u-auth's global geolocation deny policy on the response.
+app.add_middleware(_MapPermissionsPolicyMiddleware)
 
 # Include HTML auth pages (login/register forms) at /auth prefix
 # These provide GET endpoints for browser-accessible pages
@@ -635,6 +676,11 @@ def asset_url(relative_path: str) -> str:
 
 
 templates.env.globals["asset_url"] = asset_url
+if _theme_setup is not None:
+    # Theme-rendered pages use the theme package's Jinja environment. Expose
+    # the application's cache-busting helper there as well, so map assets are
+    # invalidated consistently across both template stacks.
+    _theme_setup.templates.env.globals["asset_url"] = asset_url
 
 
 @app.get("/favicon.ico", include_in_schema=False)
@@ -822,15 +868,45 @@ async def serve_direct_map(request: Request, user=Depends(get_current_user_optio
     rolled out.
     """
     locale = detect_locale(request)
-    return templates.TemplateResponse(request, "map_v2.html", {
-        "request": request,
+    context = {
         "_": make_gettext(locale),
         "locale": locale,
+        "i18n_strings": {
+            key: make_gettext(locale)(key)
+            for key in (
+                "Universities", "Schools", "Kindergartens", "Supermarkets", "Shops",
+                "Pharmacies", "Hospitals", "Public transport", "Parks", "Restaurants",
+                "Red alert", "Orange alert", "Yellow alert", "No alert", "Unavailable", "Alert area",
+            )
+        },
         "carto_enabled": map_generator.controls_manager.settings.carto_enabled,
         "carto_api_key": map_generator.controls_manager.settings.carto_api_key,
         "clerk_publishable_key": get_auth_config().clerk_publishable_key,
         "signed_in": user is not None,
-    })
+        "login_redirect_url": "/map",
+        # The sales service remains the source of truth for sale records. The
+        # same-origin proxy keeps the direct map usable when both services run
+        # locally, while deployments can point it at their sales host.
+        "sales_map_points_url": "/api/v1/sales/map-points",
+        "sales_geo_layers_url": "/api/v1/sales/geo-layers" if os.getenv("LAND_REGISTRY_SALES_GEO_LAYERS_URL", "").strip() else "",
+    }
+    if _theme_setup is not None:
+        # The shared theme's preload+onload font swap can miss its load event
+        # on a warm cache, leaving an unused-preload warning on this map page.
+        # Keep the same font URL but load it as a stylesheet directly; leave
+        # Bootstrap and icon CDN configuration untouched.
+        theme_context = _theme_setup.config.get_template_context()
+        theme_assets = dict(theme_context.get("theme_assets") or {})
+        map_fonts_css = theme_assets.get("fonts_css") if theme_context.get("use_cdn_assets") else ""
+        theme_assets["fonts_css"] = ""
+        context["theme_assets"] = theme_assets
+        context["map_fonts_css"] = map_fonts_css
+        # The direct map is the first map surface migrated to the shared
+        # aecs4u-theme shell. The legacy route intentionally keeps the app's
+        # original template stack for upload/analysis compatibility.
+        return _theme_setup.render("map_v2.html", request, user=user, **context)
+    context["request"] = request
+    return templates.TemplateResponse(request, "map_v2.html", context)
 
 
 _ACCOUNT_LOCALES = (("it", "Italiano"), ("en", "English"))

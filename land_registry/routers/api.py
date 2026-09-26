@@ -7,7 +7,7 @@ import asyncio
 import boto3
 from botocore import UNSIGNED
 from botocore.config import Config
-from fastapi import APIRouter, Body, UploadFile, File, HTTPException, Depends, Query, Path as ApiPath
+from fastapi import APIRouter, Body, UploadFile, File, HTTPException, Depends, Query, Path as ApiPath, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import HTTPBearer
@@ -25,6 +25,7 @@ from typing import Dict, Any, List, Literal, Optional
 import hashlib
 import sqlite3
 from uuid import UUID
+import httpx
 
 from land_registry.dashboard import STATE
 from land_registry.map import (
@@ -62,6 +63,7 @@ from land_registry.dependencies import _cadastral_registry, _datashader_registry
 from land_registry.map_layers import (
     get_map_layer,
     get_map_layer_source,
+    get_map_search_source,
     map_layer_catalog,
 )
 from land_registry.map_observability import map_metrics
@@ -372,6 +374,54 @@ api_router = APIRouter()
 
 # Authentication utilities
 security = HTTPBearer()
+
+
+@api_router.get("/sales/map-points")
+async def proxy_sales_map_points(request: Request):
+    """Proxy the sales map feed without turning land-registry into an open proxy.
+
+    The sales application owns the sales database and authentication.  The
+    standalone map can still consume its exact ``/sales/map-points`` contract
+    through one same-origin endpoint when ``LAND_REGISTRY_SALES_BASE_URL`` is
+    configured (default: the local sales service on port 8016).
+    """
+    base_url = os.getenv("LAND_REGISTRY_SALES_BASE_URL", "http://127.0.0.1:8016").rstrip("/")
+    target = f"{base_url}/sales/map-points"
+    params = list(request.query_params.multi_items())
+    headers = {"Accept": "application/json"}
+    for name in ("authorization", "cookie"):
+        value = request.headers.get(name)
+        if value:
+            headers[name] = value
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
+            response = await client.get(target, params=params, headers=headers)
+        content_type = response.headers.get("content-type", "application/json")
+        return JSONResponse(
+            content=response.json() if "json" in content_type else {"error": "sales feed returned a non-JSON response"},
+            status_code=response.status_code,
+        )
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning("Sales map feed unavailable at %s: %s", target, exc)
+        return JSONResponse(
+            {"error": "sales map feed unavailable", "source": target},
+            status_code=503,
+        )
+
+
+@api_router.get("/sales/geo-layers")
+async def proxy_sales_geo_layers(request: Request):
+    """Proxy optional region/province/municipality sales statistics."""
+    target = os.getenv("LAND_REGISTRY_SALES_GEO_LAYERS_URL", "").strip()
+    if not target:
+        return JSONResponse({"error": "sales geographic statistics are not configured"}, status_code=503)
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
+            response = await client.get(target, headers={"Accept": "application/json", "Cookie": request.headers.get("cookie", "")})
+        return JSONResponse(content=response.json(), status_code=response.status_code)
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning("Sales geographic layers unavailable at %s: %s", target, exc)
+        return JSONResponse({"error": "sales geographic statistics unavailable"}, status_code=503)
 
 
 def get_user_id_from_clerk_user(user: Optional[ClerkUser]) -> Optional[str]:
@@ -4222,18 +4272,41 @@ async def search_map(query: str = Query(..., min_length=2, max_length=120), limi
     normalized = query.strip()
     lookup_reference = normalized.upper()
     parcel_results: list[dict[str, Any]] = []
-    if "_" in lookup_reference and "." in lookup_reference:
+    canonical_reference = re.fullmatch(r"[A-Z]\d{3}[A-Z]?\d{4}\d{2}\.\w+", lookup_reference)
+    looks_like_parcel_reference = bool(canonical_reference) or ("_" in lookup_reference and "." in lookup_reference)
+    source = get_map_layer_source()
+    if looks_like_parcel_reference and source.available:
+        try:
+            # Reserved interactive pool: on the shared tile pool this waited
+            # for a connection behind tile rendering and timed out (503).
+            search_source = get_map_search_source()
+            matches = await asyncio.wait_for(search_source.search_parcels_by_reference(lookup_reference, limit), timeout=2.0)
+        except asyncio.TimeoutError as exc:
+            logger.warning("Map canonical parcel search timed out")
+            raise HTTPException(status_code=503, detail="Parcel search temporarily unavailable") from exc
+        except Exception as exc:
+            logger.warning("Map canonical parcel search failed: %s", exc)
+            raise HTTPException(status_code=503, detail="Parcel search temporarily unavailable") from exc
+        for item in matches:
+            reference = item.get("canonical_reference") or item.get("national_cadastral_reference")
+            if reference:
+                parcel_results.append({
+                    "kind": "parcel", "id": item["id"], "label": reference,
+                    "reference": reference, "municipality_name": item.get("municipality_name"),
+                    "sheet": item.get("sheet"),
+                })
+    if not parcel_results and not source.available and "_" in lookup_reference and "." in lookup_reference:
         try:
             parcel = await asyncio.wait_for(
                 asyncio.to_thread(stats_service.get_parcel_by_reference, lookup_reference),
                 timeout=3,
             )
-        except asyncio.TimeoutError:
+        except asyncio.TimeoutError as exc:
             logger.warning("Map parcel search timed out")
-            parcel = None
+            raise HTTPException(status_code=503, detail="Parcel search temporarily unavailable") from exc
         except Exception as exc:
             logger.warning("Map parcel search failed: %s", exc)
-            parcel = None
+            raise HTTPException(status_code=503, detail="Parcel search temporarily unavailable") from exc
         if parcel:
             properties = (parcel.get("properties") or {}) if isinstance(parcel, dict) else {}
             parcel_results.append({
@@ -4266,12 +4339,12 @@ async def search_map(query: str = Query(..., min_length=2, max_length=120), limi
                 ),
                 timeout=3,
             )
-        except asyncio.TimeoutError:
+        except asyncio.TimeoutError as exc:
             logger.warning("Map component parcel search timed out")
-            collection = None
+            raise HTTPException(status_code=503, detail="Parcel search temporarily unavailable") from exc
         except Exception as exc:
             logger.warning("Map component parcel search failed: %s", exc)
-            collection = None
+            raise HTTPException(status_code=503, detail="Parcel search temporarily unavailable") from exc
         for feature in (collection or {}).get("features", []) if isinstance(collection, dict) else []:
             properties = feature.get("properties") or {}
             reference = (
@@ -4289,17 +4362,19 @@ async def search_map(query: str = Query(..., min_length=2, max_length=120), limi
                 })
 
     municipalities: list[dict[str, Any]] = []
-    source = get_map_layer_source()
-    if source.available and not parcel_results:
+    if source.available and not parcel_results and not looks_like_parcel_reference:
         try:
+            search_source = get_map_search_source()
             municipalities = await asyncio.wait_for(
-                source.search_municipalities(normalized, limit),
-                timeout=1.5,
+                search_source.search_municipalities(normalized, limit),
+                timeout=3.0,
             )
-        except asyncio.TimeoutError:
+        except asyncio.TimeoutError as exc:
             logger.warning("Map municipality search timed out")
+            raise HTTPException(status_code=503, detail="Municipality search temporarily unavailable") from exc
         except Exception as exc:
             logger.warning("Map municipality search failed: %s", exc)
+            raise HTTPException(status_code=503, detail="Municipality search temporarily unavailable") from exc
 
     return {
         "query": normalized,
@@ -4327,7 +4402,10 @@ async def get_map_layers():
 
 @api_router.get("/map/metrics")
 async def get_map_metrics():
-    """Return privacy-preserving diagnostics for the map request pipeline."""
+    """Return privacy-preserving diagnostics in local/debug deployments."""
+    public_metrics = os.getenv("MAP_PUBLIC_METRICS", "").strip().lower() in {"1", "true", "yes", "on"}
+    if not public_metrics:
+        raise HTTPException(status_code=404, detail="Not found")
     return map_metrics.snapshot()
 
 
@@ -4355,8 +4433,9 @@ async def get_map_layer_features(
     east: float = Query(..., ge=-180, le=180),
     north: float = Query(..., ge=-90, le=90),
     limit: int = Query(2000, ge=1, le=5000),
+    offset: int = Query(0, ge=0, le=1_000_000),
 ):
-    """Return a bounded WGS84 GeoJSON viewport for one canonical layer."""
+    """Return a bounded, paginated WGS84 GeoJSON viewport for one canonical layer."""
     try:
         layer = get_map_layer(layer_id)
     except KeyError as exc:
@@ -4371,9 +4450,13 @@ async def get_map_layer_features(
     source = get_map_layer_source()
     if not source.available:
         raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable")
-    payload = await source.read_geojson(layer.id, (west, south, east, north), min(limit, layer.max_features))
+    page_size = min(limit, layer.max_features)
+    payload = await source.read_geojson(layer.id, (west, south, east, north), min(page_size + 1, layer.max_features + 1), offset)
+    features = payload.get("features", [])
+    payload["truncated"] = len(features) > page_size
+    payload["features"] = features[:page_size]
+    payload["offset"] = offset
     payload["layer"] = layer.id
-    payload["truncated"] = len(payload["features"]) >= min(limit, layer.max_features)
     return payload
 
 
@@ -4410,12 +4493,12 @@ async def get_map_layer_tile(layer_id: str, z: int, x: int, y: int):
         return Response(content=b"", media_type="application/vnd.mapbox-vector-tile")
     source = get_map_layer_source()
     if not source.available:
-        raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable")
+        raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable", headers={"Retry-After": "2", "Cache-Control": "no-store"})
     try:
         tile_bytes = await source.read_mvt(layer.id, z, x, y)
     except Exception as exc:
         logger.warning("Canonical map layer tile failed for %s/%s/%s/%s: %s", layer_id, z, x, y, exc)
-        raise HTTPException(status_code=503, detail="Canonical PostGIS map layer unavailable") from exc
+        raise HTTPException(status_code=503, detail="Canonical PostGIS map layer unavailable", headers={"Retry-After": "2", "Cache-Control": "no-store"}) from exc
     return Response(
         content=tile_bytes,
         media_type="application/vnd.mapbox-vector-tile",

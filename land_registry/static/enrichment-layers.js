@@ -153,6 +153,29 @@
         return { color, weight: 1.5, opacity: 0.85, fillColor: color, fillOpacity: 0.12 };
     }
 
+    function _canonicalHttpUrl(value) {
+        if (typeof value !== 'string' || !value.trim()) return null;
+        try {
+            const url = new URL(value.trim());
+            return ['http:', 'https:'].includes(url.protocol) ? url.href : null;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    function _canonicalFieldHtml(key, value, item) {
+        const url = _canonicalHttpUrl(value);
+        if (!url) return _escapeHtml(value);
+        const label = item?.title || item?.resource_title || (
+            key === 'source_page_url' ? 'Open source page' :
+            key === 'document_url' ? 'Open document' :
+            key === 'requested_url' ? 'Open requested document' :
+            key === 'final_url' ? 'Open document' :
+            'Open document'
+        );
+        return `<a href="${_escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${_escapeHtml(label)}</a>`;
+    }
+
     function _canonicalPopup(properties, details) {
         const rows = Object.entries(properties || {})
             .filter(([, value]) => value !== null && value !== undefined && value !== '')
@@ -165,7 +188,7 @@
                 const items = value.slice(0, 3).map(item => Object.entries(item || {})
                     .filter(([, field]) => field !== null && field !== undefined && field !== '')
                     .slice(0, 5)
-                    .map(([key, field]) => `<div><b>${_escapeHtml(key)}:</b> ${_escapeHtml(field)}</div>`)
+                    .map(([key, field]) => `<div><b>${_escapeHtml(key)}:</b> ${_canonicalFieldHtml(key, field, item)}</div>`)
                     .join('')).join('<hr>');
                 return `<div class="canonical-layer-related"><b>${_escapeHtml(name)}</b> (${value.length})${items ? `<div>${items}</div>` : ''}</div>`;
             }).filter(Boolean).join('');

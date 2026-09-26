@@ -35,6 +35,7 @@ class MapLayerSpec:
     geojson_max_area: float = 250.0
     coverage: str = "full"
     coverage_note: str = ""
+    coverage_bounds: Optional[tuple[float, float, float, float]] = None
     properties: tuple[str, ...] = ()
     kind: str = "polygon"
     role: str = ""
@@ -46,6 +47,8 @@ class MapLayerSpec:
         value["tile_url"] = f"/api/v1/tiles/map-layers/{self.id}/{{z}}/{{x}}/{{y}}.pbf"
         value["geojson_url"] = f"/api/v1/map/layers/{self.id}/features"
         value["detail_url"] = f"/api/v1/map/layers/{self.id}/features/{{feature_id}}"
+        if self.coverage_bounds is not None:
+            value["coverage_bounds"] = list(self.coverage_bounds)
         return value
 
 
@@ -53,9 +56,9 @@ class MapLayerSpec:
 # be very wide.  Raw landing relations are allowed when they have explicitly
 # prepared native geometry and map-safe indexes.
 MAP_LAYERS: tuple[MapLayerSpec, ...] = (
-    MapLayerSpec("geo-boundaries", "Administrative boundaries", "geo.geo_boundary", "geom", properties=("id", "geo_unit_id", "generalization", "source_release"), role="admin-substitute"),
-    MapLayerSpec("cadastral-sheets", "Cadastral sheets", "spatial.cadastral_sheet", "geom", min_zoom=10, coverage="partial", coverage_note="Canonical publication currently covers only loaded regions", properties=("id", "sheet_reference", "municipality_id", "level", "level_name", "area_sqm", "source_release")),
-    MapLayerSpec("cadastral-parcels", "Cadastral parcels", "spatial.cadastral_parcel", "geom", min_zoom=14, max_features=5000, coverage="partial", coverage_note="Canonical publication currently covers only loaded regions", properties=("id", "canonical_reference", "national_cadastral_reference", "parcel", "sheet", "municipality_id", "area_sqm", "source_release")),
+    MapLayerSpec("geo-boundaries", "Administrative boundaries", "geo.geo_boundary", "geom", properties=("id", "geo_unit_id", "canonical_name", "unit_type", "generalization", "source_release"), role="admin-substitute"),
+    MapLayerSpec("cadastral-sheets", "Cadastral sheets", "spatial.cadastral_sheet", "geom", min_zoom=10, coverage="partial", coverage_note="Veneto only", coverage_bounds=(10.62, 44.79, 13.10, 46.68), properties=("id", "sheet_reference", "municipality_id", "level", "level_name", "area_sqm", "source_release")),
+    MapLayerSpec("cadastral-parcels", "Cadastral parcels", "spatial.cadastral_parcel", "geom", min_zoom=14, max_features=5000, coverage="partial", coverage_note="Veneto only", coverage_bounds=(10.62, 44.79, 13.10, 46.68), properties=("id", "canonical_reference", "national_cadastral_reference", "parcel", "sheet", "municipality_id", "area_sqm", "source_release")),
     MapLayerSpec("urban-sections", "Cadastral urban sections", "spatial.cadastral_urban_section", "geom", min_zoom=11, coverage="partial", coverage_note="Upstream source currently contains 1,523 of the expected 2,847 sections", properties=("id", "zoning_reference", "section", "municipality_id", "source_release")),
     MapLayerSpec("market-zones", "OMI market zones", "spatial.market_zone", "geom", min_zoom=10, properties=("id", "omi_zone_key", "municipality_id", "valid_from", "valid_to", "source_release")),
     MapLayerSpec("postal-zones", "Postal zones", "spatial.postal_zone", "geom", min_zoom=10, properties=("id", "cap", "municipality_id", "valid_from", "valid_to", "source_release")),
@@ -268,25 +271,29 @@ class PostgresMapLayerSource:
                 geometry_srid = int(values[5] or 0)
                 checks.append({
                     "id": values[0],
-                    "table": layer.table,
                     "available": bool(values[1] and values[3] and values[4] and geometry_srid == layer.source_srid),
                     "relation_exists": bool(values[1]),
-                    "row_estimate": max(0, int(values[2] or 0)),
-                    "geometry_column": layer.geometry_column,
-                    "geometry_column_exists": bool(values[3]),
-                    "gist_index_exists": bool(values[4]),
-                    "expected_srid": layer.source_srid,
-                    "geometry_srid": geometry_srid,
-                    "srid_matches": geometry_srid == layer.source_srid,
                     "coverage": layer.coverage if values[1] else "unavailable",
                     "coverage_note": layer.coverage_note,
+                    "coverage_bounds": list(layer.coverage_bounds) if layer.coverage_bounds else None,
                 })
         return checks
 
     @staticmethod
     def _source_columns(layer: MapLayerSpec) -> str:
         # Every identifier comes from MAP_LAYERS above, never from a request.
-        return ", ".join(f"t.{column}" for column in layer.properties)
+        if layer.id != "geo-boundaries":
+            return ", ".join(f"t.{column}" for column in layer.properties)
+        # Only boundaries resolve their name and level through the geo.geo_unit
+        # join (_source_join); other layers, e.g. municipality profiles, carry
+        # canonical_name on their own row and must keep selecting it.
+        columns = [f"t.{column}" for column in layer.properties if column not in {"canonical_name", "unit_type"}]
+        columns.extend(("u.canonical_name AS canonical_name", "u.unit_type AS unit_type"))
+        return ", ".join(columns)
+
+    @staticmethod
+    def _source_join(layer: MapLayerSpec) -> str:
+        return "LEFT JOIN geo.geo_unit AS u ON u.id = t.geo_unit_id" if layer.id == "geo-boundaries" else ""
 
     async def read_mvt(self, layer_id: str, z: int, x: int, y: int) -> bytes:
         layer = get_map_layer(layer_id)
@@ -311,7 +318,7 @@ class PostgresMapLayerSource:
             ), mvtgeom AS (
                 SELECT {columns},
                        ST_AsMVTGeom(ST_Transform({geometry}, 3857), bounds.tile, 4096, 64, true) AS geom
-                FROM {layer.table} AS t CROSS JOIN bounds
+                FROM {layer.table} AS t {self._source_join(layer)} CROSS JOIN bounds
                 WHERE t.{layer.geometry_column} && bounds.source
                 LIMIT %s
             )
@@ -325,7 +332,7 @@ class PostgresMapLayerSource:
             )
         return tile or b""
 
-    async def read_geojson(self, layer_id: str, bbox: tuple[float, float, float, float], limit: int) -> dict[str, Any]:
+    async def read_geojson(self, layer_id: str, bbox: tuple[float, float, float, float], limit: int, offset: int = 0) -> dict[str, Any]:
         layer = get_map_layer(layer_id)
         if not self.connection_source:
             return {"type": "FeatureCollection", "features": []}
@@ -340,15 +347,17 @@ class PostgresMapLayerSource:
             )
             SELECT {columns},
                    ST_AsGeoJSON(ST_Intersection(ST_Transform(t.{layer.geometry_column}, 4326), bounds.web)) AS geometry
-            FROM {layer.table} AS t CROSS JOIN bounds
+            FROM {layer.table} AS t {self._source_join(layer)} CROSS JOIN bounds
             WHERE t.{layer.geometry_column} && bounds.source
               AND ST_Intersects(t.{layer.geometry_column}, bounds.source)
-            LIMIT %s
+            ORDER BY t.{layer.id_column}
+            LIMIT %s OFFSET %s
         """
         async with self.connection_source.connection() as connection:
             rows = await connection.fetch(
                 _asyncpg_sql(sql),
-                west, south, east, north, west, south, east, north, min(limit, layer.max_features),
+                west, south, east, north, west, south, east, north,
+                min(max(int(limit), 1), layer.max_features), max(int(offset), 0),
             )
         features = []
         for row in rows:
@@ -361,6 +370,195 @@ class PostgresMapLayerSource:
                 "geometry": json.loads(geometry) if geometry else None,
             })
         return {"type": "FeatureCollection", "features": features}
+
+    async def read_feature_at_point(self, layer_id: str, lat: float, lng: float) -> Optional[dict[str, Any]]:
+        """Return the polygon containing a WGS84 point as a GeoJSON feature."""
+
+        layer = get_map_layer(layer_id)
+        if not self.connection_source:
+            return None
+        columns = self._source_columns(layer)
+        point = f"ST_SetSRID(ST_Point(%s, %s), 4326)"
+        source_point = f"ST_Transform({point}, {layer.source_srid})"
+        sql = f"""
+            WITH click AS (
+                SELECT {point} AS web, {source_point} AS source
+            )
+            SELECT {columns},
+                   ST_AsGeoJSON(ST_Transform(t.{layer.geometry_column}, 4326)) AS geometry
+            FROM {layer.table} AS t {self._source_join(layer)} CROSS JOIN click
+            WHERE t.{layer.geometry_column} && click.source
+              AND ST_Covers(t.{layer.geometry_column}, click.source)
+            LIMIT 1
+        """
+        async with self.connection_source.connection() as connection:
+            row = await connection.fetchrow(_asyncpg_sql(sql), float(lng), float(lat), float(lng), float(lat))
+        if not row:
+            return None
+        values = dict(row)
+        geometry = values.pop("geometry", None)
+        return {
+            "type": "Feature",
+            "id": values.get(layer.id_column),
+            "properties": {key: _json_value(values.get(key)) for key in layer.properties},
+            "geometry": json.loads(geometry) if geometry else None,
+        }
+
+    async def read_feature_by_reference(
+        self, layer_id: str, reference: str, feature_id: Optional[int] = None
+    ) -> Optional[dict[str, Any]]:
+        """Return one cadastral feature by its canonical parcel reference."""
+
+        layer = get_map_layer(layer_id)
+        if not self.connection_source:
+            return None
+        if layer.id != "cadastral-parcels":
+            raise ValueError("Reference lookup is only supported for cadastral parcels")
+        columns = self._source_columns(layer)
+        # Panel-facing extras: whole regional loads ship without area_sqm, and
+        # the municipality is otherwise only an opaque geo_unit id.
+        extras = (
+            f"ST_AsGeoJSON(ST_Transform(t.{layer.geometry_column}, 4326)) AS geometry, "
+            f"ST_Area(t.{layer.geometry_column}::geography) AS computed_area_sqm, "
+            "(SELECT u.canonical_name FROM geo.geo_unit AS u WHERE u.id = t.municipality_id) AS municipality_name"
+        )
+        normalized = str(reference).strip()
+        if feature_id is not None:
+            # A clicked vector-tile feature already carries its primary key.
+            # The reference columns have no index in aecs4u-stats, so an OR
+            # lookup over them is a sequential scan of every parcel; the PK
+            # lookup is instant, and the reference check guards stale ids.
+            sql = f"""
+                SELECT {columns}, {extras}
+                FROM {layer.table} AS t
+                WHERE t.{layer.id_column} = %s
+                  AND (t.national_cadastral_reference = %s OR t.canonical_reference = %s)
+                LIMIT 1
+            """
+            params: tuple[Any, ...] = (int(feature_id), normalized, normalized)
+        else:
+            sql = f"""
+                SELECT {columns}, {extras}
+                FROM {layer.table} AS t
+                WHERE t.national_cadastral_reference = %s
+                   OR t.canonical_reference = %s
+                LIMIT 1
+            """
+            params = (normalized, normalized)
+        async with self.connection_source.connection() as connection:
+            row = await connection.fetchrow(_asyncpg_sql(sql), *params)
+        if not row:
+            return None
+        values = dict(row)
+        geometry = values.pop("geometry", None)
+        properties = {key: _json_value(values.get(key)) for key in layer.properties}
+        for key in ("computed_area_sqm", "municipality_name"):
+            if values.get(key) is not None:
+                properties[key] = _json_value(values[key])
+        return {
+            "type": "Feature",
+            "id": values.get(layer.id_column),
+            "properties": properties,
+            "geometry": json.loads(geometry) if geometry else None,
+        }
+
+    async def search_parcels_by_reference(self, reference: str, limit: int = 10) -> list[dict[str, Any]]:
+        """Return every parcel polygon matching an exact cadastral reference.
+
+        This query is intentionally exact and bounded, and depends on the
+        canonical reference indexes installed by scripts/sql/map-reference-indexes.sql.
+        """
+        layer = get_map_layer("cadastral-parcels")
+        if not self.connection_source:
+            return []
+        normalized = str(reference or "").strip().upper()
+        # Resolve matches through the two reference indexes first. A single
+        # "a = x OR b = y ORDER BY id LIMIT n" lets the planner walk the
+        # primary key instead whenever column statistics are missing or stale
+        # (observed on the unanalyzed Veneto load: a full scan past the 2 s
+        # search timeout). Each UNION branch is an indexed equality lookup.
+        sql = f"""
+            WITH matches AS MATERIALIZED (
+                SELECT {layer.id_column} AS id FROM {layer.table} WHERE canonical_reference = %s
+                UNION
+                SELECT {layer.id_column} AS id FROM {layer.table} WHERE national_cadastral_reference = %s
+            )
+            SELECT t.{layer.id_column} AS id, t.canonical_reference,
+                   t.national_cadastral_reference, t.parcel, t.sheet,
+                   t.municipality_id, u.canonical_name AS municipality_name
+            FROM matches
+            JOIN {layer.table} AS t ON t.{layer.id_column} = matches.id
+            LEFT JOIN geo.geo_unit AS u ON u.id = t.municipality_id
+            ORDER BY t.{layer.id_column}
+            LIMIT %s
+        """
+        async with self.connection_source.connection() as connection:
+            rows = await connection.fetch(
+                _asyncpg_sql(sql), normalized, normalized, min(max(int(limit), 1), 20)
+            )
+        return [_json_row(row) for row in rows]
+
+    async def read_adjacent_features(
+        self, layer_id: str, reference: str, limit: int = 25, feature_id: Optional[int] = None
+    ) -> list[dict[str, Any]]:
+        """Return parcels that touch or overlap the parcel identified by ``reference``.
+
+        Mirrors the legacy "Find Adjacent" analysis (default "intersects"
+        method): ``ST_Intersects`` already covers shared-boundary touches, so
+        one predicate serves both.
+        """
+
+        layer = get_map_layer(layer_id)
+        if not self.connection_source:
+            return []
+        if layer.id != "cadastral-parcels":
+            raise ValueError("Adjacency lookup is only supported for cadastral parcels")
+        columns = self._source_columns(layer)
+        normalized = str(reference).strip()
+        # Same primary-key fast path as read_feature_by_reference: the
+        # reference columns are unindexed, so resolving the target by them is
+        # a full scan that routinely hits the statement timeout.
+        if feature_id is not None:
+            target_predicate = (
+                f"{layer.id_column} = %s AND (national_cadastral_reference = %s OR canonical_reference = %s)"
+            )
+            target_params: tuple[Any, ...] = (int(feature_id), normalized, normalized)
+        else:
+            target_predicate = "national_cadastral_reference = %s OR canonical_reference = %s"
+            target_params = (normalized, normalized)
+        sql = f"""
+            WITH target AS (
+                SELECT {layer.id_column} AS target_id, {layer.geometry_column} AS geom
+                FROM {layer.table}
+                WHERE {target_predicate}
+                LIMIT 1
+            )
+            SELECT {columns},
+                   ST_AsGeoJSON(ST_Transform(t.{layer.geometry_column}, 4326)) AS geometry
+            FROM {layer.table} AS t, target
+            WHERE t.{layer.geometry_column} && target.geom
+              AND ST_Intersects(t.{layer.geometry_column}, target.geom)
+              AND t.{layer.id_column} <> target.target_id
+            LIMIT %s
+        """
+        # Exclude the target by primary key: national_cadastral_reference is
+        # NULL for whole regional loads, and NULL IS DISTINCT FROM 'x' is true,
+        # so a reference-based exclusion returned the parcel as its own neighbour.
+        async with self.connection_source.connection() as connection:
+            rows = await connection.fetch(
+                _asyncpg_sql(sql), *target_params, min(max(int(limit), 1), 50),
+            )
+        features = []
+        for row in rows:
+            values = dict(row)
+            geometry = values.pop("geometry", None)
+            features.append({
+                "type": "Feature",
+                "id": values.get(layer.id_column),
+                "properties": {key: _json_value(values.get(key)) for key in layer.properties},
+                "geometry": json.loads(geometry) if geometry else None,
+            })
+        return features
 
     async def read_feature_details(self, layer_id: str, feature_id: int) -> Optional[dict[str, Any]]:
         """Return one allow-listed feature and related maritime records."""
@@ -442,24 +640,45 @@ class PostgresMapLayerSource:
         normalized = str(query or "").strip()
         if len(normalized) < 2:
             return []
-        columns = self._source_columns(layer)
+        # Some serving rows have a geo_unit_id but no materialized display
+        # name. Resolve the canonical name from the authoritative unit table so
+        # search results never fall back to opaque ISTAT codes.
+        name_expression = "COALESCE(NULLIF(t.canonical_name, ''), u.canonical_name)"
+        columns = self._source_columns(layer).replace(
+            "t.canonical_name", f"{name_expression} AS canonical_name", 1
+        )
         columns = f"{columns}, ST_Y(ST_Centroid(t.{layer.geometry_column})) AS latitude, " \
-                  f"ST_X(ST_Centroid(t.{layer.geometry_column})) AS longitude"
+                  f"ST_X(ST_Centroid(t.{layer.geometry_column})) AS longitude, " \
+                  f"ST_XMin(Box2D(ST_Transform(t.{layer.geometry_column}, 4326))) AS west, " \
+                  f"ST_YMin(Box2D(ST_Transform(t.{layer.geometry_column}, 4326))) AS south, " \
+                  f"ST_XMax(Box2D(ST_Transform(t.{layer.geometry_column}, 4326))) AS east, " \
+                  f"ST_YMax(Box2D(ST_Transform(t.{layer.geometry_column}, 4326))) AS north"
         sql = f"""
             SELECT {columns}
             FROM {layer.table} AS t
-            WHERE t.canonical_name ILIKE %s
+            LEFT JOIN geo.geo_unit AS u ON u.id = t.geo_unit_id
+            WHERE {name_expression} ILIKE %s
                OR t.istat_code ILIKE %s
-            ORDER BY t.canonical_name ASC
+            ORDER BY CASE
+                WHEN lower({name_expression}) = lower(%s) THEN 0
+                WHEN lower({name_expression}) LIKE lower(%s) THEN 1
+                ELSE 2
+            END, {name_expression} ASC
             LIMIT %s
         """
         pattern = f"%{normalized}%"
+        prefix = f"{normalized}%"
+        # Bind order follows the placeholders above: substring name match,
+        # ISTAT-code prefix, then exact-name and name-prefix ranking.
         async with self.connection_source.connection() as connection:
-            rows = await connection.fetch(_asyncpg_sql(sql), pattern, pattern, min(max(int(limit), 1), 50))
+            rows = await connection.fetch(
+                _asyncpg_sql(sql), pattern, prefix, normalized, prefix, min(max(int(limit), 1), 50)
+            )
         return [_json_row(row) for row in rows]
 
 
 _source: Optional[PostgresMapLayerSource] = None
+_search_source: Optional[PostgresMapLayerSource] = None
 _source_lock = threading.Lock()
 
 
@@ -472,9 +691,51 @@ def get_map_layer_source() -> PostgresMapLayerSource:
     return _source
 
 
+def get_map_search_source() -> PostgresMapLayerSource:
+    """Use a small reserved pool for latency-sensitive interactive search.
+
+    Municipality and parcel-reference search both run here so they never
+    queue behind tile rendering on the shared pool.
+    """
+    global _search_source
+    if _search_source is not None:
+        return _search_source
+    tile_source = get_map_layer_source().connection_source
+    with _source_lock:
+        if _search_source is None:
+            if tile_source is None:
+                _search_source = PostgresMapLayerSource(None)
+            else:
+                _search_connection_source = _AsyncpgConnectionSource(
+                    tile_source.dsn,
+                    max_connections=2,
+                    connect_timeout=tile_source.connect_timeout,
+                )
+                _search_source = PostgresMapLayerSource(_search_connection_source)
+    return _search_source
+
+
+async def warm_map_search_source() -> None:
+    """Open the reserved search pool ahead of the first query.
+
+    Creating the pool lazily put its connection setup (seconds under database
+    load) inside the first search's timeout, which then returned 503.
+    """
+    connection_source = get_map_search_source().connection_source
+    if connection_source is None:
+        return
+    try:
+        await connection_source._get_pool()
+    except Exception as exc:
+        log.warning("Map search pool warm-up failed (search will retry lazily): %s", exc)
+
+
 async def close_map_layer_source() -> None:
-    global _source
+    global _source, _search_source
     with _source_lock:
         source, _source = _source, None
+        search_source, _search_source = _search_source, None
+    if search_source is not None:
+        await search_source.close()
     if source is not None:
         await source.close()

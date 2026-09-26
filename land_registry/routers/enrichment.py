@@ -8,13 +8,18 @@ the aecs4u-stats data stores are absent — check ``GET /enrichment/status``.
 """
 
 import asyncio
-from typing import Dict, List, Optional
+from typing import Annotated, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import HTMLResponse, JSONResponse, Response
+import io
+import json
 from pydantic import BaseModel, Field
 
 from aecs4u_stats.web import enrichment as _aecs4u_stats_enrichment
+from aecs4u_stats.osm.config import POI_CATEGORIES
 from land_registry import stats_service
+from land_registry.map_layers import get_map_layer_source
 from land_registry.models import EnrichmentDatasetStatus
 
 enrichment_router = APIRouter()
@@ -110,10 +115,96 @@ async def get_pois(
     radius_km: float = Query(1.0, gt=0, le=25),
     categories: Optional[List[str]] = Query(None, description="POI categories (default: all); see /enrichment/status"),
 ):
-    """OSM points of interest around a point, grouped by category, nearest-first."""
+    """OSM points of interest around a point, grouped by category, nearest-first.
+
+    Accepts both repeated ``categories`` params and the comma-separated form
+    the map and POI explorer send; a single ``"a,b"`` value would otherwise be
+    matched as one unknown category code and return nothing.
+    """
+    if categories:
+        categories = [item.strip() for value in categories for item in value.split(",") if item.strip()]
     return await stats_service.aget_pois_near(
-        lat, lng, radius_km=radius_km, categories=categories
+        lat, lng, radius_km=radius_km, categories=categories or None
     )
+
+
+@enrichment_router.get("/poi-categories")
+async def get_poi_categories():
+    """Return the category catalogue used by the POI layer and explorer."""
+    return [
+        {"key": key, "label": key.replace("_", " ").title(), "query": query}
+        for key, query in POI_CATEGORIES.items()
+    ]
+
+
+def _poi_category_query(value: Optional[str]) -> Optional[List[str]]:
+    if not value:
+        return None
+    values = [item.strip() for item in value.split(",") if item.strip()]
+    if values == ["__none__"]:
+        return []
+    return [item for item in values if item in POI_CATEGORIES]
+
+
+@enrichment_router.get("/poi-report")
+async def get_poi_report(
+    lat: float = Query(..., ge=-90, le=90),
+    lng: float = Query(..., ge=-180, le=180),
+    radius_km: float = Query(2.0, gt=0, le=25),
+    categories: Optional[str] = Query(None),
+    format: str = Query("json", pattern="^(json|pdf)$"),
+):
+    """Export the current POI Explorer result as JSON or a compact PDF."""
+    data = await stats_service.aget_pois_near(
+        lat, lng, radius_km=radius_km, categories=_poi_category_query(categories)
+    )
+    if format == "json":
+        return JSONResponse(data, headers={"Content-Disposition": "attachment; filename=poi-explorer.json"})
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfgen import canvas
+        output = io.BytesIO()
+        pdf = canvas.Canvas(output, pagesize=A4)
+        _, height = A4
+        pdf.setTitle("POI Explorer")
+        pdf.drawString(42, height - 48, f"POI Explorer — {lat:.5f}, {lng:.5f} — radius {radius_km:g} km")
+        y = height - 76
+        for category, items in (data.get("categories") or {}).items():
+            for item in items:
+                if y < 48:
+                    pdf.showPage(); y = height - 48
+                name = str(item.get("name") or category)[:100]
+                distance = item.get("distance_km")
+                suffix = f" ({distance:g} km)" if isinstance(distance, (int, float)) else ""
+                pdf.drawString(48, y, f"{category}: {name}{suffix}")
+                y -= 14
+        pdf.save()
+        return Response(output.getvalue(), media_type="application/pdf", headers={"Content-Disposition": "attachment; filename=poi-explorer.pdf"})
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"PDF export unavailable: {exc}") from exc
+
+
+@enrichment_router.get("/poi-map", response_class=HTMLResponse)
+async def get_poi_map(
+    lat: float = Query(..., ge=-90, le=90),
+    lng: float = Query(..., ge=-180, le=180),
+    radius_km: float = Query(2.0, gt=0, le=25),
+    categories: Optional[str] = Query(None),
+):
+    """Small embeddable Leaflet POI map used by the direct-map explorer."""
+    data = await stats_service.aget_pois_near(
+        lat, lng, radius_km=radius_km, categories=_poi_category_query(categories)
+    )
+    payload = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
+    return HTMLResponse(f"""<!doctype html><html><head><meta charset='utf-8'><title>POI Explorer</title>
+<link rel='stylesheet' href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'></head>
+<body style='margin:0'><div id='map' style='height:100vh'></div>
+<script src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'></script><script>
+const data={payload}; const map=L.map('map').setView([{lat},{lng}], 13);
+L.tileLayer('https://tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png',{{attribution:'© OpenStreetMap contributors'}}).addTo(map);
+L.circle([{lat},{lng}],{{radius:{radius_km}*1000,color:'#2563eb',fillOpacity:.06}}).addTo(map);
+Object.entries(data.categories||{{}}).forEach(([category,items])=>items.forEach(item=>{{if(item.lat==null||item.lng==null)return;L.marker([item.lat,item.lng]).addTo(map).bindPopup('<b>'+String(item.name||category).replace(/[<>&]/g,'')+'</b><br>'+category);}}));
+</script></body></html>""")
 
 
 @enrichment_router.get("/omi/quotes")
@@ -223,14 +314,68 @@ _CADASTRAL_BUILD_HINT = (
 
 
 @enrichment_router.get("/parcel/by-reference/{national_reference}")
-async def get_parcel_by_reference(national_reference: str):
-    """One parcel Feature by exact NATIONALCADASTRALREFERENCE (e.g. H233_000100.1)."""
-    if not stats_service.cadastral_store_available():
+async def get_parcel_by_reference(
+    national_reference: str,
+    id: Annotated[Optional[int], Query(ge=1, description="Canonical feature id hint from the clicked vector tile")] = None,
+):
+    """One parcel Feature by exact NATIONALCADASTRALREFERENCE (e.g. H233_000100.1).
+
+    Map clicks pass the vector-tile feature ``id`` so the canonical source can
+    resolve the parcel by primary key instead of scanning the unindexed
+    reference columns.
+    """
+    local_available = stats_service.cadastral_store_available()
+    source = get_map_layer_source()
+    result = None
+    if id is not None:
+        if source.available:
+            try:
+                result = await source.read_feature_by_reference(
+                    "cadastral-parcels", national_reference, feature_id=id
+                )
+            except Exception as exc:
+                raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable") from exc
+    elif source.available:
+        try:
+            matches = await source.search_parcels_by_reference(national_reference, limit=2)
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable") from exc
+        if len(matches) > 1:
+            raise HTTPException(status_code=409, detail="This reference has multiple parcel polygons. Choose a specific map feature.")
+        if matches:
+            result = await source.read_feature_by_reference(
+                "cadastral-parcels", national_reference, feature_id=int(matches[0]["id"])
+            )
+    if result is None and id is None and local_available:
+        result = stats_service.get_parcel_by_reference(national_reference)
+    if result is None and (id is not None or not local_available) and not source.available:
         raise HTTPException(status_code=503, detail=_CADASTRAL_BUILD_HINT)
-    result = stats_service.get_parcel_by_reference(national_reference)
     if result is None:
         raise HTTPException(status_code=404, detail=f"No parcel with reference '{national_reference}'")
     return result
+
+
+@enrichment_router.get("/parcel/adjacent/{national_reference}")
+async def get_adjacent_parcels(
+    national_reference: str,
+    limit: int = Query(25, ge=1, le=50),
+    id: Annotated[Optional[int], Query(ge=1, description="Canonical feature id of the target parcel")] = None,
+):
+    """Parcels that touch or overlap the parcel identified by its national reference.
+
+    Canonical-source equivalent of the legacy "Find Adjacent" spatial analysis
+    (folium-interface.js), scoped to one parcel instead of a multi-select.
+    """
+    source = get_map_layer_source()
+    if not source.available:
+        raise HTTPException(status_code=503, detail=_CADASTRAL_BUILD_HINT)
+    try:
+        features = await source.read_adjacent_features(
+            "cadastral-parcels", national_reference, limit=limit, feature_id=id
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable") from exc
+    return {"type": "FeatureCollection", "features": features}
 
 
 @enrichment_router.get("/parcel/details/{national_reference}")
@@ -329,9 +474,17 @@ async def get_parcel_at_point(
     lng: float = Query(..., ge=-180, le=180),
 ):
     """The cadastral parcel containing a WGS84 point (click → parcel lookup)."""
-    if not stats_service.cadastral_store_available():
+    local_available = stats_service.cadastral_store_available()
+    result = await asyncio.to_thread(stats_service.get_parcel_at_point, lat, lng) if local_available else None
+    source = get_map_layer_source()
+    if result is None:
+        if source.available:
+            try:
+                result = await source.read_feature_at_point("cadastral-parcels", lat, lng)
+            except Exception as exc:
+                raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable") from exc
+    if result is None and not local_available and not source.available:
         raise HTTPException(status_code=503, detail=_CADASTRAL_BUILD_HINT)
-    result = stats_service.get_parcel_at_point(lat, lng)
     if result is None:
         raise HTTPException(status_code=404, detail="No parcel at this point (region store missing or open water)")
     return result

@@ -3,9 +3,13 @@
 import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from land_registry.map_layers import MAP_LAYERS, PostgresMapLayerSource, get_map_layer
 from land_registry.map_layers import _AsyncpgConnectionSource, _asyncpg_sql
+from land_registry.routers import enrichment as enrichment_module
 
 
 API_SOURCE = Path(__file__).parents[1] / "land_registry" / "routers" / "api.py"
@@ -85,6 +89,50 @@ class _ConnectionSource:
         pass
 
 
+
+def test_partial_cadastral_coverage_is_published_as_a_viewport_bound():
+    parcels = get_map_layer("cadastral-parcels")
+    assert parcels.coverage == "partial"
+    assert parcels.coverage_note == "Veneto only"
+    assert parcels.public()["coverage_bounds"] == [10.62, 44.79, 13.10, 46.68]
+
+
+def test_boundary_tile_joins_unit_name_and_type():
+    connection = _Connection()
+    source = PostgresMapLayerSource(_ConnectionSource(connection))
+
+    asyncio.run(source.read_mvt("geo-boundaries", 10, 550, 380))
+
+    assert "geo.geo_unit AS u ON u.id = t.geo_unit_id" in connection.sql
+    assert "u.canonical_name AS canonical_name" in connection.sql
+    assert "u.unit_type AS unit_type" in connection.sql
+
+
+def test_exact_reference_search_returns_feature_ids_and_uses_plain_index_columns():
+    connection = _Connection(rows=[{"id": 7, "canonical_reference": "L781B016200.14", "national_cadastral_reference": None, "parcel": "14", "sheet": "162", "municipality_id": 11180, "municipality_name": "Verona"}])
+    source = PostgresMapLayerSource(_ConnectionSource(connection))
+
+    rows = asyncio.run(source.search_parcels_by_reference("l781b016200.14", 10))
+
+    assert rows[0]["id"] == 7
+    # Each reference column is matched in its own UNION branch so the lookup
+    # stays on the reference indexes even with stale planner statistics.
+    assert "WHERE canonical_reference = $1" in connection.sql
+    assert "WHERE national_cadastral_reference = $2" in connection.sql
+    assert "UNION" in connection.sql and " OR " not in connection.sql
+    assert connection.params == ("L781B016200.14", "L781B016200.14", 10)
+
+
+def test_geojson_page_uses_offset_and_stable_feature_order():
+    connection = _Connection(rows=[])
+    source = PostgresMapLayerSource(_ConnectionSource(connection))
+
+    asyncio.run(source.read_geojson("census-sections", (12, 41, 13, 42), 100, offset=200))
+
+    assert "ORDER BY t.sez21_id" in connection.sql
+    assert "LIMIT $9 OFFSET $10" in connection.sql
+    assert connection.params[-2:] == (100, 200)
+
 def test_dbapi_placeholders_translate_to_asyncpg():
     assert _asyncpg_sql("a = %s AND b ILIKE '%%x%%' AND c = %s") == "a = $1 AND b ILIKE '%x%' AND c = $2"
 
@@ -119,6 +167,151 @@ def test_geojson_query_transforms_projected_census_geometry():
     assert all(isinstance(value, float) for value in connection.params[:8])
 
 
+def test_point_lookup_returns_geojson_feature_from_canonical_source():
+    connection = _Connection(row={
+        "id": 42,
+        "canonical_reference": "C773_002800.29",
+        "national_cadastral_reference": "C773_002800.29",
+        "parcel": "29",
+        "sheet": "28",
+        "municipality_id": 7,
+        "area_sqm": 123.5,
+        "source_release": "2026-01",
+        "geometry": '{"type":"Polygon","coordinates":[]}',
+    })
+    source = PostgresMapLayerSource(_ConnectionSource(connection))
+
+    result = asyncio.run(source.read_feature_at_point("cadastral-parcels", 42.07, 11.85))
+
+    assert result["type"] == "Feature"
+    assert result["id"] == 42
+    assert result["properties"]["national_cadastral_reference"] == "C773_002800.29"
+    assert result["geometry"]["type"] == "Polygon"
+    assert "ST_Covers" in connection.sql
+    assert connection.params == (11.85, 42.07, 11.85, 42.07)
+
+
+def test_reference_lookup_returns_geojson_feature_from_canonical_source():
+    connection = _Connection(row={
+        "id": 42,
+        "canonical_reference": "C773_002800.29",
+        "national_cadastral_reference": "C773_002800.29",
+        "parcel": "29",
+        "sheet": "28",
+        "municipality_id": 7,
+        "area_sqm": 123.5,
+        "source_release": "2026-01",
+        "geometry": '{"type":"Polygon","coordinates":[]}',
+    })
+    source = PostgresMapLayerSource(_ConnectionSource(connection))
+
+    result = asyncio.run(source.read_feature_by_reference("cadastral-parcels", "C773_002800.29"))
+
+    assert result["properties"]["canonical_reference"] == "C773_002800.29"
+    assert "national_cadastral_reference = $1" in connection.sql
+    assert connection.params == ("C773_002800.29", "C773_002800.29")
+
+
+def test_reference_lookup_uses_primary_key_when_feature_id_is_known():
+    connection = _Connection(row={
+        "id": 42,
+        "canonical_reference": "C773_002800.29",
+        "geometry": '{"type":"Polygon","coordinates":[]}',
+    })
+    source = PostgresMapLayerSource(_ConnectionSource(connection))
+
+    result = asyncio.run(source.read_feature_by_reference("cadastral-parcels", "C773_002800.29", feature_id=42))
+
+    assert result["id"] == 42
+    # The PK predicate keeps the lookup off the unindexed reference columns,
+    # while the reference predicate rejects a stale or mismatched id.
+    assert "t.id = $1" in connection.sql
+    assert connection.params == (42, "C773_002800.29", "C773_002800.29")
+
+
+@pytest.mark.asyncio
+async def test_point_enrichment_falls_back_to_canonical_source():
+    feature = {"type": "Feature", "properties": {"national_cadastral_reference": "C773_002800.29"}}
+    source = MagicMock(available=True)
+    source.read_feature_at_point = AsyncMock(return_value=feature)
+
+    with patch.object(enrichment_module.stats_service, "cadastral_store_available", return_value=False), \
+         patch.object(enrichment_module, "get_map_layer_source", return_value=source):
+        result = await enrichment_module.get_parcel_at_point(42.07, 11.85)
+
+    assert result == feature
+    source.read_feature_at_point.assert_awaited_once_with("cadastral-parcels", 42.07, 11.85)
+
+
+@pytest.mark.asyncio
+async def test_reference_enrichment_falls_back_to_canonical_source():
+    feature = {"type": "Feature", "properties": {"national_cadastral_reference": "C773_002800.29"}}
+    source = MagicMock(available=True)
+    source.search_parcels_by_reference = AsyncMock(return_value=[{"id": 7}])
+    source.read_feature_by_reference = AsyncMock(return_value=feature)
+
+    with patch.object(enrichment_module.stats_service, "cadastral_store_available", return_value=False), \
+         patch.object(enrichment_module, "get_map_layer_source", return_value=source):
+        result = await enrichment_module.get_parcel_by_reference("C773_002800.29")
+
+    assert result == feature
+    source.read_feature_by_reference.assert_awaited_once_with(
+        "cadastral-parcels", "C773_002800.29", feature_id=7
+    )
+
+
+
+@pytest.mark.asyncio
+async def test_reference_enrichment_rejects_ambiguous_duplicate_polygons():
+    source = MagicMock(available=True)
+    source.search_parcels_by_reference = AsyncMock(return_value=[{"id": 7}, {"id": 8}])
+    with patch.object(enrichment_module.stats_service, "cadastral_store_available", return_value=False), \
+         patch.object(enrichment_module, "get_map_layer_source", return_value=source):
+        with pytest.raises(enrichment_module.HTTPException) as error:
+            await enrichment_module.get_parcel_by_reference("L781B016200.STRADA300")
+    assert error.value.status_code == 409
+
+def test_adjacent_lookup_returns_neighboring_features_excluding_self():
+    connection = _Connection(rows=[{
+        "id": 43,
+        "canonical_reference": "C773_002800.30",
+        "national_cadastral_reference": "C773_002800.30",
+        "parcel": "30",
+        "sheet": "28",
+        "municipality_id": 7,
+        "area_sqm": 88.0,
+        "source_release": "2026-01",
+        "geometry": '{"type":"Polygon","coordinates":[]}',
+    }])
+    source = PostgresMapLayerSource(_ConnectionSource(connection))
+
+    features = asyncio.run(source.read_adjacent_features("cadastral-parcels", "C773_002800.29"))
+
+    assert len(features) == 1
+    assert features[0]["properties"]["national_cadastral_reference"] == "C773_002800.30"
+    assert "ST_Intersects" in connection.sql
+    # Self-exclusion is by primary key: national_cadastral_reference is NULL
+    # for whole regional loads, so excluding by reference kept the target.
+    assert "t.id <> target.target_id" in connection.sql
+    assert "IS DISTINCT FROM" not in connection.sql
+    assert connection.params == ("C773_002800.29", "C773_002800.29", 25)
+
+
+@pytest.mark.asyncio
+async def test_adjacent_parcels_endpoint_returns_feature_collection():
+    features = [{"type": "Feature", "properties": {"national_cadastral_reference": "C773_002800.30"}}]
+    source = MagicMock(available=True)
+    source.read_adjacent_features = AsyncMock(return_value=features)
+
+    with patch.object(enrichment_module, "get_map_layer_source", return_value=source):
+        result = await enrichment_module.get_adjacent_parcels("C773_002800.29", limit=25)
+
+    assert result == {"type": "FeatureCollection", "features": features}
+    source.read_adjacent_features.assert_awaited_once_with(
+        "cadastral-parcels", "C773_002800.29", limit=25, feature_id=None
+    )
+
+
 def test_municipality_search_returns_compact_profiles_with_centroids():
     connection = _Connection(rows=[{
         "id": "1", "canonical_name": "Roma", "istat_code": "058091",
@@ -132,7 +325,11 @@ def test_municipality_search_returns_compact_profiles_with_centroids():
     assert result[0]["latitude"] == 41.9
     assert "ILIKE" in connection.sql
     assert "ST_Y(ST_Centroid" in connection.sql
-    assert connection.params == ("%Roma%", "%Roma%", 20)
+    # Substring name match first ($1), ISTAT prefix ($2), then the exact and
+    # prefix ranking terms; binding the bare query to $1 made "Rom" find nothing.
+    assert "COALESCE(NULLIF(t.canonical_name, ''), u.canonical_name) ILIKE $1" in connection.sql
+    assert "LEFT JOIN geo.geo_unit AS u ON u.id = t.geo_unit_id" in connection.sql
+    assert connection.params == ("%Roma%", "Roma%", "Roma", "Roma%", 20)
 
 
 def test_health_contract_checks_geometry_srid():
@@ -141,8 +338,9 @@ def test_health_contract_checks_geometry_srid():
 
     result = asyncio.run(source.health())
 
-    assert result[0]["srid_matches"] is True
     assert result[0]["available"] is True
+    assert "row_estimate" not in result[0]
+    assert "table" not in result[0]
     assert "geometry_columns" in connection.sql
     assert "'%USING gist%'" in connection.sql
     assert connection.params[-1] == MAP_LAYERS[-1].source_srid
@@ -188,6 +386,9 @@ def test_api_and_frontend_expose_catalog_health_and_tiles():
     assert "canonical-layer-status" in frontend
     assert "canonicalLayerOpacities" in frontend
     assert "_canonicalLoadFeatureDetails" in frontend
+    assert "_canonicalHttpUrl" in frontend
+    assert "target=\"_blank\"" in frontend
+    assert "document_url" in frontend
     assert "detail_url" in frontend
 
 
@@ -198,3 +399,76 @@ def test_consumer_map_has_geojson_fallback():
     assert '@consumer_router.get("/map/layers/{layer_id}/features/{feature_id}")' in consumer
     assert "/features" in embedded
     assert "refreshCanonicalGeoJson" in embedded
+
+
+@pytest.mark.asyncio
+async def test_poi_endpoint_accepts_comma_separated_categories():
+    with patch.object(enrichment_module.stats_service, "aget_pois_near", AsyncMock(return_value={})) as pois:
+        await enrichment_module.get_pois(38.09, 13.39, radius_km=2, categories=["schools,supermarkets", "parks"])
+
+    pois.assert_awaited_once_with(38.09, 13.39, radius_km=2, categories=["schools", "supermarkets", "parks"])
+
+
+def test_adjacent_lookup_resolves_target_by_primary_key_when_known():
+    connection = _Connection(rows=[])
+    source = PostgresMapLayerSource(_ConnectionSource(connection))
+
+    asyncio.run(source.read_adjacent_features("cadastral-parcels", "C773_002800.29", feature_id=42))
+
+    assert "WHERE id = $1 AND" in connection.sql
+    assert connection.params == (42, "C773_002800.29", "C773_002800.29", 25)
+
+
+def test_only_boundaries_resolve_names_through_the_geo_unit_join():
+    # Municipality profiles carry canonical_name on their own row; dropping it
+    # made search results and profile tiles show bare ISTAT codes.
+    profiles = PostgresMapLayerSource._source_columns(get_map_layer("municipality-profiles"))
+    assert "t.canonical_name" in profiles
+    assert "u.canonical_name" not in profiles
+
+    boundaries = PostgresMapLayerSource._source_columns(get_map_layer("geo-boundaries"))
+    assert "u.canonical_name AS canonical_name" in boundaries
+    assert "u.unit_type AS unit_type" in boundaries
+    assert "t.canonical_name" not in boundaries
+
+
+def test_municipality_search_selects_a_resolved_name():
+    connection = _Connection(rows=[])
+    source = PostgresMapLayerSource(_ConnectionSource(connection))
+
+    asyncio.run(source.search_municipalities("Roma", 5))
+
+    assert "COALESCE(NULLIF(t.canonical_name, ''), u.canonical_name) AS canonical_name" in connection.sql
+
+
+@pytest.mark.asyncio
+async def test_map_search_runs_parcel_lookup_on_reserved_search_pool():
+    # On the shared tile pool the lookup waited behind tile rendering and the
+    # 2 s timeout returned 503 even though the indexed query takes milliseconds.
+    from land_registry.routers import api as api_module
+
+    tile_source = MagicMock(available=True)
+    tile_source.search_parcels_by_reference = AsyncMock(return_value=[])
+    search_source = MagicMock(available=True)
+    search_source.search_parcels_by_reference = AsyncMock(return_value=[{
+        "id": 5226219, "canonical_reference": "L781B016200.14", "municipality_name": "Verona", "sheet": "162",
+    }])
+    with patch.object(api_module, "get_map_layer_source", return_value=tile_source), \
+         patch.object(api_module, "get_map_search_source", return_value=search_source):
+        result = await api_module.search_map("L781B016200.14", 10)
+
+    search_source.search_parcels_by_reference.assert_awaited_once_with("L781B016200.14", 10)
+    tile_source.search_parcels_by_reference.assert_not_awaited()
+    assert result["results"][0]["label"] == "L781B016200.14"
+
+
+@pytest.mark.asyncio
+async def test_search_pool_is_warmed_ahead_of_first_query():
+    from land_registry import map_layers
+
+    connection_source = MagicMock()
+    connection_source._get_pool = AsyncMock()
+    with patch.object(map_layers, "get_map_search_source", return_value=MagicMock(connection_source=connection_source)):
+        await map_layers.warm_map_search_source()
+
+    connection_source._get_pool.assert_awaited_once()
