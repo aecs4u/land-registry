@@ -61,12 +61,9 @@
     const toggle = document.querySelector('#sidebarToggle, [aria-controls="app-sidebar"]');
     const sidebar = document.querySelector('#app-sidebar, .sidebar');
     if (!toggle || !sidebar) return;
-    const mobileOffscreen = window.matchMedia('(max-width: 991px)').matches
-      && sidebar.getBoundingClientRect().right <= 0;
     const hidden = document.body.classList.contains('sidebar-hidden')
       || document.body.classList.contains('sidebar-collapsed')
-      || sidebar.classList.contains('collapsed')
-      || mobileOffscreen;
+      || sidebar.classList.contains('collapsed');
     toggle.setAttribute('aria-expanded', String(!hidden));
     sidebar.inert = hidden;
     sidebar.setAttribute('aria-hidden', String(hidden));

@@ -222,7 +222,7 @@ body.direct-map-page > .direct-map-shell { height: 100vh; flex: 0 0 100vh; }
   /* right: 60px clears the utility stack (right 15px + 38px wide, down to
      ~340px), which the toggle and open panel used to cover. */
   .map-layers-card { top: 268px; right: 60px; width: calc(100% - 72px); max-height: calc(100% - 288px); }
-  .map-mobile-action-bar { display: flex; position: absolute; left: 12px; right: 60px; bottom: 56px; z-index: 6; gap: 8px; align-items: center; }
+  .map-mobile-action-bar { display: flex; position: absolute; left: 12px; right: 60px; bottom: 56px; z-index: 3; gap: 8px; align-items: center; }
   .map-mobile-action-bar .layers-toggle, .map-mobile-action-bar .shortlist-toggle { position: static; display: inline-flex; align-items: center; gap: 6px; box-shadow: var(--direct-map-shadow); }
   .map-mobile-action-bar .shortlist-toggle { margin-left: auto; }
   /* Sit above the full-width attribution bar instead of on top of it. */
