@@ -41,7 +41,7 @@
 .map-search-result small { display: block; color: var(--direct-map-muted); margin-top: 2px; }
 .map-utility-stack { position: absolute; right: 15px; top: 18px; z-index: 2; display: grid; gap: 7px; }
 .map-round-button { width: 38px; height: 38px; font-size: 18px; }
-.map-layers-card { top: 70px; right: 65px; width: 292px; max-height: calc(100% - 88px); overflow: auto; padding: 15px; border: 1px solid var(--direct-map-border); border-radius: 9px; background: var(--direct-map-panel); }
+.map-layers-card { z-index: 7; top: 70px; right: 65px; width: 292px; max-height: calc(100% - 88px); overflow: auto; padding: 15px; border: 1px solid var(--direct-map-border); border-radius: 9px; background: var(--direct-map-panel); }
 .map-card-heading { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
 .map-card-heading h2 { margin: 2px 0 12px; font-size: 18px; }
 .map-card-heading-actions { display: flex; align-items: center; gap: 8px; }
@@ -107,7 +107,7 @@
 .map-attribute-table tbody tr { cursor: pointer; }
 .map-attribute-table tbody tr:hover { background: var(--direct-map-accent-soft); }
 .map-table-pagination { display: flex; gap: 8px; align-items: center; margin-top: 8px; font-size: 12px; color: var(--direct-map-muted); }
-.layers-toggle { right: 65px; top: 18px; padding: 9px 12px; z-index: 3; }
+.layers-toggle { right: 65px; top: 18px; padding: 9px 12px; z-index: 6; }
 .map-mobile-action-bar { display: contents; }
 /* Only meaningful once .parcel-shortlist-card becomes an opt-in bottom sheet
    below 700px (see media query below); the shortlist is already visible
@@ -124,7 +124,7 @@
 .map-market-filters label, .shortlist-controls label { font-size: 12px; }
 .shortlist-badges span, .parcel-block-chips span, .parcel-detail-table th { font-size: 12px; }
 .map-round-button, .map-card-close, .shortlist-item-actions button, .secondary-action.compact { min-width: 24px; min-height: 24px; }
-.parcel-detail-card { top: 18px; right: 65px; width: min(360px, calc(100% - 40px)); max-height: calc(100% - 36px); overflow: auto; padding: 17px; border: 1px solid var(--direct-map-border); border-radius: 9px; background: var(--direct-map-panel); }
+.parcel-detail-card { z-index: 4; top: 18px; right: 65px; width: min(360px, calc(100% - 40px)); max-height: calc(100% - 36px); overflow: auto; padding: 17px; border: 1px solid var(--direct-map-border); border-radius: 9px; background: var(--direct-map-panel); }
 .parcel-shortlist-card { top: 126px; left: 20px; width: min(360px, calc(100% - 40px)); max-height: calc(100% - 164px); overflow: auto; padding: 14px; border: 1px solid var(--direct-map-border); border-radius: 9px; background: var(--direct-map-panel); }
 .secondary-action.compact { padding: 5px 8px; font-size: 12px; }
 .shortlist-summary { color: var(--direct-map-muted); font-size: 12px; margin: -4px 0 10px; }
@@ -214,6 +214,7 @@ body.direct-map-page > .direct-map-shell { height: 100vh; flex: 0 0 100vh; }
   .map-search-card { left: 12px; width: calc(100% - 90px); }
   .direct-map-header { padding: 0 12px; }
   .map-action-link { font-size: 12px; white-space: nowrap; flex: 0 0 auto; }
+  .navbar-actions > a[href*="/auth/login"] { width: max-content; min-width: max-content; flex: 0 0 auto; white-space: nowrap; }
   #auth-widget a, #auth-widget button { white-space: nowrap; min-width: max-content; }
   /* The search card occupies the first row and the action stack occupies the
      right edge. Put Layers below that stack so all controls retain a full,
@@ -221,7 +222,7 @@ body.direct-map-page > .direct-map-shell { height: 100vh; flex: 0 0 100vh; }
   /* right: 60px clears the utility stack (right 15px + 38px wide, down to
      ~340px), which the toggle and open panel used to cover. */
   .map-layers-card { top: 268px; right: 60px; width: calc(100% - 72px); max-height: calc(100% - 288px); }
-  .map-mobile-action-bar { display: flex; position: absolute; left: 12px; right: 60px; bottom: 56px; z-index: 3; gap: 8px; align-items: center; }
+  .map-mobile-action-bar { display: flex; position: absolute; left: 12px; right: 60px; bottom: 56px; z-index: 6; gap: 8px; align-items: center; }
   .map-mobile-action-bar .layers-toggle, .map-mobile-action-bar .shortlist-toggle { position: static; display: inline-flex; align-items: center; gap: 6px; box-shadow: var(--direct-map-shadow); }
   .map-mobile-action-bar .shortlist-toggle { margin-left: auto; }
   /* Sit above the full-width attribution bar instead of on top of it. */

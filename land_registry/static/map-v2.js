@@ -61,13 +61,15 @@
     const toggle = document.querySelector('#sidebarToggle, [aria-controls="app-sidebar"]');
     const sidebar = document.querySelector('#app-sidebar, .sidebar');
     if (!toggle || !sidebar) return;
-    const mobileOffscreen = window.matchMedia('(max-width: 700px)').matches
+    const mobileOffscreen = window.matchMedia('(max-width: 991px)').matches
       && sidebar.getBoundingClientRect().right <= 0;
     const hidden = document.body.classList.contains('sidebar-hidden')
       || document.body.classList.contains('sidebar-collapsed')
       || sidebar.classList.contains('collapsed')
       || mobileOffscreen;
     toggle.setAttribute('aria-expanded', String(!hidden));
+    sidebar.inert = hidden;
+    sidebar.setAttribute('aria-hidden', String(hidden));
   }
 
   function observeMapNavigationAccessibility() {
@@ -939,6 +941,12 @@
       const response = await fetch(`/api/v1/enrichment/parcel/by-reference/${encodeURIComponent(reference)}${idHint}`);
       if (!response.ok) {
         let detail = ''; try { detail = (await response.json()).detail || ''; } catch (_) { /* non-JSON API error */ }
+        if (response.status === 409) {
+          $('mapSearchInput').value = reference;
+          mapStatus(detail || 'This reference matches multiple parcel polygons. Choose one from the results.', true);
+          submitSearch(reference, true);
+          return null;
+        }
         throw new Error(response.status === 404 ? 'Parcel not found' : (detail || 'Parcel service unavailable'));
       }
       const feature = await response.json();
@@ -1016,7 +1024,7 @@
       button.type = 'button'; button.className = 'map-search-result'; button.role = 'option'; button.id = `map-search-result-${index}`; button.tabIndex = -1;
       button.setAttribute('aria-selected', String(index === state.searchActiveIndex));
       const parcelContext = result.kind === 'parcel'
-        ? [result.municipality_name, result.sheet ? `Sheet ${result.sheet}` : ''].filter(Boolean).join(' · ')
+        ? [result.municipality_name, result.sheet ? `Sheet ${result.sheet}` : '', result.id != null ? `Polygon ID ${result.id}` : ''].filter(Boolean).join(' · ')
         : '';
       const context = parcelContext || result.context || (result.kind === 'parcel' ? 'Cadastral parcel' : 'Municipality');
       button.innerHTML = `<strong>${escapeHtml(result.label)}</strong><small>${escapeHtml(context)}</small>`;

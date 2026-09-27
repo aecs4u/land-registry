@@ -346,6 +346,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Could not schedule map search pool warm-up (non-fatal): {e}")
 
+    try:
+        from land_registry.map_layers import warm_low_zoom_map_tiles
+
+        asyncio.create_task(warm_low_zoom_map_tiles())
+    except Exception as e:
+        logger.warning(f"Could not schedule low-zoom map tile warm-up (non-fatal): {e}")
+
     logger.info(f"Application startup complete - Panel server ready at {PANEL_DASHBOARD_URL}")
 
     yield

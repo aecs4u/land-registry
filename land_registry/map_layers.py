@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import re
 import threading
@@ -728,6 +729,71 @@ async def warm_map_search_source() -> None:
         await connection_source._get_pool()
     except Exception as exc:
         log.warning("Map search pool warm-up failed (search will retry lazily): %s", exc)
+
+
+async def warm_low_zoom_map_tiles() -> None:
+    """Prime a compact set of Italy boundary tiles after startup.
+
+    The single-worker pass warms shared PostGIS pages used by the common
+    national view. It is delayed and limited to z5–z6 to avoid a large startup
+    query burst; deployments can disable it with MAP_TILE_WARMUP_ENABLED=0.
+    """
+    if os.getenv("MAP_TILE_WARMUP_ENABLED", "1").strip().lower() in {"0", "false", "no", "off"}:
+        return
+    try:
+        delay = max(0.0, float(os.getenv("MAP_TILE_WARMUP_DELAY_SECONDS", "90")))
+    except ValueError:
+        delay = 90.0
+    if delay:
+        await asyncio.sleep(delay)
+    source = get_map_layer_source()
+    if not source.available or source.connection_source is None:
+        return
+    async def database_is_busy() -> bool:
+        async with source.connection_source.connection() as connection:
+            return await connection.fetchval("""
+                SELECT EXISTS (
+                    SELECT 1 FROM pg_stat_activity
+                    WHERE datname = current_database()
+                      AND pid <> pg_backend_pid()
+                      AND state = 'active'
+                      AND (
+                          (query ILIKE '%UPDATE spatial.cadastral_parcel%'
+                           AND query ILIKE '%cadastral.veneto.IT.duckdb%')
+                          OR query ILIKE '%ST_AsMVT%'
+                          OR query ILIKE '%ST_AsMVTGeom%'
+                      )
+                )
+            """)
+
+    try:
+        if await database_is_busy():
+            log.info("Skipping low-zoom tile warm-up while cadastral updates or live tile queries are active")
+            return
+    except Exception as exc:
+        log.info("Skipping low-zoom tile warm-up because database load could not be checked: %s", exc)
+        return
+
+    west, south, east, north = 6.5, 36.3, 18.6, 47.2
+    for zoom in (5, 6):
+        scale = 1 << zoom
+        x_min = max(0, int((west + 180.0) / 360.0 * scale))
+        x_max = min(scale - 1, int((east + 180.0) / 360.0 * scale))
+        y_for_lat = lambda lat: int((1.0 - math.asinh(math.tan(math.radians(lat))) / math.pi) / 2.0 * scale)
+        y_min = max(0, y_for_lat(north))
+        y_max = min(scale - 1, y_for_lat(south))
+        for x in range(x_min, x_max + 1):
+            for y in range(y_min, y_max + 1):
+                try:
+                    if await database_is_busy():
+                        log.info("Pausing low-zoom tile warm-up because live map queries became active")
+                        return
+                    await source.read_mvt("geo-boundaries", zoom, x, y)
+                except Exception as exc:
+                    log.warning("Map tile warm-up failed for geo-boundaries/%s/%s/%s: %s", zoom, x, y, exc)
+                    return
+                await asyncio.sleep(0.1)
+    log.info("Warmed low-zoom administrative boundary tiles for Italy (z5–z6)")
 
 
 async def close_map_layer_source() -> None:
