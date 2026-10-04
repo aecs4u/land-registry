@@ -1238,3 +1238,116 @@ msgstr "Attiva Vendite per caricare le statistiche amministrative."
 
 msgid "No statistics metrics available."
 msgstr "Nessuna metrica statistica disponibile."
+
+# Information pages (/privacy, /terms, /help, /contact, /notifications)
+
+msgid "What this application stores and which third parties see your requests."
+msgstr "Cosa conserva questa applicazione e quali terze parti vedono le tue richieste."
+
+msgid "Signing in is handled by our identity provider (Clerk). We receive your name and email address and keep a session cookie so you stay signed in."
+msgstr "L'accesso è gestito dal nostro provider di identità (Clerk). Riceviamo il tuo nome e indirizzo email e conserviamo un cookie di sessione per mantenerti connesso."
+
+msgid "Your files and shortlist"
+msgstr "I tuoi file e la tua lista"
+
+msgid "Files you upload and parcels you shortlist are stored against your account and are not shared with other users."
+msgstr "I file caricati e le particelle salvate nella lista sono associati al tuo account e non vengono condivisi con altri utenti."
+
+msgid "Cookies and local storage"
+msgstr "Cookie e archiviazione locale"
+
+msgid "We use cookies and browser storage for the session, the interface language and the light or dark theme. We do not use advertising cookies."
+msgstr "Usiamo cookie e archiviazione del browser per la sessione, la lingua dell'interfaccia e il tema chiaro o scuro. Non usiamo cookie pubblicitari."
+
+msgid "Third-party services"
+msgstr "Servizi di terze parti"
+
+msgid "Basemap tiles are loaded from third-party tile providers, and place-name searches that find no cadastral match are sent to OpenStreetMap Nominatim. Those providers see your IP address and the text you searched for."
+msgstr "Le mappe di base sono caricate da fornitori di tile esterni e le ricerche di toponimi senza corrispondenza catastale sono inviate a OpenStreetMap Nominatim. Questi fornitori vedono il tuo indirizzo IP e il testo cercato."
+
+msgid "Diagnostics"
+msgstr "Diagnostica"
+
+msgid "Request counts and latency buckets are recorded for the map endpoints. Search text and coordinates are not part of those metrics."
+msgstr "Per gli endpoint della mappa registriamo il numero di richieste e le fasce di latenza. Il testo cercato e le coordinate non fanno parte di queste metriche."
+
+msgid "Your rights"
+msgstr "I tuoi diritti"
+
+msgid "You can ask to access, correct or delete your data at any time."
+msgstr "Puoi chiedere in qualsiasi momento di accedere ai tuoi dati, correggerli o cancellarli."
+
+msgid "Use the contact details published on the aecs4u.it website."
+msgstr "Usa i recapiti pubblicati sul sito aecs4u.it."
+
+msgid "Write to {email} and we will reply as soon as we can."
+msgstr "Scrivi a {email} e ti risponderemo il prima possibile."
+
+msgid "The conditions for using the Land Registry Viewer."
+msgstr "Le condizioni d'uso del Visualizzatore del Catasto."
+
+msgid "Informational use"
+msgstr "Uso informativo"
+
+msgid "Cadastral and market data are shown for information only. They are not a substitute for an official extract from the Agenzia delle Entrate, and parcel boundaries are indicative."
+msgstr "I dati catastali e di mercato sono mostrati a solo scopo informativo. Non sostituiscono una visura ufficiale dell'Agenzia delle Entrate e i confini delle particelle sono indicativi."
+
+msgid "Acceptable use"
+msgstr "Uso consentito"
+
+msgid "Do not attempt to overload the service, scrape it in bulk, or use it to access data you are not entitled to."
+msgstr "Non tentare di sovraccaricare il servizio, di estrarne i dati in massa o di usarlo per accedere a dati a cui non hai diritto."
+
+msgid "Availability"
+msgstr "Disponibilità"
+
+msgid "The service is provided as is. Layers can be temporarily unavailable when an upstream data source is down."
+msgstr "Il servizio è fornito così com'è. I livelli possono essere temporaneamente non disponibili quando una fonte dati a monte non è raggiungibile."
+
+msgid "Help"
+msgstr "Aiuto"
+
+msgid "A short guide to the map."
+msgstr "Una breve guida alla mappa."
+
+msgid "Finding a place or parcel"
+msgstr "Trovare un luogo o una particella"
+
+msgid "Type a municipality name, or a parcel reference such as A001_000100.12, into the search box and choose a result."
+msgstr "Digita il nome di un comune, o un riferimento di particella come A001_000100.12, nella casella di ricerca e scegli un risultato."
+
+msgid "Open the layers panel to switch data on and off. Cadastral parcels appear when you zoom in to a municipality. A greyed-out layer has no data available at the moment."
+msgstr "Apri il pannello dei livelli per attivare o disattivare i dati. Le particelle catastali compaiono quando ingrandisci su un comune. Un livello in grigio al momento non ha dati disponibili."
+
+msgid "Selecting parcels"
+msgstr "Selezionare le particelle"
+
+msgid "Click a parcel to see its details and add it to your shortlist. Signing in keeps the shortlist between visits."
+msgstr "Fai clic su una particella per vederne i dettagli e aggiungerla alla tua lista. Se accedi, la lista viene conservata tra una visita e l'altra."
+
+msgid "Map not loading?"
+msgstr "La mappa non si carica?"
+
+msgid "If the map reports that its data source is unavailable, wait a moment and pan or zoom to retry."
+msgstr "Se la mappa segnala che la fonte dati non è disponibile, attendi un momento e sposta o ingrandisci la mappa per riprovare."
+
+msgid "Contact"
+msgstr "Contatti"
+
+msgid "Questions, corrections and data requests."
+msgstr "Domande, correzioni e richieste sui dati."
+
+msgid "Get in touch"
+msgstr "Mettiti in contatto"
+
+msgid "Notifications"
+msgstr "Notifiche"
+
+msgid "You have no notifications."
+msgstr "Non hai notifiche."
+
+msgid "Back to the map"
+msgstr "Torna alla mappa"
+
+msgid "Legal and support"
+msgstr "Note legali e assistenza"

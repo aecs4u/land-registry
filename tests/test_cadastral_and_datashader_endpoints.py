@@ -84,12 +84,14 @@ class TestFGBLoadEndpoint:
 class TestCadastralDatabasesEndpoint:
 
     def test_list_databases_no_files(self, client, tmp_path, monkeypatch):
-        """The endpoint calls _discover_ple_databases() which is not defined (bug).
-        It always returns 500 in the current state."""
+        """With no data directory the endpoint answers 200 and reports nothing found."""
         monkeypatch.chdir(tmp_path)
-        # _discover_ple_databases is undefined in the module → endpoint raises 500
         response = client.get("/api/v1/cadastral/databases")
-        assert response.status_code == 500
+        assert response.status_code == 200
+        data = response.json()
+        assert data["map"] == {"exists": False}
+        assert data["ple"] == {}
+        assert data["ple_regions"] == []
 
     def test_list_databases_with_mock(self, client, tmp_path, monkeypatch):
         """Endpoint returns 200 when _discover_ple_databases is patched."""

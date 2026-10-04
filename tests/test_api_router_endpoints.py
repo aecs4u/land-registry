@@ -10,6 +10,8 @@ Covers:
 - Zones CRUD (with auth dep overridden)
 """
 
+from contextlib import contextmanager
+from types import SimpleNamespace
 import json
 import tempfile
 import os
@@ -124,16 +126,25 @@ class TestCadastralCacheInfo:
 # ---------------------------------------------------------------------------
 
 
-class TestRegionsProvinciesMunicipalities:
-    @pytest.fixture
-    def cadastral_json_file(self, tmp_path):
-        f = tmp_path / "cadastral_structure.json"
-        f.write_text(json.dumps(SAMPLE_CADASTRAL))
-        return str(f)
+@contextmanager
+def cadastral_structure(data):
+    """Serve ``data`` as the cadastral structure, with no local region directories.
 
-    def test_get_regions(self, client, cadastral_json_file):
-        with patch("land_registry.routers.api.get_cadastral_structure_path",
-                   return_value=cadastral_json_file):
+    The handlers list local region folders first and only then fall back to the
+    structure loader, so both must be patched or the result depends on whatever
+    cadastral data the machine running the tests happens to have.
+    """
+    loaded = SimpleNamespace(data=data) if data is not None else None
+    with patch("land_registry.cadastral_utils.list_local_cadastral_regions", return_value=[]), \
+         patch("land_registry.cadastral_utils.list_local_cadastral_provinces", return_value=[]), \
+         patch("land_registry.cadastral_utils.list_local_cadastral_municipalities", return_value=[]), \
+         patch("land_registry.cadastral_utils.load_cadastral_structure", return_value=loaded):
+        yield
+
+
+class TestRegionsProvinciesMunicipalities:
+    def test_get_regions(self, client):
+        with cadastral_structure(SAMPLE_CADASTRAL):
             response = client.get("/api/v1/get-regions/")
         assert response.status_code == 200
         regions = response.json()["regions"]
@@ -142,15 +153,12 @@ class TestRegionsProvinciesMunicipalities:
         assert regions == sorted(regions)
 
     def test_get_regions_no_file(self, client):
-        # HTTPException(404) raised inside try/except Exception gets swallowed → 500
-        with patch("land_registry.routers.api.get_cadastral_structure_path",
-                   return_value=None):
+        with cadastral_structure(None):
             response = client.get("/api/v1/get-regions/")
-        assert response.status_code == 500
+        assert response.status_code == 404
 
-    def test_get_provinces_all(self, client, cadastral_json_file):
-        with patch("land_registry.routers.api.get_cadastral_structure_path",
-                   return_value=cadastral_json_file):
+    def test_get_provinces_all(self, client):
+        with cadastral_structure(SAMPLE_CADASTRAL):
             response = client.get("/api/v1/get-provinces/")
         assert response.status_code == 200
         provinces = response.json()["provinces"]
@@ -158,17 +166,15 @@ class TestRegionsProvinciesMunicipalities:
         assert "BS" in provinces
         assert "VE" in provinces
 
-    def test_get_provinces_filtered_by_region(self, client, cadastral_json_file):
-        with patch("land_registry.routers.api.get_cadastral_structure_path",
-                   return_value=cadastral_json_file):
+    def test_get_provinces_filtered_by_region(self, client):
+        with cadastral_structure(SAMPLE_CADASTRAL):
             response = client.get("/api/v1/get-provinces/?regions=VENETO")
         assert response.status_code == 200
         provinces = response.json()["provinces"]
         assert provinces == ["VE"]
 
-    def test_get_municipalities_all(self, client, cadastral_json_file):
-        with patch("land_registry.routers.api.get_cadastral_structure_path",
-                   return_value=cadastral_json_file):
+    def test_get_municipalities_all(self, client):
+        with cadastral_structure(SAMPLE_CADASTRAL):
             response = client.get("/api/v1/get-municipalities/")
         assert response.status_code == 200
         munis = response.json()["municipalities"]
@@ -176,9 +182,8 @@ class TestRegionsProvinciesMunicipalities:
         assert "BRESCIA" in names
         assert "VENEZIA" in names
 
-    def test_get_municipalities_filtered_by_province(self, client, cadastral_json_file):
-        with patch("land_registry.routers.api.get_cadastral_structure_path",
-                   return_value=cadastral_json_file):
+    def test_get_municipalities_filtered_by_province(self, client):
+        with cadastral_structure(SAMPLE_CADASTRAL):
             response = client.get("/api/v1/get-municipalities/?regions=LOMBARDIA&provinces=BS")
         assert response.status_code == 200
         munis = response.json()["municipalities"]
@@ -187,11 +192,9 @@ class TestRegionsProvinciesMunicipalities:
         assert munis[0]["files_count"] == 2
 
     def test_get_municipalities_no_file(self, client):
-        # HTTPException inside except Exception block → swallowed to 500
-        with patch("land_registry.routers.api.get_cadastral_structure_path",
-                   return_value=None):
+        with cadastral_structure(None):
             response = client.get("/api/v1/get-municipalities/")
-        assert response.status_code == 500
+        assert response.status_code == 404
 
 
 # ---------------------------------------------------------------------------

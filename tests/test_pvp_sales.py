@@ -229,3 +229,37 @@ async def test_map_points_route_validates_filters_and_reports_loading(monkeypatc
     with pytest.raises(api_module.HTTPException) as error:
         await api_module.get_sales_map_points(period="upcoming", category="land", min_price=None, max_price=None)
     assert error.value.status_code == 503 and "Retry-After" in error.value.headers
+
+
+def test_sales_map_points_endpoint_serves_pvp_when_configured_and_rejects_bad_filters(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import land_registry.pvp_sales as pvp_sales
+    from land_registry.main import app
+
+    store = PvpSalesStore(connection_source=object())
+    store._snapshot = PvpSalesStore._build_snapshot([_row(1, 44.0, 12.0, when=datetime(2999, 1, 1))])
+    store._loaded_at = __import__("time").monotonic()
+    monkeypatch.setattr(pvp_sales, "_store", store)
+    client = TestClient(app)
+
+    ok = client.get("/api/v1/sales/map-points?period=all&limit=60000&order_by=saleability_desc")
+    assert ok.status_code == 200
+    assert ok.json()["fields"] == list(POINT_FIELDS) and ok.json()["count"] == 1
+    assert client.get("/api/v1/sales/map-points?period=yesterday").status_code == 400
+    assert client.get("/api/v1/sales/map-points?category=castles").status_code == 400
+    assert client.get("/api/v1/sales/map-points?min_price=10&max_price=5").status_code == 400
+
+
+def test_sales_map_points_falls_back_to_proxy_without_stats_database(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import land_registry.pvp_sales as pvp_sales
+    from land_registry.main import app
+
+    monkeypatch.setattr(pvp_sales, "_store", PvpSalesStore(connection_source=None))
+    monkeypatch.setattr("land_registry.pvp_sales.get_map_layer_source", lambda: type("S", (), {"connection_source": None})())
+    monkeypatch.setenv("LAND_REGISTRY_SALES_BASE_URL", "http://127.0.0.1:1")  # nothing listens
+    response = TestClient(app).get("/api/v1/sales/map-points")
+    assert response.status_code == 503
+    assert response.json()["error"] == "sales map feed unavailable"

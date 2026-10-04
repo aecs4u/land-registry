@@ -104,8 +104,24 @@ async def callback_page(request: Request):
     return _theme_response("auth/callback.html", _ctx(request))
 
 
-@router.get("/logout")
-async def logout(request: Request):
+@router.get("/logout", response_class=HTMLResponse)
+async def logout_confirm(request: Request):
+    """Ask before signing out. A GET must be safe: link checkers, prefetching
+    and a stray <img src> would otherwise end the user's session."""
+    return HTMLResponse(
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        "<title>Sign out</title></head>"
+        '<body style="font:16px system-ui,sans-serif;max-width:420px;margin:15vh auto;padding:0 16px">'
+        "<h1>Sign out?</h1>"
+        '<form method="post" action="/auth/signout">'
+        '<button type="submit" style="font:inherit;padding:8px 16px">Sign out</button> '
+        '<a href="/map">Cancel</a></form></body></html>'
+    )
+
+
+@router.post("/signout")
+async def signout(request: Request):
     if "session" in request.scope:
         request.session.clear()
-    return RedirectResponse(url="/auth/login", status_code=302)
+    return RedirectResponse(url="/auth/login", status_code=303)

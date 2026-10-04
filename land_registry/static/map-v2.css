@@ -58,6 +58,8 @@
 .map-layer-list { display: grid; gap: 6px; margin-top: 8px; }
 .map-layer-row { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; padding: 5px 0; }
 .map-layer-row input { margin-top: 2px; }
+.map-layer-row.is-unavailable { opacity: .6; }
+.map-layer-row input:disabled { cursor: not-allowed; }
 .map-layer-row > span { min-width: 0; }
 .map-layer-row strong, .map-layer-meta { display: block; }
 .map-layer-swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin: 0 5px 1px 0; }

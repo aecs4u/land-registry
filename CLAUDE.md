@@ -108,6 +108,18 @@ The dev server runs on **port 8000**. Panel/Bokeh dashboard runs on **port 5006*
 ### FlatGeobuf
 - `GET /api/v1/fgb/regions` - List available FGB regions
 
+## Operations
+
+- `GET /health` is liveness only. `GET /ready` returns 503 when the PostGIS map source is missing, unreachable, or has no usable layer; the deploy workflow reports it as a warning.
+- `GET /api/v1/map/search` returns 503 (not an empty 200) when the map source is down.
+- `/privacy`, `/terms`, `/help`, `/contact`, `/notifications` are served from `land_registry/legal_pages.py`; set `LEGAL_CONTACT_EMAIL` to show a contact address. Review the wording before relying on it as legal text.
+- Loaded map data (`_map_state`) is per browser session (`SessionScopedMapState`, max 16 live sessions); outside a request it uses a shared default.
+- Rate limits (`land_registry/rate_limit.py`) are per client and per instance; tiles and static files are exempt. Tune with `RATE_LIMIT_ENABLED`, `RATE_LIMIT_PROXY_HOPS`.
+- Map tiles are cached in memory (`land_registry/tile_cache.py`): `MAP_TILE_CACHE_MB` (default 64), `MAP_TILE_CACHE_TTL_SECONDS` (default 600).
+- `python scripts/apply_map_sql.py [--dry-run]` applies the idempotent map index/statistics SQL from `scripts/sql` in order (needs `STATS_POSTGRES_DSN`).
+- CI runs the test suite before building (`.github/workflows/deploy-cloudrun.yml`). `tests/browser` is a Playwright smoke test that skips without Chromium.
+- Sign-out is `POST /auth/signout`; `GET /auth/logout` only shows a confirmation form.
+
 ## Data Flow
 
 ### Classic Loading (page reload)

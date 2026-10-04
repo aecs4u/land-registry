@@ -22,10 +22,10 @@ class _Source:
         self._health = health or _health(available=available)
         self.closed = False
 
-    def health(self):
+    async def health(self):
         return self._health
 
-    def close(self):
+    async def close(self):
         self.closed = True
 
 

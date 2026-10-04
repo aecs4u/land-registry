@@ -165,7 +165,11 @@ def test_main_map_can_use_mvt_with_raster_fallback() -> None:
     assert "switchToRasterFallback" in enrichment
     assert "tileerror" in enrichment
     assert "status_code=503" in api
-    assert "leaflet.vectorgrid@1.3.0" in base
+    # VectorGrid is no longer a page-level script: map-v2.js loads it on demand
+    # (with SRI) and the legacy page degrades to raster tiles without it.
+    assert "leaflet.vectorgrid" not in base
+    map_v2 = (STATIC / "map-v2.js").read_text(encoding="utf-8")
+    assert "leaflet.vectorgrid@1.3.0" in map_v2
 
 
 def test_map_runtime_does_not_reload_leaflet_or_block_on_plugin_scripts() -> None:

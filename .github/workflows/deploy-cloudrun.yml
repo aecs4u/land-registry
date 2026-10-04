@@ -20,8 +20,49 @@ env:
   IMAGE_BASE:     europe-west1-docker.pkg.dev/apps-aecs4u/cloud-run-source-deploy/land-registry-service
 
 jobs:
+  test:
+    name: Run test suite
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      # Private aecs4u packages are installed from GitHub, same as the image build.
+      - name: Configure private package access
+        run: |
+          GH_PAT=$(gcloud secrets versions access latest \
+            --secret=GITHUB_TOKEN --project=${{ env.GCP_PROJECT_ID }})
+          echo "::add-mask::${GH_PAT}"
+          git config --global url."https://${GH_PAT}@github.com/".insteadOf "https://github.com/"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run tests
+        run: uv run pytest -q --no-header
+
   deploy:
     name: Build, push & deploy to Cloud Run
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -116,6 +157,16 @@ jobs:
             sleep 6
           done
           echo "/health did not return 200 after 10 attempts"; exit 1
+
+      # /health is liveness only. /ready reports whether the map source can
+      # serve data; surface it as a warning rather than failing the deploy,
+      # since a database outage is not caused by (or fixed by) this release.
+      - name: Report map readiness
+        run: |
+          URL="${{ steps.deploy.outputs.url }}"
+          CODE=$(curl -s -o /tmp/ready.json -w "%{http_code}" --max-time 30 "$URL/ready" || echo 000)
+          echo "/ready -> $CODE"; cat /tmp/ready.json 2>/dev/null || true
+          [ "$CODE" = "200" ] || echo "::warning::/ready returned $CODE: the map data source is not serving"
 
       - name: Verify map health endpoint
         run: |

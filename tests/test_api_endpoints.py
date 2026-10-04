@@ -24,11 +24,12 @@ class TestRootEndpoint:
     """Tests for root endpoint."""
 
     def test_root_endpoint_returns_html(self, client):
-        """Test root endpoint returns HTML."""
+        """The root redirects to the canonical /map page, which is HTML."""
         response = client.get("/")
         assert response.status_code == 200
+        assert response.url.path == "/map"
         assert "text/html" in response.headers["content-type"]
-        assert "Land Registry Viewer" in response.text
+        assert 'id="directMapShell"' in response.text
 
 
 class TestCadastralStructureEndpoints:
@@ -147,7 +148,7 @@ class TestAdjacentPolygonsEndpoint:
     """Tests for adjacent polygons endpoint."""
 
     @patch("land_registry.routers.api.get_current_gdf")
-    @patch("land_registry.routers.api.find_adjacent_polygons")
+    @patch("land_registry.routers.api.find_adjacent_polygons_by_geometry")
     def test_get_adjacent_polygons_success(self, mock_find_adjacent, mock_get_gdf,
                                          client, sample_gdf, polygon_selection_data):
         """Test successful adjacent polygons retrieval."""

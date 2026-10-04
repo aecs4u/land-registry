@@ -20,7 +20,7 @@
         <p class="text-muted small mb-3">{{ _('Your name, email address and password are managed by your sign-in provider.') }}</p>
         <div class="d-flex gap-2 flex-wrap">
             <a class="btn btn-outline-primary btn-sm" href="/settings"><i class="fas fa-sliders-h me-2"></i>{{ _('Settings') }}</a>
-            <a class="btn btn-outline-danger btn-sm" href="/auth/logout"><i class="fas fa-sign-out-alt me-2"></i>{{ _('Sign out') }}</a>
+            <form method="post" action="/auth/signout" class="d-inline"><button type="submit" class="btn btn-outline-danger btn-sm"><i class="fas fa-sign-out-alt me-2"></i>{{ _('Sign out') }}</button></form>
         </div>
     </div>
 </div>

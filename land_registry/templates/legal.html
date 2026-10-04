@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="{{ request.state.lr_locale | default('it') }}">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ page_title }} · {{ _('Land Registry Viewer') }}</title>
+  <style>
+    :root { --bg: #f7f8fa; --fg: #1d2733; --muted: #5a6877; --card: #fff; --line: #dde2e8; --accent: #1a5490; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #11161c; --fg: #e6ebf0; --muted: #9aa8b6; --card: #1a222b; --line: #2c3743; --accent: #6aa6e0; }
+    }
+    body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    header, main { max-width: 760px; margin: 0 auto; padding: 0 16px; }
+    header { padding-top: 20px; }
+    header a { color: var(--accent); text-decoration: none; font-weight: 600; }
+    main { padding-bottom: 48px; }
+    article { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 24px 24px; margin-top: 16px; }
+    h1 { font-size: 1.6rem; margin: 20px 0 4px; }
+    h2 { font-size: 1.1rem; margin: 24px 0 4px; }
+    p, li { color: var(--fg); }
+    .lead, .updated { color: var(--muted); }
+    a { color: var(--accent); }
+    nav.legal-links { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 20px; font-size: .9rem; }
+  </style>
+</head>
+<body>
+  <header><a href="/map">&larr; {{ _('Back to the map') }}</a></header>
+  <main>
+    <article>
+      <h1>{{ page_title }}</h1>
+      <p class="lead">{{ lead }}</p>
+      {% for section in sections %}
+      <h2>{{ section.heading }}</h2>
+      {% for paragraph in section.paragraphs %}<p>{{ paragraph }}</p>{% endfor %}
+      {% endfor %}
+    </article>
+    <nav class="legal-links" aria-label="{{ _('Legal and support') }}">
+      <a href="/privacy">{{ _('Privacy') }}</a>
+      <a href="/terms">{{ _('Terms') }}</a>
+      <a href="/help">{{ _('Help') }}</a>
+      <a href="/contact">{{ _('Contact') }}</a>
+    </nav>
+  </main>
+</body>
+</html>

@@ -17,15 +17,20 @@ For testing, override via app.dependency_overrides::
     app.dependency_overrides[get_map_state] = lambda: MockMapState()
 """
 
+import contextvars
 import logging
 import threading
 import base64
+import uuid
+from collections import OrderedDict
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+_request_session: contextvars.ContextVar = contextvars.ContextVar("_request_session", default=None)
 
 
 def empty_datashader_tile() -> bytes:
@@ -316,7 +321,112 @@ class GHSLRegistry:
 # Module-level singletons (one per process)
 # ============================================================================
 
-_map_state = MapState()
+class SessionScopedMapState(MapState):
+    """``MapState`` that keeps one independent copy per browser session.
+
+    The loaded GeoDataFrame, layers and auction points used to be process-wide,
+    so two users uploading files at once saw each other's data. Every call site
+    goes through ``_map_state``; this proxy resolves the right copy from the
+    session of the request being served (set by ``MapSessionMiddleware``).
+
+    Outside a request (tests, CLI) or before a session has stored anything,
+    reads fall through to a shared default state, so existing behaviour is
+    unchanged there. The first write inside a request mints the session's id.
+    """
+
+    MAX_SESSIONS = 16
+    SESSION_KEY = "map_state_id"
+
+    def __init__(self):
+        super().__init__()
+        self._default = MapState()
+        self._sessions: "OrderedDict[str, MapState]" = OrderedDict()
+        self._sessions_lock = threading.Lock()
+
+    def _resolve(self, create: bool) -> MapState:
+        session = _request_session.get()
+        if session is None:
+            return self._default
+        key = session.get(self.SESSION_KEY)
+        if key is None:
+            if not create:
+                return self._default
+            key = session[self.SESSION_KEY] = uuid.uuid4().hex
+        with self._sessions_lock:
+            state = self._sessions.get(key)
+            if state is None:
+                if not create:
+                    # Nothing stored for this session (or it was evicted). The default
+                    # state is only ever written outside requests, so in production
+                    # it is empty and this never exposes another user's data.
+                    return self._default
+                state = self._sessions[key] = MapState()
+                while len(self._sessions) > self.MAX_SESSIONS:
+                    self._sessions.popitem(last=False)
+            self._sessions.move_to_end(key)
+            return state
+
+    def get_gdf(self):
+        return self._resolve(False).get_gdf()
+
+    def set_gdf(self, gdf) -> None:
+        self._resolve(True).set_gdf(gdf)
+
+    def get_display_df(self):
+        return self._resolve(False).get_display_df()
+
+    def get_layers(self) -> dict:
+        return self._resolve(False).get_layers()
+
+    def set_layers(self, layers: dict) -> None:
+        self._resolve(True).set_layers(layers)
+
+    def clear_layers(self) -> None:
+        self._resolve(True).clear_layers()
+
+    def get_auction_properties(self):
+        return self._resolve(False).get_auction_properties()
+
+    def set_auction_properties(self, props) -> None:
+        self._resolve(True).set_auction_properties(props)
+
+
+class MapSessionMiddleware:
+    """Expose the request's session dict to ``SessionScopedMapState``.
+
+    Must be registered *inside* the session middleware (i.e. added before it)
+    so ``scope["session"]`` is already populated when this runs.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        session = scope.get("session")
+        path = scope.get("path", "")
+        # A streaming handler writes its state after the response headers
+        # (and so the Set-Cookie) have gone out, which would lose a brand-new
+        # session's id. Mint it up front for API calls that can load data.
+        # Tile and map-catalog responses are public and cacheable, so they
+        # must never carry a Set-Cookie.
+        if (
+            session is not None
+            and path.startswith("/api/v1/")
+            and not path.startswith(("/api/v1/tiles/", "/api/v1/map/"))
+            and SessionScopedMapState.SESSION_KEY not in session
+        ):
+            session[SessionScopedMapState.SESSION_KEY] = uuid.uuid4().hex
+        token = _request_session.set(session)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            _request_session.reset(token)
+
+
+_map_state = SessionScopedMapState()
 _cadastral_registry = CadastralRegistry()
 _datashader_registry = DatashaderRegistry()
 _ghsl_registry = GHSLRegistry()

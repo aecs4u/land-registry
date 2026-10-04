@@ -2,7 +2,7 @@ from bokeh.embed import server_document
 from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.gzip import GZipMiddleware
 import json
@@ -22,14 +22,16 @@ from land_registry.dashboard import TEMPLATE
 from land_registry.file_availability_db import file_availability_db
 from land_registry.i18n import LocaleMiddleware, detect_locale, make_gettext, contextvar_gettext
 from land_registry.map import get_current_gdf, map_generator
+from land_registry.rate_limit import RateLimitMiddleware
 from land_registry.map_observability import MapMetricsMiddleware, map_metrics
-from land_registry.dependencies import _map_state
+from land_registry.dependencies import MapSessionMiddleware, _map_state
 from land_registry.routers.api import api_router
 from land_registry.routers.auth_pages import router as auth_pages_router
 from land_registry.routers.enrichment import enrichment_router
 from land_registry.routers.api import account_workspace_snapshot, load_account_preferences
 from land_registry.routers.auth import get_current_user_optional
-from land_registry.map_layers import map_layer_catalog
+from land_registry.legal_pages import PAGE_KEYS, build_page
+from land_registry.map_layers import get_map_layer_source, map_layer_catalog
 from land_registry.models import UserPreferences
 from land_registry.s3_storage import get_s3_storage
 from land_registry.config import app_settings, panel_settings, get_panel_url, db_settings
@@ -353,6 +355,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Could not schedule low-zoom map tile warm-up (non-fatal): {e}")
 
+    try:
+        from land_registry.pvp_sales import warm_pvp_sales
+
+        asyncio.create_task(warm_pvp_sales())
+    except Exception as e:
+        logger.warning(f"Could not schedule PVP sales warm-up (non-fatal): {e}")
+
     logger.info(f"Application startup complete - Panel server ready at {PANEL_DASHBOARD_URL}")
 
     yield
@@ -462,6 +471,40 @@ class _CadastralTileCorpMiddleware:
 
 
 app.add_middleware(_CadastralTileCorpMiddleware)
+
+
+class _StaticCacheMiddleware:
+    """Cache-Control for /static.
+
+    ``asset_url`` stamps every asset with ``?v=<mtime-size>``, so a versioned
+    URL can never go stale and is cached for a year. Unversioned requests keep
+    revalidating through the ETag StaticFiles already sends.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope["path"].startswith("/static/"):
+            versioned = b"v=" in scope.get("query_string", b"")
+
+            async def send_wrapper(message):
+                if message["type"] == "http.response.start" and message.get("status") == 200:
+                    headers = [(k, v) for k, v in message["headers"] if k.lower() != b"cache-control"]
+                    value = b"public, max-age=31536000, immutable" if versioned else b"no-cache"
+                    headers.append((b"cache-control", value))
+                    message["headers"] = headers
+                await send(message)
+
+            await self.app(scope, receive, send_wrapper)
+        else:
+            await self.app(scope, receive, send)
+
+
+app.add_middleware(_StaticCacheMiddleware)
+# Inner to the session middleware that setup_auth() installs below.
+app.add_middleware(MapSessionMiddleware)
+app.add_middleware(RateLimitMiddleware)
 
 
 class _MapPermissionsPolicyMiddleware:
@@ -703,6 +746,42 @@ async def favicon():
 async def health_check():
     """Health check endpoint for Cloud Run"""
     return {"status": "healthy", "service": "land-registry"}
+
+
+@app.get("/ready", include_in_schema=False)
+async def readiness_check():
+    """Readiness probe: 503 when the canonical map source cannot serve tiles.
+
+    ``/health`` is a liveness check and stays green while the process runs.
+    This one answers whether the app can do its core job, so an uptime check
+    or load balancer does not treat a map without data as healthy.
+    """
+    source = get_map_layer_source()
+    headers = {"Cache-Control": "no-store"}
+    if not source.available:
+        return JSONResponse(
+            {"status": "unavailable", "service": "land-registry", "reason": "map source not configured"},
+            status_code=503,
+            headers=headers,
+        )
+    try:
+        layers = await asyncio.wait_for(source.health(), timeout=3)
+    except Exception as exc:  # timeout, connection refused, auth failure...
+        logger.warning("Readiness check failed: %s", exc)
+        return JSONResponse(
+            {"status": "unavailable", "service": "land-registry", "reason": "map source unreachable"},
+            status_code=503,
+            headers=headers,
+        )
+    available = [layer["id"] for layer in layers if layer.get("available")]
+    unavailable = [layer["id"] for layer in layers if not layer.get("available")]
+    body = {
+        "status": "ready" if available else "unavailable",
+        "service": "land-registry",
+        "layers_available": len(available),
+        "layers_unavailable": unavailable,
+    }
+    return JSONResponse(body, status_code=200 if available else 503, headers=headers)
 
 
 async def _build_main_map_shell_context(request: Request) -> dict:
@@ -999,6 +1078,21 @@ async def account_settings(request: Request, user=Depends(get_current_user_optio
         supported_locales=_ACCOUNT_LOCALES,
         current_locale=detect_locale(request),
     )
+
+
+def _make_info_page(key: str):
+    async def info_page(request: Request):
+        gettext = make_gettext(detect_locale(request))
+        context = {"_": gettext, **build_page(key, gettext)}
+        return templates.TemplateResponse(request, "legal.html", context)
+
+    info_page.__name__ = f"info_page_{key}"
+    return info_page
+
+
+# The footer, cookie banner and header link to these; they used to 404.
+for _page_key in PAGE_KEYS:
+    app.add_api_route(f"/{_page_key}", _make_info_page(_page_key), methods=["GET"], response_class=HTMLResponse, include_in_schema=False)
 
 
 @app.get("/map_table")

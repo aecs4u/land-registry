@@ -60,6 +60,8 @@ from land_registry.parcel_identity import (
 )
 from land_registry.cadastral_db import CadastralDatabase, CadastralFilter
 from land_registry.dependencies import _cadastral_registry, _datashader_registry, _discover_ple_databases, empty_datashader_tile
+from land_registry.pvp_sales import CATEGORY_KEYS as PVP_CATEGORY_KEYS, PERIODS as PVP_PERIODS, get_pvp_sales_store
+from land_registry.tile_cache import map_tile_cache
 from land_registry.map_layers import (
     get_map_layer,
     get_map_layer_source,
@@ -376,7 +378,76 @@ api_router = APIRouter()
 security = HTTPBearer()
 
 
+async def get_sales_map_points(
+    period: str = "upcoming",
+    category: Optional[str] = None,
+    min_price: Optional[float] = None,
+    max_price: Optional[float] = None,
+):
+    """Geocoded public-auction sales (PVP) from the in-memory copy of ``pvp.v_map_sales``.
+
+    ``category`` is a comma-separated list of category keys. The first request
+    after startup answers 503 + ``Retry-After`` while the copy loads.
+    """
+    if period not in PVP_PERIODS:
+        raise HTTPException(status_code=400, detail=f"period must be one of: {', '.join(PVP_PERIODS)}")
+    categories = {item.strip() for item in category.split(",") if item.strip()} if category else None
+    unknown = sorted((categories or set()) - set(PVP_CATEGORY_KEYS))
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"unknown category: {', '.join(unknown)}")
+    if min_price is not None and max_price is not None and min_price > max_price:
+        raise HTTPException(status_code=400, detail="min_price must not exceed max_price")
+    try:
+        payload = await get_pvp_sales_store().map_points(
+            period=period, categories=categories, min_price=min_price, max_price=max_price,
+        )
+    except Exception as exc:
+        logger.warning("PVP sales map points failed: %s", exc)
+        raise HTTPException(
+            status_code=503, detail="Sales data unavailable",
+            headers={"Retry-After": "30", "Cache-Control": "no-store"},
+        ) from exc
+    if payload is None:
+        raise HTTPException(
+            status_code=503, detail="Sales data is loading",
+            headers={"Retry-After": "10", "Cache-Control": "no-store"},
+        )
+    return payload
+
+
 @api_router.get("/sales/map-points")
+async def sales_map_points(
+    request: Request,
+    period: str = Query("upcoming"),
+    category: Optional[str] = Query(None),
+    min_price: Optional[float] = Query(None, ge=0),
+    max_price: Optional[float] = Query(None, ge=0),
+):
+    """Serve sales from the PVP view when the stats database is configured.
+
+    Without it the request goes to the external sales service, as before.
+    """
+    if get_pvp_sales_store().available:
+        return await get_sales_map_points(period, category, min_price, max_price)
+    return await proxy_sales_map_points(request)
+
+
+@api_router.get("/sales/pvp/{sale_id}")
+async def get_pvp_sale_detail(sale_id: int = ApiPath(..., ge=1)):
+    """One sale's details, read on demand (the map copy only holds the compact fields)."""
+    store = get_pvp_sales_store()
+    if not store.available:
+        raise HTTPException(status_code=503, detail="Sales data unavailable")
+    try:
+        detail = await store.sale_detail(sale_id)
+    except Exception as exc:
+        logger.warning("PVP sale detail %s failed: %s", sale_id, exc)
+        raise HTTPException(status_code=503, detail="Sales data unavailable") from exc
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Sale not found")
+    return detail
+
+
 async def proxy_sales_map_points(request: Request):
     """Proxy the sales map feed without turning land-registry into an open proxy.
 
@@ -4376,6 +4447,15 @@ async def search_map(query: str = Query(..., min_length=2, max_length=120), limi
             logger.warning("Map municipality search failed: %s", exc)
             raise HTTPException(status_code=503, detail="Municipality search temporarily unavailable") from exc
 
+    if not source.available and not parcel_results:
+        # An empty 200 here reads as "no match"; the client must be able to
+        # tell an unavailable source from a search that found nothing.
+        raise HTTPException(
+            status_code=503,
+            detail="Map search source unavailable",
+            headers={"Retry-After": "5", "Cache-Control": "no-store"},
+        )
+
     return {
         "query": normalized,
         "results": parcel_results + [
@@ -4495,7 +4575,9 @@ async def get_map_layer_tile(layer_id: str, z: int, x: int, y: int):
     if not source.available:
         raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable", headers={"Retry-After": "2", "Cache-Control": "no-store"})
     try:
-        tile_bytes = await source.read_mvt(layer.id, z, x, y)
+        tile_bytes = await map_tile_cache.get_or_fetch(
+            (layer.id, z, x, y), lambda: source.read_mvt(layer.id, z, x, y)
+        )
     except Exception as exc:
         logger.warning("Canonical map layer tile failed for %s/%s/%s/%s: %s", layer_id, z, x, y, exc)
         raise HTTPException(status_code=503, detail="Canonical PostGIS map layer unavailable", headers={"Retry-After": "2", "Cache-Control": "no-store"}) from exc

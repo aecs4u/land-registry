@@ -714,6 +714,15 @@
         else if (health.available) meta.textContent = `Available${metadata}`;
         else if (health.relation_exists === false) meta.textContent = `Not available${metadata}`;
         else meta.textContent = `Needs configuration${metadata}`;
+        // A layer with no backing data cannot render, so a checkbox that
+        // silently does nothing is worse than a disabled one. Only block
+        // turning it on; a layer already on can still be turned off.
+        const input = row.querySelector('input[type="checkbox"]');
+        if (input) {
+          const unusable = payload.available !== false && !health.available;
+          input.disabled = unusable && !input.checked;
+          row.classList.toggle('is-unavailable', unusable);
+        }
       });
     } catch (_) {
       // Health is advisory; the catalog and map remain usable without it.
@@ -1278,8 +1287,10 @@
     $('mapSearchStatus').textContent = 'Searching…';
     try {
       const response = await fetch(`/api/v1/map/search?query=${encodeURIComponent(normalized)}`, { signal: controller.signal });
-      if (!response.ok) throw new Error('Search service unavailable');
-      const payload = await response.json();
+      // A 503 means the canonical source is down, which is not "no match":
+      // say so, and still let an explicit search fall back to place names.
+      const serviceDown = !response.ok;
+      const payload = serviceDown ? {} : await response.json();
       if (requestId !== state.searchRequest) return;
       let results = payload.results || [];
       if (!results.length && explicit && !(/^[A-Z]\d{3}[A-Z]?\d{4}\d{2}(?:\.|$)/i.test(normalized) || /^[A-Z]\d{3}[_-].*\./i.test(normalized))) {
@@ -1306,7 +1317,7 @@
       if (requestId !== state.searchRequest) return;
       state.searchActiveIndex = results.length ? 0 : -1;
       renderSearchResults(results);
-      $('mapSearchStatus').textContent = results.length ? '' : (response.ok ? (explicit ? 'No result' : (state.sourceHealthDown ? 'Municipality and parcel search is unavailable — press Enter to search places' : 'No municipality or parcel match — press Enter to search places')) : 'Search service unavailable; try again.');
+      $('mapSearchStatus').textContent = results.length ? '' : (!serviceDown ? (explicit ? 'No result' : (state.sourceHealthDown ? 'Municipality and parcel search is unavailable — press Enter to search places' : 'No municipality or parcel match — press Enter to search places')) : 'Search service unavailable; try again.');
     } catch (error) {
       if (error.name === 'AbortError') return;
       if (requestId === state.searchRequest) $('mapSearchStatus').textContent = 'Search unavailable';
@@ -1433,6 +1444,23 @@
     return null;
   }
 
+  // The PVP feed sends compact rows ([id, lng, lat, price, date, category,
+  // approximate]) described by payload.fields; the sales-service feed sends
+  // objects. Normalise both to objects before building features.
+  function expandPvpSalesPoints(payload, points) {
+    if (!Array.isArray(payload?.fields)) return points;
+    const labels = Object.fromEntries((payload.categories || []).map((item) => [item.key, item.label]));
+    return points.map((row) => {
+      const point = Array.isArray(row) ? Object.fromEntries(payload.fields.map((name, index) => [name, row[index]])) : row;
+      return {
+        ...point,
+        display_title: labels[point.category] || 'Sale',
+        display_date: point.date || undefined,
+        no_detail: true,
+      };
+    });
+  }
+
   function salesPointFeature(point) {
     const lat = numberValue(point.lat, point.latitude);
     const lng = numberValue(point.lng, point.lon, point.longitude);
@@ -1478,7 +1506,7 @@
     const price = salesPrice(properties);
     const appraisal = numberValue(properties.appraisal_value, properties.market_value);
     const score = salesScore(properties);
-    const detail = properties.detail_url || properties.source_link || (properties.id ? `/sales/${encodeURIComponent(properties.id)}` : '');
+    const detail = properties.no_detail ? '' : (properties.detail_url || properties.source_link || (properties.id ? `/sales/${encodeURIComponent(properties.id)}` : ''));
     const lat = numberValue(properties.lat, properties.latitude);
     const lng = numberValue(properties.lng, properties.longitude);
     const maps = lat !== null && lng !== null ? `https://www.google.com/maps/search/?api=1&query=${lat},${lng}` : '';
@@ -1544,7 +1572,7 @@
       const payload = await response.json();
       if (token !== salesOverlay.fetchToken) return;
       const points = Array.isArray(payload) ? payload : (payload.points || payload.data || []);
-      salesOverlay.points = points.map(salesPointFeature).filter(Boolean);
+      salesOverlay.points = expandPvpSalesPoints(payload, points).map(salesPointFeature).filter(Boolean);
       state.map.getSource('sales-properties')?.setData(salesGeoJson());
       const count = salesGeoJson().features.length;
       if ($('salesCount')) $('salesCount').textContent = `(${count})`;

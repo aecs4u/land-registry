@@ -56,6 +56,14 @@ def isolate_database_environment(monkeypatch):
         "DB_POOL_RECYCLE",
         "DB_ECHO",
         "DB_STATEMENT_TIMEOUT",
+        "DB_USE_SQLITE",
+        "DB_USE_NEON",
+        "DB_SQLITE_PATH",
+        "DB_CACHE_EXPIRY_HOURS",
+        "DB_FILE_AVAILABILITY_DB_PATH",
+        # Data-location overrides from .env would beat the settings tests patch.
+        "SPATIALITE_FGB_DIRECTORY",
+        "FGB_DIRECTORY",
     )
     for variable in database_environment:
         monkeypatch.delenv(variable, raising=False)
