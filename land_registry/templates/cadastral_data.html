@@ -21,7 +21,7 @@
       </div>
       <div class="d-flex align-items-center gap-2">
         <div class="nav-lang-selector">
-          <select id="langSelect" onchange="changeLang(this.value)" title="{{ _('Language') }}" autocomplete="off">
+          <select id="langSelect" aria-label="Language" onchange="changeLang(this.value)" title="{{ _('Language') }}" autocomplete="off">
             <option value="it" {% if request.state.lr_locale == 'it' %}selected{% endif %}>🇮🇹 IT</option>
             <option value="en" {% if request.state.lr_locale == 'en' %}selected{% endif %}>🇬🇧 EN</option>
           </select>

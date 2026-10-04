@@ -9,7 +9,7 @@
 
 {% block styles %}
 {{ super() }}
-<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" integrity="sha384-MinO0mNliZ3vwppuPOUnGa+iq619pfMhLVUXfC4LHwSCvF9H+6P/KO4Q7qBOYV5V" crossorigin="anonymous" />
 <link rel="stylesheet" href="{{ asset_url('map-v2.css') }}" />
 {% endblock %}
 
@@ -106,6 +106,7 @@
         <label><input type="radio" name="basemap" value="dark"> <span>{{ _('Dark') }}</span></label>
         <label><input type="radio" name="basemap" value="satellite"> <span>{{ _('Satellite') }}</span></label>
       </div>
+      <p class="map-muted basemap-hint">{{ _('Light and Dark follow the page theme; Satellite stays selected until you change it.') }}</p>
       <div class="layer-section-title">{{ _('Overlays') }}</div>
       <div id="mapLayerList" class="map-layer-list"><p class="map-muted">{{ _('Loading layer catalog…') }}</p></div>
       <div id="mapCoverageStatus" class="map-coverage-status" aria-live="polite"></div>
@@ -121,7 +122,7 @@
         </div>
         <div class="map-market-filters">
           <label><span>{{ _('POI radius') }}</span><select id="poiRadius"><option value="1">1 km</option><option value="2" selected>2 km</option><option value="5">5 km</option><option value="10">10 km</option></select></label>
-          <label><span>{{ _('POI categories') }}</span><select id="poiCategories" multiple size="3" aria-label="{{ _('POI categories') }}"></select></label>
+          <fieldset class="poi-category-field"><legend>{{ _('POI categories') }}</legend><div id="poiCategories" class="poi-category-list"></div></fieldset>
         </div>
         <div class="map-live-layer-row"><button type="button" class="secondary-action compact btn btn-outline-secondary" id="poiExportJson">JSON</button><button type="button" class="secondary-action compact btn btn-outline-secondary" id="poiExportPdf">PDF</button></div>
         <div id="enrichmentPoiLegend" class="enrichment-legend"></div>
@@ -145,7 +146,8 @@
       <div class="layer-section-title">{{ _('Market') }}</div>
       <div class="map-live-layers" id="mapSalesLayer">
         <div class="map-live-layer-row">
-          <button type="button" class="map-live-toggle btn btn-outline-secondary" id="toggleSalesLayer" aria-pressed="false">{{ _('Sales') }} <span id="salesCount"></span></button>
+          <button type="button" class="map-live-toggle btn btn-outline-secondary" id="toggleSalesLayer" aria-pressed="false"
+                  title="{{ _('Properties for sale, clustered and coloured by saleability') }}">{{ _('Sales') }} <span id="salesCount"></span></button>
           <button type="button" class="secondary-action compact btn btn-outline-secondary" id="refreshSalesButton">{{ _('Refresh') }}</button>
         </div>
         <div class="map-market-filters">
@@ -154,13 +156,16 @@
           <label><span>{{ _('Administrative layer') }}</span><select id="salesGeoLayerType"><option value="none">{{ _('None') }}</option><option value="region">{{ _('Regions') }}</option><option value="province">{{ _('Provinces') }}</option><option value="municipality">{{ _('Municipalities') }}</option></select></label>
           <label><span>{{ _('Color by') }}</span><select id="salesGeoMetric"><option value="none">{{ _('Default') }}</option></select></label>
         </div>
+        <div id="salesGeoHint" class="map-layer-meta" aria-live="polite"></div>
         <div id="salesMapStatus" class="map-layer-meta" aria-live="polite"></div>
       </div>
       <div class="map-live-layers" id="mapMarketLayer">
         <div class="map-live-layer-row">
-          <button type="button" class="map-live-toggle btn btn-outline-secondary" id="toggleAuctionLayer" aria-pressed="false">
+          <button type="button" class="map-live-toggle btn btn-outline-secondary" id="toggleAuctionLayer" aria-pressed="false"
+                  title="{{ _('Judicial auction listings, filtered below') }}">
             {{ _('Auction listings') }} <span id="auctionCount"></span>
           </button>
+          <button type="button" class="secondary-action compact btn btn-outline-secondary" id="refreshAuctionButton">{{ _('Refresh') }}</button>
         </div>
         <div class="map-market-filters">
           <label><span>{{ _('Type') }}</span>
@@ -230,18 +235,18 @@
 </div>
 {% endblock %}
 
-{% block i18n_data %}<script>window._i18n = {{ i18n_strings | tojson }};</script>{% endblock %}
-
 {% block extra_js %}
 <script>
+  {# aecs4u-theme's base has no i18n_data block, so the strings ride along here. #}
+  window._i18n = {{ i18n_strings | tojson }};
   window.cartoEnabled = {{ 'true' if carto_enabled else 'false' }};
   window.cartoApiKey = {{ (carto_api_key or '') | tojson }};
   window.landRegistrySignedIn = {{ 'true' if signed_in else 'false' }};
   window.salesMapPointsUrl = {{ sales_map_points_url | tojson }};
   window.salesGeoLayersUrl = {{ (sales_geo_layers_url or '') | tojson }};
 </script>
-<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js" defer></script>
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js" integrity="sha384-SYKAG6cglRMN0RVvhNeBY0r3FYKNOJtznwA0v7B5Vp9tr31xAHsZC0DqkQ/pZDmj" crossorigin="anonymous" defer></script>
 {# Only used for the Civil Protection bulletin overlay, which is published as TopoJSON. #}
-<script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/topojson-client.min.js" integrity="sha384-Ukv1p/xTma6P4/2bY5KzWBw+ydSpXmhCMtyciIQVDJ1RmOxtCYNMF1uXT9T63H67" crossorigin="anonymous" defer></script>
 <script src="{{ asset_url('map-v2.js') }}" defer></script>
 {% endblock %}

@@ -472,3 +472,55 @@ async def test_search_pool_is_warmed_ahead_of_first_query():
         await map_layers.warm_map_search_source()
 
     connection_source._get_pool.assert_awaited_once()
+
+
+def test_catalog_carries_presentation_fields_for_the_layers_card():
+    from land_registry.map_layers import MAP_LAYERS, map_layer_catalog
+
+    groups = {"administrative", "cadastral", "market", "risk", "demographics", "territory"}
+    catalog = map_layer_catalog()
+    assert {layer["group"] for layer in catalog} <= groups
+    for layer in catalog:
+        assert layer["color"].startswith("#") and len(layer["color"]) == 7
+        assert 0 <= layer["fill_opacity"] <= 0.6
+    drawn = [layer for layer in MAP_LAYERS if layer.id != "raster-coverage"]
+    assert len({layer.z_order for layer in drawn}) == len(drawn)
+    assert len({layer.color for layer in drawn}) == len(drawn)
+
+
+def test_boundary_zoom_ladder_and_mixed_geometry_are_catalog_data():
+    from land_registry.map_layers import get_map_layer
+
+    ladder = get_map_layer("geo-boundaries").public()["unit_levels"]
+    assert ladder == [
+        {"min_zoom": 0, "unit_type": "region"},
+        {"min_zoom": 8, "unit_type": "province"},
+        {"min_zoom": 10, "unit_type": "municipality"},
+    ]
+    assert get_map_layer("maritime-concessions").kind == "mixed"
+
+
+def test_census_sections_use_a_catalog_colour_ramp():
+    ramp = get_map_layer("census-sections").public()["color_ramp"]
+    assert ramp["property"] == "pop21" and "pop21" in get_map_layer("census-sections").properties
+    values = [stop["value"] for stop in ramp["stops"]]
+    assert values == sorted(values) and len(values) >= 2
+    assert get_map_layer("geo-boundaries").public()["color_ramp"] is None
+
+
+def test_hazard_and_market_snapshot_layers_are_data_driven():
+    hazard = get_map_layer("hazard-areas")
+    match = hazard.public()["color_match"]
+    assert match["property"] == "hazard_type" and match["property"] in hazard.properties
+    assert any(case["contains"] == "flood" for case in match["cases"])
+    snapshots = get_map_layer("market-zone-snapshots")
+    assert snapshots.public()["color_ramp"]["property"] == "quote_count"
+    assert "quote_count" in snapshots.properties
+    assert get_map_layer("postal-zones").public()["color_match"] is None
+
+
+def test_sales_color_by_controls_explain_why_they_are_inert():
+    script = (Path(__file__).parents[1] / "land_registry" / "static" / "map-v2.js").read_text(encoding="utf-8")
+    assert "function syncSalesGeoControls" in script and "salesGeoHint" in script
+    for name in ("map_v2.html", "theme_overrides/map_v2.html"):
+        assert 'id="salesGeoHint"' in (Path(__file__).parents[1] / "land_registry" / "templates" / name).read_text(encoding="utf-8")

@@ -40,10 +40,39 @@ class MapLayerSpec:
     properties: tuple[str, ...] = ()
     kind: str = "polygon"
     role: str = ""
+    # Presentation contract: the browser draws every layer from these fields so
+    # a new layer is a single catalog edit (no colour/order tables in the JS).
+    group: str = "territory"
+    color: str = "#47758f"
+    # Stack position, bottom to top; layers sharing a value keep catalog order.
+    z_order: int = 100
+    fill_opacity: float = 0.11
+    line_width: float = 1.4
+    # Optional ((min_zoom, unit_type), ...) ladder: which ``unit_type`` of a
+    # multi-level layer is drawn at each zoom (ascending by min_zoom).
+    unit_levels: tuple[tuple[int, str], ...] = ()
+    # Optional data-driven fill: ("property", ((value, colour), ...)) is drawn
+    # as a linear colour ramp instead of the flat ``color``.
+    color_ramp: Optional[tuple[str, tuple[tuple[float, str], ...]]] = None
+    # Optional categorical colouring: ("property", ((substring, colour), ...)).
+    # The first case-insensitive substring found in the property wins; anything
+    # else keeps the flat ``color``, so unexpected source values stay visible.
+    color_match: Optional[tuple[str, tuple[tuple[str, str], ...]]] = None
 
     def public(self) -> dict[str, Any]:
         value = asdict(self)
         value["properties"] = list(self.properties)
+        value["unit_levels"] = [{"min_zoom": zoom, "unit_type": unit} for zoom, unit in self.unit_levels]
+        value["color_ramp"] = (
+            {"property": self.color_ramp[0], "stops": [{"value": at, "color": color} for at, color in self.color_ramp[1]]}
+            if self.color_ramp
+            else None
+        )
+        value["color_match"] = (
+            {"property": self.color_match[0], "cases": [{"contains": text, "color": color} for text, color in self.color_match[1]]}
+            if self.color_match
+            else None
+        )
         value["source"] = "aecs4u-stats PostgreSQL/PostGIS"
         value["tile_url"] = f"/api/v1/tiles/map-layers/{self.id}/{{z}}/{{x}}/{{y}}.pbf"
         value["geojson_url"] = f"/api/v1/map/layers/{self.id}/features"
@@ -57,21 +86,21 @@ class MapLayerSpec:
 # be very wide.  Raw landing relations are allowed when they have explicitly
 # prepared native geometry and map-safe indexes.
 MAP_LAYERS: tuple[MapLayerSpec, ...] = (
-    MapLayerSpec("geo-boundaries", "Administrative boundaries", "geo.geo_boundary", "geom", properties=("id", "geo_unit_id", "canonical_name", "unit_type", "generalization", "source_release"), role="admin-substitute"),
-    MapLayerSpec("cadastral-sheets", "Cadastral sheets", "spatial.cadastral_sheet", "geom", min_zoom=10, coverage="partial", coverage_note="Veneto only", coverage_bounds=(10.62, 44.79, 13.10, 46.68), properties=("id", "sheet_reference", "municipality_id", "level", "level_name", "area_sqm", "source_release")),
-    MapLayerSpec("cadastral-parcels", "Cadastral parcels", "spatial.cadastral_parcel", "geom", min_zoom=14, max_features=5000, coverage="partial", coverage_note="Veneto only", coverage_bounds=(10.62, 44.79, 13.10, 46.68), properties=("id", "canonical_reference", "national_cadastral_reference", "parcel", "sheet", "municipality_id", "area_sqm", "source_release")),
-    MapLayerSpec("urban-sections", "Cadastral urban sections", "spatial.cadastral_urban_section", "geom", min_zoom=11, coverage="partial", coverage_note="Upstream source currently contains 1,523 of the expected 2,847 sections", properties=("id", "zoning_reference", "section", "municipality_id", "source_release")),
-    MapLayerSpec("market-zones", "OMI market zones", "spatial.market_zone", "geom", min_zoom=10, properties=("id", "omi_zone_key", "municipality_id", "valid_from", "valid_to", "source_release")),
-    MapLayerSpec("postal-zones", "Postal zones", "spatial.postal_zone", "geom", min_zoom=10, properties=("id", "cap", "municipality_id", "valid_from", "valid_to", "source_release")),
-    MapLayerSpec("hazard-areas", "Hazard areas", "spatial.hazard_area", "geom", min_zoom=8, max_features=3000, properties=("id", "hazard_type", "class_code", "source_release")),
-    MapLayerSpec("census-sections", "ISTAT census sections", "census_sections.sections", "geom", id_column="sez21_id", source_srid=32632, min_zoom=11, max_features=2000, properties=("sez21_id", "procom", "cod_reg", "pop21", "fam21", "abi21", "edi21")),
-    MapLayerSpec("points-of-interest", "Points of interest", "facts.poi", "geom", min_zoom=12, max_features=3000, properties=("id", "osm_natural_key", "category_id", "name"), kind="point"),
-    MapLayerSpec("hazard-measurements", "Hazard measurements", "facts.hazard_measurement", "geom", min_zoom=8, max_features=3000, geojson_max_area=4.0, properties=("id", "hazard_type", "metric", "value", "period", "source_release"), kind="point"),
-    MapLayerSpec("raster-coverage", "Raster coverage footprints", "facts.raster_coverage", "footprint", min_zoom=5, properties=("id", "raster_asset_id", "resolution_m")),
-    MapLayerSpec("mps04-points", "MPS04 seismic points", "hazards_mps04.mps04_points", "geom", id_column="point_id", min_zoom=7, max_features=3000, properties=("point_id", "grid_variant", "lon", "lat"), kind="point"),
-    MapLayerSpec("municipality-profiles", "Municipality profiles", "serving.municipality_profile", "geom", properties=("id", "geo_unit_id", "canonical_name", "istat_code", "observation_count", "tax_fact_count", "market_zone_count", "pv_observation_count"), role="admin-substitute"),
-    MapLayerSpec("market-zone-snapshots", "Market-zone snapshots", "serving.market_zone_snapshot", "geom", min_zoom=10, properties=("id", "market_zone_id", "omi_zone_key", "municipality_name", "quote_count", "latest_period")),
-    MapLayerSpec("maritime-concessions", "Maritime-domain concessions", "demanio_marittimo.concessions", "geom", id_column="row_id", min_zoom=7, max_features=5000, geojson_max_area=4.0, coverage_note="MIT/SID snapshot; mixed point and polygon geometry", properties=("row_id", "idconc", "layer_kind", "geometry_type", "crs_original", "snapshot_id", "source_release")),
+    MapLayerSpec("geo-boundaries", "Administrative boundaries", "geo.geo_boundary", "geom", properties=("id", "geo_unit_id", "canonical_name", "unit_type", "generalization", "source_release"), role="admin-substitute", group="administrative", color="#526b84", z_order=10, fill_opacity=0.075, line_width=1.1, unit_levels=((0, "region"), (8, "province"), (10, "municipality"))),
+    MapLayerSpec("cadastral-sheets", "Cadastral sheets", "spatial.cadastral_sheet", "geom", min_zoom=10, coverage="partial", coverage_note="Veneto only", coverage_bounds=(10.62, 44.79, 13.10, 46.68), properties=("id", "sheet_reference", "municipality_id", "level", "level_name", "area_sqm", "source_release"), group="cadastral", color="#1976a8", z_order=70),
+    MapLayerSpec("cadastral-parcels", "Cadastral parcels", "spatial.cadastral_parcel", "geom", min_zoom=14, max_features=5000, coverage="partial", coverage_note="Veneto only", coverage_bounds=(10.62, 44.79, 13.10, 46.68), properties=("id", "canonical_reference", "national_cadastral_reference", "parcel", "sheet", "municipality_id", "area_sqm", "source_release"), group="cadastral", color="#d97925", z_order=90, fill_opacity=0.04, line_width=0.8),
+    MapLayerSpec("urban-sections", "Cadastral urban sections", "spatial.cadastral_urban_section", "geom", min_zoom=11, coverage="partial", coverage_note="Upstream source currently contains 1,523 of the expected 2,847 sections", properties=("id", "zoning_reference", "section", "municipality_id", "source_release"), group="cadastral", color="#2f9aa8", z_order=80),
+    MapLayerSpec("market-zones", "OMI market zones", "spatial.market_zone", "geom", min_zoom=10, properties=("id", "omi_zone_key", "municipality_id", "valid_from", "valid_to", "source_release"), group="market", color="#7b61a8", z_order=30),
+    MapLayerSpec("postal-zones", "Postal zones", "spatial.postal_zone", "geom", min_zoom=10, properties=("id", "cap", "municipality_id", "valid_from", "valid_to", "source_release"), group="administrative", color="#8a7a3d", z_order=40),
+    MapLayerSpec("hazard-areas", "Hazard areas", "spatial.hazard_area", "geom", min_zoom=8, max_features=3000, properties=("id", "hazard_type", "class_code", "source_release"), group="risk", color="#c44444", z_order=50, fill_opacity=0.2, color_match=("hazard_type", (("flood", "#2b7bb9"), ("alluvi", "#2b7bb9"), ("landslide", "#a0522d"), ("frana", "#a0522d"), ("seism", "#7a4cb5")))),
+    MapLayerSpec("census-sections", "ISTAT census sections", "census_sections.sections", "geom", id_column="sez21_id", source_srid=32632, min_zoom=11, max_features=2000, properties=("sez21_id", "procom", "cod_reg", "pop21", "fam21", "abi21", "edi21"), group="demographics", color="#3f8f73", z_order=60, fill_opacity=0.3, color_ramp=("pop21", ((0, "#e8f4ef"), (50, "#bfe3d2"), (200, "#7fc1a3"), (500, "#3f8f73"), (1500, "#1f5d49")))),
+    MapLayerSpec("points-of-interest", "Points of interest", "facts.poi", "geom", min_zoom=12, max_features=3000, properties=("id", "osm_natural_key", "category_id", "name"), kind="point", group="territory", color="#b04a9b", z_order=100),
+    MapLayerSpec("hazard-measurements", "Hazard measurements", "facts.hazard_measurement", "geom", min_zoom=8, max_features=3000, geojson_max_area=4.0, properties=("id", "hazard_type", "metric", "value", "period", "source_release"), kind="point", group="risk", color="#b5332e", z_order=110),
+    MapLayerSpec("raster-coverage", "Raster coverage footprints", "facts.raster_coverage", "footprint", min_zoom=5, properties=("id", "raster_asset_id", "resolution_m"), group="territory", z_order=140),
+    MapLayerSpec("mps04-points", "MPS04 seismic points", "hazards_mps04.mps04_points", "geom", id_column="point_id", min_zoom=7, max_features=3000, properties=("point_id", "grid_variant", "lon", "lat"), kind="point", group="risk", color="#5b6fb5", z_order=120),
+    MapLayerSpec("municipality-profiles", "Municipality profiles", "serving.municipality_profile", "geom", properties=("id", "geo_unit_id", "canonical_name", "istat_code", "observation_count", "tax_fact_count", "market_zone_count", "pv_observation_count"), role="admin-substitute", group="administrative", color="#4f6f86", z_order=20, fill_opacity=0.075, line_width=1.1),
+    MapLayerSpec("market-zone-snapshots", "Market-zone snapshots", "serving.market_zone_snapshot", "geom", min_zoom=10, properties=("id", "market_zone_id", "omi_zone_key", "municipality_name", "quote_count", "latest_period"), group="market", color="#9a6bb3", z_order=35, fill_opacity=0.3, color_ramp=("quote_count", ((0, "#efe6f5"), (10, "#d3bde6"), (50, "#9a6bb3"), (200, "#5e3a85")))),
+    MapLayerSpec("maritime-concessions", "Maritime-domain concessions", "demanio_marittimo.concessions", "geom", id_column="row_id", min_zoom=7, max_features=5000, geojson_max_area=4.0, coverage_note="MIT/SID snapshot; mixed point and polygon geometry", properties=("row_id", "idconc", "layer_kind", "geometry_type", "crs_original", "snapshot_id", "source_release"), kind="mixed", group="territory", color="#1f8ea3", z_order=130),
 )
 
 _BY_ID = {layer.id: layer for layer in MAP_LAYERS}

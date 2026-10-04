@@ -328,7 +328,7 @@
 
             <div class="control-group">
                 <label for="adjacencyMethod">Adjacency Method:</label>
-                <select id="adjacencyMethod">
+                <select id="adjacencyMethod" aria-label="Adjacency method">
                     <option value="intersects">Intersects (any overlap)</option>
                     <option value="touches">Touches (shared boundary)</option>
                     <option value="overlaps">Overlaps (area overlap)</option>
@@ -360,7 +360,7 @@
                 <button onclick="filterActiveAuctions()" class="control-btn">Active Only</button>
             </div>
             <div class="control-row">
-                <select id="auctionTypeFilter" onchange="filterAuctionsByType()">
+                <select id="auctionTypeFilter" aria-label="Auction type" onchange="filterAuctionsByType()">
                     <option value="">All Types</option>
                     <option value="residential">Residential</option>
                     <option value="commercial">Commercial</option>
@@ -436,7 +436,7 @@
                             <button onclick="searchTable()" class="search-btn">🔍</button>
                         </div>
                         <div class="filter-container">
-                            <select id="tableFilterField" class="filter-select">
+                            <select id="tableFilterField" aria-label="Filter by column" class="filter-select">
                                 <option value="">Filter by column...</option>
                             </select>
                             <input type="text" id="tableFilterValue" placeholder="Filter value..." class="filter-input">
@@ -446,10 +446,10 @@
                     </div>
                     <div class="control-row">
                         <div class="sort-container">
-                            <select id="tableSortField" class="sort-select">
+                            <select id="tableSortField" aria-label="Sort by column" class="sort-select">
                                 <option value="">Sort by column...</option>
                             </select>
-                            <select id="tableSortDirection" class="sort-direction">
+                            <select id="tableSortDirection" aria-label="Sort direction" class="sort-direction">
                                 <option value="asc">Ascending</option>
                                 <option value="desc">Descending</option>
                             </select>
@@ -457,7 +457,7 @@
                         </div>
                         <div class="page-size-container">
                             <label>Rows per page:</label>
-                            <select id="tablePageSize" class="page-size-select" onchange="changeTablePageSize()">
+                            <select id="tablePageSize" aria-label="Rows per page" class="page-size-select" onchange="changeTablePageSize()">
                                 <option value="25">25</option>
                                 <option value="50">50</option>
                                 <option value="100" selected>100</option>

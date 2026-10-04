@@ -1139,3 +1139,102 @@ msgstr "Scartata"
 
 msgid "Archived"
 msgstr "Archiviata"
+
+msgid "Administrative"
+msgstr "Amministrativi"
+
+msgid "Cadastral"
+msgstr "Catastali"
+
+msgid "Market"
+msgstr "Mercato"
+
+msgid "Risk"
+msgstr "Rischi"
+
+msgid "Demographics"
+msgstr "Demografia"
+
+msgid "Territory"
+msgstr "Territorio"
+
+msgid "Opacity"
+msgstr "Opacità"
+
+msgid "Fill"
+msgstr "Riempimento"
+
+msgid "Partial coverage: {layers}"
+msgstr "Copertura parziale: {layers}"
+
+msgid "Zoom in: visible from zoom {n}"
+msgstr "Avvicinati: visibile dallo zoom {n}"
+
+msgid "Outside coverage: {note}"
+msgstr "Fuori copertura: {note}"
+
+msgid "Administrative boundaries"
+msgstr "Confini amministrativi"
+
+msgid "Cadastral sheets"
+msgstr "Fogli catastali"
+
+msgid "Cadastral parcels"
+msgstr "Particelle catastali"
+
+msgid "Cadastral urban sections"
+msgstr "Sezioni urbane catastali"
+
+msgid "OMI market zones"
+msgstr "Zone di mercato OMI"
+
+msgid "Postal zones"
+msgstr "Zone postali"
+
+msgid "Hazard areas"
+msgstr "Aree di pericolosità"
+
+msgid "ISTAT census sections"
+msgstr "Sezioni di censimento ISTAT"
+
+msgid "Points of interest"
+msgstr "Punti di interesse"
+
+msgid "Hazard measurements"
+msgstr "Misure di pericolosità"
+
+msgid "MPS04 seismic points"
+msgstr "Punti sismici MPS04"
+
+msgid "Municipality profiles"
+msgstr "Profili comunali"
+
+msgid "Market-zone snapshots"
+msgstr "Istantanee zone di mercato"
+
+msgid "Maritime-domain concessions"
+msgstr "Concessioni del demanio marittimo"
+
+msgid "Properties for sale, clustered and coloured by saleability"
+msgstr "Immobili in vendita, raggruppati e colorati per vendibilità"
+
+msgid "Judicial auction listings, filtered below"
+msgstr "Aste giudiziarie, filtrate qui sotto"
+
+msgid "Light and Dark follow the page theme; Satellite stays selected until you change it."
+msgstr "Chiaro e Scuro seguono il tema della pagina; Satellite resta selezionato finché non lo cambi."
+
+msgid "Up to {n} features per tile"
+msgstr "Fino a {n} elementi per tile"
+
+msgid "Default"
+msgstr "Predefinito"
+
+msgid "Administrative statistics are not configured."
+msgstr "Statistiche amministrative non configurate."
+
+msgid "Turn on Sales to load administrative statistics."
+msgstr "Attiva Vendite per caricare le statistiche amministrative."
+
+msgid "No statistics metrics available."
+msgstr "Nessuna metrica statistica disponibile."

@@ -333,3 +333,84 @@ def test_idle_handler_only_reacts_after_a_tile_loading_phase():
 def test_attribute_table_keeps_pagination_visible_above_shortlist_chip():
     assert ".map-table-card { z-index: 4;" in STYLES
     assert ".map-table-card:not([hidden]) { display: flex; flex-direction: column; overflow: hidden; }" in STYLES
+
+
+def _element_ids(template: str) -> list[str]:
+    import re
+
+    return re.findall(r'\bid="([^"]+)"', template)
+
+
+def test_standalone_and_theme_templates_define_the_same_map_controls():
+    # The theme override is what /map renders when aecs4u-theme is installed;
+    # map_v2.html is the fallback. They are kept as separate files, so this
+    # guards against one gaining or losing a control the script depends on.
+    shell_only = {"themeButton", "sidebar-group-land-registry", "sidebar-group-account"}
+    assert set(_element_ids(TEMPLATE)) ^ set(_element_ids(THEME_TEMPLATE)) == shell_only
+
+
+def test_map_templates_have_no_duplicate_element_ids():
+    for template in (TEMPLATE, THEME_TEMPLATE):
+        ids = _element_ids(template)
+        assert len(ids) == len(set(ids)), sorted({i for i in ids if ids.count(i) > 1})
+
+
+def test_map_templates_load_pinned_assets_with_integrity_and_topojson_before_script():
+    for template in (TEMPLATE, THEME_TEMPLATE):
+        assert "topojson-client@3.1.0" in template
+        assert template.index("topojson-client") < template.index("asset_url('map-v2.js')")
+        for needle in ("maplibre-gl.js", "maplibre-gl.css", "topojson-client.min.js"):
+            tag = template[template.rindex("<", 0, template.index(needle)):template.index(">", template.index(needle))]
+            assert 'integrity="sha384-' in tag and 'crossorigin="anonymous"' in tag, needle
+        # Leaflet is lazy-loaded only when WebGL is unavailable.
+        assert "leaflet.css" not in template
+
+
+def test_layers_card_is_catalog_driven_and_groups_overlays():
+    for value in ("buildLayerItem", "updateLayerBadges", "applyLayerOpacity", "bindUnitLevels", "layer.unit_levels", "z_order", "layer.fill_opacity"):
+        assert value in SCRIPT
+    assert "const colors = {" not in SCRIPT  # colours live in the catalog now
+    assert "map-layer-group" in STYLES and "map-layer-badges" in STYLES
+    for template in (TEMPLATE, THEME_TEMPLATE):
+        assert 'id="refreshAuctionButton"' in template
+        assert '<select id="poiCategories"' not in template
+
+
+def test_theme_map_injects_i18n_strings_through_a_block_the_theme_renders():
+    # aecs4u-theme's base.html has no i18n_data block, so a template that only
+    # fills that block silently loses window._i18n.
+    assert "window._i18n" in THEME_TEMPLATE.split("{% block extra_js %}", 1)[1]
+    assert THEME_TEMPLATE.index("window._i18n") < THEME_TEMPLATE.index("asset_url('map-v2.js')")
+
+
+def test_tile_retry_counter_only_resets_on_a_loaded_tile():
+    # setTiles() emits a 'content' sourcedata event of its own. Resetting the
+    # retry counter on any such event meant a 503 source was retried forever.
+    handler = SCRIPT[SCRIPT.index("state.map.on('sourcedata'"):]
+    handler = handler[:handler.index("});")]
+    assert "event.tile?.state === 'loaded'" in handler
+    assert "tileRetry.attempts[event.sourceId] = 0" in handler
+
+
+def test_exhausted_tile_retries_raise_a_source_banner_instead_of_a_status_pill():
+    retry = SCRIPT[SCRIPT.index("function scheduleTileRetry"):]
+    retry = retry[:retry.index("tileRetry.pending.add")]
+    assert "state.sourceTileDown = true" in retry
+    assert "updateSourceBanner()" in retry
+    assert "function retrySourceTiles" in SCRIPT
+    assert "mapSourceRetry" in SCRIPT
+    assert ".map-source-banner" in STYLES
+    assert ".map-status-pill:empty { display: none; }" in STYLES
+
+
+def test_source_outage_is_not_reported_as_configuration_or_coverage():
+    health = SCRIPT[SCRIPT.index("async function loadLayerHealth"):]
+    health = health[:health.index("finally {")]
+    assert "state.sourceHealthDown = payload.available === false" in health
+    assert "Temporarily unavailable" in health
+    assert "`Not configured${metadata}`" not in health
+    # The Veneto "no parcels published" claim must not be made during an outage.
+    assert "!sourceDown && viewportOutside(bounds, coverage)" in SCRIPT
+    # A missing catalog yields a message in the attribute table, not a blank box.
+    table = SCRIPT[SCRIPT.index("async function loadTableData"):]
+    assert "Layer data is temporarily unavailable." in table[:table.index("const bounds")]

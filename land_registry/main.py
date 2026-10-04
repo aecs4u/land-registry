@@ -884,6 +884,13 @@ async def serve_direct_map(request: Request, user=Depends(get_current_user_optio
                 "Universities", "Schools", "Kindergartens", "Supermarkets", "Shops",
                 "Pharmacies", "Hospitals", "Public transport", "Parks", "Restaurants",
                 "Red alert", "Orange alert", "Yellow alert", "No alert", "Unavailable", "Alert area",
+                # Layers card: group headings, row hints and catalog titles.
+                "Administrative", "Cadastral", "Market", "Risk", "Demographics", "Territory",
+                "Opacity", "Fill", "Partial coverage: {layers}", "Zoom in: visible from zoom {n}",
+                "Outside coverage: {note}", "Up to {n} features per tile", "Default",
+                "Administrative statistics are not configured.", "Turn on Sales to load administrative statistics.",
+                "No statistics metrics available.",
+                *(layer["title"] for layer in map_layer_catalog()),
             )
         },
         "carto_enabled": map_generator.controls_manager.settings.carto_enabled,

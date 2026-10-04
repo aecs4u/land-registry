@@ -43,9 +43,20 @@
     resizeObserver: null,
     statusTimer: null,
     tileErrors: new Set(),
+    // Two independent signals that the map data source is down: the health
+    // endpoint, and tiles that kept failing after their retries ran out.
+    sourceHealthDown: false,
+    sourceTileDown: false,
+    layerOpacity: new Map(),
   };
 
   const $ = (id) => document.getElementById(id);
+  // Server-rendered strings (window._i18n) win; the English literal is the fallback.
+  const tr = (key, values) => {
+    const text = (window._i18n && window._i18n[key]) || key;
+    return values ? text.replace(/\{(\w+)\}/g, (_, name) => values[name] ?? '') : text;
+  };
+  const LAYER_GROUPS = ['administrative', 'cadastral', 'market', 'risk', 'demographics', 'territory'];
 
   function syncMapNavigationAccessibility() {
     const lang = document.documentElement.lang.toLowerCase();
@@ -108,6 +119,32 @@
       state.statusTimer = setTimeout(() => { if (element.textContent === message) element.textContent = ''; }, 4000);
     }
   };
+
+  // One persistent notice for "the data source is down", instead of per-layer
+  // guesses ("not configured", "no parcels published") or an empty status pill.
+  function updateSourceBanner() {
+    const down = state.sourceHealthDown || state.sourceTileDown;
+    let banner = $('mapSourceBanner');
+    if (!banner && down) {
+      banner = document.createElement('div');
+      banner.id = 'mapSourceBanner';
+      banner.className = 'map-source-banner';
+      banner.setAttribute('role', 'status');
+      const message = document.createElement('span');
+      message.textContent = tr('Map data is temporarily unavailable. The basemap still works; layers will return when the service recovers.');
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'secondary-action compact';
+      retry.id = 'mapSourceRetry';
+      retry.textContent = tr('Retry');
+      retry.addEventListener('click', retrySourceTiles);
+      banner.append(message, retry);
+      ($('directMapShell')?.querySelector('.direct-map-stage') || document.body).appendChild(banner);
+    }
+    if (banner) banner.hidden = !down;
+    const table = $('mapTableCard');
+    if (table) table.classList.toggle('is-source-down', down);
+  }
 
   function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>'"]/g, (char) => ({
@@ -254,22 +291,38 @@
     return state.catalog.find(isAdministrativeSubstitute) || null;
   }
 
+  // Polygon and mixed layers draw fill + outline; point and mixed layers draw
+  // circles. A mixed layer (e.g. maritime concessions) carries both geometries.
   function isPolygonLayer(layer) {
     return layer.kind !== 'point';
   }
 
+  function isPointLayer(layer) {
+    return layer.kind === 'point' || layer.kind === 'mixed';
+  }
+
+  // Colour, opacity and stack order come from the server catalog (MapLayerSpec).
+  function catalogLayer(layerId) {
+    return state.catalog.find((candidate) => candidate.id === layerId);
+  }
+
+  // A catalog ``color_ramp`` (numeric) or ``color_match`` (categorical) becomes
+  // a data-driven colour expression; otherwise the flat catalog colour is used.
+  function layerFillColor(layer, fallback) {
+    const ramp = layer.color_ramp;
+    if (ramp?.stops?.length) {
+      return ['interpolate', ['linear'], ['to-number', ['get', ramp.property], 0], ...ramp.stops.flatMap((stop) => [Number(stop.value), stop.color])];
+    }
+    const match = layer.color_match;
+    if (match?.cases?.length) {
+      const text = ['downcase', ['to-string', ['coalesce', ['get', match.property], '']]];
+      return ['case', ...match.cases.flatMap((entry) => [['>=', ['index-of', String(entry.contains).toLowerCase(), text], 0], entry.color]), fallback];
+    }
+    return fallback;
+  }
+
   function layerColor(layerId) {
-    const colors = {
-      'geo-boundaries': '#526b84',
-      'municipality-profiles': '#4f6f86',
-      'cadastral-sheets': '#1976a8',
-      'cadastral-parcels': '#d97925',
-      'market-zones': '#7b61a8',
-      'hazard-areas': '#c44444',
-      'census-sections': '#3f8f73',
-      'points-of-interest': '#b04a9b',
-    };
-    return colors[layerId] || '#47758f';
+    return catalogLayer(layerId)?.color || '#47758f';
   }
 
   function layerMetadata(layer) {
@@ -337,24 +390,17 @@
       });
       const color = layerColor(layer.id);
       const isAdminSubstitute = isAdministrativeSubstitute(layer);
+      const userOpacity = state.layerOpacity.get(layer.id);
       if (isPolygonLayer(layer)) {
         state.map.addLayer({ id: `fill-${layer.id}`, type: 'fill', source: sourceId, 'source-layer': layer.id,
-          minzoom: Number(layer.min_zoom || 0), paint: { 'fill-color': color, 'fill-opacity': layer.id === 'cadastral-parcels' ? 0.04 : (isAdminSubstitute ? 0.075 : 0.11) } });
+          minzoom: Number(layer.min_zoom || 0), paint: { 'fill-color': layerFillColor(layer, color), 'fill-opacity': userOpacity ?? Number(layer.fill_opacity ?? 0.11) } });
         state.map.addLayer({ id: `line-${layer.id}`, type: 'line', source: sourceId, 'source-layer': layer.id,
-          minzoom: Number(layer.min_zoom || 0), paint: { 'line-color': color, 'line-width': layer.id === 'cadastral-parcels' ? 0.8 : (isAdminSubstitute ? 1.1 : 1.4), 'line-opacity': isAdminSubstitute ? 0.62 : 0.8 } });
-        if (layer.id === 'geo-boundaries') {
-          const boundaryLevel = () => state.map.getZoom() >= 10 ? 'municipality' : (state.map.getZoom() >= 8 ? 'province' : 'region');
-          const applyBoundaryLevel = () => {
-            const filter = ['==', ['get', 'unit_type'], boundaryLevel()];
-            state.map.setFilter('fill-geo-boundaries', filter);
-            state.map.setFilter('line-geo-boundaries', filter);
-          };
-          applyBoundaryLevel();
-          state.map.on('zoomend', applyBoundaryLevel);
-        }
-      } else {
+          minzoom: Number(layer.min_zoom || 0), paint: { 'line-color': layerFillColor(layer, color), 'line-width': Number(layer.line_width ?? 1.4), 'line-opacity': isAdminSubstitute ? 0.62 : 0.8 } });
+        if (Array.isArray(layer.unit_levels) && layer.unit_levels.length) bindUnitLevels(layer);
+      }
+      if (isPointLayer(layer)) {
         state.map.addLayer({ id: `point-${layer.id}`, type: 'circle', source: sourceId, 'source-layer': layer.id,
-          minzoom: Number(layer.min_zoom || 0), paint: { 'circle-color': color, 'circle-radius': 4, 'circle-stroke-color': '#fff', 'circle-stroke-width': 1 } });
+          minzoom: Number(layer.min_zoom || 0), paint: { 'circle-color': color, 'circle-radius': 4, 'circle-stroke-color': '#fff', 'circle-stroke-width': 1, 'circle-opacity': layer.kind === 'point' ? (userOpacity ?? 1) : 1 } });
       }
       if (layer.id === 'cadastral-parcels') {
         addParcelLabels();
@@ -390,6 +436,24 @@
     }
   }
 
+  // A multi-level layer (administrative boundaries) draws one ``unit_type`` per
+  // zoom band; the ladder comes from the catalog's ``unit_levels``.
+  function bindUnitLevels(layer) {
+    const levels = [...layer.unit_levels].sort((a, b) => a.min_zoom - b.min_zoom);
+    let applied = null;
+    const apply = () => {
+      const zoom = state.map.getZoom();
+      const level = levels.filter((entry) => zoom >= entry.min_zoom).pop() || levels[0];
+      if (level.unit_type === applied) return;
+      applied = level.unit_type;
+      const filter = ['==', ['get', 'unit_type'], level.unit_type];
+      ['fill', 'line'].forEach((prefix) => { if (state.map.getLayer(`${prefix}-${layer.id}`)) state.map.setFilter(`${prefix}-${layer.id}`, filter); });
+    };
+    apply();
+    // `zoom` (not `zoomend`) so the level follows a pinch or wheel gesture.
+    state.map.on('zoom', apply);
+  }
+
   function addParcelLabels() {
     if (state.preferences?.parcel_labels === false) return;
     if (state.map.getLayer('label-cadastral-parcels')) return;
@@ -417,45 +481,124 @@
     state.map.addLayer({ id: 'parcel-raster-fallback', type: 'raster', source: 'parcel-raster-fallback', layout: { visibility: 'visible' }, paint: { 'raster-opacity': 0.85 } });
   }
 
+  function layerOpacitySetting(layer) {
+    // Point layers expose whole-marker opacity; polygon and mixed layers expose
+    // the fill, which is the faint part of the default style.
+    return layer.kind === 'point'
+      ? { label: tr('Opacity'), min: 0.1, max: 1, step: 0.05, value: state.layerOpacity.get(layer.id) ?? 1 }
+      : { label: tr('Fill'), min: 0, max: 0.6, step: 0.01, value: state.layerOpacity.get(layer.id) ?? Number(layer.fill_opacity ?? 0.11) };
+  }
+
+  function applyLayerOpacity(layer, value) {
+    state.layerOpacity.set(layer.id, value);
+    if (!state.map) return;
+    const target = layer.kind === 'point' ? `point-${layer.id}` : `fill-${layer.id}`;
+    const property = layer.kind === 'point' ? 'circle-opacity' : 'fill-opacity';
+    if (state.map.getLayer(target)) state.map.setPaintProperty(target, property, value);
+  }
+
+  function buildLayerItem(layer, initializingLayers) {
+    const item = document.createElement('div');
+    item.className = 'map-layer-item';
+    item.dataset.layerId = layer.id;
+    const row = document.createElement('label');
+    row.className = 'map-layer-row';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = initializingLayers ? state.defaultLayers.has(layer.id) : state.activeLayers.has(layer.id);
+    const badges = document.createElement('small');
+    badges.className = 'map-layer-badges';
+    badges.hidden = true;
+    const opacity = document.createElement('label');
+    opacity.className = 'map-layer-opacity';
+    opacity.hidden = !input.checked || !state.map;
+    const setting = layerOpacitySetting(layer);
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    Object.assign(slider, { min: setting.min, max: setting.max, step: setting.step, value: setting.value });
+    slider.addEventListener('input', () => applyLayerOpacity(layer, Number(slider.value)));
+    const caption = document.createElement('span');
+    caption.textContent = setting.label;
+    opacity.append(caption, slider);
+    input.addEventListener('change', () => {
+      state.adminSubstituteAutoLayers.delete(layer.id);
+      if (state.activeLayers === null) state.activeLayers = new Set();
+      if (input.checked) state.activeLayers.add(layer.id);
+      else state.activeLayers.delete(layer.id);
+      if (input.checked && (!state.map || !state.map.getSource(layerSourceId(layer)))) addCatalogLayer(layer);
+      setLayerVisibility(layer.id, input.checked);
+      opacity.hidden = !input.checked || !state.map;
+      reorderMapLayers();
+      updateParcelZoomAffordance();
+    });
+    // Tiles are capped server-side, so dense areas can omit features; say so.
+    const cap = layer.max_features ? ` · ${tr('Up to {n} features per tile', { n: Number(layer.max_features).toLocaleString('it-IT') })}` : '';
+    row.title = `${layerMetadata(layer)}${cap}`;
+    const copy = document.createElement('span');
+    copy.innerHTML = `<strong><i class="map-layer-swatch" style="background:${layerColor(layer.id)}"></i>${escapeHtml(tr(layer.title))}</strong><small class="map-layer-meta">${escapeHtml(layerMetadata(layer))}</small>`;
+    row.append(input, copy);
+    item.append(row, badges, opacity);
+    return { item, input };
+  }
+
   function renderLayerCatalog() {
     const list = $('mapLayerList');
     if (!list) return;
     list.replaceChildren();
     const initializingLayers = state.activeLayers === null;
-    state.catalog.filter((layer) => layer.id !== 'raster-coverage').forEach((layer) => {
-      const row = document.createElement('label');
-      row.className = 'map-layer-row';
-      row.dataset.layerId = layer.id;
-      const input = document.createElement('input');
-      input.type = 'checkbox';
-      const defaults = state.defaultLayers.has(layer.id);
-      input.checked = initializingLayers ? defaults : state.activeLayers.has(layer.id);
-      input.disabled = Number(layer.min_zoom || 0) > 22;
-      input.addEventListener('change', () => {
-        state.adminSubstituteAutoLayers.delete(layer.id);
-        if (state.activeLayers === null) state.activeLayers = new Set();
-        if (input.checked) state.activeLayers.add(layer.id);
-        else state.activeLayers.delete(layer.id);
-        if (input.checked && (!state.map || !state.map.getSource(layerSourceId(layer)))) addCatalogLayer(layer);
-        setLayerVisibility(layer.id, input.checked);
-        reorderMapLayers();
-        updateParcelZoomAffordance();
+    const visible = state.catalog.filter((layer) => layer.id !== 'raster-coverage');
+    const groups = [...new Set([...LAYER_GROUPS, ...visible.map((layer) => layer.group || 'territory')])];
+    groups.forEach((group) => {
+      const members = visible.filter((layer) => (layer.group || 'territory') === group);
+      if (!members.length) return;
+      const section = document.createElement('details');
+      section.className = 'map-layer-group';
+      section.open = true;
+      const summary = document.createElement('summary');
+      summary.textContent = tr(group.charAt(0).toUpperCase() + group.slice(1));
+      section.appendChild(summary);
+      members.forEach((layer) => {
+        const { item, input } = buildLayerItem(layer, initializingLayers);
+        section.appendChild(item);
+        if (input.checked) {
+          if (state.activeLayers === null) state.activeLayers = new Set();
+          state.activeLayers.add(layer.id);
+          addCatalogLayer(layer);
+        }
       });
-      row.title = layerMetadata(layer);
-      const copy = document.createElement('span');
-      copy.innerHTML = `<strong><i class="map-layer-swatch" style="background:${layerColor(layer.id)}"></i>${escapeHtml(layer.title)}</strong><small class="map-layer-meta">${escapeHtml(layerMetadata(layer))}</small>`;
-      row.append(input, copy);
-      list.appendChild(row);
-      if (input.checked) {
-        if (state.activeLayers === null) state.activeLayers = new Set();
-        state.activeLayers.add(layer.id);
-        addCatalogLayer(layer);
-      }
+      list.appendChild(section);
     });
     reorderMapLayers();
     updateParcelZoomAffordance();
     const partial = state.catalog.filter((layer) => layer.coverage === 'partial');
-    if (partial.length) $('mapCoverageStatus').textContent = 'Some layers have partial regional coverage.';
+    $('mapCoverageStatus').textContent = partial.length
+      ? tr('Partial coverage: {layers}', { layers: partial.map((layer) => `${tr(layer.title)}${layer.coverage_note ? ` (${layer.coverage_note})` : ''}`).join('; ') })
+      : '';
+  }
+
+  function viewportOutside(bounds, coverage) {
+    return Boolean(coverage && bounds && (bounds.getEast() < coverage[0] || bounds.getWest() > coverage[2] || bounds.getNorth() < coverage[1] || bounds.getSouth() > coverage[3]));
+  }
+
+  // Per-row hints for checked layers that cannot draw anything right now:
+  // either the map is below the layer's minimum zoom or the viewport is
+  // outside the area the layer covers.
+  function updateLayerBadges() {
+    const map = state.map || state.fallbackMap;
+    if (!map || !state.catalog.length) return;
+    const zoom = map.getZoom();
+    const bounds = map.getBounds?.();
+    state.catalog.forEach((layer) => {
+      const badges = document.querySelector(`[data-layer-id="${CSS.escape(layer.id)}"] .map-layer-badges`);
+      if (!badges) return;
+      const hints = [];
+      if (state.activeLayers?.has(layer.id)) {
+        if (zoom < Number(layer.min_zoom || 0)) hints.push(tr('Zoom in: visible from zoom {n}', { n: layer.min_zoom }));
+        if (viewportOutside(bounds, layer.coverage_bounds)) hints.push(tr('Outside coverage: {note}', { note: layer.coverage_note || '' }));
+      }
+      badges.textContent = hints.join(' · ');
+      badges.hidden = !hints.length;
+    });
   }
 
   function addFallbackCatalogLayer(layer) {
@@ -469,7 +612,7 @@
         });
       } else if (L.vectorGrid?.protobuf && layer.tile_url) {
         const color = layerColor(layer.id);
-        const style = { color, weight: 1, opacity: .8, fillColor: color, fillOpacity: .12, radius: 4 };
+        const style = { color, weight: 1, opacity: .8, fillColor: color, fillOpacity: Number(layer.fill_opacity ?? .12), radius: 4 };
         overlay = L.vectorGrid.protobuf(absoluteTileUrl(layer.tile_url), {
           vectorTileLayerStyles: { [layer.id]: style },
           maxNativeZoom: 22,
@@ -487,7 +630,10 @@
 
   function syncLayerCheckbox(layerId, checked) {
     const input = document.querySelector(`[data-layer-id="${CSS.escape(layerId)}"] input[type="checkbox"]`);
-    if (input) input.checked = checked;
+    if (!input) return;
+    input.checked = checked;
+    const opacity = input.closest('.map-layer-item')?.querySelector('.map-layer-opacity');
+    if (opacity) opacity.hidden = !checked || !state.map;
   }
 
   function enableAdministrativeSubstitute() {
@@ -528,12 +674,16 @@
     const bounds = map.getBounds?.();
     const parcels = state.catalog.find((layer) => layer.id === 'cadastral-parcels');
     const coverage = parcels?.coverage_bounds;
-    const outsideCoverage = Boolean(coverage && bounds && (bounds.getEast() < coverage[0] || bounds.getWest() > coverage[2] || bounds.getNorth() < coverage[1] || bounds.getSouth() > coverage[3]));
+    // While the source is down the catalog's coverage bounds say nothing about
+    // what is published, so do not claim an area has no parcels.
+    const sourceDown = state.sourceHealthDown || state.sourceTileDown;
+    const outsideCoverage = !sourceDown && viewportOutside(bounds, coverage);
+    updateLayerBadges();
     const note = $('mapHelpNote');
     if (!note) return;
     if (outsideCoverage) {
       note.textContent = 'No cadastral parcels published for this area yet (coverage: Veneto).';
-    } else if (belowParcelZoom && !administrativeSubstituteLayer()) {
+    } else if (belowParcelZoom && !administrativeSubstituteLayer() && !sourceDown) {
       note.textContent = 'Zoom in to see cadastral parcels; administrative boundaries are not configured.';
     } else {
       note.textContent = 'Zoom in to see cadastral parcels';
@@ -548,13 +698,18 @@
       const response = await fetch('/api/v1/map/layers/health', { signal: controller.signal });
       if (!response.ok) return;
       const payload = await response.json();
+      state.sourceHealthDown = payload.available === false;
+      updateSourceBanner();
+      updateParcelZoomAffordance();
       (payload.layers || []).forEach((health) => {
         const row = document.querySelector(`[data-layer-id="${CSS.escape(health.id)}"]`);
         const meta = row?.querySelector('.map-layer-meta');
         if (!meta) return;
         const catalogLayer = state.catalog.find((layer) => layer.id === health.id);
         const metadata = catalogLayer ? ` · ${layerMetadata(catalogLayer)}` : '';
-        if (payload.available === false) meta.textContent = `Not configured${metadata}`;
+        // The whole source being down is an outage, not a configuration
+        // state; drop the provenance text so the row says only that.
+        if (payload.available === false) meta.textContent = tr('Temporarily unavailable');
         else if (health.available && catalogLayer?.coverage === 'partial') meta.textContent = `Partial coverage · ${catalogLayer.coverage_note || 'some regions'}${metadata}`;
         else if (health.available) meta.textContent = `Available${metadata}`;
         else if (health.relation_exists === false) meta.textContent = `Not available${metadata}`;
@@ -567,13 +722,14 @@
 
   function reorderMapLayers() {
     if (!state.map) return;
+    // Catalog layers stack by their server-side ``z_order``; live overlays
+    // (bulletin, fires, auctions, sales) have fixed slots above them.
+    const ordered = [...state.catalog].sort((a, b) => Number(a.z_order ?? 100) - Number(b.z_order ?? 100));
+    const idsFor = (prefix, include) => ordered.filter(include).map((layer) => `${prefix}-${layer.id}`);
     const bottomToTop = [
-      'fill-geo-boundaries', 'fill-municipality-profiles', 'fill-market-zones', 'fill-postal-zones',
-      'fill-hazard-areas', 'fill-census-sections', 'fill-cadastral-sheets', 'fill-urban-sections',
-      'fill-cadastral-parcels', 'fill-enrichment-bulletin',
-      'line-geo-boundaries', 'line-municipality-profiles', 'line-market-zones', 'line-postal-zones',
-      'line-hazard-areas', 'line-census-sections', 'line-cadastral-sheets', 'line-urban-sections', 'line-cadastral-parcels',
-      'point-points-of-interest', 'point-hazard-measurements', 'point-mps04-points',
+      ...idsFor('fill', isPolygonLayer), 'fill-enrichment-bulletin',
+      ...idsFor('line', isPolygonLayer),
+      ...idsFor('point', isPointLayer),
       'point-enrichment-fires', 'point-auction-properties', 'point-sales-properties',
       'label-cadastral-parcels', 'fill-adjacent-parcels', 'line-adjacent-parcels',
       'selected-parcel-fill', 'selected-parcel-line',
@@ -1060,7 +1216,10 @@
   function scheduleTileRetry(sourceId) {
     const attempts = tileRetry.attempts[sourceId] || 0;
     if (attempts >= 2) {
-      mapStatus('Some map data failed to load; pan or zoom to retry.', true);
+      // Out of retries: stop requesting and tell the user once. Panning or
+      // the banner's Retry button starts a fresh round.
+      state.sourceTileDown = true;
+      updateSourceBanner();
       return;
     }
     tileRetry.pending.add(sourceId);
@@ -1075,6 +1234,19 @@
       });
       tileRetry.pending.clear();
     }, 1500 * (attempts + 1));
+  }
+
+  function retrySourceTiles() {
+    tileRetry.attempts = {};
+    state.tileErrors.clear();
+    state.sourceTileDown = false;
+    updateSourceBanner();
+    void loadLayerHealth();
+    state.catalog.forEach((layer) => {
+      const source = state.map?.getSource(layerSourceId(layer));
+      const tiles = source?.serialize?.().tiles;
+      if (source?.setTiles && tiles) source.setTiles(tiles);
+    });
   }
 
   function submitSearch(query, explicit = false) {
@@ -1134,7 +1306,7 @@
       if (requestId !== state.searchRequest) return;
       state.searchActiveIndex = results.length ? 0 : -1;
       renderSearchResults(results);
-      $('mapSearchStatus').textContent = results.length ? '' : (response.ok ? (explicit ? 'No result' : 'No municipality or parcel match — press Enter to search places') : 'Search service unavailable; try again.');
+      $('mapSearchStatus').textContent = results.length ? '' : (response.ok ? (explicit ? 'No result' : (state.sourceHealthDown ? 'Municipality and parcel search is unavailable — press Enter to search places' : 'No municipality or parcel match — press Enter to search places')) : 'Search service unavailable; try again.');
     } catch (error) {
       if (error.name === 'AbortError') return;
       if (requestId === state.searchRequest) $('mapSearchStatus').textContent = 'Search unavailable';
@@ -1414,17 +1586,34 @@
     window.open(url, '_blank', 'noopener,noreferrer');
   }
 
+  // The administrative layer and "Color by" controls only mean something once
+  // the statistics feed has loaded, so say why they are inert instead of
+  // leaving a lone "Default" option.
+  function syncSalesGeoControls() {
+    const layerType = $('salesGeoLayerType');
+    const metric = $('salesGeoMetric');
+    const hint = $('salesGeoHint');
+    let message = '';
+    if (!window.salesGeoLayersUrl) message = tr('Administrative statistics are not configured.');
+    else if (!salesOverlay.geo) message = tr('Turn on Sales to load administrative statistics.');
+    else if (metric && metric.options.length < 2) message = tr('No statistics metrics available.');
+    if (layerType) layerType.disabled = !salesOverlay.geo;
+    if (metric) metric.disabled = !salesOverlay.geo || metric.options.length < 2;
+    if (hint) { hint.textContent = message; hint.hidden = !message; }
+  }
+
   async function loadSalesGeoLayers() {
-    if (!window.salesGeoLayersUrl || !state.map) return;
+    if (!window.salesGeoLayersUrl || !state.map) { syncSalesGeoControls(); return; }
     try {
       const response = await fetch(window.salesGeoLayersUrl, { credentials: 'same-origin' });
-      if (!response.ok) return;
+      if (!response.ok) { syncSalesGeoControls(); return; }
       salesOverlay.geo = await response.json();
       const metric = $('salesGeoMetric');
       const metrics = salesOverlay.geo?.stats_meta?.metrics || [];
-      if (metric) metric.innerHTML = '<option value="none">Default</option>' + metrics.map((item) => `<option value="${escapeHtml(item.key)}">${escapeHtml(item.label || item.key)}</option>`).join('');
+      if (metric) metric.innerHTML = `<option value="none">${escapeHtml(tr('Default'))}</option>` + metrics.map((item) => `<option value="${escapeHtml(item.key)}">${escapeHtml(item.label || item.key)}</option>`).join('');
+      syncSalesGeoControls();
       renderSalesGeoLayers();
-    } catch (_) { /* administrative statistics are optional */ }
+    } catch (_) { syncSalesGeoControls(); /* administrative statistics are optional */ }
   }
 
   function renderSalesGeoLayers() {
@@ -1481,9 +1670,9 @@
   }
 
   function selectedPoiCategories() {
-    const select = $('poiCategories');
-    if (!select) return [];
-    return [...select.selectedOptions].map((option) => option.value).filter(Boolean);
+    const group = $('poiCategories');
+    if (!group) return [];
+    return [...group.querySelectorAll('input[type="checkbox"]:checked')].map((input) => input.value).filter(Boolean);
   }
 
   function poiQueryParams(center) {
@@ -1498,12 +1687,16 @@
   }
 
   function populatePoiCategories() {
-    const select = $('poiCategories');
-    if (!select) return;
+    const group = $('poiCategories');
+    if (!group) return;
     Object.entries(POI_CATEGORY_META).forEach(([key, meta]) => {
-      const option = document.createElement('option');
-      option.value = key; option.textContent = window.t?.(meta.label) || meta.label; option.selected = true;
-      select.appendChild(option);
+      const label = document.createElement('label');
+      const input = document.createElement('input');
+      input.type = 'checkbox'; input.value = key; input.checked = true;
+      const text = document.createElement('span');
+      text.textContent = window.t?.(meta.label) || meta.label;
+      label.append(input, text);
+      group.appendChild(label);
     });
   }
 
@@ -1876,7 +2069,7 @@
     button?.setAttribute('aria-pressed', String(auctionOverlay.active));
     if (auctionOverlay.active) { addAuctionOverlayLayer(); loadAuctionOverlay(); }
     else {
-      state.map.getSource('auction-properties')?.setData(emptyFeatureCollection());
+      state.map?.getSource('auction-properties')?.setData(emptyFeatureCollection());
       const countElement = $('auctionCount');
       if (countElement) countElement.textContent = '';
     }
@@ -1884,7 +2077,7 @@
 
   // ---- Attribute table (single-layer, viewport-scoped analogue of the
   // legacy Table View / table-manager.js) ----
-  const tableView = { active: false, layerId: null, rawFeatures: [], page: 1, pageSize: 100, hasMore: false, controller: null };
+  const tableView = { active: false, layerId: null, rawFeatures: [], page: 1, pageSize: 100, hasMore: false, controller: null, error: '' };
 
   function populateTableLayerSelect() {
     const select = $('mapTableLayerSelect');
@@ -1919,7 +2112,7 @@
     const pageItems = features;
     body.innerHTML = pageItems.length
       ? pageItems.map((feature) => `<tr data-feature-id="${escapeHtml(feature.id ?? '')}" tabindex="0">${columns.map((column) => `<td>${escapeHtml(feature.properties?.[column])}</td>`).join('')}</tr>`).join('')
-      : `<tr><td colspan="${columns.length || 1}">No features in the current view.</td></tr>`;
+      : `<tr><td colspan="${columns.length || 1}">${escapeHtml(tableView.error || tr('No features in the current view.'))}</td></tr>`;
     const pageInfo = $('mapTablePageInfo');
     if (pageInfo) pageInfo.textContent = `Page ${tableView.page}${tableView.hasMore ? '+' : ''}`;
     $('mapTablePrevButton').disabled = tableView.page <= 1;
@@ -1945,6 +2138,18 @@
   }
 
   async function loadTableData() {
+    if (tableView.active && !tableView.layerId) {
+      // No catalog means no layer to query; say so rather than show an empty box.
+      tableView.rawFeatures = [];
+      tableView.hasMore = false;
+      tableView.error = state.sourceHealthDown || state.sourceTileDown
+        ? tr('Layer data is temporarily unavailable.')
+        : tr('No layers available to list.');
+      renderTable();
+      const status = $('mapTableStatus');
+      if (status) status.textContent = tableView.error;
+      return;
+    }
     if (!tableView.active || !tableView.layerId || !state.map) return;
     const bounds = state.map.getBounds();
     const params = new URLSearchParams({
@@ -1965,6 +2170,7 @@
       if (tableView.controller !== controller) return;
       tableView.rawFeatures = data.features || [];
       tableView.hasMore = Boolean(data.truncated);
+      tableView.error = '';
       renderTable();
       if (status) status.textContent = data.zoom_required
         ? `Zoom in to at least level ${data.zoom_required}`
@@ -1973,6 +2179,7 @@
       if (error.name === 'AbortError' || tableView.controller !== controller) return;
       tableView.rawFeatures = [];
       tableView.hasMore = false;
+      tableView.error = tr('Layer data could not be loaded. Try Refresh in a moment.');
       renderTable();
       if (status) status.textContent = error.message || 'Attribute table unavailable';
     }
@@ -2041,12 +2248,14 @@
     $('toggleEnrichmentBulletin').addEventListener('click', toggleBulletinOverlay);
     $('refreshBulletinButton').addEventListener('click', refreshBulletinOverlay);
     $('toggleAuctionLayer').addEventListener('click', toggleAuctionOverlay);
+    $('refreshAuctionButton')?.addEventListener('click', () => loadAuctionOverlay());
     $('toggleSalesLayer')?.addEventListener('click', toggleSalesOverlay);
     $('refreshSalesButton')?.addEventListener('click', () => loadSalesOverlay());
     $('salesSort')?.addEventListener('change', () => { if (salesOverlay.active) loadSalesOverlay(); });
     $('salesSaleabilityMin')?.addEventListener('input', () => { if (salesOverlay.active) state.map?.getSource('sales-properties')?.setData(salesGeoJson()); });
     $('salesGeoLayerType')?.addEventListener('change', renderSalesGeoLayers);
     $('salesGeoMetric')?.addEventListener('change', renderSalesGeoLayers);
+    syncSalesGeoControls();
     $('googleMapsButton')?.addEventListener('click', () => openMapAt('google'));
     $('streetViewButton')?.addEventListener('click', () => openMapAt('street'));
     $('auctionTypeFilter').addEventListener('change', applyAuctionFilter);
@@ -2226,13 +2435,14 @@
     if (radio) radio.checked = true;
   }
 
-  function loadScriptOnce(src) {
+  function loadScriptOnce(src, integrity) {
     return new Promise((resolve, reject) => {
       const existing = [...document.scripts].find((script) => script.src === src);
       if (existing?.dataset.loaded === 'true') return resolve();
       const script = existing || document.createElement('script');
       script.src = src;
       script.async = false;
+      if (integrity) { script.integrity = integrity; script.crossOrigin = 'anonymous'; }
       script.onload = () => { script.dataset.loaded = 'true'; resolve(); };
       script.onerror = () => reject(new Error(`Could not load ${src}`));
       if (!existing) document.head.appendChild(script);
@@ -2244,11 +2454,13 @@
       const link = document.createElement('link');
       link.rel = 'stylesheet';
       link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+      link.integrity = 'sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H';
+      link.crossOrigin = 'anonymous';
       link.dataset.mapLeaflet = 'true';
       document.head.appendChild(link);
     }
-    if (!window.L) await loadScriptOnce('https://unpkg.com/leaflet@1.9.4/dist/leaflet.js');
-    if (!window.L?.vectorGrid) await loadScriptOnce('https://unpkg.com/leaflet.vectorgrid@1.3.0/dist/Leaflet.VectorGrid.bundled.js');
+    if (!window.L) await loadScriptOnce('https://unpkg.com/leaflet@1.9.4/dist/leaflet.js', 'sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH');
+    if (!window.L?.vectorGrid) await loadScriptOnce('https://unpkg.com/leaflet.vectorgrid@1.3.0/dist/Leaflet.VectorGrid.bundled.js', 'sha384-FON5fTjCTtPuBgUS1r2H/PGXstH0Rk23YKjZmB6qITkbFqBcqtey/rPo9eXwOWpx');
   }
 
   function createFallbackMap(initialView, basemap) {
@@ -2346,7 +2558,17 @@
     state.map.on('load', () => { state.tilesLoading = true; mapStatus('Loading map tiles…'); void finishMapInit(restored); });
     state.map.on('dataloading', (event) => { if (event.dataType === 'source' && event.tile) state.tilesLoading = true; });
     state.map.on('sourcedata', (event) => {
-      if (event.sourceId && event.sourceDataType === 'content') { state.tileErrors.delete(event.sourceId); tileRetry.attempts[event.sourceId] = 0; }
+      // Only a tile that actually loaded counts as recovery. setTiles() itself
+      // fires a 'content' sourcedata event, so resetting on any such event
+      // zeroed the retry counter and let a 503 retry forever.
+      if (event.sourceId && event.sourceDataType === 'content' && event.tile?.state === 'loaded') {
+        state.tileErrors.delete(event.sourceId);
+        tileRetry.attempts[event.sourceId] = 0;
+        if (state.sourceTileDown && !String(event.sourceId).startsWith('basemap')) {
+          state.sourceTileDown = false;
+          updateSourceBanner();
+        }
+      }
     });
     // React only when a tile-loading phase has just settled. Doing this work
     // on every 'idle' formed a render loop (the affordance update touches

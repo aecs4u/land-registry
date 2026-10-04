@@ -25,7 +25,7 @@
       <div class="d-flex align-items-center gap-2">
         <!-- Language selector -->
         <div class="nav-lang-selector">
-          <select id="langSelect" onchange="changeLang(this.value)" title="{{ _('Language') }}" autocomplete="off">
+          <select id="langSelect" aria-label="Language" onchange="changeLang(this.value)" title="{{ _('Language') }}" autocomplete="off">
             <option value="it" {% if request.state.lr_locale == 'it' %}selected{% endif %}>🇮🇹 IT</option>
             <option value="en" {% if request.state.lr_locale == 'en' %}selected{% endif %}>🇬🇧 EN</option>
           </select>
@@ -510,7 +510,7 @@
               <h5>{{ _('Spatial Analysis') }}</h5>
               <div class="tool-field">
                 <label>{{ _('Adjacency Method:') }}</label>
-                <select id="adjacencyMethod" class="tool-select">
+                <select id="adjacencyMethod" aria-label="Adjacency method" class="tool-select">
                   <option value="intersects">{{ _('Intersects (any overlap)') }}</option>
                   <option value="touches">{{ _('Touches (shared boundary)') }}</option>
                   <option value="overlaps">{{ _('Overlaps (area overlap)') }}</option>
@@ -553,9 +553,9 @@
               <div class="tool-field" style="margin-top:8px;">
                 <label>{{ _('Border color') }}</label>
                 <div class="tool-row" style="gap:6px;align-items:center;">
-                  <input type="color" id="regionBorderColor" value="#b45309"
+                  <input type="color" id="regionBorderColor" aria-label="Region border color" value="#b45309"
                          oninput="applyRegionLayerColor()" style="width:36px;height:28px;padding:2px;border:1px solid #ced4da;border-radius:4px;cursor:pointer;">
-                  <input type="color" id="regionFillColor" value="#f59e0b"
+                  <input type="color" id="regionFillColor" aria-label="Region fill color" value="#f59e0b"
                          oninput="applyRegionLayerColor()" style="width:36px;height:28px;padding:2px;border:1px solid #ced4da;border-radius:4px;cursor:pointer;">
                   <span style="font-size:11px;color:#868e96;">{{ _('border / fill') }}</span>
                   <button onclick="resetRegionLayerColor()" class="tool-btn-ghost" style="margin-left:auto;font-size:11px;padding:3px 7px;">{{ _('Reset') }}</button>
@@ -588,7 +588,7 @@
                 <div class="tool-row">
                   <div class="tool-field" style="flex:1">
                     <label>{{ _('Color') }}</label>
-                    <input type="color" id="zoneColor" value="#3388ff" />
+                    <input type="color" id="zoneColor" aria-label="Zone color" value="#3388ff" />
                   </div>
                   <div class="tool-field" style="flex:2">
                     <label>{{ _('Tags') }}</label>
@@ -635,7 +635,7 @@
               </div>
               <div class="tool-field">
                 <label>{{ _('Type') }}</label>
-                <select id="auctionTypeFilter" onchange="filterAuctionsByType()" class="tool-select">
+                <select id="auctionTypeFilter" aria-label="Auction type" onchange="filterAuctionsByType()" class="tool-select">
                   <option value="">{{ _('All Types') }}</option>
                   <option value="residential">{{ _('Residential') }}</option>
                   <option value="commercial">{{ _('Commercial') }}</option>
@@ -687,7 +687,7 @@
               <button onclick="searchTable()" class="search-btn">🔍</button>
             </div>
             <div class="filter-container">
-              <select id="tableFilterField" class="filter-select">
+              <select id="tableFilterField" aria-label="Filter by column" class="filter-select">
                 <option value="">{{ _('Filter by column…') }}</option>
               </select>
               <input type="text" id="tableFilterValue" placeholder="{{ _('Filter value…') }}" class="filter-input">
@@ -697,10 +697,10 @@
           </div>
           <div class="control-row">
             <div class="sort-container">
-              <select id="tableSortField" class="sort-select">
+              <select id="tableSortField" aria-label="Sort by column" class="sort-select">
                 <option value="">{{ _('Sort by column…') }}</option>
               </select>
-              <select id="tableSortDirection" class="sort-direction">
+              <select id="tableSortDirection" aria-label="Sort direction" class="sort-direction">
                 <option value="asc">{{ _('Ascending') }}</option>
                 <option value="desc">{{ _('Descending') }}</option>
               </select>
@@ -708,7 +708,7 @@
             </div>
             <div class="page-size-container">
               <label>{{ _('Rows per page:') }}</label>
-              <select id="tablePageSize" class="page-size-select" onchange="changeTablePageSize()">
+              <select id="tablePageSize" aria-label="Rows per page" class="page-size-select" onchange="changeTablePageSize()">
                 <option value="25">25</option>
                 <option value="50">50</option>
                 <option value="100" selected>100</option>
