@@ -68,6 +68,7 @@ data/*.sqlite-wal
 data/*.sqlite-shm
 land_registry.db
 file_availability.db
+land_registry/static/images/
 
 # Local cadastral data symlink (points to /data/catasto, 45 GB)
 data/catasto
