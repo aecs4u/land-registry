@@ -13,6 +13,7 @@ The DDL in this module is the existing application-store compatibility
 initializer; it is not a replacement domain model layer.
 """
 
+import asyncio
 import logging
 import json
 from contextlib import asynccontextmanager, contextmanager
@@ -356,12 +357,25 @@ class AsyncDatabaseConnection:
         )
         return row is not None
 
-    async def close(self):
-        """Close the async connection pool."""
-        if self._pool:
-            await self._pool.close()
-            self._pool = None
+    async def close(self, *, timeout: float = 5.0) -> None:
+        """Close the pool, terminating connections if graceful shutdown times out."""
+        pool = self._pool
+        if pool is None:
+            return
+        try:
+            # Pool.close() also waits for borrowed connections to be released.
+            await asyncio.wait_for(pool.close(), timeout=timeout)
+        except TimeoutError:
+            pool.terminate()
+            logger.warning("Async database connection pool close timed out; connections terminated")
+        except (Exception, asyncio.CancelledError):
+            pool.terminate()
+            raise
+        else:
             logger.info("Async database connection pool closed")
+        finally:
+            # asyncpg terminates a failed pool; never cache it for later use.
+            self._pool = None
 
 
 # Global connection instances (lazy initialized)

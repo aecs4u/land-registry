@@ -35,6 +35,8 @@
 .map-search-row input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: inherit; font: inherit; padding: 7px 2px; overflow: hidden; text-overflow: ellipsis; }
 .map-search-row button { width: 32px; height: 32px; border: 0; border-radius: 6px; background: var(--direct-map-accent); color: white; cursor: pointer; }
 .map-search-status { min-height: 0; color: var(--direct-map-muted); font-size: 12px; padding: 2px 27px; }
+.map-search-privacy { font-size: 11px; line-height: 1.35; padding: 0 8px 2px; }
+.map-search-privacy a, .map-provider-disclosure a { color: var(--direct-map-accent); }
 .map-search-results { max-height: 290px; overflow: auto; border-top: 1px solid var(--direct-map-border); margin-top: 5px; padding-top: 4px; }
 .map-search-result { display: block; width: 100%; border: 0; border-radius: 5px; background: transparent; color: inherit; cursor: pointer; text-align: left; padding: 9px; }
 .map-search-result:hover, .map-search-result:focus { background: var(--direct-map-accent-soft); outline: 0; }
@@ -72,9 +74,16 @@
 .map-layer-badges[hidden], .map-layer-opacity[hidden] { display: none; }
 .map-layer-opacity { align-items: center; color: var(--direct-map-muted); display: flex; font-size: 12px; gap: 8px; margin: 0 0 6px 32px; }
 .map-layer-opacity input[type="range"] { flex: 1; min-width: 0; }
+.map-layer-geometry-controls { margin: 0 0 8px 32px; }
+.map-layer-geometry-controls[hidden] { display: none; }
+.map-layer-geometry-legend { display: flex; flex-wrap: wrap; gap: 14px; color: var(--direct-map-muted); font-size: 12px; margin-bottom: 6px; }
+.map-layer-swatch.is-point { border-radius: 50%; }
+.map-layer-zoom { background: var(--direct-map-panel); border: 1px solid var(--direct-map-border); border-radius: 5px; color: var(--direct-map-text); cursor: pointer; font-size: 12px; padding: 5px 9px; }
+.map-layer-zoom:disabled { cursor: wait; opacity: .6; }
 .poi-category-field { border: 0; grid-column: 1 / -1; margin: 0; min-width: 0; padding: 0; }
 .poi-category-field legend { color: var(--direct-map-muted); float: none; font-size: 12px; margin: 0 0 4px; padding: 0; width: auto; }
 .basemap-hint { margin: -10px 0 14px; }
+.map-provider-disclosure { margin: -8px 0 14px; }
 .poi-category-list { border: 0; display: grid; gap: 2px 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; padding: 0; }
 .poi-category-list label { align-items: center; display: flex; gap: 6px; }
 .map-coverage-status { border-top: 1px solid var(--direct-map-border); color: var(--direct-map-muted); font-size: 12px; margin-top: 13px; padding-top: 10px; }

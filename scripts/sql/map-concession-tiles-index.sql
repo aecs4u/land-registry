@@ -1,7 +1,4 @@
--- Run against aecs4u-stats outside a transaction. The map displays only these
--- two concession row kinds; indexing the display predicate avoids fetching
--- duplicate CSV point rows from the heap for every spatial tile.
-CREATE INDEX CONCURRENTLY IF NOT EXISTS demanio_marittimo_concessions_map_geom_gist
-    ON demanio_marittimo.concessions USING GIST (geom)
-    WHERE layer_kind IN ('polygon_shp', 'point_shp');
-ANALYZE demanio_marittimo.concessions;
+-- The map relation is a postgres_fdw foreign table, so it cannot have a local
+-- GiST index. The remote view agenziademanio.v_concession_map_features reads
+-- the native geometry GiST index on agenziademanio.public.concessions. Local planner
+-- statistics are refreshed by map-layer-statistics.sql.

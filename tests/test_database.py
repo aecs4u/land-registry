@@ -11,6 +11,9 @@ Tests cover:
 Note: These tests use mocking to avoid actual database connections.
 """
 
+import asyncio
+import logging
+
 import pytest
 from unittest.mock import Mock, MagicMock, patch, AsyncMock
 from contextlib import contextmanager
@@ -294,9 +297,101 @@ class TestAsyncDatabaseConnection:
         await conn.get_pool()
 
         await conn.close()
+        await conn.close()
 
-        mock_pool.close.assert_called_once()
+        mock_pool.close.assert_awaited_once()
+        mock_pool.terminate.assert_not_called()
         assert conn._pool is None
+
+    @pytest.mark.asyncio
+    async def test_close_pool_handles_connection_timeout(self, caplog):
+        """A timeout inside asyncpg close is a recoverable shutdown warning."""
+        pool = Mock(close=AsyncMock(side_effect=TimeoutError))
+        conn = AsyncDatabaseConnection()
+        conn._pool = pool
+
+        with caplog.at_level(logging.WARNING, logger="land_registry.database"):
+            await conn.close()
+
+        pool.terminate.assert_called_once_with()
+        assert conn._pool is None
+        assert "close timed out; connections terminated" in caplog.text
+        assert all(record.exc_info is None for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_close_pool_bounds_hanging_shutdown(self):
+        """Unreleased connections cannot make shutdown wait indefinitely."""
+        cancelled = asyncio.Event()
+
+        async def hang():
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+        pool = Mock(close=AsyncMock(side_effect=hang))
+        conn = AsyncDatabaseConnection()
+        conn._pool = pool
+
+        await asyncio.wait_for(conn.close(timeout=0.01), timeout=1)
+
+        assert cancelled.is_set()
+        pool.terminate.assert_called_once_with()
+        assert conn._pool is None
+
+    @pytest.mark.asyncio
+    async def test_close_pool_preserves_cancellation(self):
+        """Cancellation still propagates after connections are terminated."""
+        started = asyncio.Event()
+
+        async def hang():
+            started.set()
+            await asyncio.Event().wait()
+
+        pool = Mock(close=AsyncMock(side_effect=hang))
+        conn = AsyncDatabaseConnection()
+        conn._pool = pool
+        task = asyncio.create_task(conn.close())
+        try:
+            await asyncio.wait_for(started.wait(), timeout=1)
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        pool.terminate.assert_called_once_with()
+        assert conn._pool is None
+
+    @pytest.mark.asyncio
+    async def test_close_pool_preserves_unexpected_errors(self):
+        """Unexpected close failures stay visible after pool cleanup."""
+        pool = Mock(close=AsyncMock(side_effect=RuntimeError("close failed")))
+        conn = AsyncDatabaseConnection()
+        conn._pool = pool
+
+        with pytest.raises(RuntimeError, match="close failed"):
+            await conn.close()
+
+        pool.terminate.assert_called_once_with()
+        assert conn._pool is None
+
+    @pytest.mark.asyncio
+    @patch("land_registry.database._get_asyncpg")
+    async def test_get_pool_recreates_after_close_timeout(self, mock_get_asyncpg):
+        """A later application lifespan gets a new pool after failed close."""
+        old_pool = Mock(close=AsyncMock(side_effect=TimeoutError))
+        new_pool = Mock()
+        mock_get_asyncpg.return_value.create_pool = AsyncMock(return_value=new_pool)
+        conn = AsyncDatabaseConnection(
+            settings=DatabaseSettings(database_url="postgresql://user:pass@host/db")
+        )
+        conn._pool = old_pool
+
+        await conn.close()
+        await conn.close()
+
+        old_pool.close.assert_awaited_once()
+        assert await conn.get_pool() is new_pool
 
 
 class TestGlobalFunctions:

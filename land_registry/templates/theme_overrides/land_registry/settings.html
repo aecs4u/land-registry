@@ -203,3 +203,5 @@
 {{ super() }}
 <script src="/static/account-settings.js"{% if csp_nonce %} nonce="{{ csp_nonce }}"{% endif %} defer></script>
 {% endblock %}
+
+{% block cookie_consent %}{% endblock %}

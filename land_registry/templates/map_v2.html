@@ -40,6 +40,7 @@
         <button id="mapSearchSubmit" type="submit" title="{{ _('Search') }}" aria-label="{{ _('Search') }}">↵</button>
       </form>
       <div id="mapSearchStatus" class="map-search-status" aria-live="polite"></div>
+      <p class="map-muted map-search-privacy">{{ _('Search fallback sends your place name to OpenStreetMap Nominatim.') }} <a href="/privacy">{{ _('Privacy') }}</a></p>
       <div id="mapSearchResults" class="map-search-results" role="listbox" hidden></div>
     </div>
 
@@ -88,6 +89,7 @@
         <label><input type="radio" name="basemap" value="satellite"> <span>{{ _('Satellite') }}</span></label>
       </div>
       <p class="map-muted basemap-hint">{{ _('Light and Dark follow the page theme; Satellite stays selected until you change it.') }}</p>
+      <p class="map-muted map-provider-disclosure">{{ _('Basemap tiles are loaded from external map providers. See the privacy page for details.') }} <a href="/privacy">{{ _('Privacy') }}</a></p>
       <div class="layer-section-title">{{ _('Overlays') }}</div>
       <div id="mapLayerList" class="map-layer-list">
         <p class="map-muted">{{ _('Loading layer catalog…') }}</p>
@@ -250,6 +252,11 @@
   </section>
 </main>
 {% endblock %}
+
+{# The shared theme's generic consent prompt claims analytics and personalized
+   cookies that this application does not use. Third-party map/search requests
+   are disclosed beside the controls and on /privacy. #}
+{% block cookie_consent %}{% endblock %}
 
 {% block i18n_data %}<script>window._i18n = {{ i18n_strings | tojson }};</script>{% endblock %}
 

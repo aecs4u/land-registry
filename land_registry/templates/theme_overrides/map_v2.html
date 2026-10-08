@@ -25,11 +25,6 @@
         <i class="fas fa-map-marked-alt" aria-hidden="true"></i><span>{{ _('Cadastral map') }}</span>
       </a>
     </div>
-    <div class="nav-item">
-      <a class="nav-link" href="/map-legacy">
-        <i class="fas fa-draw-polygon" aria-hidden="true"></i><span>{{ _('Analysis map') }}</span>
-      </a>
-    </div>
   </div>
 </div>
 <div class="sidebar-group" data-group="account">
@@ -59,6 +54,7 @@
         <button id="mapSearchSubmit" type="submit" class="btn btn-primary" title="{{ _('Search') }}" aria-label="{{ _('Search') }}"><i class="fas fa-arrow-right" aria-hidden="true"></i></button>
       </form>
       <div id="mapSearchStatus" class="map-search-status" aria-live="polite"></div>
+      <p class="map-muted map-search-privacy">{{ _('Search fallback sends your place name to OpenStreetMap Nominatim.') }} <a href="/privacy">{{ _('Privacy') }}</a></p>
       <div id="mapSearchResults" class="map-search-results" role="listbox" hidden></div>
     </div>
 
@@ -107,6 +103,7 @@
         <label><input type="radio" name="basemap" value="satellite"> <span>{{ _('Satellite') }}</span></label>
       </div>
       <p class="map-muted basemap-hint">{{ _('Light and Dark follow the page theme; Satellite stays selected until you change it.') }}</p>
+      <p class="map-muted map-provider-disclosure">{{ _('Basemap tiles are loaded from external map providers. See the privacy page for details.') }} <a href="/privacy">{{ _('Privacy') }}</a></p>
       <div class="layer-section-title">{{ _('Overlays') }}</div>
       <div id="mapLayerList" class="map-layer-list"><p class="map-muted">{{ _('Loading layer catalog…') }}</p></div>
       <div id="mapCoverageStatus" class="map-coverage-status" aria-live="polite"></div>
@@ -250,3 +247,8 @@
 <script src="https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/topojson-client.min.js" integrity="sha384-Ukv1p/xTma6P4/2bY5KzWBw+ydSpXmhCMtyciIQVDJ1RmOxtCYNMF1uXT9T63H67" crossorigin="anonymous" defer></script>
 <script src="{{ asset_url('map-v2.js') }}" defer></script>
 {% endblock %}
+
+{# The generic theme prompt claims analytics and personalized cookies that
+   this application does not use. External map/search requests are disclosed
+   beside the controls and on /privacy. #}
+{% block cookie_consent %}{% endblock %}

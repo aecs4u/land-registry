@@ -2,9 +2,45 @@
 <html lang="{{ request.state.lr_locale | default('it') }}">
   <head>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{{ title }}</title>
+    <style>
+      :root { color-scheme: light dark; font: 16px/1.55 system-ui, sans-serif; }
+      body { margin: 0; background: #f5f7fa; color: #1d2733; }
+      main { max-width: 860px; margin: 8vh auto; padding: 24px; }
+      .fallback { background: #fff; border: 1px solid #d8dee7; border-radius: 12px; padding: 24px; box-shadow: 0 8px 32px #12243a12; }
+      .fallback h1 { margin-top: 0; font-size: 1.35rem; }
+      .fallback a { display: inline-block; margin: 8px 0; border-radius: 6px; padding: 9px 14px; background: #1a5490; color: #fff; text-decoration: none; font-weight: 600; }
+      .back { display: inline-block; margin-bottom: 14px; }
+      @media (prefers-color-scheme: dark) {
+        body { background: #11161c; color: #e6ebf0; }
+        .fallback { background: #1a222b; border-color: #33404c; }
+      }
+    </style>
   </head>
   <body>
-    {{ tabulator|safe }}
+    <main aria-labelledby="pageTitle">
+      <a class="back" href="/map">← {{ _('Back to the map') }}</a>
+      <h1 id="pageTitle">{{ title }}</h1>
+      <section id="panelFallback" class="fallback" role="status" aria-live="polite">
+        <h2>{{ _('Interactive table unavailable') }}</h2>
+        <p>{{ fallback_message }}</p>
+        <a href="{{ replacement_url }}">{{ replacement_label }}</a>
+      </section>
+      <div id="panelMount">{{ tabulator|safe }}</div>
+    </main>
+    <script>
+      (function () {
+        const mount = document.getElementById('panelMount');
+        const fallback = document.getElementById('panelFallback');
+        const update = () => {
+          if (mount.querySelector('.bk-root, .pn-root')) fallback.hidden = true;
+        };
+        update();
+        const observer = new MutationObserver(update);
+        observer.observe(mount, { childList: true, subtree: true });
+        window.setTimeout(() => observer.disconnect(), 15000);
+      })();
+    </script>
   </body>
 </html>

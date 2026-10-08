@@ -43,6 +43,7 @@
     resizeObserver: null,
     statusTimer: null,
     tileErrors: new Set(),
+    unavailableLayerIds: new Set(),
     // Two independent signals that the map data source is down: the health
     // endpoint, and tiles that kept failing after their retries ran out.
     sourceHealthDown: false,
@@ -112,11 +113,12 @@
   const mapStatus = (message, error = false) => {
     const element = $('mapStatus');
     if (!element) return;
+    const displayedMessage = typeof message === 'string' ? tr(message) : message;
     clearTimeout(state.statusTimer);
-    element.textContent = message || '';
+    element.textContent = displayedMessage || '';
     element.classList.toggle('is-error', error);
-    if (message && !error) {
-      state.statusTimer = setTimeout(() => { if (element.textContent === message) element.textContent = ''; }, 4000);
+    if (displayedMessage && !error) {
+      state.statusTimer = setTimeout(() => { if (element.textContent === displayedMessage) element.textContent = ''; }, 4000);
     }
   };
 
@@ -326,12 +328,16 @@
   }
 
   function layerMetadata(layer) {
-    const coverage = layer.coverage === 'partial'
-      ? `Partial coverage${layer.coverage_note ? ` · ${layer.coverage_note}` : ''}`
-      : `From zoom ${layer.min_zoom || 0}`;
+    const coverage = Array.isArray(layer.estimated_bounds)
+      ? tr('Approximate data extent')
+      : layer.coverage === 'partial'
+        ? `${tr('Partial coverage')}${layer.coverage_note ? ` · ${layer.coverage_note}` : ''}`
+        : layer.coverage === 'unknown'
+          ? tr('Coverage not reported')
+          : `${tr('From zoom')} ${layer.min_zoom || 0}`;
     const freshness = (layer.properties || []).includes('source_release')
-      ? 'Date reported per feature'
-      : 'Update date not reported';
+      ? tr('Source version shown in feature details')
+      : tr('Source date not reported');
     return `${coverage} · ${freshness} · ${layer.source || 'Source not reported'}`;
   }
 
@@ -389,18 +395,33 @@
         maxzoom: 22,
       });
       const color = layerColor(layer.id);
+      const polygonColor = layer.polygon_color || layerFillColor(layer, color);
       const isAdminSubstitute = isAdministrativeSubstitute(layer);
       const userOpacity = state.layerOpacity.get(layer.id);
       if (isPolygonLayer(layer)) {
         state.map.addLayer({ id: `fill-${layer.id}`, type: 'fill', source: sourceId, 'source-layer': layer.id,
-          minzoom: Number(layer.min_zoom || 0), paint: { 'fill-color': layerFillColor(layer, color), 'fill-opacity': userOpacity ?? Number(layer.fill_opacity ?? 0.11) } });
+          ...(layer.kind === 'mixed' ? { filter: ['==', ['geometry-type'], 'Polygon'] } : {}),
+          minzoom: Number(layer.min_zoom || 0), paint: { 'fill-color': polygonColor, 'fill-opacity': userOpacity ?? Number(layer.fill_opacity ?? 0.11) } });
         state.map.addLayer({ id: `line-${layer.id}`, type: 'line', source: sourceId, 'source-layer': layer.id,
-          minzoom: Number(layer.min_zoom || 0), paint: { 'line-color': layerFillColor(layer, color), 'line-width': Number(layer.line_width ?? 1.4), 'line-opacity': isAdminSubstitute ? 0.62 : 0.8 } });
+          ...(layer.kind === 'mixed' ? { filter: ['==', ['geometry-type'], 'Polygon'] } : {}),
+          minzoom: Number(layer.min_zoom || 0), paint: { 'line-color': polygonColor, 'line-width': Number(layer.line_width ?? 1.4), 'line-opacity': isAdminSubstitute ? 0.62 : (layer.kind === 'mixed' ? 1 : 0.8) } });
         if (Array.isArray(layer.unit_levels) && layer.unit_levels.length) bindUnitLevels(layer);
       }
       if (isPointLayer(layer)) {
         state.map.addLayer({ id: `point-${layer.id}`, type: 'circle', source: sourceId, 'source-layer': layer.id,
+          ...(layer.kind === 'mixed' ? { filter: ['==', ['geometry-type'], 'Point'] } : {}),
           minzoom: Number(layer.min_zoom || 0), paint: { 'circle-color': color, 'circle-radius': 4, 'circle-stroke-color': '#fff', 'circle-stroke-width': 1, 'circle-opacity': layer.kind === 'point' ? (userOpacity ?? 1) : 1 } });
+      }
+      if (layer.id === 'maritime-concessions') {
+        state.map.addLayer({
+          id: `label-${layer.id}`, type: 'symbol', source: sourceId, 'source-layer': layer.id,
+          minzoom: 15, filter: ['==', ['geometry-type'], 'Polygon'],
+          layout: {
+            'text-field': ['get', 'idconc'], 'text-font': ['noto-sans-regular'],
+            'text-size': 11, 'text-anchor': 'top', 'text-offset': [0, 0.7],
+          },
+          paint: { 'text-color': polygonColor, 'text-halo-color': '#fff', 'text-halo-width': 1.5 },
+        });
       }
       if (layer.id === 'cadastral-parcels') {
         addParcelLabels();
@@ -468,7 +489,7 @@
     if (state.layerFailures.has(layer.id)) return;
     state.layerFailures.add(layer.id);
     const row = document.querySelector(`[data-layer-id="${CSS.escape(layer.id)}"]`);
-    if (row) row.querySelector('.map-layer-meta').textContent = 'Unavailable';
+    if (row) row.querySelector('.map-layer-meta').textContent = tr('Temporarily unavailable');
     if (layer.id === 'cadastral-parcels') {
       addParcelRasterFallback();
       mapStatus('Vector parcel layer unavailable; using boundary fallback.', true);
@@ -497,6 +518,99 @@
     if (state.map.getLayer(target)) state.map.setPaintProperty(target, property, value);
   }
 
+  async function zoomToLayerPolygons(layer, button, { automatic = false } = {}) {
+    const map = state.map || state.fallbackMap;
+    if (!map || !layer.geojson_url) return;
+    const viewport = map.getBounds();
+    const initialCenter = map.getCenter();
+    const initialZoom = map.getZoom();
+    // Include nearby footprints at the edge of a shorter viewport. The same
+    // shared map centre can put a small polygon just below the visible map.
+    const longitudePadding = automatic ? (viewport.getEast() - viewport.getWest()) * 0.25 : 0;
+    const latitudePadding = automatic ? (viewport.getNorth() - viewport.getSouth()) * 0.25 : 0;
+    const params = new URLSearchParams({
+      west: String(Math.max(-180, viewport.getWest() - longitudePadding)),
+      south: String(Math.max(-90, viewport.getSouth() - latitudePadding)),
+      east: String(Math.min(180, viewport.getEast() + longitudePadding)),
+      north: String(Math.min(90, viewport.getNorth() + latitudePadding)),
+      limit: String(Math.min(layer.max_features || 2000, 5000)),
+    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    button.disabled = true;
+    mapStatus(tr('Loading polygon footprints…'));
+    try {
+      // Read native viewport geometry: tiny polygons can disappear during MVT
+      // quantization, but their real footprint can still be inspected at zoom.
+      const response = await fetch(`${layer.geojson_url}?${params}`, { signal: controller.signal });
+      if (!response.ok) throw new Error('Polygon geometry unavailable');
+      const payload = await response.json();
+      if (!state.activeLayers?.has(layer.id)) return;
+      if (payload.zoom_required) {
+        mapStatus(tr('Zoom in to find polygon footprints.'));
+        return;
+      }
+      const polygons = (payload.features || []).filter(feature => ['Polygon', 'MultiPolygon'].includes(feature.geometry?.type));
+      if (!polygons.length) {
+        mapStatus(tr('No polygon footprints are published in this view.'));
+        return;
+      }
+      let footprints = polygons.map(feature => {
+        let west = Infinity, south = Infinity, east = -Infinity, north = -Infinity;
+        const visit = coordinates => {
+          if (!Array.isArray(coordinates)) return;
+          if (typeof coordinates[0] === 'number' && typeof coordinates[1] === 'number') {
+            const [lng, lat] = coordinates;
+            if (!Number.isFinite(lng) || !Number.isFinite(lat)) return;
+            west = Math.min(west, lng); south = Math.min(south, lat);
+            east = Math.max(east, lng); north = Math.max(north, lat);
+          } else coordinates.forEach(visit);
+        };
+        visit(feature.geometry.coordinates);
+        return { west, south, east, north };
+      }).filter(bounds => Number.isFinite(bounds.west) && Number.isFinite(bounds.south) && bounds.east > bounds.west && bounds.north > bounds.south);
+      if (!footprints.length) throw new Error('Polygon bounds unavailable');
+      let fit = true;
+      if (automatic) {
+        const currentCenter = map.getCenter();
+        // An automatic reveal must not interrupt a pan or zoom made while
+        // its request was pending.
+        if (Math.abs(currentCenter.lng - initialCenter.lng) > 1e-8 || Math.abs(currentCenter.lat - initialCenter.lat) > 1e-8 || Math.abs(map.getZoom() - initialZoom) > 1e-8) return;
+        const project = coordinates => state.map
+          ? state.map.project(coordinates)
+          : state.fallbackMap.latLngToContainerPoint([coordinates[1], coordinates[0]]);
+        const width = $('directMap').clientWidth, height = $('directMap').clientHeight;
+        fit = !footprints.some(bounds => {
+          const corners = [[bounds.west, bounds.south], [bounds.west, bounds.north], [bounds.east, bounds.south], [bounds.east, bounds.north]].map(project);
+          const visibleWidth = Math.min(width - 50, Math.max(...corners.map(point => point.x))) - Math.max(50, Math.min(...corners.map(point => point.x)));
+          const visibleHeight = Math.min(height - 50, Math.max(...corners.map(point => point.y))) - Math.max(50, Math.min(...corners.map(point => point.y)));
+          return visibleWidth >= 16 && visibleHeight >= 16;
+        });
+        if (fit) {
+          const distance = bounds => {
+            const point = project([(bounds.west + bounds.east) / 2, (bounds.south + bounds.north) / 2]);
+            return Math.hypot(point.x - width / 2, point.y - height / 2);
+          };
+          // Fitting many tiny, scattered footprints would zoom out and keep
+          // them looking like dots. Reveal the nearest actual polygon.
+          footprints = [footprints.reduce((nearest, bounds) => distance(bounds) < distance(nearest) ? bounds : nearest)];
+        }
+      }
+      const west = Math.min(...footprints.map(bounds => bounds.west)), south = Math.min(...footprints.map(bounds => bounds.south));
+      const east = Math.max(...footprints.map(bounds => bounds.east)), north = Math.max(...footprints.map(bounds => bounds.north));
+      if (fit && state.map) state.map.fitBounds([[west, south], [east, north]], { padding: 80, maxZoom: 20, duration: 600 });
+      else if (fit) state.fallbackMap.fitBounds([[south, west], [north, east]], { padding: [80, 80], maxZoom: 20 });
+      $('mapLayersCard').hidden = true;
+      $('layersToggle').setAttribute('aria-expanded', 'false');
+      mapStatus(tr('Polygon footprints in view: {n}', { n: footprints.length }));
+    } catch (_) {
+      mapStatus(tr('Polygon footprints could not be loaded.'), true);
+    } finally {
+      clearTimeout(timeout);
+      button.disabled = false;
+    }
+  }
+
   function buildLayerItem(layer, initializingLayers) {
     const item = document.createElement('div');
     item.className = 'map-layer-item';
@@ -520,6 +634,20 @@
     const caption = document.createElement('span');
     caption.textContent = setting.label;
     opacity.append(caption, slider);
+    const geometryControls = layer.kind === 'mixed' ? document.createElement('div') : null;
+    if (geometryControls) {
+      geometryControls.className = 'map-layer-geometry-controls';
+      geometryControls.hidden = !input.checked;
+      const legend = document.createElement('div');
+      legend.className = 'map-layer-geometry-legend';
+      legend.innerHTML = `<span><i class="map-layer-swatch" style="background:${escapeHtml(layer.polygon_color || layerColor(layer.id))}"></i>${escapeHtml(tr('Polygons'))}</span><span><i class="map-layer-swatch is-point" style="background:${escapeHtml(layerColor(layer.id))}"></i>${escapeHtml(tr('Points'))}</span>`;
+      const zoomButton = document.createElement('button');
+      zoomButton.type = 'button';
+      zoomButton.className = 'map-layer-zoom';
+      zoomButton.textContent = tr('Zoom to polygons');
+      zoomButton.addEventListener('click', () => { void zoomToLayerPolygons(layer, zoomButton); });
+      geometryControls.append(legend, zoomButton);
+    }
     input.addEventListener('change', () => {
       state.adminSubstituteAutoLayers.delete(layer.id);
       if (state.activeLayers === null) state.activeLayers = new Set();
@@ -528,8 +656,13 @@
       if (input.checked && (!state.map || !state.map.getSource(layerSourceId(layer)))) addCatalogLayer(layer);
       setLayerVisibility(layer.id, input.checked);
       opacity.hidden = !input.checked || !state.map;
+      if (geometryControls) geometryControls.hidden = !input.checked;
       reorderMapLayers();
       updateParcelZoomAffordance();
+      if (input.checked && layer.id === 'maritime-concessions') {
+        const zoomButton = geometryControls?.querySelector('.map-layer-zoom');
+        if (zoomButton) void zoomToLayerPolygons(layer, zoomButton, { automatic: true });
+      }
     });
     // Tiles are capped server-side, so dense areas can omit features; say so.
     const cap = layer.max_features ? ` · ${tr('Up to {n} features per tile', { n: Number(layer.max_features).toLocaleString('it-IT') })}` : '';
@@ -538,6 +671,7 @@
     copy.innerHTML = `<strong><i class="map-layer-swatch" style="background:${layerColor(layer.id)}"></i>${escapeHtml(tr(layer.title))}</strong><small class="map-layer-meta">${escapeHtml(layerMetadata(layer))}</small>`;
     row.append(input, copy);
     item.append(row, badges, opacity);
+    if (geometryControls) item.appendChild(geometryControls);
     return { item, input };
   }
 
@@ -564,16 +698,35 @@
           if (state.activeLayers === null) state.activeLayers = new Set();
           state.activeLayers.add(layer.id);
           addCatalogLayer(layer);
+          if (initializingLayers && layer.id === 'maritime-concessions' && !new URLSearchParams(window.location.search).has('parcel')) {
+            const zoomButton = item.querySelector('.map-layer-zoom');
+            if (zoomButton) void zoomToLayerPolygons(layer, zoomButton, { automatic: true });
+          }
         }
       });
       list.appendChild(section);
     });
     reorderMapLayers();
     updateParcelZoomAffordance();
+    updateCoverageStatus();
+  }
+
+  function updateCoverageStatus() {
+    const status = $('mapCoverageStatus');
+    if (!status) return;
+    const estimated = state.catalog.filter((layer) => Array.isArray(layer.estimated_bounds));
     const partial = state.catalog.filter((layer) => layer.coverage === 'partial');
-    $('mapCoverageStatus').textContent = partial.length
-      ? tr('Partial coverage: {layers}', { layers: partial.map((layer) => `${tr(layer.title)}${layer.coverage_note ? ` (${layer.coverage_note})` : ''}`).join('; ') })
-      : '';
+    if (estimated.length) {
+      status.textContent = `${tr('Approximate data extent')}: ${estimated.map((layer) => tr(layer.title)).join(', ')}. ${tr('The extent is estimated; local gaps may remain.')}`;
+    } else if (partial.length) {
+      status.textContent = tr('Partial coverage: {layers}', {
+        layers: partial.map((layer) => `${tr(layer.title)}${layer.coverage_note ? ` (${layer.coverage_note})` : ''}`).join('; '),
+      });
+    } else {
+      status.textContent = state.catalog.some((layer) => layer.coverage === 'unknown')
+        ? tr('Coverage not reported')
+        : '';
+    }
   }
 
   function viewportOutside(bounds, coverage) {
@@ -594,7 +747,11 @@
       const hints = [];
       if (state.activeLayers?.has(layer.id)) {
         if (zoom < Number(layer.min_zoom || 0)) hints.push(tr('Zoom in: visible from zoom {n}', { n: layer.min_zoom }));
-        if (viewportOutside(bounds, layer.coverage_bounds)) hints.push(tr('Outside coverage: {note}', { note: layer.coverage_note || '' }));
+        if (viewportOutside(bounds, layer.estimated_bounds || layer.coverage_bounds)) {
+          hints.push(layer.estimated_bounds
+            ? tr('Outside the estimated data extent; coverage may vary.')
+            : tr('Outside coverage: {note}', { note: layer.coverage_note || '' }));
+        }
       }
       badges.textContent = hints.join(' · ');
       badges.hidden = !hints.length;
@@ -605,16 +762,31 @@
     if (!state.fallbackMap || !layer || layer.id === 'raster-coverage' || state.fallbackLayers.has(layer.id)) return;
     try {
       let overlay;
-      if (layer.id === 'cadastral-parcels') {
+      if (layer.id === 'cadastral-parcels' && !L.vectorGrid?.protobuf) {
         overlay = L.tileLayer(absoluteTileUrl('/api/v1/tiles/cadastral-boundaries/{z}/{x}/{y}.png?layer=ple'), {
           minZoom: Number(layer.min_zoom || 0), maxZoom: 22, maxNativeZoom: 16,
           attribution: 'Cadastral boundaries',
         });
       } else if (L.vectorGrid?.protobuf && layer.tile_url) {
         const color = layerColor(layer.id);
-        const style = { color, weight: 1, opacity: .8, fillColor: color, fillOpacity: Number(layer.fill_opacity ?? .12), radius: 4 };
+        const style = (properties) => {
+          const polygon = layer.kind === 'mixed'
+            ? /polygon/i.test(String(properties.geometry_type || ''))
+            : isPolygonLayer(layer);
+          const featureColor = polygon ? (layer.polygon_color || color) : color;
+          return {
+            color: polygon ? featureColor : '#fff',
+            weight: polygon ? Number(layer.line_width ?? 1.4) : 1,
+            opacity: 1,
+            fill: true,
+            fillColor: featureColor,
+            fillOpacity: polygon ? Number(layer.fill_opacity ?? .12) : 1,
+            radius: 4,
+          };
+        };
         overlay = L.vectorGrid.protobuf(absoluteTileUrl(layer.tile_url), {
           vectorTileLayerStyles: { [layer.id]: style },
+          minZoom: Number(layer.min_zoom || 0),
           maxNativeZoom: 22,
           interactive: false,
         });
@@ -634,6 +806,8 @@
     input.checked = checked;
     const opacity = input.closest('.map-layer-item')?.querySelector('.map-layer-opacity');
     if (opacity) opacity.hidden = !checked || !state.map;
+    const geometryControls = input.closest('.map-layer-item')?.querySelector('.map-layer-geometry-controls');
+    if (geometryControls) geometryControls.hidden = !checked;
   }
 
   function enableAdministrativeSubstitute() {
@@ -673,20 +847,20 @@
     const panelOpen = !$('directParcelPanel')?.hidden;
     const bounds = map.getBounds?.();
     const parcels = state.catalog.find((layer) => layer.id === 'cadastral-parcels');
-    const coverage = parcels?.coverage_bounds;
+    const estimatedBounds = parcels?.estimated_bounds || parcels?.coverage_bounds;
     // While the source is down the catalog's coverage bounds say nothing about
     // what is published, so do not claim an area has no parcels.
     const sourceDown = state.sourceHealthDown || state.sourceTileDown;
-    const outsideCoverage = !sourceDown && viewportOutside(bounds, coverage);
+    const outsideCoverage = !sourceDown && viewportOutside(bounds, estimatedBounds);
     updateLayerBadges();
     const note = $('mapHelpNote');
     if (!note) return;
     if (outsideCoverage) {
-      note.textContent = 'No cadastral parcels published for this area yet (coverage: Veneto).';
+      note.textContent = tr('Outside the estimated data extent; coverage may vary.');
     } else if (belowParcelZoom && !administrativeSubstituteLayer() && !sourceDown) {
-      note.textContent = 'Zoom in to see cadastral parcels; administrative boundaries are not configured.';
+      note.textContent = tr('Zoom in to see cadastral parcels; administrative boundaries are not configured.');
     } else {
-      note.textContent = 'Zoom in to see cadastral parcels';
+      note.textContent = tr('Zoom in to see cadastral parcels');
     }
     note.hidden = panelOpen || (!outsideCoverage && !belowParcelZoom);
   }
@@ -699,13 +873,32 @@
       if (!response.ok) return;
       const payload = await response.json();
       state.sourceHealthDown = payload.available === false;
-      updateSourceBanner();
+      state.unavailableLayerIds = new Set(
+        payload.available === false
+          ? []
+          : (payload.layers || []).filter((health) => !health.available).map((health) => health.id),
+      );
+      [...state.tileErrors].forEach((sourceId) => {
+        if (isKnownUnavailableTileSource(sourceId)) {
+          state.tileErrors.delete(sourceId);
+          tileRetry.pending.delete(sourceId);
+          delete tileRetry.attempts[sourceId];
+        }
+      });
+      refreshSourceTileDown();
       updateParcelZoomAffordance();
       (payload.layers || []).forEach((health) => {
         const row = document.querySelector(`[data-layer-id="${CSS.escape(health.id)}"]`);
         const meta = row?.querySelector('.map-layer-meta');
         if (!meta) return;
         const catalogLayer = state.catalog.find((layer) => layer.id === health.id);
+        if (catalogLayer && health.source_database) {
+          catalogLayer.source = `${health.source_database} PostgreSQL/PostGIS`;
+        }
+        if (catalogLayer && Array.isArray(health.estimated_bounds)) {
+          catalogLayer.estimated_bounds = health.estimated_bounds;
+          catalogLayer.extent_source = health.extent_source || '';
+        }
         const metadata = catalogLayer ? ` · ${layerMetadata(catalogLayer)}` : '';
         // The whole source being down is an outage, not a configuration
         // state; drop the provenance text so the row says only that.
@@ -720,10 +913,30 @@
         const input = row.querySelector('input[type="checkbox"]');
         if (input) {
           const unusable = payload.available !== false && !health.available;
-          input.disabled = unusable && !input.checked;
+          if (unusable && input.checked) {
+            input.checked = false;
+            state.activeLayers?.delete(health.id);
+            setLayerVisibility(health.id, false);
+            const opacity = row.querySelector('.map-layer-opacity');
+            if (opacity) opacity.hidden = true;
+            const geometryControls = row.querySelector('.map-layer-geometry-controls');
+            if (geometryControls) geometryControls.hidden = true;
+            const sourceId = layerSourceId({ id: health.id });
+            tileRetry.pending.delete(sourceId);
+            delete tileRetry.attempts[sourceId];
+            if (!tileRetry.pending.size) {
+              clearTimeout(tileRetry.timer);
+              tileRetry.timer = null;
+            }
+          }
+          input.disabled = unusable;
           row.classList.toggle('is-unavailable', unusable);
         }
+        if (catalogLayer) row.title = layerMetadata(catalogLayer);
       });
+      updateCoverageStatus();
+      updateLayerBadges();
+      updateParcelZoomAffordance();
     } catch (_) {
       // Health is advisory; the catalog and map remain usable without it.
     } finally { clearTimeout(timeout); }
@@ -740,7 +953,8 @@
       ...idsFor('line', isPolygonLayer),
       ...idsFor('point', isPointLayer),
       'point-enrichment-fires', 'point-auction-properties', 'point-sales-properties',
-      'label-cadastral-parcels', 'fill-adjacent-parcels', 'line-adjacent-parcels',
+      'label-cadastral-parcels', ...idsFor('label', layer => layer.kind === 'mixed'),
+      'fill-adjacent-parcels', 'line-adjacent-parcels',
       'selected-parcel-fill', 'selected-parcel-line',
     ];
     bottomToTop.forEach((id) => { if (state.map.getLayer(id)) state.map.moveLayer(id); });
@@ -850,10 +1064,10 @@
     $('legacyAnalysisLink').href = `/map-legacy?parcel=${encodeURIComponent(reference)}`;
     $('parcelReportLink').href = `/map-legacy${parcelQuery}`;
     const computedArea = props.computed_area_sqm != null && props.area_sqm == null && props.area == null && props.area_display == null;
-    if (computedArea) $('directParcelContent').querySelector('.parcel-kpi:first-child span').textContent = 'Area (computed)';
+    if (computedArea) $('directParcelContent').querySelector('.parcel-kpi:first-child span').textContent = tr('Area (computed)');
     const saved = state.savedReference === reference;
     $('parcelSaveButton').disabled = saved;
-    $('parcelSaveButton').textContent = saved ? 'Saved' : 'Save parcel';
+    $('parcelSaveButton').textContent = saved ? tr('Saved') : tr('Save parcel');
     $('directParcelContent').insertAdjacentHTML('beforeend', enrichmentHtml);
     $('directParcelPanel').hidden = false;
     $('mapHelpNote').hidden = true;
@@ -864,7 +1078,7 @@
     if (!reference) return;
     const button = $('parcelSaveButton');
     button.disabled = true;
-    button.textContent = 'Saving…';
+    button.textContent = tr('Saving…');
     try {
       const response = await fetch('/api/v1/saved-parcels', {
         method: 'POST',
@@ -879,18 +1093,18 @@
       if (response.status === 401) throw new Error('Sign in to save parcels');
       if (response.status === 409) {
         state.savedReference = reference;
-        button.textContent = 'Already saved';
+        button.textContent = tr('Already saved');
         mapStatus('Parcel already saved');
         return;
       }
       if (!response.ok) throw new Error('Could not save parcel');
       state.savedReference = reference;
-      button.textContent = 'Saved';
+      button.textContent = tr('Saved');
       mapStatus('Parcel saved');
       void loadShortlist();
     } catch (error) {
       button.disabled = false;
-      button.textContent = 'Save parcel';
+      button.textContent = tr('Save parcel');
       mapStatus(error.message || 'Could not save parcel', true);
     }
   }
@@ -998,18 +1212,18 @@
     if (!list) return;
     if (!window.landRegistrySignedIn) {
       // Signed-out visitors have no saved parcels; don't provoke a 401.
-      $('shortlistSummary').textContent = 'Sign in to load saved parcels';
+      $('shortlistSummary').textContent = tr('Sign in to load saved parcels');
       const next = encodeURIComponent(window.location.pathname + window.location.search);
-      list.innerHTML = `<p class="map-muted"><a href="/auth/login?next=${next}">Sign in</a> to see your saved parcels.</p>`;
+      list.innerHTML = `<p class="map-muted"><a href="/auth/login?next=${next}">${escapeHtml(tr('Sign in'))}</a> ${escapeHtml(tr('to see your saved parcels.'))}</p>`;
       return;
     }
     const hazardOnly = $('shortlistHazardFilter')?.checked;
-    list.innerHTML = '<p class="map-muted">Loading shortlist…</p>';
+    list.innerHTML = `<p class="map-muted">${escapeHtml(tr('Loading shortlist…'))}</p>`;
     try {
       const response = await fetch(`/api/v1/saved-parcels${hazardOnly ? '?active_hazard=true' : ''}`);
       if (response.status === 401) {
-        $('shortlistSummary').textContent = 'Sign in to load saved parcels';
-        list.innerHTML = '<p class="map-muted">Authentication required.</p>';
+        $('shortlistSummary').textContent = tr('Sign in to load saved parcels');
+        list.innerHTML = `<p class="map-muted">${escapeHtml(tr('Authentication required.'))}</p>`;
         return;
       }
       if (!response.ok) throw new Error('Shortlist unavailable');
@@ -1019,7 +1233,7 @@
       state.shortlistSummary = payload.summary || null;
       renderShortlist();
     } catch (error) {
-      list.innerHTML = '<p class="map-muted">Shortlist unavailable.</p>';
+      list.innerHTML = `<p class="map-muted">${escapeHtml(tr('Shortlist unavailable.'))}</p>`;
       mapStatus(error.message || 'Shortlist unavailable', true);
     }
   }
@@ -1222,13 +1436,32 @@
 
   const tileRetry = { pending: new Set(), timer: null, attempts: {} };
 
+  function isKnownUnavailableTileSource(sourceId) {
+    const prefix = 'source-';
+    return String(sourceId).startsWith(prefix)
+      && state.unavailableLayerIds.has(String(sourceId).slice(prefix.length));
+  }
+
+  function refreshSourceTileDown() {
+    state.sourceTileDown = [...state.tileErrors].some((sourceId) =>
+      !isKnownUnavailableTileSource(sourceId) && (tileRetry.attempts[sourceId] || 0) >= 2,
+    );
+    updateSourceBanner();
+  }
+
   function scheduleTileRetry(sourceId) {
+    if (!state.sourceHealthDown && isKnownUnavailableTileSource(sourceId)) {
+      state.tileErrors.delete(sourceId);
+      tileRetry.pending.delete(sourceId);
+      delete tileRetry.attempts[sourceId];
+      refreshSourceTileDown();
+      return;
+    }
     const attempts = tileRetry.attempts[sourceId] || 0;
     if (attempts >= 2) {
       // Out of retries: stop requesting and tell the user once. Panning or
       // the banner's Retry button starts a fresh round.
-      state.sourceTileDown = true;
-      updateSourceBanner();
+      refreshSourceTileDown();
       return;
     }
     tileRetry.pending.add(sourceId);
@@ -1242,7 +1475,7 @@
         source.setTiles(tiles);
       });
       tileRetry.pending.clear();
-    }, 1500 * (attempts + 1));
+    }, 8000 * (2 ** attempts));
   }
 
   function retrySourceTiles() {
@@ -2521,6 +2754,14 @@
     else if (restored.invalidParcel) mapStatus('Invalid parcel reference — selection was not loaded.', true);
     else mapStatus(state.fallbackMap ? 'Map ready (raster mode)' : 'Map ready');
     await loadCatalog();
+    const requestedView = new URLSearchParams(window.location.search);
+    if (requestedView.get('panel') === 'table') setTableViewOpen(true);
+    const routeNotices = {
+      table: 'Map table moved into the map.',
+      adjacency: 'Select a parcel to find adjacent parcels from its details panel.',
+    };
+    const notice = routeNotices[requestedView.get('notice')];
+    if (notice) mapStatus(tr(notice));
     if (salesOverlay.active) { void loadSalesGeoLayers(); void loadSalesOverlay(); }
     void loadShortlist();
     void loadLayerHealth();
@@ -2592,10 +2833,7 @@
       if (event.sourceId && event.sourceDataType === 'content' && event.tile?.state === 'loaded') {
         state.tileErrors.delete(event.sourceId);
         tileRetry.attempts[event.sourceId] = 0;
-        if (state.sourceTileDown && !String(event.sourceId).startsWith('basemap')) {
-          state.sourceTileDown = false;
-          updateSourceBanner();
-        }
+        refreshSourceTileDown();
       }
     });
     // React only when a tile-loading phase has just settled. Doing this work
@@ -2634,7 +2872,7 @@
       }
       const overlayLayers = state.catalog
         .filter((layer) => layer.id !== 'cadastral-parcels' && (state.map.getLayer(`fill-${layer.id}`) || state.map.getLayer(`point-${layer.id}`)))
-        .map((layer) => state.map.getLayer(`fill-${layer.id}`) ? `fill-${layer.id}` : `point-${layer.id}`);
+        .flatMap((layer) => ['fill', 'line', 'point', 'label'].map(prefix => `${prefix}-${layer.id}`).filter(id => state.map.getLayer(id)));
       const overlayFeature = overlayLayers.length ? state.map.queryRenderedFeatures(event.point, { layers: overlayLayers })[0] : null;
       if (overlayFeature) {
         const layer = state.catalog.find((candidate) => overlayFeature.layer?.id?.endsWith(candidate.id));

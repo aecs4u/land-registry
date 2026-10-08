@@ -148,6 +148,12 @@ function handleTableViewClick() {
 // ── Page init (auto-zoom, zone manager) ──────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', function () {
+    if (new URLSearchParams(window.location.search).get('view') === 'mapping') {
+        setTimeout(function () {
+            if (typeof window.showMappingView === 'function') window.showMappingView();
+        }, 0);
+    }
+
     setTimeout(function () {
         if (typeof updatePolygonManagementState === 'function') {
             updatePolygonManagementState();

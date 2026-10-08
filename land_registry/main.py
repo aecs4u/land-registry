@@ -20,7 +20,7 @@ from tornado.ioloop import IOLoop
 from land_registry.cadastral_utils import load_cadastral_structure, get_cadastral_stats
 from land_registry.dashboard import TEMPLATE
 from land_registry.file_availability_db import file_availability_db
-from land_registry.i18n import LocaleMiddleware, detect_locale, make_gettext, contextvar_gettext
+from land_registry.i18n import LocaleMiddleware, detect_locale, make_gettext, contextvar_gettext, translation_map
 from land_registry.map import get_current_gdf, map_generator
 from land_registry.rate_limit import RateLimitMiddleware
 from land_registry.map_observability import MapMetricsMiddleware, map_metrics
@@ -773,15 +773,23 @@ async def readiness_check():
             status_code=503,
             headers=headers,
         )
-    available = [layer["id"] for layer in layers if layer.get("available")]
-    unavailable = [layer["id"] for layer in layers if not layer.get("available")]
+    available = {layer["id"] for layer in layers if layer.get("available")}
+    unavailable = sorted(layer["id"] for layer in layers if not layer.get("available"))
+    # A configured source with unrelated layers online is not ready to serve
+    # the application's core cadastral workflow. Keep this tied to catalog
+    # entries so small test/fallback sources can still report their own status.
+    required_ids = {"cadastral-parcels"} & {layer["id"] for layer in layers}
+    missing_required = sorted(required_ids - available)
+    ready = bool(available) and not missing_required
     body = {
-        "status": "ready" if available else "unavailable",
+        "status": "ready" if ready else "unavailable",
         "service": "land-registry",
         "layers_available": len(available),
         "layers_unavailable": unavailable,
+        "layers_required": sorted(required_ids),
+        "layers_required_unavailable": missing_required,
     }
-    return JSONResponse(body, status_code=200 if available else 503, headers=headers)
+    return JSONResponse(body, status_code=200 if ready else 503, headers=headers)
 
 
 async def _build_main_map_shell_context(request: Request) -> dict:
@@ -945,7 +953,13 @@ async def serve_legacy_map_shell(request: Request):
     return await _serve_legacy_map_shell(request)
 
 
-@app.get("/map-v2", response_class=HTMLResponse)
+@app.get("/map-v2", include_in_schema=False)
+async def redirect_map_v2(request: Request):
+    """Keep old bookmarks working while exposing a single canonical map URL."""
+    query = f"?{request.url.query}" if request.url.query else ""
+    return RedirectResponse(url=f"/map{query}", status_code=308)
+
+
 async def serve_direct_map(request: Request, user=Depends(get_current_user_optional)):
     """Serve the direct, vector-tile map experience.
 
@@ -954,24 +968,28 @@ async def serve_direct_map(request: Request, user=Depends(get_current_user_optio
     rolled out.
     """
     locale = detect_locale(request)
+    gettext = make_gettext(locale)
+    i18n_strings = translation_map(locale)
+    i18n_strings.update({
+        key: gettext(key)
+        for key in (
+            "Universities", "Schools", "Kindergartens", "Supermarkets", "Shops",
+            "Pharmacies", "Hospitals", "Public transport", "Parks", "Restaurants",
+            "Red alert", "Orange alert", "Yellow alert", "No alert", "Unavailable", "Alert area",
+            "Administrative", "Cadastral", "Market", "Risk", "Demographics", "Territory",
+            "Opacity", "Fill", "Partial coverage: {layers}", "Zoom in: visible from zoom {n}",
+            "Outside coverage: {note}", "Up to {n} features per tile", "Default",
+            "Administrative statistics are not configured.", "Turn on Sales to load administrative statistics.",
+            "No statistics metrics available.", "Coverage not reported", "Approximate data extent",
+            "Outside the estimated data extent; coverage may vary.", "Map table moved into the map.",
+            "This table is not available in the current map. Use the parcel analysis tools instead.",
+            *(layer["title"] for layer in map_layer_catalog()),
+        )
+    })
     context = {
-        "_": make_gettext(locale),
+        "_": gettext,
         "locale": locale,
-        "i18n_strings": {
-            key: make_gettext(locale)(key)
-            for key in (
-                "Universities", "Schools", "Kindergartens", "Supermarkets", "Shops",
-                "Pharmacies", "Hospitals", "Public transport", "Parks", "Restaurants",
-                "Red alert", "Orange alert", "Yellow alert", "No alert", "Unavailable", "Alert area",
-                # Layers card: group headings, row hints and catalog titles.
-                "Administrative", "Cadastral", "Market", "Risk", "Demographics", "Territory",
-                "Opacity", "Fill", "Partial coverage: {layers}", "Zoom in: visible from zoom {n}",
-                "Outside coverage: {note}", "Up to {n} features per tile", "Default",
-                "Administrative statistics are not configured.", "Turn on Sales to load administrative statistics.",
-                "No statistics metrics available.",
-                *(layer["title"] for layer in map_layer_catalog()),
-            )
-        },
+        "i18n_strings": i18n_strings,
         "carto_enabled": map_generator.controls_manager.settings.carto_enabled,
         "carto_api_key": map_generator.controls_manager.settings.carto_api_key,
         "clerk_publishable_key": get_auth_config().clerk_publishable_key,
@@ -1013,7 +1031,6 @@ def _account_nav_items(gettext) -> list[dict]:
             "icon": "fa-map",
             "children": [
                 {"label": gettext("Cadastral map"), "url": "/map", "icon": "fa-map-marked-alt"},
-                {"label": gettext("Analysis map"), "url": "/map-legacy", "icon": "fa-draw-polygon"},
             ],
         },
         {
@@ -1101,10 +1118,17 @@ async def show_map_table(request: Request):
     Display map table using Panel.
     Uses configured Panel route from settings (currently points to main dashboard).
     """
-    tabulator = await asyncio.to_thread(server_document, PANEL_MAP_TABLE_URL)
+    try:
+        tabulator = await asyncio.to_thread(server_document, PANEL_MAP_TABLE_URL)
+    except Exception as exc:
+        logger.warning("Panel map table could not be embedded: %s", exc)
+        tabulator = ""
     return templates.TemplateResponse(request, "tabulator.html", {
         "tabulator": tabulator,
         "title": f"{contextvar_gettext('Map Table')} - {contextvar_gettext('Land Registry Viewer')}",
+        "replacement_url": "/map?panel=table&notice=table",
+        "replacement_label": contextvar_gettext("Open the map attribute table"),
+        "fallback_message": contextvar_gettext("The table service did not connect. The map now has a built-in attribute table."),
     })
 
 
@@ -1114,10 +1138,17 @@ async def show_adjacency_table(request: Request):
     Display adjacency analysis table using Panel.
     Uses configured Panel route from settings (currently points to main dashboard).
     """
-    tabulator = await asyncio.to_thread(server_document, PANEL_ADJACENCY_TABLE_URL)
+    try:
+        tabulator = await asyncio.to_thread(server_document, PANEL_ADJACENCY_TABLE_URL)
+    except Exception as exc:
+        logger.warning("Panel adjacency table could not be embedded: %s", exc)
+        tabulator = ""
     return templates.TemplateResponse(request, "tabulator.html", {
         "tabulator": tabulator,
         "title": f"{contextvar_gettext('Adjacency Table')} - {contextvar_gettext('Land Registry Viewer')}",
+        "replacement_url": "/map?notice=adjacency",
+        "replacement_label": contextvar_gettext("Open cadastral map"),
+        "fallback_message": contextvar_gettext("Select a parcel to find adjacent parcels from its details panel."),
     })
 
 
@@ -1127,10 +1158,17 @@ async def show_mapping_table(request: Request):
     Display mapping/drawing table using Panel.
     Uses configured Panel route from settings (currently points to main dashboard).
     """
-    tabulator = await asyncio.to_thread(server_document, PANEL_MAPPING_TABLE_URL)
+    try:
+        tabulator = await asyncio.to_thread(server_document, PANEL_MAPPING_TABLE_URL)
+    except Exception as exc:
+        logger.warning("Panel mapping table could not be embedded: %s", exc)
+        tabulator = ""
     return templates.TemplateResponse(request, "tabulator.html", {
         "tabulator": tabulator,
         "title": f"{contextvar_gettext('Mapping Table')} - {contextvar_gettext('Land Registry Viewer')}",
+        "replacement_url": "/map-legacy?view=mapping",
+        "replacement_label": contextvar_gettext("Open drawing and zone tools"),
+        "fallback_message": contextvar_gettext("The mapping table is part of the file and drawing workspace."),
     })
 
 

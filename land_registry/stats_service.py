@@ -138,7 +138,7 @@ except ImportError:
     def zone_boundaries(*args, **kwargs) -> Dict[str, Any]:
         return {"type": "FeatureCollection", "features": []}
 from aecs4u_stats.osm.config import POI_CATEGORIES
-from aecs4u_stats.osm.pois import pois_within_radius, resolve_poi_db
+from aecs4u_stats.osm.pois import bbox_from_center, pois_within_radius, resolve_poi_db
 from shapely.geometry import Point, shape
 
 logger = logging.getLogger(__name__)
@@ -870,9 +870,61 @@ def sister_documents_available() -> bool:
     return source is not None and source.available()
 
 
+_POSTGRES_POI_RELATION_SQL = """
+    SELECT CASE
+        WHEN to_regclass('facts.poi') IS NOT NULL
+         AND to_regclass('facts.poi_category') IS NOT NULL THEN 'facts.poi'
+        WHEN to_regclass('source_osm_pois.osm_pois') IS NOT NULL
+            THEN 'source_osm_pois.osm_pois'
+    END AS relation
+"""
+
+
+def _postgres_poi_query(
+    relation: str, lat: float, lng: float, radius_km: float, categories: list[str] | None
+) -> tuple[str, tuple]:
+    """Support both normalized POIs and the migrated source foreign table."""
+    if relation == "facts.poi":
+        category = "c.code"
+        geometry = "p.geom"
+        tables = "facts.poi p JOIN facts.poi_category c ON c.id = p.category_id"
+    elif relation == "source_osm_pois.osm_pois":
+        category = "p.category"
+        geometry = "ST_SetSRID(ST_MakePoint(p.longitude, p.latitude), 4326)"
+        tables = "source_osm_pois.osm_pois p"
+    else:
+        raise ValueError(f"Unsupported PostgreSQL POI relation: {relation}")
+
+    sql = f"""
+        SELECT {category} AS code, p.name, ST_Y({geometry}), ST_X({geometry}),
+               ST_Distance(
+                   {geometry}::geography,
+                   ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography
+               ) / 1000.0 AS distance_km
+        FROM {tables}
+        WHERE ST_DWithin(
+            {geometry}::geography,
+            ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography,
+            %s
+        )
+    """
+    params: list = [lng, lat, lng, lat, radius_km * 1000.0]
+    if relation == "source_osm_pois.osm_pois":
+        # These numeric predicates are pushed to the remote POI database;
+        # PostGIS only computes exact distances for the bounding-box rows.
+        south, west, north, east = bbox_from_center(lat, lng, radius_km)
+        sql += " AND p.latitude BETWEEN %s AND %s AND p.longitude BETWEEN %s AND %s"
+        params.extend((south, north, west, east))
+    if categories:
+        placeholders = ",".join(["%s"] * len(categories))
+        sql += f" AND {category} IN ({placeholders})"
+        params.extend(categories)
+    sql += " ORDER BY distance_km"
+    return sql, tuple(params)
+
+
 class _PostgresPoiSource:
-    """Read-only adapter over the canonical aecs4u-stats PostGIS ``facts.poi``
-    table — the migrated replacement for the local OSM POI SQLite store.
+    """Read-only adapter over the aecs4u-stats PostgreSQL POI tables.
 
     Mirrors ``PostgresCadastralBoundarySource`` in datashader_service.py:
     same DSN env-var chain, same lazy connection pool, same "unavailable is
@@ -889,6 +941,7 @@ class _PostgresPoiSource:
         self._pool = None
         self._pool_lock = threading.Lock()
         self._retry_at = 0.0
+        self._poi_relation_cache: tuple[str | None, float] | None = None
 
     @classmethod
     def from_environment(cls):
@@ -937,29 +990,23 @@ class _PostgresPoiSource:
         finally:
             pool.putconn(connection, close=bool(getattr(connection, "closed", 0)))
 
+    def _get_poi_relation(self) -> str | None:
+        cached = self._poi_relation_cache
+        if cached is not None and time.monotonic() < cached[1]:
+            return cached[0]
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute(_POSTGRES_POI_RELATION_SQL)
+            relation = cursor.fetchone()[0]
+        self._poi_relation_cache = (relation, time.monotonic() + (300 if relation else 60))
+        return relation
+
     def pois_near(
         self, lat: float, lng: float, radius_km: float = 1.0, categories: Optional[List[str]] = None
-    ) -> Dict[str, List[dict]]:
-        sql = """
-            SELECT c.code, p.name, ST_Y(p.geom), ST_X(p.geom),
-                   ST_Distance(
-                       p.geom::geography,
-                       ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography
-                   ) / 1000.0 AS distance_km
-            FROM facts.poi p
-            JOIN facts.poi_category c ON c.id = p.category_id
-            WHERE ST_DWithin(
-                p.geom::geography,
-                ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography,
-                %s
-            )
-        """
-        params: list = [lng, lat, lng, lat, radius_km * 1000.0]
-        if categories:
-            placeholders = ",".join(["%s"] * len(categories))
-            sql += f" AND c.code IN ({placeholders})"
-            params.extend(categories)
-        sql += " ORDER BY distance_km"
+    ) -> dict[str, list[dict]] | None:
+        relation = self._get_poi_relation()
+        if relation is None:
+            return None
+        sql, params = _postgres_poi_query(relation, lat, lng, radius_km, categories)
 
         grouped: Dict[str, List[dict]] = {}
         with self._connection() as connection:
@@ -1095,6 +1142,7 @@ class _AsyncPostgresSource:
         self.max_connections = max_connections
         self._pool = None
         self._retry_at = 0.0
+        self._poi_relation_cache: tuple[str | None, float] | None = None
 
     async def _get_pool(self):
         if self._pool is None:
@@ -1293,28 +1341,21 @@ class _AsyncPostgresSource:
             "source": "MEF/IRPEF via aecs4u-stats PostgreSQL via asyncpg",
         }
 
+    async def _get_poi_relation(self) -> str | None:
+        cached = self._poi_relation_cache
+        if cached is not None and time.monotonic() < cached[1]:
+            return cached[0]
+        row = await self._fetchrow(_POSTGRES_POI_RELATION_SQL)
+        relation = row["relation"]
+        self._poi_relation_cache = (relation, time.monotonic() + (300 if relation else 60))
+        return relation
+
     async def pois_near(self, lat: float, lng: float, radius_km: float = 1.0, categories=None):
-        sql = """
-            SELECT c.code, p.name, ST_Y(p.geom), ST_X(p.geom),
-                   ST_Distance(
-                       p.geom::geography,
-                       ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography
-                   ) / 1000.0 AS distance_km
-            FROM facts.poi p
-            JOIN facts.poi_category c ON c.id = p.category_id
-            WHERE ST_DWithin(
-                p.geom::geography,
-                ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography,
-                %s
-            )
-        """
-        params = [lng, lat, lng, lat, radius_km * 1000.0]
-        if categories:
-            placeholders = ",".join(["%s"] * len(categories))
-            sql += f" AND c.code IN ({placeholders})"
-            params.extend(categories)
-        sql += " ORDER BY distance_km"
-        rows = await self._fetch(sql, tuple(params))
+        relation = await self._get_poi_relation()
+        if relation is None:
+            return None
+        sql, params = _postgres_poi_query(relation, lat, lng, radius_km, categories)
+        rows = await self._fetch(sql, params)
         grouped: Dict[str, List[dict]] = {}
         for row in rows:
             grouped.setdefault(row["code"], []).append({
@@ -1559,13 +1600,14 @@ async def aget_pois_near(
             grouped = await asyncio.wait_for(
                 source.pois_near(lat, lng, radius_km=radius_km, categories=categories), timeout=6
             )
-            return {
-                "center": {"lat": lat, "lng": lng},
-                "radius_km": radius_km,
-                "total": sum(len(values) for values in grouped.values()),
-                "categories": grouped,
-                "source": "OpenStreetMap via aecs4u-stats (PostGIS asyncpg)",
-            }
+            if grouped is not None:
+                return {
+                    "center": {"lat": lat, "lng": lng},
+                    "radius_km": radius_km,
+                    "total": sum(len(values) for values in grouped.values()),
+                    "categories": grouped,
+                    "source": "OpenStreetMap via aecs4u-stats (PostGIS asyncpg)",
+                }
         except Exception:
             source._retry_at = time.monotonic() + 60
             logger.warning("Async PostgreSQL POI lookup failed; using local fallback", exc_info=True)
@@ -3773,7 +3815,7 @@ def get_pois_near(
     """
     POIs around a point, grouped by category with ``distance_km``, nearest-first.
 
-    Prefers the aecs4u-stats PostGIS ``facts.poi`` table when configured
+    Prefers the available aecs4u-stats PostgreSQL POI table when configured
     (``STATS_POSTGRES_DSN``), falling back to the local OSM POI
     SQLite store, and finally to an empty result when neither is available.
     """
@@ -3786,13 +3828,14 @@ def get_pois_near(
             grouped = _call_with_hard_timeout(
                 postgres_source.pois_near, 6, lat, lng, radius_km=radius_km, categories=categories
             )
-            return {
-                "center": {"lat": lat, "lng": lng},
-                "radius_km": radius_km,
-                "total": sum(len(v) for v in grouped.values()),
-                "categories": grouped,
-                "source": "OpenStreetMap via aecs4u-stats (PostGIS)",
-            }
+            if grouped is not None:
+                return {
+                    "center": {"lat": lat, "lng": lng},
+                    "radius_km": radius_km,
+                    "total": sum(len(v) for v in grouped.values()),
+                    "categories": grouped,
+                    "source": "OpenStreetMap via aecs4u-stats (PostGIS)",
+                }
         except Exception:
             postgres_source._retry_at = time.monotonic() + 60
             logger.warning("Postgres POI query failed; falling back to local SQLite store", exc_info=True)

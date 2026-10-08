@@ -73,8 +73,8 @@ def test_direct_map_supports_selection_search_url_state_and_enrichment():
         "Sign in to save parcels",
         "activeLayers",
         "initializingLayers",
-        "Date reported per feature",
-        "Update date not reported",
+        "Approximate data extent",
+        "Coverage not reported",
         "role === 'admin-substitute'",
         "enableAdministrativeSubstitute",
         "releaseAdministrativeSubstitute",
@@ -302,7 +302,7 @@ def test_direct_map_sales_and_poi_explorer_contract():
 
 
 def test_map_audit_fixes_include_coverage_state_accessibility_and_table_paging():
-    assert "coverage_bounds" in SCRIPT and "No cadastral parcels published for this area yet" in SCRIPT
+    assert "coverage_bounds" in SCRIPT and "Outside the estimated data extent; coverage may vary." in SCRIPT
     assert "parcel_id" in SCRIPT and "searchActiveIndex" in SCRIPT
     assert "aria-activedescendant" in SCRIPT
     assert "offset: String((tableView.page - 1) * tableView.pageSize)" in SCRIPT
@@ -395,8 +395,12 @@ def test_tile_retry_counter_only_resets_on_a_loaded_tile():
 def test_exhausted_tile_retries_raise_a_source_banner_instead_of_a_status_pill():
     retry = SCRIPT[SCRIPT.index("function scheduleTileRetry"):]
     retry = retry[:retry.index("tileRetry.pending.add")]
-    assert "state.sourceTileDown = true" in retry
-    assert "updateSourceBanner()" in retry
+    assert "refreshSourceTileDown()" in retry
+    refresh = SCRIPT[SCRIPT.index("function refreshSourceTileDown"):]
+    refresh = refresh[:refresh.index("function scheduleTileRetry")]
+    assert "state.sourceTileDown =" in refresh
+    assert "isKnownUnavailableTileSource" in refresh
+    assert "updateSourceBanner()" in refresh
     assert "function retrySourceTiles" in SCRIPT
     assert "mapSourceRetry" in SCRIPT
     assert ".map-source-banner" in STYLES
@@ -409,8 +413,8 @@ def test_source_outage_is_not_reported_as_configuration_or_coverage():
     assert "state.sourceHealthDown = payload.available === false" in health
     assert "Temporarily unavailable" in health
     assert "`Not configured${metadata}`" not in health
-    # The Veneto "no parcels published" claim must not be made during an outage.
-    assert "!sourceDown && viewportOutside(bounds, coverage)" in SCRIPT
+    # An approximate extent must not be interpreted as coverage during an outage.
+    assert "!sourceDown && viewportOutside(bounds, estimatedBounds)" in SCRIPT
     # A missing catalog yields a message in the attribute table, not a blank box.
     table = SCRIPT[SCRIPT.index("async function loadTableData"):]
     assert "Layer data is temporarily unavailable." in table[:table.index("const bounds")]

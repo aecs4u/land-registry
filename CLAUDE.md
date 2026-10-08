@@ -116,6 +116,8 @@ The dev server runs on **port 8000**. Panel/Bokeh dashboard runs on **port 5006*
 - Loaded map data (`_map_state`) is per browser session (`SessionScopedMapState`, max 16 live sessions); outside a request it uses a shared default.
 - Rate limits (`land_registry/rate_limit.py`) are per client and per instance; tiles and static files are exempt. Tune with `RATE_LIMIT_ENABLED`, `RATE_LIMIT_PROXY_HOPS`.
 - Map tiles are cached in memory (`land_registry/tile_cache.py`): `MAP_TILE_CACHE_MB` (default 64), `MAP_TILE_CACHE_TTL_SECONDS` (default 600).
+- The map's PostgreSQL schemas (`geo`, `spatial`, `facts`, `serving`) are defined by the `aecs4u-domain` migration `202610041200_land_registry_map_schemas.sql`; apply it before `scripts/apply_map_sql.py`. Census sections, maritime concessions and MPS04 points come from separate source databases (foreign tables owned by aecs4u-stats).
+- Geo-entity views (`serving.geo_entity`, `serving.geo_boundary_level`, `serving.market_zone_geo`, `serving.postal_zone_geo`, `serving.cadastral_*_geo`) key each layer by country, region, province, municipality and OMI zone; they come from `202610061200_land_registry_geo_entity_views.sql`. Run `select serving.refresh_geo_entity_views();` after loading geography or zone data (pass `true` after the first refresh to avoid blocking readers).
 - `python scripts/apply_map_sql.py [--dry-run]` applies the idempotent map index/statistics SQL from `scripts/sql` in order (needs `STATS_POSTGRES_DSN`).
 - CI runs the test suite before building (`.github/workflows/deploy-cloudrun.yml`). `tests/browser` is a Playwright smoke test that skips without Chromium.
 - Sign-out is `POST /auth/signout`; `GET /auth/logout` only shows a confirmation form.

@@ -4,4 +4,4 @@
 ANALYZE spatial.cadastral_parcel;
 ANALYZE spatial.hazard_area;
 ANALYZE spatial.market_zone;
-ANALYZE demanio_marittimo.concessions;
+ANALYZE agenziademanio.concessions;

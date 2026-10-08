@@ -29,7 +29,7 @@ def evaluate_health(
             problems.append(f"{layer_id}: relation is missing")
         if not item.get("geometry_column_exists"):
             problems.append(f"{layer_id}: geometry column is missing")
-        if not item.get("gist_index_exists"):
+        if item.get("requires_gist_index", True) and not item.get("gist_index_exists"):
             problems.append(f"{layer_id}: GiST index is missing")
         if not item.get("srid_matches"):
             problems.append(

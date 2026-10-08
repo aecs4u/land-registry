@@ -28,10 +28,11 @@ def build_page(key: str, _) -> dict:
                     _("Signing in is handled by our identity provider (Clerk). We receive your name and email address and keep a session cookie so you stay signed in."),
                 ]},
                 {"heading": _("Your files and shortlist"), "paragraphs": [
-                    _("Files you upload and parcels you shortlist are stored against your account and are not shared with other users."),
+                    _("Uploaded geospatial files are processed for the current session. The temporary upload file is deleted after processing; the resulting map layer stays in session memory and is not stored as an account document."),
+                    _("Saved parcels are stored under your account when you are signed in and are only returned to that account."),
                 ]},
                 {"heading": _("Cookies and local storage"), "paragraphs": [
-                    _("We use cookies and browser storage for the session, the interface language and the light or dark theme. We do not use advertising cookies."),
+                    _("We use a session cookie and a language-preference cookie. The light or dark theme is kept in browser storage. This application does not set advertising or analytics cookies."),
                 ]},
                 {"heading": _("Third-party services"), "paragraphs": [
                     _("Basemap tiles are loaded from third-party tile providers, and place-name searches that find no cadastral match are sent to OpenStreetMap Nominatim. Those providers see your IP address and the text you searched for."),

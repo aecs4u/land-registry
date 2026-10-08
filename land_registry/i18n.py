@@ -102,6 +102,21 @@ def make_gettext(locale: str) -> Callable[[str], str]:
     return get_translation(locale).gettext
 
 
+def translation_map(locale: str) -> dict[str, str]:
+    """Return singular translations for browser-side UI strings.
+
+    JavaScript uses a small gettext-compatible lookup. Sending the complete
+    singular catalogue prevents translated strings from silently falling back
+    to English just because a template did not list them first.
+    """
+    catalog = getattr(get_translation(locale), "_catalog", {})
+    return {
+        key: value
+        for key, value in catalog.items()
+        if isinstance(key, str) and isinstance(value, str) and value and value != key
+    }
+
+
 def contextvar_gettext(message: str) -> str:
     """
     Request-scoped gettext that reads the locale from the ContextVar set by

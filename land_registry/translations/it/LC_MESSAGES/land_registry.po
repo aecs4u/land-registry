@@ -1351,3 +1351,111 @@ msgstr "Torna alla mappa"
 
 msgid "Legal and support"
 msgstr "Note legali e assistenza"
+
+msgid "Uploaded geospatial files are processed for the current session. The temporary upload file is deleted after processing; the resulting map layer stays in session memory and is not stored as an account document."
+msgstr "I file geospaziali caricati vengono elaborati per la sessione corrente. Il file temporaneo viene eliminato al termine dell'elaborazione; il livello risultante resta nella memoria della sessione e non viene archiviato come documento dell'account."
+
+msgid "Saved parcels are stored under your account when you are signed in and are only returned to that account."
+msgstr "Le particelle salvate vengono associate al tuo account quando hai effettuato l'accesso e sono restituite solo a quell'account."
+
+msgid "We use a session cookie and a language-preference cookie. The light or dark theme is kept in browser storage. This application does not set advertising or analytics cookies."
+msgstr "Usiamo un cookie di sessione e un cookie per la lingua preferita. Il tema chiaro o scuro è conservato nella memoria del browser. Questa applicazione non imposta cookie pubblicitari o di analisi."
+
+msgid "Coverage not reported"
+msgstr "Copertura non dichiarata"
+
+msgid "Approximate data extent"
+msgstr "Estensione approssimativa dei dati"
+
+msgid "The extent is estimated; local gaps may remain."
+msgstr "L'estensione è stimata; possono esserci aree locali prive di dati."
+
+msgid "Outside the estimated data extent; coverage may vary."
+msgstr "Fuori dall'estensione stimata dei dati; la copertura può variare."
+
+msgid "Source version shown in feature details"
+msgstr "Versione della fonte visibile nei dettagli dell'elemento"
+
+msgid "Source date not reported"
+msgstr "Data della fonte non dichiarata"
+
+msgid "Map table moved into the map."
+msgstr "La tabella è ora disponibile direttamente nella mappa."
+
+msgid "Select a parcel to find adjacent parcels from its details panel."
+msgstr "Seleziona una particella e usa il pannello dei dettagli per trovare quelle adiacenti."
+
+msgid "Drawing and zone tools are available in the analysis workspace."
+msgstr "Gli strumenti di disegno e gestione delle zone sono disponibili nell'area di analisi."
+
+msgid "Search fallback sends your place name to OpenStreetMap Nominatim."
+msgstr "La ricerca alternativa invia il nome del luogo a OpenStreetMap Nominatim."
+
+msgid "Basemap tiles are loaded from external map providers. See the privacy page for details."
+msgstr "Le tile della mappa di base sono caricate da fornitori esterni. Consulta la pagina privacy per i dettagli."
+
+msgid "Layer data could not be loaded. Try Refresh in a moment."
+msgstr "Impossibile caricare i dati del livello. Riprova tra poco con Aggiorna."
+
+msgid "Layer data is temporarily unavailable."
+msgstr "I dati del livello non sono temporaneamente disponibili."
+
+msgid "No features in the current view."
+msgstr "Nessun elemento nella vista corrente."
+
+msgid "No layers available to list."
+msgstr "Nessun livello disponibile da elencare."
+
+msgid "Retry"
+msgstr "Riprova"
+
+msgid "Temporarily unavailable"
+msgstr "Temporaneamente non disponibile"
+
+msgid "Map data is temporarily unavailable. The basemap still works; layers will return when the service recovers."
+msgstr "I dati cartografici non sono temporaneamente disponibili. La mappa di base continua a funzionare; i livelli torneranno quando il servizio sarà ripristinato."
+
+msgid "Open the map attribute table"
+msgstr "Apri la tabella degli attributi della mappa"
+
+msgid "The table service did not connect. The map now has a built-in attribute table."
+msgstr "Il servizio della tabella non si è connesso. La mappa dispone ora di una tabella degli attributi integrata."
+
+msgid "Open cadastral map"
+msgstr "Apri la mappa catastale"
+
+msgid "Interactive table unavailable"
+msgstr "Tabella interattiva non disponibile"
+
+msgid "The mapping table is part of the file and drawing workspace."
+msgstr "La tabella di mappatura fa parte dell'area di lavoro per file e disegni."
+
+msgid "Open drawing and zone tools"
+msgstr "Apri gli strumenti di disegno e gestione delle zone"
+
+msgid "The table is now available directly in the map."
+msgstr "La tabella è ora disponibile direttamente nella mappa."
+
+msgid "Select a parcel and use its details panel to find adjacent parcels."
+msgstr "Seleziona una particella e usa il pannello dei dettagli per trovare quelle adiacenti."
+
+msgid "Points"
+msgstr "Punti"
+
+msgid "Zoom to polygons"
+msgstr "Inquadra poligoni"
+
+msgid "Loading polygon footprints…"
+msgstr "Caricamento dei poligoni…"
+
+msgid "Zoom in to find polygon footprints."
+msgstr "Aumenta lo zoom per trovare i poligoni."
+
+msgid "No polygon footprints are published in this view."
+msgstr "Nessun poligono pubblicato nell'area visualizzata."
+
+msgid "Polygon footprints could not be loaded."
+msgstr "Impossibile caricare i poligoni."
+
+msgid "Polygon footprints in view: {n}"
+msgstr "Poligoni nell'area visualizzata: {n}"

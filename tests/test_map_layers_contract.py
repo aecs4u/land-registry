@@ -24,7 +24,7 @@ def test_catalog_covers_every_canonical_spatial_relation():
         "spatial.cadastral_sheet",
         "spatial.cadastral_urban_section",
         "spatial.market_zone",
-        "spatial.postal_zone",
+        "cap_subcomunali.cap_subcomunali",
         "spatial.hazard_area",
         "facts.poi",
         "facts.hazard_measurement",
@@ -33,7 +33,7 @@ def test_catalog_covers_every_canonical_spatial_relation():
         "census_sections.sections",
         "serving.municipality_profile",
         "serving.market_zone_snapshot",
-        "demanio_marittimo.concessions",
+        "agenziademanio.concessions",
     } == tables
 
 
@@ -42,8 +42,8 @@ def test_catalog_ids_are_safe_and_have_feature_ids():
     for layer in MAP_LAYERS:
         assert layer.id_column in layer.properties
         assert layer.table.replace(".", "").replace("_", "").isalnum()
-    assert get_map_layer("cadastral-parcels").coverage == "partial"
-    assert "expected 2,847" in get_map_layer("urban-sections").coverage_note
+    assert get_map_layer("cadastral-parcels").coverage == "unknown"
+    assert get_map_layer("urban-sections").coverage == "unknown"
     assert get_map_layer("maritime-concessions").id_column == "row_id"
     assert get_map_layer("geo-boundaries").role == "admin-substitute"
     assert get_map_layer("municipality-profiles").role == "admin-substitute"
@@ -90,11 +90,11 @@ class _ConnectionSource:
 
 
 
-def test_partial_cadastral_coverage_is_published_as_a_viewport_bound():
+def test_cadastral_catalog_does_not_hardcode_regional_coverage():
     parcels = get_map_layer("cadastral-parcels")
-    assert parcels.coverage == "partial"
-    assert parcels.coverage_note == "Veneto only"
-    assert parcels.public()["coverage_bounds"] == [10.62, 44.79, 13.10, 46.68]
+    assert parcels.coverage == "unknown"
+    assert parcels.coverage_note == ""
+    assert parcels.public()["coverage_bounds"] is None
 
 
 def test_boundary_tile_joins_unit_name_and_type():
@@ -145,7 +145,7 @@ def test_mvt_query_is_allowlisted_and_attribute_bearing():
     assert "spatial.market_zone" in connection.sql
     assert "omi_zone_key" in connection.sql
     assert "ST_AsMVT" in connection.sql
-    assert "%s" not in connection.sql and "$8::text" in connection.sql
+    assert "%s" not in connection.sql and "$2::text" in connection.sql
     # Clip and simplify before transforming; no exact intersect on huge polygons.
     assert "ST_ClipByBox2D" in connection.sql and "ST_Intersects" not in connection.sql
     assert "market-zones" in connection.params
@@ -339,7 +339,7 @@ def test_health_contract_checks_geometry_srid():
     result = asyncio.run(source.health())
 
     assert result[0]["available"] is True
-    assert "row_estimate" not in result[0]
+    assert result[0]["row_estimate"] == 10
     assert "table" not in result[0]
     assert "geometry_columns" in connection.sql
     assert "'%USING gist%'" in connection.sql

@@ -4573,14 +4573,14 @@ async def get_map_layer_tile(layer_id: str, z: int, x: int, y: int):
         return Response(content=b"", media_type="application/vnd.mapbox-vector-tile")
     source = get_map_layer_source()
     if not source.available:
-        raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable", headers={"Retry-After": "2", "Cache-Control": "no-store"})
+        raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable", headers={"Retry-After": "8", "Cache-Control": "no-store"})
     try:
         tile_bytes = await map_tile_cache.get_or_fetch(
-            (layer.id, z, x, y), lambda: source.read_mvt(layer.id, z, x, y)
+            (layer.id, layer.tile_revision, z, x, y), lambda: source.read_mvt(layer.id, z, x, y)
         )
     except Exception as exc:
         logger.warning("Canonical map layer tile failed for %s/%s/%s/%s: %s", layer_id, z, x, y, exc)
-        raise HTTPException(status_code=503, detail="Canonical PostGIS map layer unavailable", headers={"Retry-After": "2", "Cache-Control": "no-store"}) from exc
+        raise HTTPException(status_code=503, detail="Canonical PostGIS map layer unavailable", headers={"Retry-After": "8", "Cache-Control": "no-store"}) from exc
     return Response(
         content=tile_bytes,
         media_type="application/vnd.mapbox-vector-tile",

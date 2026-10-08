@@ -164,8 +164,17 @@ jobs:
       - name: Report map readiness
         run: |
           URL="${{ steps.deploy.outputs.url }}"
-          CODE=$(curl -s -o /tmp/ready.json -w "%{http_code}" --max-time 30 "$URL/ready" || echo 000)
+          CODE=$(curl -s -o /tmp/ready.json -w "%{http_code}" --max-time 30 "$URL/ready" || true)
+          [ -n "$CODE" ] || CODE=000
           echo "/ready -> $CODE"; cat /tmp/ready.json 2>/dev/null || true
+          {
+            echo "## Map data readiness"
+            echo "Deployment URL: $URL"
+            echo "Readiness response: HTTP $CODE"
+            echo '```json'
+            cat /tmp/ready.json 2>/dev/null || echo '{}'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
           [ "$CODE" = "200" ] || echo "::warning::/ready returned $CODE: the map data source is not serving"
 
       - name: Verify map health endpoint
