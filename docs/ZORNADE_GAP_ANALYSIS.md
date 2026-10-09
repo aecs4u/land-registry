@@ -1,5 +1,11 @@
 # Gap Analysis: land-registry vs. Zornade (app.zornade.com)
 
+> **2026-10-09 note:** the parcel detail panel has since been re-audited against the primary `/map` page in
+> [PARCEL_PANEL_GAP_ANALYSIS_2026-10.md](PARCEL_PANEL_GAP_ANALYSIS_2026-10.md). Where that document and the status
+> column below disagree, the newer document is current. In particular, row 2 below describes the legacy panel
+> only: the primary map opens a parcel panel for cadastral tile selections, but it renders far fewer sections than
+> the legacy page.
+
 *Date: 2026-07-10, updated 2026-07-13. Based on a live review of app.zornade.com
 (v2.4.0) and the current state of this repository.*
 

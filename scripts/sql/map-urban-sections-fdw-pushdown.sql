@@ -1,31 +1,24 @@
 -- Run against aecs4u-stats as the owner of the foreign server (or a superuser).
--- Postal zone tiles filter source_cap.cap_subcomunali by geom. postgres_fdw
--- needs PostGIS listed as a shippable extension to send that bbox predicate to
--- the source instead of transferring every CAP geometry for each tile.
-DO $map_postal_fdw$
+-- Cadastral urban-section tiles filter sezioni_urbane.sezioni_urbane by geom.
+-- Ship the PostGIS bbox predicate to the source instead of transferring every
+-- section geometry for each tile.
+DO $map_urban_fdw$
 DECLARE
     server_name name;
-    server_count integer;
     configured_extensions text;
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'postgis') THEN
         RAISE EXCEPTION 'PostGIS must be installed in aecs4u-stats before enabling FDW pushdown';
     END IF;
 
-    -- The relation lives in source_cap or geo_postal depending on how the
-    -- consolidation was run; both must resolve to one foreign server.
-    SELECT count(DISTINCT fs.oid), min(fs.srvname)
-      INTO server_count, server_name
+    SELECT fs.srvname
+      INTO STRICT server_name
       FROM pg_foreign_table AS ft
       JOIN pg_class AS relation ON relation.oid = ft.ftrelid
       JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
       JOIN pg_foreign_server AS fs ON fs.oid = ft.ftserver
-     WHERE namespace.nspname IN ('source_cap', 'geo_postal')
-       AND relation.relname = 'cap_subcomunali';
-
-    IF server_count <> 1 THEN
-        RAISE EXCEPTION 'Expected cap_subcomunali to use exactly one foreign server; found %', server_count;
-    END IF;
+     WHERE namespace.nspname = 'sezioni_urbane'
+       AND relation.relname = 'sezioni_urbane';
 
     SELECT split_part(option_value, '=', 2)
       INTO configured_extensions
@@ -52,4 +45,4 @@ BEGIN
         END IF;
     END IF;
 END
-$map_postal_fdw$;
+$map_urban_fdw$;

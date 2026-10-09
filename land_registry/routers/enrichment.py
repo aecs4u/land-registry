@@ -8,6 +8,7 @@ the aecs4u-stats data stores are absent — check ``GET /enrichment/status``.
 """
 
 import asyncio
+import time
 from typing import Annotated, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -81,10 +82,35 @@ class OmiEstimateRequest(BaseModel):
     area_sqm: float = Field(..., gt=0, le=10_000_000)
 
 
+# ``enrichment_status`` probes every store (file and database checks that can
+# take many seconds on a host with missing stores). Run it off the event loop
+# and reuse the answer briefly so concurrent callers do not repeat the probes.
+_STATUS_CACHE_SECONDS = 60.0
+_status_cache: Optional[tuple] = None  # (producer, monotonic time, payload)
+_status_lock = asyncio.Lock()
+
+
 @enrichment_router.get("/status", response_model=Dict[str, EnrichmentDatasetStatus])
 async def get_enrichment_status():
-    """Report which aecs4u-stats datasets are available on this host."""
-    return stats_service.enrichment_status()
+    """Report which aecs4u-stats datasets are available on this host.
+
+    The report is computed in a worker thread and cached for
+    ``_STATUS_CACHE_SECONDS``, so a slow probe never blocks other requests.
+    """
+    global _status_cache
+    producer = stats_service.enrichment_status
+    cached = _status_cache
+    now = time.monotonic()
+    if cached and cached[0] is producer and now - cached[1] < _STATUS_CACHE_SECONDS:
+        return cached[2]
+    async with _status_lock:
+        cached = _status_cache
+        now = time.monotonic()
+        if cached and cached[0] is producer and now - cached[1] < _STATUS_CACHE_SECONDS:
+            return cached[2]
+        payload = await asyncio.to_thread(producer)
+        _status_cache = (producer, time.monotonic(), payload)
+        return payload
 
 
 @enrichment_router.get("/municipality/{cadastral_code}")

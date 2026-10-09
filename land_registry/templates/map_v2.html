@@ -252,14 +252,17 @@
     <div class="map-status-pill" id="mapStatus" aria-live="polite"></div>
     {% include 'partials/map_task_progress.html' %}
 
-    <aside class="parcel-detail-card" id="directParcelPanel" aria-labelledby="directParcelTitle" hidden>
-      <div class="map-card-heading">
-        <div>
+    <aside class="parcel-detail-card parcel-sheet" id="directParcelPanel" aria-labelledby="directParcelTitle" hidden>
+      <header class="parcel-sheet-header">
+        <div class="parcel-sheet-heading">
           <span class="map-eyebrow">{{ _('Selected parcel') }}</span>
           <h2 id="directParcelTitle">{{ _('Parcel details') }}</h2>
+          <p class="parcel-sheet-subtitle" id="directParcelSubtitle"></p>
         </div>
         <button type="button" class="map-card-close" id="parcelCloseButton" aria-label="{{ _('Close parcel details') }}">×</button>
-      </div>
+      </header>
+      <div class="parcel-stat-strip" id="parcelStatStrip"></div>
+      <nav class="parcel-section-nav" id="parcelSectionNav" aria-label="{{ _('Parcel sections') }}"></nav>
       <div id="directParcelContent" class="parcel-detail-content"></div>
       <div class="parcel-detail-actions">
         <button type="button" id="parcelPurchaseButton" class="secondary-action">{{ _('Purchase cadastral query') }}</button>
@@ -299,6 +302,8 @@
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js" integrity="sha384-SYKAG6cglRMN0RVvhNeBY0r3FYKNOJtznwA0v7B5Vp9tr31xAHsZC0DqkQ/pZDmj" crossorigin="anonymous" defer></script>
 {# Only used for the Civil Protection bulletin overlay, which is published as TopoJSON. #}
 <script src="https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/topojson-client.min.js" integrity="sha384-Ukv1p/xTma6P4/2bY5KzWBw+ydSpXmhCMtyciIQVDJ1RmOxtCYNMF1uXT9T63H67" crossorigin="anonymous" defer></script>
+<script src="{{ asset_url('parcel-panel-core.js') }}" defer></script>
+<script src="{{ asset_url('parcel-panel.js') }}" defer></script>
 <script src="{{ asset_url('map-v2.js') }}" defer></script>
 <script src="{{ asset_url('cadastral-purchases.js') }}" defer></script>
 {% endblock %}

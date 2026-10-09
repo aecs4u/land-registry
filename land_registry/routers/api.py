@@ -388,7 +388,8 @@ async def get_sales_map_points(
     """Geocoded public-auction sales (PVP) from the enriched map-view cache.
 
     ``category`` is a comma-separated list of category keys. The first request
-    after startup answers 503 + ``Retry-After`` while the copy loads.
+    waits for the shared startup snapshot load, so the map progress indicator
+    stays active rather than treating a normal cold load as unavailable data.
     """
     if period not in PVP_PERIODS:
         raise HTTPException(status_code=400, detail=f"period must be one of: {', '.join(PVP_PERIODS)}")
@@ -401,7 +402,7 @@ async def get_sales_map_points(
     try:
         payload = await get_pvp_sales_store().map_points(
             period=period, categories=categories, min_price=min_price, max_price=max_price,
-            refresh=refresh,
+            wait=True, refresh=refresh,
         )
     except Exception as exc:
         logger.warning("PVP sales map points failed: %s", exc)

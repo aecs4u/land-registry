@@ -1729,3 +1729,551 @@ msgstr "Caricamento delle allerte meteo…"
 
 msgid "Loading map tiles…"
 msgstr "Caricamento delle tessere della mappa…"
+
+# Parcel side sheet (static/parcel-panel*.js), 2026-10-09
+
+msgid "+ {n} more"
+msgstr "+ altri {n}"
+
+msgid "Active fires"
+msgstr "Incendi attivi"
+
+msgid "Address"
+msgstr "Indirizzo"
+
+msgid "All attributes"
+msgstr "Tutti gli attributi"
+
+msgid "Area"
+msgstr "Superficie"
+
+msgid "Area (computed)"
+msgstr "Superficie (calcolata)"
+
+msgid "Auction base price"
+msgstr "Base d'asta"
+
+msgid "Available"
+msgstr "Disponibile"
+
+msgid "Available · WGS84"
+msgstr "Disponibile · WGS84"
+
+msgid "Benchmark"
+msgstr "Riferimento"
+
+msgid "Blocks not present in the local datasets are listed as not available; they are never shown as zero."
+msgstr "I blocchi assenti dai dataset locali sono indicati come non disponibili; non vengono mai mostrati come zero."
+
+msgid "Building"
+msgstr "Fabbricato"
+
+msgid "Building type"
+msgstr "Tipo di fabbricato"
+
+msgid "Buildings"
+msgstr "Edifici"
+
+msgid "Cadastral OpenData"
+msgstr "Dati catastali OpenData"
+
+msgid "Cadastral class"
+msgstr "Classe catastale"
+
+msgid "Cadastral code"
+msgstr "Codice catastale"
+
+msgid "Cadastral income"
+msgstr "Rendita catastale"
+
+msgid "Cadastre and postcode"
+msgstr "Catasto e CAP"
+
+msgid "Calculated and verified by the server"
+msgstr "Calcolo verificato dal server"
+
+msgid "Census 2021"
+msgstr "Censimento 2021"
+
+msgid "Census section 2021"
+msgstr "Sezione di censimento 2021"
+
+msgid "Coastal erosion"
+msgstr "Erosione costiera"
+
+msgid "Confidence"
+msgstr "Confidenza"
+
+msgid "Consistency"
+msgstr "Consistenza"
+
+msgid "Context"
+msgstr "Contesto"
+
+msgid "Crime types recorded"
+msgstr "Tipologie di reato rilevate"
+
+msgid "Criticality bulletin"
+msgstr "Bollettino di criticità"
+
+msgid "Cultural heritage"
+msgstr "Patrimonio culturale"
+
+msgid "Data coverage"
+msgstr "Copertura dati"
+
+msgid "Dataset"
+msgstr "Dataset"
+
+msgid "Demographic indicators"
+msgstr "Indicatori demografici"
+
+msgid "Detections within {km} km"
+msgstr "Rilevamenti entro {km} km"
+
+msgid "Dwellings"
+msgstr "Abitazioni"
+
+msgid "Economy"
+msgstr "Economia"
+
+msgid "Employment 15–64"
+msgstr "Occupazione 15–64"
+
+msgid "Enter a valid surface to compute the estimate."
+msgstr "Inserisci una superficie valida per calcolare la stima."
+
+msgid "Environmental risks"
+msgstr "Rischi ambientali"
+
+msgid "Flood hazard (P3)"
+msgstr "Pericolosità alluvioni (P3)"
+
+msgid "Foreign residents"
+msgstr "Residenti stranieri"
+
+msgid "High"
+msgstr "Alto"
+
+msgid "Household size"
+msgstr "Componenti per famiglia"
+
+msgid "Households"
+msgstr "Famiglie"
+
+msgid "Hydraulic"
+msgstr "Idraulico"
+
+msgid "Hydrogeological"
+msgstr "Idrogeologico"
+
+msgid "ISTAT code"
+msgstr "Codice ISTAT"
+
+msgid "ISTAT demographics"
+msgstr "Demografia ISTAT"
+
+msgid "Income (IRPEF)"
+msgstr "Reddito (IRPEF)"
+
+msgid "Indicative estimate: surface × the selected OMI interval. It is not an appraisal and does not account for the building's commercial consistency, actual condition or whether the OMI zone is the right one."
+msgstr "Stima indicativa: superficie × intervallo OMI selezionato. Non è una perizia e non tiene conto della consistenza commerciale del fabbricato, dello stato reale o dell'esattezza della zona OMI."
+
+msgid "Indicative value"
+msgstr "Valore indicativo"
+
+msgid "Land cover"
+msgstr "Uso del suolo"
+
+msgid "Landslide hazard (P4)"
+msgstr "Pericolosità frane (P4)"
+
+msgid "Last feed refresh"
+msgstr "Ultimo aggiornamento del feed"
+
+msgid "Last feed refresh: not declared by the provider"
+msgstr "Ultimo aggiornamento del feed: non dichiarato dal fornitore"
+
+msgid "Latest interval"
+msgstr "Ultimo intervallo"
+
+msgid "Listing"
+msgstr "Annuncio"
+
+msgid "Listing surface"
+msgstr "Superficie dell'annuncio"
+
+msgid "Loading history…"
+msgstr "Caricamento dello storico…"
+
+msgid "Loading…"
+msgstr "Caricamento…"
+
+msgid "Local preview"
+msgstr "Anteprima locale"
+
+msgid "Low"
+msgstr "Basso"
+
+msgid "Main address"
+msgstr "Indirizzo principale"
+
+msgid "Match"
+msgstr "Corrispondenza"
+
+msgid "Mean taxable income"
+msgstr "Reddito imponibile medio"
+
+msgid "Medium"
+msgstr "Medio"
+
+msgid "Minimum offer"
+msgstr "Offerta minima"
+
+msgid "Model"
+msgstr "Modello"
+
+msgid "Modelled population"
+msgstr "Popolazione modellata"
+
+msgid "Modelled values: they are estimates for the census section, not observations of this parcel."
+msgstr "Valori modellati: sono stime per la sezione di censimento, non osservazioni su questa particella."
+
+msgid "Municipality"
+msgstr "Comune"
+
+msgid "Municipality-level data: it describes the whole municipality, not this parcel."
+msgstr "Dato a livello comunale: descrive l'intero comune, non questa particella."
+
+msgid "NUTS3 code"
+msgstr "Codice NUTS3"
+
+msgid "Night lights"
+msgstr "Luminosità notturna"
+
+msgid "No IRPEF data is available for this municipality."
+msgstr "Nessun dato IRPEF disponibile per questo comune."
+
+msgid "No OMI quotes are available for this municipality."
+msgstr "Nessuna quotazione OMI disponibile per questo comune."
+
+msgid "No PVP auction found for this parcel."
+msgstr "Nessuna asta PVP trovata per questa particella."
+
+msgid "No active fire detected within {km} km."
+msgstr "Nessun incendio attivo rilevato entro {km} km."
+
+msgid "No alert"
+msgstr "Nessuna allerta"
+
+msgid "No building is recorded in the SISTER cache for this parcel."
+msgstr "Nessun fabbricato presente nella cache SISTER per questa particella."
+
+msgid "No cadastral OpenData found for this parcel."
+msgstr "Nessun dato catastale OpenData trovato per questa particella."
+
+msgid "No census section is available for this parcel."
+msgstr "Nessuna sezione di censimento disponibile per questa particella."
+
+msgid "No data profile has been built for this parcel yet."
+msgstr "Il profilo dati di questa particella non è ancora stato costruito."
+
+msgid "No municipal data is available."
+msgstr "Nessun dato comunale disponibile."
+
+msgid "No point of interest found within {km} km."
+msgstr "Nessun punto di interesse trovato entro {km} km."
+
+msgid "No risk data is available for this municipality."
+msgstr "Nessun dato di rischio disponibile per questo comune."
+
+msgid "Not available"
+msgstr "Non disponibile"
+
+msgid "OMI history"
+msgstr "Storico OMI"
+
+msgid "OMI history is not available for this selection."
+msgstr "Lo storico OMI non è disponibile per questa selezione."
+
+msgid "OMI valuation"
+msgstr "Valutazione OMI"
+
+msgid "OMI zone and property type"
+msgstr "Zona OMI e tipologia"
+
+msgid "OMI zone detected automatically"
+msgstr "Zona OMI rilevata automaticamente"
+
+msgid "Official name"
+msgstr "Denominazione ufficiale"
+
+msgid "Open listing"
+msgstr "Apri annuncio"
+
+msgid "Open page"
+msgstr "Apri pagina"
+
+msgid "Open website"
+msgstr "Apri sito"
+
+msgid "Orange alert"
+msgstr "Allerta arancione"
+
+msgid "PEC"
+msgstr "PEC"
+
+msgid "PVP auctions"
+msgstr "Aste PVP"
+
+msgid "PVP records are auction candidates matched by sheet and parcel, not official cadastral identifiers."
+msgstr "I record PVP sono candidati di asta abbinati per foglio e particella, non identificativi catastali ufficiali."
+
+msgid "Parcel"
+msgstr "Particella"
+
+msgid "Parcel identity"
+msgstr "Identità della particella"
+
+msgid "Parcel sections"
+msgstr "Sezioni della particella"
+
+msgid "Parcel {parcel}"
+msgstr "Particella {parcel}"
+
+msgid "Population"
+msgstr "Popolazione"
+
+msgid "Population history ({n} years)"
+msgstr "Storico della popolazione ({n} anni)"
+
+msgid "Postcode"
+msgstr "CAP"
+
+msgid "Preview of {shown} of {total} available indicators."
+msgstr "Anteprima di {shown} indicatori su {total} disponibili."
+
+msgid "Property"
+msgstr "Immobile"
+
+msgid "Province-level data, not specific to this parcel."
+msgstr "Dato a livello provinciale, non specifico di questa particella."
+
+msgid "Province-level indicators ({nuts3})."
+msgstr "Indicatori a livello provinciale ({nuts3})."
+
+msgid "Provincial capital"
+msgstr "Capoluogo di provincia"
+
+msgid "Quality of life"
+msgstr "Qualità della vita"
+
+msgid "Query date"
+msgstr "Data della query"
+
+msgid "Red alert"
+msgstr "Allerta rossa"
+
+msgid "Reference"
+msgstr "Riferimento"
+
+msgid "Rent"
+msgstr "Locazione"
+
+msgid "Reported crimes"
+msgstr "Delitti denunciati"
+
+msgid "Residential buildings"
+msgstr "Edifici residenziali"
+
+msgid "Residents"
+msgstr "Residenti"
+
+msgid "Resolution"
+msgstr "Risoluzione"
+
+msgid "Result"
+msgstr "Risultato"
+
+msgid "Risks"
+msgstr "Rischi"
+
+msgid "Safety"
+msgstr "Sicurezza"
+
+msgid "Safety data is not available."
+msgstr "I dati sulla sicurezza non sono disponibili."
+
+msgid "Sale"
+msgstr "Compravendita"
+
+msgid "Sale ID"
+msgstr "ID vendita"
+
+msgid "Sale date"
+msgstr "Data vendita"
+
+msgid "Sale price (OMI)"
+msgstr "Prezzo di vendita (OMI)"
+
+msgid "Sale price history"
+msgstr "Storico dei prezzi di vendita"
+
+msgid "Section density"
+msgstr "Densità della sezione"
+
+msgid "Seismic zone"
+msgstr "Zona sismica"
+
+msgid "Sheet"
+msgstr "Foglio"
+
+msgid "Showing {shown} of {total} listings."
+msgstr "Visualizzati {shown} annunci su {total}."
+
+msgid "Solar potential"
+msgstr "Potenziale solare"
+
+msgid "Status"
+msgstr "Stato"
+
+msgid "Subsidence"
+msgstr "Subsidenza"
+
+msgid "Surface used for the estimate (m²)"
+msgstr "Superficie usata nella stima (m²)"
+
+msgid "Taxpayers"
+msgstr "Contribuenti"
+
+msgid "Taxpayers by income bracket"
+msgstr "Contribuenti per fascia di reddito"
+
+msgid "Terrain"
+msgstr "Terreno"
+
+msgid "Territorial scope"
+msgstr "Ambito territoriale"
+
+msgid "Tertiary education"
+msgstr "Istruzione terziaria"
+
+msgid "The Civil Protection bulletin is not available."
+msgstr "Il bollettino della Protezione Civile non è disponibile."
+
+msgid "The OMI zone was not detected automatically: check the selection."
+msgstr "La zona OMI non è stata rilevata automaticamente: verifica la selezione."
+
+msgid "The available OMI quotes contain no valid sale interval."
+msgstr "Le quotazioni OMI disponibili non contengono intervalli di compravendita validi."
+
+msgid "The bulletin has expired: today's alerts are not available."
+msgstr "Il bollettino è scaduto: le allerte odierne non sono disponibili."
+
+msgid "The municipality code is not available for this parcel."
+msgstr "Il codice del comune non è disponibile per questa particella."
+
+msgid "The municipality is not identified, so auctions cannot be matched."
+msgstr "Il comune non è identificato: non è possibile abbinare le aste."
+
+msgid "The municipality is not identified, so risks cannot be retrieved."
+msgstr "Il comune non è identificato: non è possibile recuperare i rischi."
+
+msgid "The municipality is not in today's bulletin."
+msgstr "Il comune non è presente nel bollettino odierno."
+
+msgid "The parcel data profile is temporarily unavailable."
+msgstr "Il profilo dati della particella non è temporaneamente disponibile."
+
+msgid "The parcel geometry is not available to locate the census section."
+msgstr "La geometria della particella non è disponibile per individuare la sezione di censimento."
+
+msgid "The parcel geometry is not available."
+msgstr "La geometria della particella non è disponibile."
+
+msgid "The parcel measures {area}: enter the commercial surface of the building to estimate."
+msgstr "La particella misura {area}: inserisci la superficie commerciale del fabbricato da stimare."
+
+msgid "This data is temporarily unavailable."
+msgstr "Questo dato è temporaneamente non disponibile."
+
+msgid "This data source is not available on this server."
+msgstr "Questa fonte di dati non è disponibile su questo server."
+
+msgid "Thunderstorms"
+msgstr "Temporali"
+
+msgid "Trend of the mean OMI value"
+msgstr "Andamento del valore OMI medio"
+
+msgid "Unavailable for this record"
+msgstr "Non disponibile per questo record"
+
+msgid "Urban section"
+msgstr "Sezione urbana"
+
+msgid "Vacant dwellings"
+msgstr "Abitazioni non occupate"
+
+msgid "Value"
+msgstr "Valore"
+
+msgid "Website"
+msgstr "Sito web"
+
+msgid "Wikipedia"
+msgstr "Wikipedia"
+
+msgid "Year"
+msgstr "Anno"
+
+msgid "Yellow alert"
+msgstr "Allerta gialla"
+
+msgid "Zone"
+msgstr "Zona"
+
+msgid "Zone 1 (high seismicity)"
+msgstr "Zona 1 (alta sismicità)"
+
+msgid "Zone 4 (low seismicity)"
+msgstr "Zona 4 (bassa sismicità)"
+
+msgid "Zone {n}"
+msgstr "Zona {n}"
+
+msgid "Zone {zone} was detected but has no quotes available: select and check an alternative."
+msgstr "La zona {zone} è stata rilevata ma non ha quotazioni disponibili: seleziona e verifica un'alternativa."
+
+msgid "computed from the geometry"
+msgstr "calcolata dalla geometria"
+
+msgid "e.g. 100"
+msgstr "es. 100"
+
+msgid "less than 1 min ago"
+msgstr "meno di 1 min fa"
+
+msgid "month"
+msgstr "mese"
+
+msgid "of the area"
+msgstr "dell'area"
+
+msgid "residents/km²"
+msgstr "residenti/km²"
+
+msgid "{n} days ago"
+msgstr "{n} giorni fa"
+
+msgid "{n} hours ago"
+msgstr "{n} ore fa"
+
+msgid "{n} min ago"
+msgstr "{n} min fa"
+
+msgid "{n} semesters"
+msgstr "{n} semestri"
+
+msgid "Source"
+msgstr "Fonte"

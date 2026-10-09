@@ -1,6 +1,6 @@
 # Protection constraints: aecs4u-stats → land-registry contract
 
-**Status:** proposed on 2026-09-27 for [aecs4u-stats#48](https://github.com/aecs4u/aecs4u-stats/issues/48). land-registry is ready for it now. Until aecs4u-stats publishes the tables below, the two map layers stay out of the catalog, and the parcel panel shows no constraint section.
+**Status:** proposed on 2026-09-27 for [aecs4u-stats#48](https://github.com/aecs4u/aecs4u-stats/issues/48). **Implementation status (checked 2026-10-09): the land-registry side is not implemented.** `land_registry/map_layers.py` has no `PROTECTION_AREA_TABLE`, `PROTECTION_COVERAGE_TABLE` or `_PROTECTION_PROPERTIES`, there are no `landscape-constraints` or `heritage-protections` catalog layers, no `GET /api/v1/enrichment/parcel/constraints/{reference}` route and no panel section. Git history shows only this document was added (commit `8268a8a`). The sections below describe the intended behaviour; the work is scheduled as Phase 3, item 1 of [PARCEL_PANEL_GAP_ANALYSIS_2026-10.md](PARCEL_PANEL_GAP_ANALYSIS_2026-10.md). Until aecs4u-stats publishes the tables below, the two map layers stay out of the catalog, and the parcel panel shows no constraint section.
 
 This is what land-registry reads. Table and column names can change, but they must change in both repositories together. On the land-registry side they live in `land_registry/map_layers.py` (`PROTECTION_AREA_TABLE`, `PROTECTION_COVERAGE_TABLE`, `_PROTECTION_PROPERTIES`).
 

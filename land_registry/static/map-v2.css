@@ -307,3 +307,114 @@ body.direct-map-page > .direct-map-shell { height: 100vh; flex: 0 0 100vh; }
   .parcel-shortlist-card { top: 72px; left: 20px; width: min(360px, calc(100% - 90px)); max-height: calc(100% - 160px); }
   .map-layers-card { right: 65px; max-height: calc(100% - 88px); }
 }
+
+/* ---- Parcel side sheet -------------------------------------------------------
+ * Replaces the 360 px card. On desktop it docks to the right edge (beside the
+ * utility stack) so the selected parcel stays visible on the map; at the
+ * existing tablet and mobile breakpoints it becomes a bottom sheet again.
+ * Structure: header, stat strip, section nav, one scrolling content area,
+ * sticky action bar. Sections are filled by static/parcel-panel.js. */
+.parcel-detail-card.parcel-sheet { top: 12px; right: 65px; bottom: 12px; width: clamp(380px, 36vw, 540px); max-height: none; padding: 0; display: flex; flex-direction: column; overflow: hidden; }
+.parcel-detail-card.parcel-sheet[hidden] { display: none; }
+.parcel-sheet-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; padding: 14px 16px 10px; border-bottom: 1px solid var(--direct-map-border); }
+.parcel-sheet-heading { min-width: 0; }
+.parcel-sheet-header h2 { margin: 2px 0 0; font-size: 19px; overflow-wrap: anywhere; }
+.parcel-sheet-subtitle { margin: 3px 0 0; color: var(--direct-map-muted); font-size: 12px; overflow-wrap: anywhere; }
+.parcel-sheet-subtitle:empty { display: none; }
+.parcel-stat-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-bottom: 1px solid var(--direct-map-border); }
+.parcel-stat-strip:empty { display: none; }
+.parcel-stat { min-width: 0; padding: 8px 10px; border-right: 1px solid var(--direct-map-border); }
+.parcel-stat:last-child { border-right: 0; }
+.parcel-stat-label { display: block; color: var(--direct-map-muted); font-size: 12px; line-height: 1.25; }
+.parcel-stat-value { display: block; margin-top: 2px; font-size: 13px; overflow-wrap: anywhere; }
+.parcel-section-nav { display: flex; gap: 4px; padding: 6px 10px; overflow-x: auto; border-bottom: 1px solid var(--direct-map-border); scrollbar-width: thin; }
+.parcel-section-nav:empty { display: none; }
+.parcel-section-nav button { flex: 0 0 auto; border: 0; border-radius: 6px; background: transparent; color: var(--direct-map-muted); cursor: pointer; font: inherit; font-size: 13px; min-height: 28px; padding: 5px 10px; }
+.parcel-section-nav button:hover { color: var(--direct-map-text); }
+.parcel-section-nav button[aria-current="true"] { background: var(--direct-map-accent-soft); color: var(--direct-map-accent); font-weight: 600; }
+.parcel-section-nav button:focus-visible { outline: 3px solid var(--direct-map-accent-ring); outline-offset: 1px; }
+.parcel-sheet .parcel-detail-content { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px 16px 14px; }
+.parcel-sheet .parcel-detail-actions { margin: 0; padding: 10px 14px; border-top: 1px solid var(--direct-map-border); background: var(--direct-map-panel); }
+.parcel-sheet .parcel-adjacent-results { max-height: 26%; overflow: auto; padding: 0 14px; }
+.parcel-sheet .parcel-adjacent-results:empty { display: none; }
+
+.parcel-section { padding: 13px 0; border-bottom: 1px solid var(--direct-map-border); scroll-margin-top: 4px; }
+.parcel-section:last-child { border-bottom: 0; }
+.parcel-section-header { display: flex; align-items: center; gap: 8px; }
+.parcel-section-header i { width: 18px; color: var(--direct-map-accent); text-align: center; }
+.parcel-section-header h3 { flex: 1; margin: 0; font-size: 14px; }
+.parcel-section-badge { border: 1px solid var(--direct-map-border); border-radius: 999px; color: var(--direct-map-muted); font-size: 12px; line-height: 1.4; padding: 0 8px; }
+.parcel-section-body { margin-top: 8px; }
+.parcel-section-footer { margin-top: 8px; }
+.parcel-section[data-state="empty"] .parcel-section-header h3 { color: var(--direct-map-muted); }
+.parcel-rows { margin: 0; }
+.parcel-rows > div { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-bottom: 1px dashed var(--direct-map-border); }
+.parcel-rows > div:last-child { border-bottom: 0; }
+.parcel-rows dt { flex: 0 0 42%; color: var(--direct-map-muted); font-size: 12px; font-weight: 600; }
+.parcel-rows dd { margin: 0; min-width: 0; text-align: right; overflow-wrap: anywhere; }
+.parcel-rows dd small { color: var(--direct-map-muted); font-size: 12px; }
+.parcel-note { margin: 6px 0 0; color: var(--direct-map-muted); font-size: 12px; line-height: 1.45; }
+.parcel-feed { margin: 6px 0 0; color: var(--direct-map-muted); font-size: 12px; }
+.parcel-record { padding: 8px 0; border-bottom: 1px dashed var(--direct-map-border); }
+.parcel-record:last-child { border-bottom: 0; }
+.parcel-record h4, .parcel-history h4 { margin: 0 0 4px; font-size: 13px; }
+.parcel-record h4 small, .parcel-history h4 small { color: var(--direct-map-muted); font-size: 12px; font-weight: 400; }
+.parcel-callout { margin: 0 0 8px; padding: 7px 9px; border-radius: 7px; border: 1px solid var(--direct-map-border); font-size: 12px; }
+.parcel-callout[data-tone="ok"] { border-color: color-mix(in srgb, var(--color-success-500, #12b76a) 45%, transparent); background: color-mix(in srgb, var(--color-success-500, #12b76a) 10%, transparent); }
+.parcel-callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--direct-map-selection) 55%, transparent); background: color-mix(in srgb, var(--direct-map-selection) 12%, transparent); }
+.parcel-callout[data-tone="muted"] { color: var(--direct-map-muted); }
+.parcel-badge { display: inline-block; border: 1px solid var(--direct-map-border); border-radius: 999px; font-size: 12px; line-height: 1.4; padding: 0 8px; }
+.parcel-badge[data-level="high"] { border-color: color-mix(in srgb, #d92d20 50%, transparent); background: color-mix(in srgb, #d92d20 14%, transparent); color: color-mix(in srgb, #d92d20 70%, var(--direct-map-text)); }
+.parcel-badge[data-level="medium"] { border-color: color-mix(in srgb, #f79009 55%, transparent); background: color-mix(in srgb, #f79009 16%, transparent); color: color-mix(in srgb, #b54708 60%, var(--direct-map-text)); }
+.parcel-badge[data-level="low"] { border-color: color-mix(in srgb, #12b76a 50%, transparent); background: color-mix(in srgb, #12b76a 14%, transparent); color: color-mix(in srgb, #067647 65%, var(--direct-map-text)); }
+.parcel-form { display: grid; gap: 5px; margin-bottom: 8px; }
+.parcel-form label { color: var(--direct-map-muted); font-size: 12px; font-weight: 600; }
+.parcel-input { width: 100%; min-height: 32px; border: 1px solid var(--direct-map-border); border-radius: 6px; background: var(--direct-map-panel); color: var(--direct-map-text); font: inherit; padding: 5px 8px; }
+.parcel-input:focus-visible { outline: 3px solid var(--direct-map-accent-ring); outline-offset: 1px; }
+.parcel-estimate { display: grid; gap: 2px; margin: 8px 0; padding: 10px 12px; border: 1px solid var(--direct-map-accent-ring); border-radius: 8px; background: var(--direct-map-accent-soft); }
+.parcel-estimate strong { font-size: 18px; }
+.parcel-estimate small, .parcel-benchmark { color: var(--direct-map-muted); font-size: 12px; }
+.parcel-benchmark { display: block; font-weight: 400; }
+.parcel-disclaimer { margin-top: 4px; }
+.parcel-history { margin-top: 10px; }
+.parcel-chart { display: block; width: 100%; height: auto; color: var(--direct-map-accent); }
+.parcel-chart-band { fill: color-mix(in srgb, currentColor 18%, transparent); stroke: none; }
+.parcel-chart-line { stroke: currentColor; stroke-width: 2.5; }
+.parcel-chart-dot { fill: currentColor; }
+.parcel-chart-axis { display: flex; justify-content: space-between; color: var(--direct-map-muted); font-size: 12px; }
+.parcel-bars { display: grid; gap: 4px; margin-top: 8px; }
+.parcel-bar-row { display: grid; grid-template-columns: 76px minmax(0, 1fr) 48px; gap: 8px; align-items: center; font-size: 12px; }
+.parcel-bar-row > span:last-child { text-align: right; }
+.parcel-bar-track { height: 8px; border-radius: 4px; background: var(--direct-map-border); overflow: hidden; }
+.parcel-bar { height: 100%; background: var(--direct-map-accent); }
+.parcel-skeleton { display: grid; gap: 7px; }
+.parcel-skeleton span { display: block; height: 12px; border-radius: 4px; background: var(--direct-map-border); animation: parcel-skeleton-pulse 1.3s ease-in-out infinite; }
+.parcel-skeleton span:nth-child(2) { width: 82%; }
+.parcel-skeleton span:nth-child(3) { width: 58%; }
+@keyframes parcel-skeleton-pulse { 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .parcel-skeleton span { animation: none; } }
+.parcel-retry { margin-top: 6px; }
+.parcel-all-attributes { margin-top: 8px; }
+.parcel-all-attributes summary, .parcel-history-list summary { cursor: pointer; font-size: 12px; font-weight: 600; }
+.parcel-sheet .parcel-block-provenance { margin: 8px 0 0; color: var(--direct-map-muted); font-size: 12px; }
+
+/* Tablet and mobile: same bottom-sheet geometry as the old card. */
+@media (min-width: 701px) and (max-width: 1024px) {
+  .parcel-detail-card.parcel-sheet { top: auto; bottom: 18px; right: 60px; width: min(480px, calc(100% - 90px)); max-height: 62%; }
+}
+@media (max-width: 700px) {
+  .parcel-detail-card.parcel-sheet { top: auto; bottom: 0; right: 0; width: 100%; max-height: 72%; border-radius: 12px 12px 0 0; }
+  .parcel-stat-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .parcel-stat:nth-child(2) { border-right: 0; }
+  .parcel-stat:nth-child(-n+2) { border-bottom: 1px solid var(--direct-map-border); }
+}
+
+/* Sheet refinements: fixed-height chrome, clear of the Layers button, compact
+   actions, and the progress pill moved aside while the sheet is open. */
+.parcel-sheet .parcel-sheet-header, .parcel-sheet .parcel-stat-strip, .parcel-sheet .parcel-section-nav, .parcel-sheet .parcel-detail-actions { flex: 0 0 auto; }
+.parcel-detail-card.parcel-sheet { top: 66px; }
+.parcel-sheet .parcel-detail-actions { gap: 6px; }
+.parcel-sheet .parcel-detail-actions .secondary-action { font-size: 12px; padding: 5px 8px; }
+@media (min-width: 1025px) {
+  .direct-map-shell:has(.parcel-sheet:not([hidden])) .map-task-progress { left: 20px; transform: none; width: min(380px, calc(100% - clamp(380px, 36vw, 540px) - 160px)); }
+}

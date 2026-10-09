@@ -110,8 +110,8 @@ MAP_LAYERS: tuple[MapLayerSpec, ...] = (
     # from PostGIS statistics when ANALYZE data is available.
     MapLayerSpec("cadastral-sheets", "Cadastral sheets", "spatial.cadastral_sheet", "geom", min_zoom=10, geojson_max_area=4.0, coverage="unknown", properties=("id", "sheet_reference", "municipality_id", "level", "level_name", "area_sqm", "source_release"), group="cadastral", color="#1976a8", z_order=70, tile_revision="regional-1"),
     MapLayerSpec("cadastral-parcels", "Cadastral parcels", "spatial.cadastral_parcel", "geom", min_zoom=14, max_features=5000, geojson_max_area=0.04, coverage="unknown", properties=("id", "canonical_reference", "national_cadastral_reference", "parcel", "sheet", "municipality_id", "area_sqm", "source_release"), group="cadastral", color="#d97925", z_order=90, fill_opacity=0.04, line_width=0.8, tile_revision="regional-1"),
-    MapLayerSpec("urban-sections", "Cadastral urban sections", "sezioni_urbane.sezioni_urbane", "geom", id_column="OGC_FID", min_zoom=11, coverage="unknown", properties=("OGC_FID", "nationalcadastralzoningreference", "administrativeunit", "sezione_urbana"), group="cadastral", color="#2f9aa8", z_order=80),
-    MapLayerSpec("market-zones", "OMI market zones", "zornade.zornade_zone_omi", "geom", id_column="OGC_FID", min_zoom=10, properties=("OGC_FID", "codcom", "codzona", "zona_descr", "comune_descrizione", "descr_tip_prev", "compr_min", "compr_max"), group="market", color="#7b61a8", z_order=30, tile_revision="2"),
+    MapLayerSpec("urban-sections", "Cadastral urban sections", "sezioni_urbane.sezioni_urbane", "geom", id_column="OGC_FID", min_zoom=11, coverage="unknown", properties=("OGC_FID", "nationalcadastralzoningreference", "administrativeunit", "sezione_urbana"), group="cadastral", color="#2f9aa8", z_order=80, require_gist_index=False),
+    MapLayerSpec("market-zones", "OMI market zones", "zornade.zornade_zone_omi", "geom", id_column="OGC_FID", min_zoom=10, properties=("OGC_FID", "codcom", "codzona", "zona_descr", "comune_descrizione", "descr_tip_prev", "compr_min", "compr_max"), group="market", color="#7b61a8", z_order=30, require_gist_index=False, tile_revision="2"),
     MapLayerSpec("postal-zones", "Postal zones", "cap_subcomunali.cap_subcomunali", "geom", id_column="OGC_FID", min_zoom=10, properties=("OGC_FID", "cap", "comune_cap", "comune", "provincia", "regione", "fonte"), group="administrative", color="#8a7a3d", z_order=40, require_gist_index=False, tile_revision="3"),
     MapLayerSpec("flood-hazard", "Flood hazard areas", "hazards.flood_hazard", "geom", id_column="scenario_code", min_zoom=8, max_features=3000, properties=("scenario_code", "scenario_label", "area_sqm"), group="risk", color="#2b7bb9", z_order=50, fill_opacity=0.2, require_gist_index=False, tile_revision="2"),
     MapLayerSpec("landslide-hazard", "Landslide hazard areas", "hazards.landslide_hazard", "geom", id_column="hazard_code", min_zoom=8, max_features=3000, properties=("hazard_code", "hazard_label", "area_sqm"), group="risk", color="#a0522d", z_order=51, fill_opacity=0.2, require_gist_index=False, tile_revision="2"),
@@ -379,6 +379,12 @@ class _AsyncpgConnectionSource:
                         max_size=self.max_connections,
                         timeout=self.connect_timeout,
                         command_timeout=10,
+                        # Every pooled connection that reads a foreign table
+                        # keeps one backend open per remote server. Recycle idle
+                        # connections quickly so a tile burst does not leave
+                        # dozens of FDW backends holding Postgres connection
+                        # slots ("too many clients already").
+                        max_inactive_connection_lifetime=20,
                         statement_cache_size=0,
                         server_settings={"jit": "off", "statement_timeout": "8000"},
                     )

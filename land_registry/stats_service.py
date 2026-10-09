@@ -5149,6 +5149,13 @@ def _build_parcel_enrichment(
             dataset_version=_valuation_dataset_version(omi, postgres_omi),
             model_version="omi-zone-centroid-match-v1",
             match_method="centroid",
+            # The data dict is always non-empty, so judge availability by
+            # content: a matched zone, at least one quote, or a snapshot.
+            available=bool(
+                (omi_zone or {}).get("matched")
+                or (omi or {}).get("quotes")
+                or postgres_omi
+            ),
         ),
     })
     return {

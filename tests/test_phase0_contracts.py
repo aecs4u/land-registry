@@ -205,3 +205,47 @@ def test_parcel_version_defines_validity_range_database_constraint():
     constraint_names = {constraint.name for constraint in ParcelVersion.__table__.constraints}
 
     assert "ck_parcel_versions_valid_range" in constraint_names
+
+
+@pytest.mark.asyncio
+async def test_enrichment_status_runs_off_the_event_loop_and_is_cached():
+    import threading
+
+    from land_registry.routers import enrichment as enrichment_router_module
+
+    calls = []
+    loop_thread = threading.get_ident()
+
+    def probe():
+        calls.append(threading.get_ident())
+        return {"cadastral_parcels": {"available": True}}
+
+    enrichment_router_module._status_cache = None
+    with patch("land_registry.stats_service.enrichment_status", probe):
+        first = await get_enrichment_status()
+        second = await get_enrichment_status()
+
+    assert first == second
+    assert len(calls) == 1, "the second call within the TTL must reuse the cached report"
+    assert calls[0] != loop_thread, "the probe must not run on the event loop thread"
+    enrichment_router_module._status_cache = None
+
+
+@pytest.mark.asyncio
+async def test_enrichment_status_recomputes_after_the_cache_expires(monkeypatch):
+    from land_registry.routers import enrichment as enrichment_router_module
+
+    calls = []
+
+    def probe():
+        calls.append(1)
+        return {"cadastral_parcels": {"available": True}}
+
+    enrichment_router_module._status_cache = None
+    monkeypatch.setattr(enrichment_router_module, "_STATUS_CACHE_SECONDS", 0.0)
+    with patch("land_registry.stats_service.enrichment_status", probe):
+        await get_enrichment_status()
+        await get_enrichment_status()
+
+    assert len(calls) == 2
+    enrichment_router_module._status_cache = None

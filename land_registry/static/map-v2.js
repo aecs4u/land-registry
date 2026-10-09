@@ -473,34 +473,6 @@
     return `${coverage} · ${freshness} · ${layer.source || 'Source not reported'}`;
   }
 
-  function formatConfidence(value) {
-    if (value === null || value === undefined || value === '') return '';
-    const number = Number(value);
-    if (!Number.isFinite(number)) return String(value);
-    const percent = number <= 1 ? number * 100 : number;
-    return `${percent.toLocaleString('it-IT', { maximumFractionDigits: 1 })}%`;
-  }
-
-  function blockMetadataHtml(block) {
-    if (!block) return '';
-    const chips = [];
-    const confidence = formatConfidence(block.confidence);
-    if (confidence) chips.push(['Confidence', confidence]);
-    if (block.spatial_resolution) chips.push(['Resolution', block.spatial_resolution]);
-    if (block.spatial_resolution_m != null) chips.push(['Resolution', `${Number(block.spatial_resolution_m).toLocaleString('it-IT', { maximumFractionDigits: 0 })} m`]);
-    const provenance = [
-      block.dataset_version ? `Dataset: ${block.dataset_version}` : '',
-      block.model_version ? `Model: ${block.model_version}` : '',
-      block.match_method ? `Match: ${block.match_method}` : '',
-    ].filter(Boolean).join(' · ');
-    const benchmarkRows = Object.values(block.benchmarks || {}).filter((benchmark) => benchmark && benchmark.value !== null && benchmark.value !== undefined);
-    if (!chips.length && !benchmarkRows.length && !block.source && !provenance) return '';
-    return `
-      ${chips.length ? `<div class="parcel-block-chips">${chips.map(([label, value]) => `<span><strong>${escapeHtml(label)}</strong> ${escapeHtml(value)}</span>`).join('')}</div>` : ''}
-      ${benchmarkRows.length ? `<div class="parcel-block-benchmarks">${benchmarkRows.map((benchmark) => `<span>Benchmark ${escapeHtml([benchmark.label || '', benchmark.year || ''].filter(Boolean).join(' '))}: <strong>${escapeHtml(benchmark.value)} ${escapeHtml(benchmark.unit || '')}</strong></span>`).join('')}</div>` : ''}
-      <p class="parcel-block-provenance">${escapeHtml(block.source || '')}${block.source && provenance ? '<br>' : ''}${escapeHtml(provenance)}</p>`;
-  }
-
   function layerSourceId(layer) { return `source-${layer.id}`; }
 
   // MapLibre fetches tiles from blob: workers, where a root-relative URL
@@ -565,32 +537,33 @@
         let hoverPopup = null;
         let hoverKey = null;
         let hoverFrame = 0;
-        let hoverEvent = null;
+        let hover = null;
         const renderHover = () => {
           hoverFrame = 0;
-          const event = hoverEvent;
-          hoverEvent = null;
-          if (!event) return;
-          const props = event.features?.[0]?.properties || {};
-          const parcel = props.parcel || props.particella || props.LABEL || props.canonical_reference;
-          if (!parcel) return;
-          const municipality = props.municipality_name || props.municipality || props.municipality_id || '';
-          const key = `${parcel}:${municipality}`;
+          const pending = hover;
+          hover = null;
+          if (!pending) return;
           if (!hoverPopup) hoverPopup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 8 });
-          hoverPopup.setLngLat(event.lngLat);
-          if (hoverKey !== key) {
-            hoverKey = key;
-            hoverPopup.setHTML(`<strong>Parcel ${escapeHtml(parcel)}</strong><br><small>${escapeHtml(municipality)}</small>`);
+          hoverPopup.setLngLat(pending.lngLat);
+          if (hoverKey !== pending.key) {
+            hoverKey = pending.key;
+            hoverPopup.setHTML(`<strong>Parcel ${escapeHtml(pending.parcel)}</strong><br><small>${escapeHtml(pending.municipality)}</small>`);
           }
           if (!hoverPopup.isOpen()) hoverPopup.addTo(state.map);
         };
         state.map.on('mousemove', 'fill-cadastral-parcels', (event) => {
-          hoverEvent = event;
+          // MapLibre deletes event.features once this handler returns, so read
+          // everything now and defer only the DOM work to the next frame.
+          const props = event.features?.[0]?.properties || {};
+          const parcel = props.parcel || props.particella || props.LABEL || props.canonical_reference;
+          if (!parcel) return;
+          const municipality = props.municipality_name || props.municipality || props.municipality_id || '';
+          hover = { parcel, municipality, key: `${parcel}:${municipality}`, lngLat: event.lngLat };
           if (!hoverFrame) hoverFrame = requestAnimationFrame(renderHover);
         });
         state.map.on('mouseleave', 'fill-cadastral-parcels', () => {
           hoverKey = null;
-          hoverEvent = null;
+          hover = null;
           if (hoverPopup) hoverPopup.remove();
         });
       }
@@ -1061,34 +1034,11 @@
         else if (health.available) meta.textContent = `Available${metadata}`;
         else if (health.relation_exists === false) meta.textContent = `Not available${metadata}`;
         else meta.textContent = `Needs configuration${metadata}`;
-        // A layer with no backing data cannot render, so a checkbox that
-        // silently does nothing is worse than a disabled one. Only block
-        // turning it on; a layer already on can still be turned off. Keep
-        // administrative substitutes toggleable: the low-zoom parcel
-        // affordance may activate one before this advisory health check runs,
-        // and users need to be able to control or retry that fallback.
-        const input = row.querySelector('input[type="checkbox"]');
-        if (input) {
-          const unusable = payload.available !== false && !health.available && !isAdministrativeSubstitute(catalogLayer);
-          if (unusable && input.checked) {
-            input.checked = false;
-            state.activeLayers?.delete(health.id);
-            setLayerVisibility(health.id, false);
-            const opacity = row.querySelector('.map-layer-opacity');
-            if (opacity) opacity.hidden = true;
-            const geometryControls = row.querySelector('.map-layer-geometry-controls');
-            if (geometryControls) geometryControls.hidden = true;
-            const sourceId = layerSourceId({ id: health.id });
-            tileRetry.pending.delete(sourceId);
-            delete tileRetry.attempts[sourceId];
-            if (!tileRetry.pending.size) {
-              clearTimeout(tileRetry.timer);
-              tileRetry.timer = null;
-            }
-          }
-          input.disabled = unusable;
-          row.classList.toggle('is-unavailable', unusable);
-        }
+        // Health is advisory: checks can fail independently, and readiness
+        // requirements such as a spatial index do not necessarily mean the
+        // map layer cannot be drawn. Keep catalog controls selectable and
+        // report availability in the row metadata instead of overriding the
+        // user's layer choices when this asynchronous check completes.
         if (catalogLayer) row.title = layerMetadata(catalogLayer);
       });
       updateCoverageStatus();
@@ -1188,63 +1138,36 @@
     return properties.national_cadastral_reference || properties.national_cadastralreference || properties.NATIONALCADASTRALREFERENCE || properties.canonical_reference || properties.national_reference || null;
   }
 
-  // Legacy's Table View shows every source column for the current selection
-  // (table-manager.js); this is the single-parcel equivalent — every raw
-  // property the catalog layer returns, not just the curated summary fields.
-  function allAttributesHtml(properties = {}) {
-    const rows = Object.entries(properties)
-      .filter(([, value]) => value !== null && value !== undefined && typeof value !== 'object')
-      .map(([key, value]) => `<tr><th>${escapeHtml(key.replaceAll('_', ' '))}</th><td>${escapeHtml(value)}</td></tr>`)
-      .join('');
-    if (!rows) return '';
-    return `<details class="parcel-all-attributes"><summary>All attributes</summary><table class="parcel-detail-table"><tbody>${rows}</tbody></table></details>`;
-  }
-
+  // The parcel panel is a side sheet whose sections load independently
+  // (static/parcel-panel.js). This function owns the page-level glue: title,
+  // links, action buttons and the hand-over of the parcel read model. It is
+  // called once when a parcel is selected and again, with the read model (or
+  // {unavailable: true}), when /parcel/details answers.
   function renderParcelPanel(feature, enrichment = null) {
     const props = feature?.properties || {};
-    const reference = state.selectedReference || referenceFrom(props) || 'Selected parcel';
-    const municipality = props.municipality_name || props.municipality || props.ADMINISTRATIVEUNIT || props.municipality_id || '—';
-    const sheet = props.sheet || props.sheet_number || props.foglio || '—';
-    const parcel = props.parcel || props.particella || props.LABEL || '—';
-    // computed_area_sqm is the geodesic geometry area, used when the source
-    // release did not publish area_sqm (e.g. the Veneto cadastral load).
-    const area = props.area_sqm ?? props.area ?? props.area_display ?? props.computed_area_sqm;
-    const freshness = props.source_release || enrichment?.read_model?.source_fingerprint || 'Source date not available';
-    $('directParcelTitle').textContent = parcel !== '—' ? `Parcel ${parcel}` : 'Parcel details';
-    const blocks = enrichment?.blocks || {};
-    const blockLabels = { cadastral: 'Cadastral', valuation: 'OMI valuation', economics: 'Economy', demographics: 'Demographics', population: 'Population', buildings: 'Buildings', risk: 'Risks', address: 'Address' };
-    const blockHtml = Object.entries(blockLabels).map(([key, label]) => {
-      const block = blocks[key];
-      if (!block?.available) return '';
-      const values = Object.entries(block.data || {}).filter(([, value]) => value !== null && value !== undefined && typeof value !== 'object').slice(0, 5);
-      const valueHtml = values.map(([name, value]) => `<dt>${escapeHtml(name.replaceAll('_', ' '))}</dt><dd>${escapeHtml(value)}</dd>`).join('');
-      return `<details><summary>${escapeHtml(label)}</summary>${blockMetadataHtml(block)}${valueHtml ? `<dl>${valueHtml}</dl>` : '<p>Available; open the analysis view for full details.</p>'}</details>`;
-    }).join('');
-    const emptyEnrichment = enrichment?.unavailable
-      ? '<p>Optional enrichment is temporarily unavailable.</p>'
-      : '<p>No optional enrichment is available for this parcel.</p>';
-    const enrichmentHtml = enrichment ? `<div class="parcel-enrichment">${blockHtml || emptyEnrichment}</div>` : '<div class="parcel-enrichment"><p>Loading optional enrichment…</p></div>';
-    $('directParcelContent').innerHTML = `
-      <div class="parcel-hero"><strong>${escapeHtml(reference)}</strong><span>${escapeHtml(municipality)}</span></div>
-      <div class="parcel-kpis"><div class="parcel-kpi"><span>Area</span><strong>${escapeHtml(formatArea(area))}</strong></div><div class="parcel-kpi"><span>Sheet</span><strong>${escapeHtml(sheet)}</strong></div></div>
-      <table class="parcel-detail-table"><tbody>
-        <tr><th>Parcel</th><td>${escapeHtml(parcel)}</td></tr>
-        <tr><th>Municipality</th><td>${escapeHtml(municipality)}</td></tr>
-        <tr><th>Reference</th><td>${escapeHtml(reference)}</td></tr>
-        <tr><th>Geometry</th><td>${feature?.geometry ? 'Available · WGS84' : 'Unavailable for this record'}</td></tr>
-        <tr><th>Data</th><td>${escapeHtml(freshness)}</td></tr>
-      </tbody></table>
-      ${enrichment?.municipality ? `<p class="map-layer-meta">Municipality profile available.</p>` : ''}
-      ${allAttributesHtml(props)}`;
-    const parcelQuery = `?parcel=${encodeURIComponent(reference)}&report=1`;
-    $('legacyAnalysisLink').href = `/map-legacy?parcel=${encodeURIComponent(reference)}`;
+    const reference = state.selectedReference || referenceFrom(props) || null;
+    if (enrichment) {
+      window.ParcelPanel?.setReadModel(enrichment);
+      return;
+    }
+    const municipality = props.municipality_name || props.municipality || props.ADMINISTRATIVEUNIT || props.municipality_id || '';
+    const parcel = props.parcel_number ?? props.parcel ?? props.particella ?? props.LABEL;
+    $('directParcelTitle').textContent = parcel !== undefined && parcel !== null && parcel !== '' ? tr('Parcel {parcel}', { parcel }) : tr('Parcel details');
+    $('directParcelSubtitle').textContent = [reference, municipality].filter(Boolean).join(' · ');
+    if (window.ParcelPanel) {
+      window.ParcelPanel.show(feature, { reference });
+      // Without a reference there is no read model to wait for.
+      if (!reference) window.ParcelPanel.setReadModel({ unavailable: true });
+    } else {
+      // The panel script failed to load: identity is still useful.
+      $('directParcelContent').textContent = [reference, municipality].filter(Boolean).join(' · ') || tr('Parcel details');
+    }
+    const parcelQuery = `?parcel=${encodeURIComponent(reference || '')}&report=1`;
+    $('legacyAnalysisLink').href = `/map-legacy?parcel=${encodeURIComponent(reference || '')}`;
     $('parcelReportLink').href = `/map-legacy${parcelQuery}`;
-    const computedArea = props.computed_area_sqm != null && props.area_sqm == null && props.area == null && props.area_display == null;
-    if (computedArea) $('directParcelContent').querySelector('.parcel-kpi:first-child span').textContent = tr('Area (computed)');
     const saved = state.savedReference === reference;
     $('parcelSaveButton').disabled = saved;
     $('parcelSaveButton').textContent = saved ? tr('Saved') : tr('Save parcel');
-    $('directParcelContent').insertAdjacentHTML('beforeend', enrichmentHtml);
     $('directParcelPanel').hidden = false;
     $('mapHelpNote').hidden = true;
   }
@@ -1792,6 +1715,8 @@
     if ($('sisterBuildingsStatus')) $('sisterBuildingsStatus').textContent = sisterBuildingsOverlay.active ? 'Select a parcel to check SISTER records.' : '';
     const adjacentResults = $('parcelAdjacentResults');
     if (adjacentResults) adjacentResults.innerHTML = '';
+    window.ParcelPanel?.clear();
+    $('directParcelSubtitle').textContent = '';
     $('directParcelPanel').hidden = true;
     updateParcelZoomAffordance();
     writeUrl();
@@ -3016,6 +2941,7 @@
       if (state.map) state.map.fitBounds(ITALY_BOUNDS, { padding: 20 });
       else if (state.fallbackMap) state.fallbackMap.fitBounds([[36.3, 6.5], [47.2, 18.6]], { padding: [20, 20] });
     });
+    window.ParcelPanel?.mount({ content: $('directParcelContent'), nav: $('parcelSectionNav'), strip: $('parcelStatStrip'), tr });
     $('parcelCloseButton').addEventListener('click', () => { $('directParcelPanel').hidden = true; updateParcelZoomAffordance(); mapStatus(''); });
     $('layersCloseButton').addEventListener('click', () => { $('mapLayersCard').hidden = true; $('layersToggle').setAttribute('aria-expanded', 'false'); });
     const basemapToggle = $('basemapToggle');

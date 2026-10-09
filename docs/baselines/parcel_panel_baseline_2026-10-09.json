@@ -1,0 +1,673 @@
+{
+  "captured_at": "2026-10-09T14:29:26+00:00",
+  "base_url": "http://127.0.0.1:8011",
+  "summary": {
+    "unique_parcels": 20,
+    "parcels_per_area": {
+      "roma-centro": 5,
+      "milano-centro": 5,
+      "tolfa-comune": 5,
+      "monte-romano-campagna": 5
+    },
+    "details_calls_ok": 40,
+    "details_calls_failed": 0,
+    "cold_build_seconds": {
+      "n": 40,
+      "median": 4.614,
+      "p95": 6.941,
+      "max": 7.717
+    },
+    "cache_hit_seconds": {
+      "n": 0
+    },
+    "cache_hits_observed": 0,
+    "details_bytes_median": 12718,
+    "block_coverage": {
+      "basic": "20/20",
+      "cadastral": "20/20",
+      "valuation": "20/20"
+    }
+  },
+  "rows": [
+    {
+      "area": "roma-centro",
+      "lat": 41.8986,
+      "lng": 12.4769,
+      "reference": "H501A048600.D",
+      "lookup_status": 200,
+      "lookup_seconds": 4.179,
+      "first": {
+        "status": 200,
+        "seconds": 4.557,
+        "bytes": 12563,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 4.467,
+        "bytes": 12563,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "roma-centro",
+      "lat": 41.8971,
+      "lng": 12.4769,
+      "reference": "H501A048600.114",
+      "lookup_status": 200,
+      "lookup_seconds": 0.214,
+      "first": {
+        "status": 200,
+        "seconds": 4.369,
+        "bytes": 11326,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 4.305,
+        "bytes": 11326,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "roma-centro",
+      "lat": 41.9001,
+      "lng": 12.4769,
+      "reference": "H501A048600.A",
+      "lookup_status": 200,
+      "lookup_seconds": 0.228,
+      "first": {
+        "status": 200,
+        "seconds": 4.61,
+        "bytes": 10954,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 4.555,
+        "bytes": 10954,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "roma-centro",
+      "lat": 41.8986,
+      "lng": 12.4749,
+      "reference": "H501A048500.351",
+      "lookup_status": 200,
+      "lookup_seconds": 0.296,
+      "first": {
+        "status": 200,
+        "seconds": 5.578,
+        "bytes": 11443,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 5.627,
+        "bytes": 11443,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "roma-centro",
+      "lat": 41.8986,
+      "lng": 12.4789,
+      "reference": "H501A048600.78",
+      "lookup_status": 200,
+      "lookup_seconds": 0.287,
+      "first": {
+        "status": 200,
+        "seconds": 6.783,
+        "bytes": 13809,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 6.941,
+        "bytes": 13809,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "milano-centro",
+      "lat": 45.4642,
+      "lng": 9.19,
+      "reference": "F205_039000.STRADA288",
+      "lookup_status": 200,
+      "lookup_seconds": 0.394,
+      "first": {
+        "status": 200,
+        "seconds": 5.872,
+        "bytes": 10519,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 5.247,
+        "bytes": 10519,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "milano-centro",
+      "lat": 45.4627,
+      "lng": 9.19,
+      "reference": "F205_043700.STRADA331",
+      "lookup_status": 200,
+      "lookup_seconds": 0.291,
+      "first": {
+        "status": 200,
+        "seconds": 5.013,
+        "bytes": 17864,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 7.717,
+        "bytes": 17864,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "milano-centro",
+      "lat": 45.4657,
+      "lng": 9.19,
+      "reference": "F205_039000.98",
+      "lookup_status": 200,
+      "lookup_seconds": 0.216,
+      "first": {
+        "status": 200,
+        "seconds": 4.34,
+        "bytes": 32710,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 4.608,
+        "bytes": 32710,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "milano-centro",
+      "lat": 45.4642,
+      "lng": 9.192,
+      "reference": "F205_039000.H",
+      "lookup_status": 200,
+      "lookup_seconds": 0.226,
+      "first": {
+        "status": 200,
+        "seconds": 4.531,
+        "bytes": 18787,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 4.225,
+        "bytes": 18787,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "milano-centro",
+      "lat": 45.4672,
+      "lng": 9.19,
+      "reference": "F205_038900.STRADA285",
+      "lookup_status": 200,
+      "lookup_seconds": 0.241,
+      "first": {
+        "status": 200,
+        "seconds": 4.458,
+        "bytes": 12615,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 4.619,
+        "bytes": 12615,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "tolfa-comune",
+      "lat": 42.1517,
+      "lng": 11.9394,
+      "reference": "L192_002300.STRADA114",
+      "lookup_status": 200,
+      "lookup_seconds": 0.225,
+      "first": {
+        "status": 200,
+        "seconds": 4.243,
+        "bytes": 47727,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 4.411,
+        "bytes": 47727,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "tolfa-comune",
+      "lat": 42.1502,
+      "lng": 11.9394,
+      "reference": "L192_002300.898",
+      "lookup_status": 200,
+      "lookup_seconds": 0.21,
+      "first": {
+        "status": 200,
+        "seconds": 4.352,
+        "bytes": 11005,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 4.892,
+        "bytes": 11005,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "tolfa-comune",
+      "lat": 42.1532,
+      "lng": 11.9394,
+      "reference": "L192_002300.STRADA103",
+      "lookup_status": 200,
+      "lookup_seconds": 0.244,
+      "first": {
+        "status": 200,
+        "seconds": 4.75,
+        "bytes": 55140,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 4.766,
+        "bytes": 55140,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "tolfa-comune",
+      "lat": 42.1517,
+      "lng": 11.9374,
+      "reference": "L192_002300.1368",
+      "lookup_status": 200,
+      "lookup_seconds": 0.252,
+      "first": {
+        "status": 200,
+        "seconds": 4.618,
+        "bytes": 10810,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 4.793,
+        "bytes": 10810,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "tolfa-comune",
+      "lat": 42.1517,
+      "lng": 11.9414,
+      "reference": "L192_002300.1459",
+      "lookup_status": 200,
+      "lookup_seconds": 0.268,
+      "first": {
+        "status": 200,
+        "seconds": 4.75,
+        "bytes": 11057,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 4.933,
+        "bytes": 11057,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "monte-romano-campagna",
+      "lat": 42.25,
+      "lng": 11.9,
+      "reference": "F603_003000.15",
+      "lookup_status": 200,
+      "lookup_seconds": 0.254,
+      "first": {
+        "status": 200,
+        "seconds": 4.91,
+        "bytes": 14888,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 4.915,
+        "bytes": 14888,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "monte-romano-campagna",
+      "lat": 42.2485,
+      "lng": 11.9,
+      "reference": "F603_003000.21",
+      "lookup_status": 200,
+      "lookup_seconds": 0.242,
+      "first": {
+        "status": 200,
+        "seconds": 4.867,
+        "bytes": 27636,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 4.779,
+        "bytes": 27636,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "monte-romano-campagna",
+      "lat": 42.2515,
+      "lng": 11.9,
+      "reference": "F603_003000.17",
+      "lookup_status": 200,
+      "lookup_seconds": 0.256,
+      "first": {
+        "status": 200,
+        "seconds": 4.337,
+        "bytes": 11017,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 4.34,
+        "bytes": 11017,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "monte-romano-campagna",
+      "lat": 42.253,
+      "lng": 11.9,
+      "reference": "F603_003000.55",
+      "lookup_status": 200,
+      "lookup_seconds": 0.219,
+      "first": {
+        "status": 200,
+        "seconds": 4.327,
+        "bytes": 28726,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 4.322,
+        "bytes": 28726,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "monte-romano-campagna",
+      "lat": 42.253,
+      "lng": 11.902,
+      "reference": "F603_003000.40",
+      "lookup_status": 200,
+      "lookup_seconds": 0.23,
+      "first": {
+        "status": 200,
+        "seconds": 4.381,
+        "bytes": 12822,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 4.45,
+        "bytes": 12822,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    }
+  ]
+}

@@ -9,7 +9,12 @@ ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = (ROOT / "land_registry/templates/map_v2.html").read_text(encoding="utf-8")
 THEME_TEMPLATE = (ROOT / "land_registry/templates/theme_overrides/map_v2.html").read_text(encoding="utf-8")
 BASE_TEMPLATE = (ROOT / "land_registry/templates/base.html").read_text(encoding="utf-8")
-SCRIPT = (ROOT / "land_registry/static/map-v2.js").read_text(encoding="utf-8")
+# The parcel side sheet lives in two modules loaded before map-v2.js; the
+# contracts below describe the page's browser code as a whole.
+PANEL_CORE = (ROOT / "land_registry/static/parcel-panel-core.js").read_text(encoding="utf-8")
+PANEL_VIEW = (ROOT / "land_registry/static/parcel-panel.js").read_text(encoding="utf-8")
+MAP_SCRIPT = (ROOT / "land_registry/static/map-v2.js").read_text(encoding="utf-8")
+SCRIPT = "\n".join((MAP_SCRIPT, PANEL_CORE, PANEL_VIEW))
 STYLES = (ROOT / "land_registry/static/map-v2.css").read_text(encoding="utf-8")
 API = (ROOT / "land_registry/routers/api.py").read_text(encoding="utf-8")
 MAIN = (ROOT / "land_registry/main.py").read_text(encoding="utf-8")
@@ -191,7 +196,7 @@ def test_direct_map_closes_enrichment_overlay_and_adjacency_gaps():
         "adjacent-parcels",
         # Full raw-property dump, the single-parcel analogue of the legacy
         # attribute table (table-manager.js).
-        "allAttributesHtml",
+        "parcel-all-attributes",
     ):
         assert value in SCRIPT
 
