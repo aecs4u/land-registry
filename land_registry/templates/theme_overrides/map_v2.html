@@ -241,7 +241,11 @@
           <h2 id="directParcelTitle">{{ _('Parcel details') }}</h2>
           <p class="parcel-sheet-subtitle" id="directParcelSubtitle"></p>
         </div>
-        <button type="button" class="map-card-close" id="parcelCloseButton" aria-label="{{ _('Close parcel details') }}">×</button>
+        <div class="parcel-sheet-header-actions" aria-label="{{ _('Parcel actions') }}">
+          <button type="button" id="parcelShareButton" class="secondary-action compact" title="{{ _('Copy link') }}" aria-label="{{ _('Copy link') }}"><i class="fas fa-link" aria-hidden="true"></i></button>
+          <a id="parcelReportLink" class="secondary-action compact" href="/api/v1/enrichment/parcel/report/" title="{{ _('Download PDF') }}" aria-label="{{ _('Download PDF') }}" aria-live="polite" aria-busy="false"><i class="fas fa-file-pdf" aria-hidden="true"></i></a>
+          <button type="button" class="map-card-close" id="parcelCloseButton" aria-label="{{ _('Close parcel details') }}">×</button>
+        </div>
       </header>
       <div class="parcel-stat-strip" id="parcelStatStrip"></div>
       <nav class="parcel-section-nav" id="parcelSectionNav" aria-label="{{ _('Parcel sections') }}"></nav>
@@ -250,10 +254,8 @@
         <button type="button" id="parcelPurchaseButton" class="secondary-action">{{ _('Purchase cadastral query') }}</button>
         <button type="button" id="parcelSaveButton" class="secondary-action btn btn-outline-primary">{{ _('Save parcel') }}</button>
         <button type="button" id="parcelAdjacentButton" class="secondary-action btn btn-outline-secondary">{{ _('Find adjacent parcels') }}</button>
-        <button type="button" id="parcelShareButton" class="secondary-action btn btn-outline-secondary">{{ _('Copy link') }}</button>
         <button type="button" id="parcelClearButton" class="secondary-action btn btn-outline-secondary">{{ _('Clear selection') }}</button>
         <a id="legacyAnalysisLink" class="secondary-action btn btn-outline-secondary" href="/map-legacy">{{ _('Open analysis') }}</a>
-        <a id="parcelReportLink" class="secondary-action btn btn-outline-secondary" href="/map-legacy?report=1">{{ _('Print report') }}</a>
       </div>
       <div id="parcelAdjacentResults" class="parcel-adjacent-results" aria-live="polite"></div>
     </aside>

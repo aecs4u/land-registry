@@ -163,6 +163,20 @@ test('census summary derives density and keeps the supplied ratios', () => {
   assert.equal(Core.censusSummary(null, null), null);
 });
 
+test('census demographics require complete ISTAT 2021 sex and age fields', () => {
+  const properties = { p1: 101, p2: 49, p3: 52 };
+  for (let key = 14; key <= 29; key += 1) properties[`p${key}`] = key - 13;
+  for (let key = 30; key <= 45; key += 1) properties[`p${key}`] = key - 29;
+  for (let key = 67; key <= 82; key += 1) properties[`p${key}`] = key - 66;
+  const result = Core.censusDemographics({ properties });
+  assert.equal(result.total, 101);
+  assert.equal(result.male, 49);
+  assert.equal(result.female, 52);
+  assert.deepEqual(result.ageGroups[0], { label: 'Under 5', total: 1, male: 1, female: 1 });
+  assert.deepEqual(result.ageGroups.at(-1), { label: '75+', total: 16, male: 16, female: 16 });
+  assert.equal(Core.censusDemographics({ properties: { p1: 101, p2: 49, p3: 52 } }), null);
+});
+
 test('income bracket rows clamp to 0..100', () => {
   const result = Core.incomeBracketRows([{ bracket: '0-10k', pct: 140 }, { bracket: 'x', pct: null }, { bracket: 'y', pct: -3 }]);
   assert.deepEqual(result.map((row) => row.pct), [100, null, 0]);
@@ -201,6 +215,7 @@ test('blockMetadataHtml shows only what the source supplies and escapes it', () 
   const html = Core.blockMetadataHtml({
     source: 'A <b>', dataset_version: 'v1', model_version: 'm1', match_method: 'centroid',
     confidence: 0.5, spatial_resolution: 'section', spatial_resolution_m: 30,
+    updated_at: '2026-09-30',
     benchmarks: { d: { label: 'Italy', year: 2021, value: 196, unit: 'x/km²' }, empty: { value: null } },
   }, tr);
   assert.match(html, /Source: A &lt;b&gt;/);
@@ -208,6 +223,7 @@ test('blockMetadataHtml shows only what the source supplies and escapes it', () 
   assert.match(html, /Model: m1/);
   assert.match(html, /50%/);
   assert.match(html, /30 m/);
+  assert.match(html, /Last updated.*2026-09-30/);
   assert.match(html, /parcel-block-benchmarks/);
   assert.equal((html.match(/Benchmark/g) || []).length, 1);
 });
@@ -245,15 +261,34 @@ test('identity escapes feature properties and reports a computed area', () => {
   assert.match(result.body, /Unavailable for this record/);
 });
 
+test('address section escapes bounded SISTER addresses and explains its match scope', () => {
+  const result = section('address').render({
+    addresses: ['Via <Roma> 1'], address_count: 12, addresses_truncated: true,
+    address_source: 'SISTER SQLite visura_properties.address',
+  }, makeCtx());
+
+  assert.equal(result.badge, 12);
+  assert.match(result.body, /Via &lt;Roma&gt; 1/);
+  assert.match(result.body, /not a geocoded address register/);
+  assert.match(result.body, /Showing 1 of 12 addresses/);
+  assert.equal(result.meta.match_method, 'cadastral_reference');
+  assert.equal(section('address').render({ unresolved: true }, makeCtx()).empty, true);
+});
+
 test('omi renders zone states, a surface prompt for large parcels and the quote options', () => {
   const quotes = [
     { zona: 'B31', cod_tipologia: '20', tipologia: 'Abitazioni civili', stato_conservazione: 'NORMALE', prezzo_min: 7400, prezzo_max: 9700, anno: 2025, semestre: 2 },
     { zona: 'C1', cod_tipologia: '20', tipologia: 'Abitazioni civili', stato_conservazione: 'NORMALE', prezzo_min: 3000, prezzo_max: 4000, anno: 2025, semestre: 2 },
+    { zona: 'A1', cod_tipologia: '20', tipologia: 'Abitazioni civili', stato_conservazione: 'NORMALE', locazione_min: 11, locazione_max: 14, anno: 2025, semestre: 2 },
   ];
   const detected = section('omi').render({ quotes, zone: { matched: true, zone: 'B31' }, source: 'AdE OMI', dataset_version: '2025/2' }, makeCtx());
   assert.match(detected.body, /OMI zone detected automatically/);
   assert.match(detected.body, /<option value="0">Zone B31/);
-  assert.equal(detected.badge, 2);
+  assert.match(detected.body, /All OMI quotes for this municipality \(3\)/);
+  assert.match(detected.body, /<td>B31<\/td><td>Abitazioni civili<\/td>/);
+  assert.ok(detected.body.includes('Sale range (€/m²)'));
+  assert.match(detected.body, /<td>A1<\/td><td>Abitazioni civili<\/td><td>NORMALE<\/td><td>—<\/td><td>11–14<\/td>/);
+  assert.equal(detected.badge, 3);
   assert.equal(detected.meta.dataset_version, '2025/2');
   assert.match(detected.body, /value="5545"/);
 
@@ -305,15 +340,70 @@ test('pvp only links http(s) listings and flags unresolved municipalities', asyn
 test('risks are labelled as municipality-level and graded', () => {
   const html = section('risks').render({
     seismic: { zone: 3 },
+    pga: { available: true, matched: true, pga_g: 0.123, pga_p16_g: 0.101, pga_p84_g: 0.147 },
     hydrogeological: { flood: { area_pct: { P3_high_probability: 6.2 } }, landslide: { area_pct: { P4_very_high: 0.4 } } },
   }, makeCtx());
-  assert.match(html.body, /Municipality-level data/);
+  assert.match(html.body, /whole municipality/);
+  assert.match(html.body, /PGA source: INGV MPS04 under CC BY 4\.0/);
   assert.match(html.body, /data-level="high"/);
   assert.match(html.body, /data-level="low"/);
   assert.match(html.body, /Zone 3/);
-  assert.equal(html.meta.spatial_resolution, 'municipality');
+  assert.match(html.body, /0,123 g \(0,101–0,147 g\)/);
+  assert.equal(html.meta.spatial_resolution, 'municipality plus parcel-centroid nearest grid point');
+  assert.equal(html.meta.additional_source, 'INGV MPS04 seismic hazard model');
+  assert.equal(html.meta.additional_model_version, 'MPS04');
   assert.equal(section('risks').render({}, makeCtx()).empty, true);
   assert.equal(section('risks').render({ unresolved: true }, makeCtx()).empty, true);
+});
+
+test('risks load municipality data and parcel-centroid PGA independently', async () => {
+  const calls = [];
+  const ctx = makeCtx({
+    fetchJson: async (url) => {
+      calls.push(url);
+      return url.includes('/mps04/pga')
+        ? { ok: true, status: 200, data: { available: true, matched: true, pga_g: 0.08 } }
+        : { ok: true, status: 200, data: { seismic: { zone: 2 } } };
+    },
+  });
+
+  const result = await section('risks').load(ctx);
+
+  assert.ok(calls.some((url) => url.includes('/risks/058091')));
+  assert.ok(calls.some((url) => url.includes('/mps04/pga?lat=41.8986&lng=12.4769')));
+  assert.equal(result.seismic.zone, 2);
+  assert.equal(result.pga.pga_g, 0.08);
+});
+
+test('PGA distinguishes an unbuilt store from a point outside its match radius', () => {
+  const render = (pga) => section('risks').render({ pga }, makeCtx()).body;
+  assert.match(render({ available: false, reason: 'mps04_not_built' }), /Not available on this server/);
+  assert.match(render({ available: true, matched: false }), /No MPS04 grid point was found within 5 km/);
+});
+
+test('municipal solar aggregates carry municipality provenance and are not framed as parcel estimates', () => {
+  const data = {
+    pv_n_buildings: 125,
+    pv_pvout_pessimistic_kwh_year_total: 940000,
+    pv_pvout_modern_kwh_year_total: 1210000,
+    pv_high_viability_pct: 18.5,
+    pv_medium_viability_pct: 32,
+    pv_low_viability_pct: 21.5,
+    pv_not_eligible_pct: 28,
+  };
+  const result = section('solar').render(null, makeCtx({
+    block: (name) => name === 'solar' ? {
+      available: true, data, source: 'aecs4u-stats serving.municipality_profile',
+      spatial_resolution: 'municipality', match_method: 'municipality',
+    } : null,
+  }));
+
+  assert.match(result.body, /Buildings included in the estimate/);
+  assert.match(result.body, /940\.000 kWh\/year/);
+  assert.match(result.body, /not estimates for this parcel, building, or roof/);
+  assert.equal(result.meta.spatial_resolution, 'municipality');
+  assert.equal(result.meta.match_method, 'municipality');
+  assert.equal(section('solar').render(null, makeCtx()).empty, true);
 });
 
 test('risks bind pushes the seismic zone into the stat strip', () => {
@@ -362,9 +452,10 @@ test('municipality links are restricted to safe URLs and valid emails', () => {
 test('income renders bars and benchmark; census flags modelled values', () => {
   const income = section('income').render({
     taxpayers: 1000, mean_taxable_income_eur: 25000, income_distribution: [{ bracket: '0-10k', pct: 26.5 }], source: 'MEF',
+    income_reference_averages: { nation: { mean_taxable_income_eur: 23456, name: 'Italy' } },
   }, makeCtx());
   assert.match(income.body, /parcel-bar/);
-  assert.match(income.body, /Benchmark Italy 2022/);
+  assert.match(income.body, /National average \(Italy\)/);
   assert.equal(income.meta.spatial_resolution, 'municipality');
 
   const feature = { properties: { sez21_id: 'S1', p1: 100, area_sqm: 1e6, ratios: { employment_rate_working_age: 0.5 } } };
@@ -374,6 +465,21 @@ test('income renders bars and benchmark; census flags modelled values', () => {
   const modelled = section('census').render(feature, makeCtx({ block: () => ({ confidence: 0.7, spatial_resolution: 'section' }) }));
   assert.match(modelled.body, /Modelled values/);
   assert.equal(section('census').render({ unresolved: true }, makeCtx()).empty, true);
+});
+
+test('census section shows a scoped sex split and age pyramid when ISTAT fields are present', () => {
+  const props = { sez21_id: 'S1', p1: 100, p2: 48, p3: 52, area_sqm: 1e6 };
+  for (let key = 14; key <= 29; key += 1) props[`p${key}`] = 2;
+  for (let key = 30; key <= 45; key += 1) props[`p${key}`] = 1;
+  for (let key = 67; key <= 82; key += 1) props[`p${key}`] = 1;
+  const result = section('census').render({ properties: props }, makeCtx({ props }));
+  assert.match(result.body, /Age and sex distribution \(Census 2021\)/);
+  assert.match(result.body, /Male residents/);
+  assert.match(result.body, /Female residents/);
+  assert.match(result.body, /Under 5/);
+  assert.match(result.body, /75\+/);
+  assert.match(result.body, /not residents of this parcel/);
+  assert.equal((result.body.match(/<tr><td class="parcel-age-male"/g) || []).length, 16);
 });
 
 test('indicator sections preview a few series and say they are province-level', async () => {

@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 
 from land_registry.map_observability import MapMetrics, map_route_bucket
+from land_registry.map_layers import MAP_LAYERS
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = (ROOT / "land_registry/templates/map_v2.html").read_text(encoding="utf-8")
@@ -69,7 +70,7 @@ def test_direct_map_supports_selection_search_url_state_and_enrichment():
         "parcel-enrichment",
         "mousemove",
         "parcelReportLink",
-        "report=1",
+        "/api/v1/enrichment/parcel/report/",
         "searchController.abort()",
         "controller.signal",
         "Geometry",
@@ -137,7 +138,8 @@ def test_direct_map_shortlist_opens_legacy_source_keys_by_reference():
 def test_direct_map_shows_admin_substitute_below_parcel_zoom():
     assert "ADMIN_SUBSTITUTE_LAYER_IDS" in SCRIPT
     assert "geo-boundaries" in SCRIPT
-    assert "municipality-profiles" in SCRIPT
+    assert "layer?.role === 'admin-substitute'" in SCRIPT
+    assert any(layer.id == "geo-boundaries" and layer.role == "admin-substitute" for layer in MAP_LAYERS)
     assert "parcelMinZoom()" in SCRIPT
     assert "state.map.getZoom() < parcelMinZoom()" in SCRIPT
     assert "state.adminSubstituteAutoLayers.add(layer.id)" in SCRIPT

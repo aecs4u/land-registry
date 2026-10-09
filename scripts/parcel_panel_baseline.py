@@ -5,7 +5,8 @@ For each area it walks a grid of points around a centre until it has found the
 requested number of unique parcels (``/parcel/at-point``), then reads
 ``/parcel/details/{reference}`` twice and records latency, payload size,
 ``read_model.cached`` and which blocks carry data. Cold builds and cache hits
-are summarised separately. It issues read-only GET requests and never calls
+are summarised separately. It sends GET requests only; ``--view panel`` can
+populate the application's panel read cache. It never calls
 ``/enrichment/status`` (that endpoint probes every store and is slow on hosts
 where stores are not built).
 
@@ -76,8 +77,10 @@ def _reference(feature: dict[str, Any]) -> str | None:
     return None
 
 
-def _details(base_url: str, reference: str, timeout: float) -> dict[str, Any]:
+def _details(base_url: str, reference: str, timeout: float, view: str) -> dict[str, Any]:
     url = f"{base_url}/api/v1/enrichment/parcel/details/{urllib.parse.quote(reference, safe='')}"
+    if view != "full":
+        url = f"{url}?view={urllib.parse.quote(view, safe='')}"
     status, detail, seconds, size = _get_json(url, timeout)
     detail = detail if isinstance(detail, dict) else {}
     blocks = detail.get("blocks") or {}
@@ -96,6 +99,7 @@ def measure(
     areas: dict[str, tuple[float, float]],
     per_area: int,
     timeout: float,
+    view: str = "full",
 ) -> list[dict[str, Any]]:
     """Collect ``per_area`` unique parcels in each area, two detail calls each."""
     rows: list[dict[str, Any]] = []
@@ -103,6 +107,7 @@ def measure(
     for area, (centre_lat, centre_lng) in areas.items():
         found = 0
         attempts = 0
+        transport_errors = 0
         for d_lat, d_lng in _OFFSETS:
             if found >= per_area:
                 break
@@ -112,6 +117,15 @@ def measure(
             status, feature, lookup_s, _ = _get_json(
                 f"{base_url}/api/v1/enrichment/parcel/at-point?{query}", timeout
             )
+            if status == 0:
+                transport_errors += 1
+                if transport_errors >= 3:
+                    raise RuntimeError(
+                        f"{base_url} failed three consecutive parcel lookups; "
+                        "the benchmark was aborted without writing partial results"
+                    )
+            else:
+                transport_errors = 0
             reference = _reference(feature) if isinstance(feature, dict) else None
             if not reference or reference in seen:
                 if attempts >= 3 and found == 0 and status == 404:
@@ -122,8 +136,8 @@ def measure(
             rows.append({
                 "area": area, "lat": lat, "lng": lng, "reference": reference,
                 "lookup_status": status, "lookup_seconds": round(lookup_s, 3),
-                "first": _details(base_url, reference, timeout),
-                "second": _details(base_url, reference, timeout),
+                "first": _details(base_url, reference, timeout, view),
+                "second": _details(base_url, reference, timeout, view),
             })
         if found < per_area:
             print(f"warning: {area}: only {found} unique parcels found", file=sys.stderr)
@@ -172,6 +186,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--base-url", default="http://127.0.0.1:8011")
     parser.add_argument("--per-area", type=int, default=5, help="unique parcels collected in each area (default 5, 20 in total)")
     parser.add_argument("--timeout", type=float, default=30.0, help="seconds per request")
+    parser.add_argument("--view", choices=("full", "panel"), default="full", help="details response shape (default: full)")
     parser.add_argument("--output", help="write the full result as JSON to this path")
     args = parser.parse_args(argv)
 
@@ -181,10 +196,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{base_url}/health did not answer 200 (got {status}); is the server running?", file=sys.stderr)
         return 2
 
-    rows = measure(base_url, DEFAULT_AREAS, max(args.per_area, 1), args.timeout)
+    try:
+        rows = measure(base_url, DEFAULT_AREAS, max(args.per_area, 1), args.timeout, args.view)
+    except RuntimeError as exc:
+        print(f"benchmark aborted: {exc}", file=sys.stderr)
+        return 2
     result = {
         "captured_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "base_url": base_url,
+        "details_view": args.view,
         "summary": summarise(rows),
         "rows": rows,
     }

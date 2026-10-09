@@ -230,7 +230,8 @@
     const rows = (history || []).filter((row) => {
       const min = toNumber(row.prezzo_min);
       const max = toNumber(row.prezzo_max);
-      const sameState = !state || !row.stato_conservazione || row.stato_conservazione === state;
+      const sameState = !state || !row.stato_conservazione
+        || String(row.stato_conservazione).trim().toUpperCase() === String(state).trim().toUpperCase();
       return sameState && min !== null && max !== null;
     }).slice(-limit);
     const points = rows.map((row) => {
@@ -285,6 +286,43 @@
       ratios: props.ratios || {},
       benchmark,
     };
+  }
+
+  /** Census 2021 sex totals and 5-year age groups, or null when fields are absent. */
+  function censusDemographics(feature) {
+    const props = feature && feature.properties;
+    if (!props) return null;
+    const total = toNumber(props.p1 ?? props.pop21);
+    const male = toNumber(props.p2);
+    const female = toNumber(props.p3);
+    if (total === null || total <= 0 || male === null || female === null) return null;
+    const columns = [
+      ['Under 5', 'p14', 'p30', 'p67'],
+      ['5–9', 'p15', 'p31', 'p68'],
+      ['10–14', 'p16', 'p32', 'p69'],
+      ['15–19', 'p17', 'p33', 'p70'],
+      ['20–24', 'p18', 'p34', 'p71'],
+      ['25–29', 'p19', 'p35', 'p72'],
+      ['30–34', 'p20', 'p36', 'p73'],
+      ['35–39', 'p21', 'p37', 'p74'],
+      ['40–44', 'p22', 'p38', 'p75'],
+      ['45–49', 'p23', 'p39', 'p76'],
+      ['50–54', 'p24', 'p40', 'p77'],
+      ['55–59', 'p25', 'p41', 'p78'],
+      ['60–64', 'p26', 'p42', 'p79'],
+      ['65–69', 'p27', 'p43', 'p80'],
+      ['70–74', 'p28', 'p44', 'p81'],
+      ['75+', 'p29', 'p45', 'p82'],
+    ];
+    const ageGroups = columns.map(([label, all, maleKey, femaleKey]) => ({
+      label,
+      total: toNumber(props[all]),
+      male: toNumber(props[maleKey]),
+      female: toNumber(props[femaleKey]),
+    }));
+    if (ageGroups.some((group) => group.total === null || group.male === null || group.female === null)) return null;
+    if (!ageGroups.some((group) => group.total > 0)) return null;
+    return { total, male, female, ageGroups };
   }
 
   /** Income-bracket rows {label, pct (0..100 or null)}. */
@@ -407,6 +445,7 @@
     if (confidence) chips.push([translate(tr, 'Confidence'), confidence]);
     if (block.spatial_resolution) chips.push([translate(tr, 'Resolution'), block.spatial_resolution]);
     if (toNumber(block.spatial_resolution_m) !== null) chips.push([translate(tr, 'Resolution'), `${formatNumber(block.spatial_resolution_m)} m`]);
+    if (block.updated_at) chips.push([translate(tr, 'Last updated'), block.updated_at]);
     const provenance = [
       block.dataset_version ? `${translate(tr, 'Dataset')}: ${block.dataset_version}` : '',
       block.model_version ? `${translate(tr, 'Model')}: ${block.model_version}` : '',
@@ -431,7 +470,7 @@
     cadastralCodeOf, parcelAreaSqm, centroidOf, referenceParts,
     validOmiQuotes, quoteMidpoint, estimateOmiRange, defaultEstimateArea, quoteBenchmark,
     omiHistorySeries, historyChartSvg,
-    censusSummary, incomeBracketRows, riskLevel, seismicLabel, bulletinSeverity,
+    censusSummary, censusDemographics, incomeBracketRows, riskLevel, seismicLabel, bulletinSeverity,
     foldName, findBulletinZone, feedRefreshValue, parseFireObservationTime, indicatorLabel,
     flattenValues, safeHttpUrl, blockMetadataHtml,
   };

@@ -329,7 +329,7 @@
       if (state.selectedFeature?.id != null) params.set('parcel_id', String(state.selectedFeature.id));
       else params.delete('parcel_id');
     } else { params.delete('parcel'); params.delete('parcel_id'); }
-    window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`);
+    window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}${window.location.hash}`);
   }
 
   function currentBasemap() {
@@ -1155,16 +1155,24 @@
     $('directParcelTitle').textContent = parcel !== undefined && parcel !== null && parcel !== '' ? tr('Parcel {parcel}', { parcel }) : tr('Parcel details');
     $('directParcelSubtitle').textContent = [reference, municipality].filter(Boolean).join(' · ');
     if (window.ParcelPanel) {
-      window.ParcelPanel.show(feature, { reference });
+      window.ParcelPanel.show(feature, { reference, featureId: feature.id ?? props.id ?? null });
       // Without a reference there is no read model to wait for.
       if (!reference) window.ParcelPanel.setReadModel({ unavailable: true });
     } else {
       // The panel script failed to load: identity is still useful.
       $('directParcelContent').textContent = [reference, municipality].filter(Boolean).join(' · ') || tr('Parcel details');
     }
-    const parcelQuery = `?parcel=${encodeURIComponent(reference || '')}&report=1`;
     $('legacyAnalysisLink').href = `/map-legacy?parcel=${encodeURIComponent(reference || '')}`;
-    $('parcelReportLink').href = `/map-legacy${parcelQuery}`;
+    const reportLink = $('parcelReportLink');
+    const featureId = feature.id ?? props.id ?? null;
+    const reportIdQuery = Number.isInteger(Number(featureId)) && Number(featureId) > 0
+      ? `?id=${encodeURIComponent(String(Number(featureId)))}`
+      : '';
+    reportLink.href = reference
+      ? `/api/v1/enrichment/parcel/report/${encodeURIComponent(reference)}${reportIdQuery}`
+      : '#';
+    reportLink.setAttribute('aria-disabled', String(!reference));
+    reportLink.tabIndex = reference ? 0 : -1;
     const saved = state.savedReference === reference;
     $('parcelSaveButton').disabled = saved;
     $('parcelSaveButton').textContent = saved ? tr('Saved') : tr('Save parcel');
@@ -1207,6 +1215,55 @@
       button.textContent = tr('Save parcel');
       mapStatus(error.message || 'Could not save parcel', true);
     } finally { task.finish(); }
+  }
+
+  async function downloadParcelReport(event) {
+    const link = event.currentTarget;
+    if (!link || link.getAttribute('aria-disabled') === 'true' || link.dataset.exporting === 'true') return;
+    // Retain the server-only GET as a useful fallback if the panel bundle did
+    // not load. With the bundle present, export every independently loaded
+    // section before asking the server to render the PDF.
+    if (typeof window.ParcelPanel?.createReportSnapshot !== 'function') return;
+    event.preventDefault();
+    const endpoint = link.href;
+    const originalLabel = link.dataset.label || link.textContent.trim();
+    link.dataset.label = originalLabel;
+    link.dataset.exporting = 'true';
+    link.setAttribute('aria-busy', 'true');
+    link.textContent = tr('Preparing report…');
+    link.title = '';
+    try {
+      const snapshot = await window.ParcelPanel.createReportSnapshot((loaded, total) => {
+        link.textContent = tr('Loading report data: {loaded}/{total}', { loaded, total });
+      });
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/pdf' },
+        body: JSON.stringify(snapshot),
+      });
+      if (!response.ok) {
+        let detail = '';
+        try { detail = (await response.json()).detail || ''; } catch (_) { /* use the localized fallback */ }
+        throw new Error(detail || `HTTP ${response.status}`);
+      }
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const download = document.createElement('a');
+      download.href = objectUrl;
+      download.download = 'parcel-report.pdf';
+      document.body.append(download);
+      download.click();
+      download.remove();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 30_000);
+    } catch (error) {
+      link.textContent = tr('Report could not be prepared. Retry.');
+      link.title = error && error.message ? error.message : tr('Report could not be prepared. Retry.');
+      return;
+    } finally {
+      link.dataset.exporting = 'false';
+      link.setAttribute('aria-busy', 'false');
+      if (link.textContent === tr('Preparing report…')) link.textContent = originalLabel;
+    }
   }
 
   function statusLabel(status) {
@@ -1451,7 +1508,9 @@
           submitSearch(reference, true);
           return null;
         }
-        throw new Error(response.status === 404 ? 'Parcel not found' : (detail || 'Parcel service unavailable'));
+        throw new Error(response.status === 404
+          ? 'This parcel is not in the available cadastral data. The autonomous provinces of Bolzano and Trento are not currently covered.'
+          : (detail || 'Parcel service unavailable'));
       }
       const feature = await response.json();
       state.selectedReference = feature.properties?.canonical_reference || feature.properties?.national_cadastral_reference || reference;
@@ -1487,7 +1546,7 @@
   async function loadParcelEnrichment(reference, feature) {
     const task = beginMapProgress('parcel-enrichment', 'Loading parcel details…');
     try {
-      const response = await fetch(`/api/v1/enrichment/parcel/details/${encodeURIComponent(reference)}`);
+      const response = await fetch(`/api/v1/enrichment/parcel/details/${encodeURIComponent(reference)}?view=panel`);
       // Replace the loading placeholder either way; a 404 simply means no
       // read-model row exists for this parcel yet.
       if (!response.ok) {
@@ -2882,6 +2941,7 @@
     $('locateButton').addEventListener('click', locate);
     $('shareButton').addEventListener('click', copyLink);
     $('parcelSaveButton').addEventListener('click', saveParcel);
+    $('parcelReportLink')?.addEventListener('click', downloadParcelReport);
     $('parcelAdjacentButton').addEventListener('click', findAdjacentParcels);
     $('parcelShareButton').addEventListener('click', copyLink);
     $('parcelClearButton').addEventListener('click', () => { clearParcelSelection(); $('mapSearchInput').focus(); });

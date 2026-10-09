@@ -2,6 +2,10 @@
 
 *Captured 2026-10-09 against the local dev server (`http://127.0.0.1:8011`).
 Raw data: [`baselines/parcel_panel_baseline_2026-10-09.json`](baselines/parcel_panel_baseline_2026-10-09.json).
+Post-implementation panel-view sample:
+[`baselines/parcel_panel_after_cache_2026-10-09.json`](baselines/parcel_panel_after_cache_2026-10-09.json).
+The full-response comparison sample is
+[`baselines/parcel_panel_after_implementation_2026-10-09.json`](baselines/parcel_panel_after_implementation_2026-10-09.json).
 Re-run with `python scripts/parcel_panel_baseline.py --output docs/baselines/<name>.json`
 and compare.*
 
@@ -23,8 +27,9 @@ compare phases on the same host.
   `GET /api/v1/enrichment/parcel/details/{reference}` twice.
 - Each details response is classified by `read_model.cached`. Cold builds and
   cache hits are summarised separately.
-- Read-only requests. `/api/v1/enrichment/status` is deliberately not called
-  (finding 3).
+- GET requests only. `--view panel` may populate the application's compact
+  panel cache. `/api/v1/enrichment/status` is deliberately not called because
+  it probes every store.
 
 ## Results
 
@@ -47,7 +52,7 @@ Block coverage across the 20 parcels: `basic` 20/20, `cadastral` 20/20,
 including `economics`, `population`, `demographics`, `buildings`, `opendata`
 and `pvp`.
 
-## Findings
+## Findings at Phase 0
 
 1. **The read-model cache is not serving on this host.** Every repeat request is
    a cold build (`read_model.cached: false`, about 4.6 s), so the "one indexed
@@ -64,14 +69,14 @@ and `pvp`.
    `/data/istat/`, two different roots. Phase 1 work on census, economics and
    POIs cannot be verified end to end here; use fixtures for unit tests and a
    fuller host for acceptance.
-3. **`/enrichment/status` is slow and noisy.** It runs every store availability
-   checker. Each raises and logs a full traceback at DEBUG when its store is
-   missing. One call exceeded 15 s here, and the checkers are not cached. A
-   60-second availability cache with a one-line cause per store would fix both;
-   the panel's "not available on this host" states depend on it.
-4. **Uncovered areas return 404 with no explanation.** The panel's empty state
-   for a point with no parcel should say that provincial cadastres outside the AdE
-   extract (Bolzano, Trento) are not covered.
+3. **`/enrichment/status` was slow on this host.** It runs every store
+   availability checker. The current route moves the probe to a worker thread
+   and caches its result for 60 seconds, so repeated status requests do not
+   rerun every check.
+4. **Uncovered-area explanation was missing.** The primary map now explains the
+   Bolzano and Trento coverage limit when parcel-by-reference returns 404; a
+   browser check covers that path. The generic no-parcel point state remains a
+   separate behavior to review.
 5. **The dev server reloads on any file write in the repository**, including
    documents and scripts, causing short outages (`/health` failures). Allow time
    after edits before timing anything.
@@ -105,4 +110,34 @@ unavailable today: `address`, `addresses`, `risk`, `subsidence`, `terrain`,
 | Sections rendered on `/map` | Identity, two KPIs and a generic five-value list per block | Every section the legacy panel renders, as typed sections |
 | After a click | Identity from tile feature, then one 4.6 s call | Identity under 300 ms; sections fill independently; no section failure blanks the panel |
 | Cold details median (this host) | 4.61 s | No worse than baseline plus 20 % |
-| Warm-cache latency | Not measured | Capture on a host with the read-model table |
+| Warm-cache latency | PostgreSQL path not measured; local panel fallback is measured below | Capture PostgreSQL cache on a provisioned host |
+
+## Post-implementation panel-view sample
+
+Captured 2026-10-09 against a fresh, no-reload dev server on port 8012 using
+`--view panel`. The 20-parcel sample includes five parcels in each of the same
+four areas, with 40 successful detail calls and no failures. Raw observations
+are in the linked JSON file above.
+
+| Measure | Panel view |
+|---|---:|
+| Cold builds | 14; median 6.461 s, p95 8.492 s, max 8.492 s |
+| Cache hits | 26; median 0.010 s, p95 0.026 s, max 0.048 s |
+| First-call cache hits | 6 of 20 |
+| Repeat-call cache hits | 20 of 20 |
+| Details payload median | 18,539 bytes |
+| Available blocks | 6 of 22 on all 20 sampled parcels |
+
+The six first-call hits were already warm when this complete run began (the
+earlier interrupted local run had populated them). The 14 cold calls and 26
+hits are classified by the response's `read_model.cached` field. The warm path
+measured here is the application-side compact panel cache; this does not verify
+the PostgreSQL read-model path.
+
+The compact response was about 70% smaller than the 62,480-byte median from the
+post-implementation full response sample linked above. It is still larger than the original
+12,718-byte Phase 0 response because the later sample returned six populated
+blocks rather than three. Those payload comparisons use different response
+shapes and reflect changing source availability, so compare them as context,
+not as a controlled same-data benchmark. The panel-view cold-build median was
+6.461 s; latency remains a provisioned-host acceptance item.

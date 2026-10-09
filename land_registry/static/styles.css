@@ -3829,6 +3829,27 @@ body.dark-mode .drawing-subsection-divider {
   color: #666;
 }
 
+.enrichment-indicator-cluster { margin-top: 12px; }
+.enrichment-indicator-cluster h4 { display: flex; justify-content: space-between; gap: 8px; margin: 0 0 6px; font-size: 13px; }
+.enrichment-indicator-cluster h4 small { color: #777; font-size: 11px; font-weight: 400; }
+.enrichment-indicator-scroll { max-width: 100%; overflow-x: auto; border: 1px solid #dee2e6; border-radius: 5px; }
+.enrichment-indicator-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 11px; }
+.enrichment-indicator-table th, .enrichment-indicator-table td { min-width: 62px; padding: 5px 7px; border-bottom: 1px solid #e5e7eb; text-align: right; white-space: nowrap; }
+.enrichment-indicator-table thead th { position: sticky; top: 0; z-index: 2; background: #f8f9fa; color: #64748b; }
+.enrichment-indicator-table th:first-child { position: sticky; left: 0; z-index: 1; min-width: 175px; max-width: 245px; text-align: left; white-space: normal; background: #fff; }
+.enrichment-indicator-table thead th:first-child { z-index: 3; background: #f8f9fa; }
+.enrichment-indicator-table tbody th { font-weight: 550; }
+.enrichment-indicator-table tbody td { font-variant-numeric: tabular-nums; }
+.enrichment-indicator-table tbody th small, .enrichment-indicator-table tbody td small { display: block; margin-top: 2px; color: #64748b; font-size: 10px; font-weight: 400; }
+.enrichment-indicator-table tbody tr:last-child th, .enrichment-indicator-table tbody tr:last-child td { border-bottom: 0; }
+.enrichment-income-average-heading { margin: 8px 0 4px; font-size: 12px; }
+.enrichment-income-averages { display: grid; gap: 5px; margin: 6px 0 10px; }
+.enrichment-income-average-row { display: grid; grid-template-columns: minmax(105px, 1.3fr) minmax(45px, 2fr) minmax(75px, auto); align-items: center; gap: 7px; font-size: 11px; }
+.enrichment-income-average-row > span { overflow-wrap: anywhere; }
+.enrichment-income-average-row strong { text-align: right; white-space: nowrap; }
+.enrichment-income-average-track { height: 7px; overflow: hidden; border-radius: 4px; background: #e2e8f0; }
+.enrichment-income-average-track i { display: block; height: 100%; border-radius: inherit; background: #2563eb; }
+
 .enrichment-model-metadata {
   display: flex;
   flex-wrap: wrap;
@@ -6344,6 +6365,14 @@ body.dark-mode .enrichment-card .card-header.enrichment-card-header {
 body.dark-mode .enrichment-card-body {
   color: #e4e4e7;
 }
+
+body.dark-mode .enrichment-indicator-table th:first-child { background: #16213e; }
+body.dark-mode .enrichment-indicator-table thead th { background: #0f3460; color: #cbd5e1; }
+body.dark-mode .enrichment-indicator-table thead th:first-child { background: #0f3460; }
+body.dark-mode .enrichment-indicator-scroll { border-color: #2d3a4f; }
+body.dark-mode .enrichment-indicator-table th, body.dark-mode .enrichment-indicator-table td { border-color: #2d3a4f; }
+body.dark-mode .enrichment-indicator-table tbody th small, body.dark-mode .enrichment-indicator-table tbody td small { color: #94a3b8; }
+body.dark-mode .enrichment-income-average-track { background: #334155; }
 
 body.dark-mode .enrichment-row span:first-child {
   color: #94a3b8;

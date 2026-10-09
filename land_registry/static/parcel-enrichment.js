@@ -659,9 +659,27 @@
 
     function _renderIncome(data) {
         if (!data) return _emptyState('Nessun dato IRPEF disponibile per questo comune.');
+        const averages = data.income_reference_averages || {};
         const benchmark = data.benchmark_average_income_eur
             || (data.benchmarks && data.benchmarks.average_income_eur)
             || PANEL_BENCHMARKS.average_income_eur;
+        const averageSeries = [
+            { key: 'municipality', label: 'Comune', fallback: data.mean_taxable_income_eur },
+            { key: 'province', label: 'Provincia' },
+            { key: 'region', label: 'Regione' },
+            { key: 'nation', label: 'Italia' },
+        ].map((item) => ({
+            ...item,
+            name: averages[item.key] && averages[item.key].name,
+            value: Number(averages[item.key] && averages[item.key].mean_taxable_income_eur != null
+                ? averages[item.key].mean_taxable_income_eur : item.fallback),
+        })).filter((item) => Number.isFinite(item.value));
+        const averageMaximum = Math.max(0, ...averageSeries.map((item) => item.value));
+        const averageBars = averageSeries.map((item) => {
+            const width = averageMaximum > 0 ? Math.max(2, item.value / averageMaximum * 100) : 0;
+            const label = item.name ? `${item.label} (${item.name})` : item.label;
+            return `<div class="enrichment-income-average-row"><span>${_escapeHtml(label)}</span><div class="enrichment-income-average-track"><i style="width:${width.toFixed(1)}%"></i></div><strong>€ ${_formatNumber(item.value)}</strong></div>`;
+        }).join('');
         const brackets = (data.income_distribution || []).map(b => `
             <div class="enrichment-bracket-row">
                 <span class="enrichment-bracket-label">${b.bracket}</span>
@@ -673,6 +691,7 @@
         return `
             <div class="enrichment-row"><span>Contribuenti</span><strong>${(data.taxpayers || 0).toLocaleString('it-IT')}</strong></div>
             <div class="enrichment-row"><span>Reddito medio</span><strong>€ ${data.mean_taxable_income_eur != null ? Math.round(data.mean_taxable_income_eur).toLocaleString('it-IT') : '—'}${_benchmarkInline(benchmark, (value) => `€ ${Math.round(Number(value)).toLocaleString('it-IT')}`)}</strong></div>
+            ${averageBars ? `<h4 class="enrichment-income-average-heading">Reddito medio per area</h4><div class="enrichment-income-averages">${averageBars}</div>` : ''}
             <div class="enrichment-brackets">${brackets}</div>
             ${_sourceFootnote(data.source, data)}
         `;
@@ -722,24 +741,65 @@
         `;
     }
 
-    async function _fetchIndicatorPreview(catalogUrl, seriesBaseUrl) {
+    async function _fetchIndicatorPreview(catalogUrl, seriesBaseUrl, includeAll = false) {
         const catalogResult = await _fetchJson(catalogUrl);
         if (!catalogResult.ok || !catalogResult.data || !catalogResult.data.indicators) return null;
-        const codes = catalogResult.data.indicators.slice(0, INDICATOR_PREVIEW_LIMIT);
-        const series = await Promise.all(codes.map(async (code) => {
-            const result = await _fetchJson(`${seriesBaseUrl}/${encodeURIComponent(code)}`);
-            const values = result.ok && result.data ? result.data.series || [] : [];
-            return { code, latest: values.length ? values[values.length - 1] : null };
+        if (Array.isArray(catalogResult.data.clusters) && Array.isArray(catalogResult.data.years)) {
+            return catalogResult.data;
+        }
+        const codes = includeAll
+            ? catalogResult.data.indicators
+            : catalogResult.data.indicators.slice(0, INDICATOR_PREVIEW_LIMIT);
+        const series = [];
+        for (let offset = 0; offset < codes.length; offset += includeAll ? 16 : codes.length || 1) {
+            const batch = await Promise.all(codes.slice(offset, offset + (includeAll ? 16 : codes.length || 1)).map(async (code) => {
+                const result = await _fetchJson(`${seriesBaseUrl}/${encodeURIComponent(code)}`);
+                const values = result.ok && result.data ? result.data.series || [] : [];
+                return { code, values };
+            }));
+            series.push(...batch);
+        }
+        if (includeAll) {
+            const yearSet = new Set();
+            const indicators = series.map(({ code, values }) => {
+                const row = { name: code, unit: null, unit_varies: false, values: {} };
+                const units = new Set();
+                values.forEach((item) => {
+                    const year = String(item.edition_label || (item.is_covid_supplement ? `${item.year} COVID` : item.year));
+                    yearSet.add(year);
+                    row.values[year] = {
+                        value: item.value,
+                        unit: item.unit || null,
+                        temporal_reference: item.temporal_reference || null,
+                    };
+                    if (item.unit) units.add(item.unit);
+                });
+                row.unit_varies = units.size > 1;
+                row.unit = units.size === 1 ? [...units][0] : null;
+                return row;
+            });
+            const years = [...yearSet].sort((a, b) => (Number.parseInt(a, 10) || 0) - (Number.parseInt(b, 10) || 0) || a.localeCompare(b));
+            return {
+                ...catalogResult.data,
+                years,
+                clusters: indicators.length ? [{ key: 'quality_of_life', label: 'Quality-of-life indicators', indicators }] : [],
+            };
+        }
+        const latestSeries = series.map(({ code, values }) => ({
+            code, latest: values.length ? values[values.length - 1] : null,
         }));
         return {
             source: catalogResult.data.source,
             nuts3: catalogResult.data.nuts3,
             total: catalogResult.data.indicators.length,
-            series,
+            series: latestSeries,
         };
     }
 
     function _renderIndicatorPreview(data, emptyMessage) {
+        if (data && Array.isArray(data.clusters)) {
+            return _renderIndicatorClusters(data);
+        }
         if (!data || !data.series || data.series.every((item) => !item.latest)) {
             return _emptyState(emptyMessage);
         }
@@ -754,6 +814,41 @@
             <div class="enrichment-empty text-muted">Indicatori a livello provinciale (${_escapeHtml(data.nuts3 || 'NUTS3')}).</div>
             ${_sourceFootnote(data.source)}
         `;
+    }
+
+    function _renderIndicatorClusters(data) {
+        const clusterLabels = {
+            wealth_consumption: 'Ricchezza e consumi',
+            business_work: 'Affari e lavoro',
+            environment_services: 'Ambiente e servizi',
+            demography_society: 'Demografia e società',
+            justice_safety: 'Giustizia e sicurezza',
+            culture_leisure: 'Cultura e tempo libero',
+            covid_supplement: 'Supplemento Covid-19',
+            quality_of_life: 'Indicatori di qualità della vita',
+        };
+        const clusters = data.clusters.filter((cluster) => (cluster.indicators || []).length);
+        if (!clusters.length) return _emptyState('Indicatori di qualità della vita non disponibili.');
+        const years = data.years || [];
+        const tables = clusters.map((cluster) => {
+            const label = clusterLabels[cluster.key] || cluster.label || cluster.key;
+            const rows = cluster.indicators.map((indicator) => `<tr>
+                <th scope="row">${_escapeHtml(indicator.name)}${indicator.unit && !indicator.unit_varies
+                    ? `<small>${_escapeHtml(indicator.unit)}</small>` : ''}</th>
+                ${years.map((year) => {
+                    const item = indicator.values && indicator.values[year];
+                    if (item == null || item.value == null) return '<td>—</td>';
+                    const title = [item.unit, item.temporal_reference].filter(Boolean).join(' · ');
+                    return `<td${title ? ` title="${_escapeHtml(title)}"` : ''}>${_formatNumber(item.value, 2)}${indicator.unit_varies && item.unit
+                        ? `<small>${_escapeHtml(item.unit)}</small>` : ''}</td>`;
+                }).join('')}
+            </tr>`).join('');
+            return `<section class="enrichment-indicator-cluster"><h4>${_escapeHtml(label)} <small>${cluster.indicators.length}</small></h4>
+                <div class="enrichment-indicator-scroll" role="region" tabindex="0" aria-label="${_escapeHtml(label)}">
+                    <table class="enrichment-indicator-table"><thead><tr><th>Indicatore</th>${years.map((year) => `<th>${_escapeHtml(year)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>
+                </div></section>`;
+        }).join('');
+        return `${tables}<div class="enrichment-empty text-muted">Indicatori a livello provinciale (${_escapeHtml(data.nuts3 || 'NUTS3')}).</div>${_sourceFootnote(data.source)}`;
     }
 
     function _seismicLabel(zone) {
@@ -1041,7 +1136,8 @@
             }),
             _fetchIndicatorPreview(
                 `/api/v1/enrichment/quality-of-life/${encodeURIComponent(cadastralCode)}`,
-                `/api/v1/enrichment/quality-of-life/${encodeURIComponent(cadastralCode)}`
+                `/api/v1/enrichment/quality-of-life/${encodeURIComponent(cadastralCode)}`,
+                true
             ).then(data => {
                 if (qualityEl && renderToken === activeRenderToken) {
                     qualityEl.querySelector('.enrichment-card-body').innerHTML = _renderIndicatorPreview(data, 'Indicatori di qualità della vita non disponibili.');

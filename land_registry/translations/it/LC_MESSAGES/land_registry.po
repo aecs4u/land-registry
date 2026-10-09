@@ -5,7 +5,7 @@ msgstr ""
 "Project-Id-Version: land_registry 0.1.4\n"
 "Report-Msgid-Bugs-To: \n"
 "POT-Creation-Date: 2025-04-05 00:00+0000\n"
-"PO-Revision-Date: 2025-04-05 00:00+0000\n"
+"PO-Revision-Date: 2026-10-09 00:00+0000\n"
 "Last-Translator: \n"
 "Language-Team: Italian\n"
 "Language: it\n"
@@ -778,6 +778,9 @@ msgstr "Livello Regioni"
 msgid "Parcel report"
 msgstr "Report Particella"
 
+msgid "Parcel actions"
+msgstr "Azioni particella"
+
 msgid "Print / Save PDF"
 msgstr "Stampa / Salva PDF"
 
@@ -1036,6 +1039,9 @@ msgstr "Un file JSON con le tue particelle salvate e le tue preferenze."
 
 msgid "Download"
 msgstr "Scarica"
+
+msgid "Download PDF"
+msgstr "Scarica PDF"
 
 msgid "Basemap"
 msgstr "Mappa di base"
@@ -1700,6 +1706,9 @@ msgstr "Caricamento della particella…"
 msgid "Loading parcel details…"
 msgstr "Caricamento dei dettagli della particella…"
 
+msgid "This parcel is not in the available cadastral data. The autonomous provinces of Bolzano and Trento are not currently covered."
+msgstr "Questa particella non è presente nei dati catastali disponibili. Le province autonome di Bolzano e Trento non sono attualmente coperte."
+
 msgid "Finding parcel…"
 msgstr "Ricerca della particella…"
 
@@ -1740,6 +1749,18 @@ msgstr "Incendi attivi"
 
 msgid "Address"
 msgstr "Indirizzo"
+
+msgid "Address {n}"
+msgstr "Indirizzo {n}"
+
+msgid "No address is recorded in the SISTER cache for this parcel."
+msgstr "Nella cache SISTER non è registrato un indirizzo per questa particella."
+
+msgid "Addresses are taken from SISTER cadastral property records matched by municipality, sheet and parcel. Coverage may be incomplete; this is not a geocoded address register."
+msgstr "Gli indirizzi provengono dalle unità immobiliari catastali SISTER abbinate per comune, foglio e particella. La copertura può essere incompleta; non si tratta di un archivio geocodificato degli indirizzi."
+
+msgid "Showing {shown} of {total} addresses."
+msgstr "Sono mostrati {shown} indirizzi su {total}."
 
 msgid "All attributes"
 msgstr "Tutti gli attributi"
@@ -1924,6 +1945,18 @@ msgstr "Corrispondenza"
 msgid "Mean taxable income"
 msgstr "Reddito imponibile medio"
 
+msgid "Municipality average"
+msgstr "Media comunale"
+
+msgid "Province average"
+msgstr "Media provinciale"
+
+msgid "Region average"
+msgstr "Media regionale"
+
+msgid "National average"
+msgstr "Media nazionale"
+
 msgid "Medium"
 msgstr "Medio"
 
@@ -2068,6 +2101,39 @@ msgstr "Capoluogo di provincia"
 msgid "Quality of life"
 msgstr "Qualità della vita"
 
+msgid "Wealth and consumption"
+msgstr "Ricchezza e consumi"
+
+msgid "Business and work"
+msgstr "Affari e lavoro"
+
+msgid "Environment and services"
+msgstr "Ambiente e servizi"
+
+msgid "Demography and society"
+msgstr "Demografia e società"
+
+msgid "Justice and safety"
+msgstr "Giustizia e sicurezza"
+
+msgid "Culture and leisure"
+msgstr "Cultura e tempo libero"
+
+msgid "COVID-19 supplement"
+msgstr "Supplemento Covid-19"
+
+msgid "Quality-of-life indicators"
+msgstr "Indicatori di qualità della vita"
+
+msgid "Indicator"
+msgstr "Indicatore"
+
+msgid "Average taxable income"
+msgstr "Reddito imponibile medio"
+
+msgid "Average taxable income by area"
+msgstr "Reddito imponibile medio per area"
+
 msgid "Query date"
 msgstr "Data della query"
 
@@ -2124,6 +2190,21 @@ msgstr "Densità della sezione"
 
 msgid "Seismic zone"
 msgstr "Zona sismica"
+
+msgid "PGA (10 percent in 50 years)"
+msgstr "PGA (10% in 50 anni)"
+
+msgid "The seismic zone and flood or landslide shares describe the whole municipality. PGA is a parcel-centroid estimate from the nearest INGV MPS04 grid point, not an interpolated or site-specific value."
+msgstr "La zona sismica e le quote di rischio alluvione o frana descrivono l'intero comune. La PGA è una stima nel centroide della particella, ricavata dal punto più vicino della griglia INGV MPS04: non è interpolata né specifica del sito."
+
+msgid "PGA source: INGV MPS04 under CC BY 4.0. The estimate uses a 10 percent exceedance probability in 50 years and the nearest native grid point; no interpolation is applied."
+msgstr "Fonte PGA: INGV MPS04 con licenza CC BY 4.0. La stima usa una probabilità di superamento del 10% in 50 anni e il punto più vicino della griglia nativa, senza interpolazione."
+
+msgid "No MPS04 grid point was found within 5 km."
+msgstr "Nessun punto della griglia MPS04 trovato entro 5 km."
+
+msgid "Not available on this server."
+msgstr "Non disponibile su questo server."
 
 msgid "Sheet"
 msgstr "Foglio"
@@ -2275,5 +2356,831 @@ msgstr "{n} min fa"
 msgid "{n} semesters"
 msgstr "{n} semestri"
 
+msgid "6 months"
+msgstr "6 mesi"
+
+msgid "1 year"
+msgstr "1 anno"
+
+msgid "3 years"
+msgstr "3 anni"
+
+msgid "5 years"
+msgstr "5 anni"
+
+msgid "10 years"
+msgstr "10 anni"
+
+msgid "Estimated income inequality (Gini)"
+msgstr "Disuguaglianza dei redditi stimata (Gini)"
+
+msgid "Gross rental yield"
+msgstr "Rendimento lordo da locazione"
+
+msgid "Sale-price percentile in comune"
+msgstr "Percentile del prezzo di vendita nel comune"
+
+msgid "Gross yield = rent midpoint × 12 ÷ sale midpoint × 100%, before costs and taxes. Percentile uses midranks of sale midpoints for the same OMI type and condition; ties share their middle rank."
+msgstr "Rendimento lordo = valore medio della locazione × 12 ÷ valore medio di vendita × 100%, al lordo di costi e imposte. Il percentile usa i ranghi medi dei prezzi di vendita per tipologia e stato OMI; i valori uguali condividono il rango centrale."
+
+msgid "Price to mean taxable income"
+msgstr "Prezzo rispetto al reddito imponibile medio"
+
+msgid "years"
+msgstr "anni"
+
+msgid "MEF {year}"
+msgstr "MEF {year}"
+
+msgid "Compares this indicative property value with one mean municipal taxpayer’s annual taxable income; it is not a household affordability measure."
+msgstr "Confronta questo valore immobiliare indicativo con il reddito imponibile annuo medio di un contribuente del comune; non misura la sostenibilità per una famiglia."
+
+msgid "Grouped Gini estimate on a 0–1 scale from eight income brackets. The lowest bracket is represented by €0 and the open-ended top bracket by €150,000; within-bracket inequality is not observed."
+msgstr "Indice di Gini stimato su dati raggruppati, su scala da 0 a 1 e basato su otto fasce di reddito. La fascia più bassa è rappresentata da 0 € e quella aperta più alta da 150.000 €; la disuguaglianza interna alle fasce non è osservata."
+
+msgid "Trend change = (latest sale-band midpoint ÷ comparison-period sale-band midpoint − 1) × 100%. The compared periods are shown."
+msgstr "Variazione del trend = (valore medio dell'ultima fascia di vendita ÷ valore medio della fascia del periodo di confronto − 1) × 100%. I periodi confrontati sono indicati."
+
+msgid "{n} comparable zones"
+msgstr "{n} zone confrontabili"
+
+msgid "Not enough comparable zones ({n} found; at least {minimum} needed)"
+msgstr "Zone confrontabili insufficienti ({n} disponibili; ne servono almeno {minimum})"
+
+msgid "Parcel-scale hazards"
+msgstr "Pericolosità sulla particella"
+
+msgid "Parcel-scale ISPRA hazard polygons are not available on this server."
+msgstr "Le geometrie ISPRA della pericolosità sulla particella non sono disponibili su questo server."
+
+msgid "No mapped hazard intersects this parcel."
+msgstr "Nessuna area di pericolosità mappata interseca questa particella."
+
+msgid "parcel polygon intersection"
+msgstr "intersezione con il poligono della particella"
+
+msgid "Affected parcel area"
+msgstr "Superficie della particella interessata"
+
+msgid "Intersecting hazard classes"
+msgstr "Classi di pericolosità intersecanti"
+
+msgid "Landslide: highest mapped class"
+msgstr "Frane: classe mappata più elevata"
+
+msgid "Flood: highest mapped scenario"
+msgstr "Alluvioni: scenario mappato più elevato"
+
+msgid "Class areas can overlap and are not additive. These are intersections with the mapped ISPRA polygons. Source polygons: CC BY-SA 4.0."
+msgstr "Le superfici delle classi possono sovrapporsi e non vanno sommate. Sono intersezioni con i poligoni ISPRA disponibili. Licenza dei poligoni: CC BY-SA 4.0."
+
+msgid "The hazard query is partial because its feature limit was reached or some polygon geometries could not be measured."
+msgstr "La ricerca della pericolosità è parziale perché ha raggiunto il limite di elementi o alcune geometrie non sono state misurabili."
+
+msgid "Ground movement (EGMS)"
+msgstr "Movimento del suolo (EGMS)"
+
+msgid "EGMS ground-motion data is not available on this server."
+msgstr "I dati EGMS sul movimento del suolo non sono disponibili su questo server."
+
+msgid "No EGMS grid cell covers the parcel center."
+msgstr "Nessuna cella EGMS copre il centro della particella."
+
+msgid "Movement class"
+msgstr "Classe di movimento"
+
+msgid "Mean vertical velocity"
+msgstr "Velocità verticale media"
+
+msgid "Acceleration"
+msgstr "Accelerazione"
+
+msgid "Signal quality"
+msgstr "Qualità del segnale"
+
+msgid "This is the EGMS 100 m cell covering the parcel center; it does not summarize the full parcel. Negative vertical velocity indicates lowering."
+msgstr "È la cella EGMS di 100 m che copre il centro della particella; non descrive l'intera particella. Una velocità verticale negativa indica abbassamento."
+
+msgid "No EGMS grid cell intersects this parcel."
+msgstr "Nessuna cella EGMS interseca questa particella."
+
+msgid "Movement class by covered area"
+msgstr "Classe di movimento per superficie coperta"
+
+msgid "Intersected EGMS cells"
+msgstr "Celle EGMS intersecate"
+
+msgid "Parcel area covered by EGMS"
+msgstr "Superficie della particella coperta da EGMS"
+
+msgid "Minimum vertical velocity"
+msgstr "Velocità verticale minima"
+
+msgid "Maximum vertical velocity"
+msgstr "Velocità verticale massima"
+
+msgid "Mean acceleration"
+msgstr "Accelerazione media"
+
+msgid "Velocity and acceleration are weighted by the parcel area intersected by each EGMS grid cell. Coverage is the area overlapped by returned cells and does not certify complete source coverage. Negative vertical velocity indicates lowering."
+msgstr "Velocità e accelerazione sono ponderate in base alla superficie della particella intersecata da ciascuna cella EGMS. La copertura indica la superficie sovrapposta alle celle restituite e non garantisce la completezza dei dati sorgente. Una velocità verticale negativa indica abbassamento."
+
+msgid "The EGMS query is partial because its candidate limit was reached or some grid-cell geometries could not be measured."
+msgstr "La ricerca EGMS è parziale perché ha raggiunto il limite di elementi o alcune geometrie delle celle non sono state misurabili."
+
+msgid "Agenzia Demanio concessions"
+msgstr "Concessioni dell'Agenzia del Demanio"
+
+msgid "Agenzia Demanio parcel links are not available on this server."
+msgstr "I collegamenti alle concessioni dell'Agenzia del Demanio non sono disponibili su questo server."
+
+msgid "No Agenzia Demanio concession is spatially linked to this parcel."
+msgstr "Nessuna concessione dell'Agenzia del Demanio risulta collegata spazialmente a questa particella."
+
+msgid "Concession"
+msgstr "Concessione"
+
+msgid "Positive-area polygon overlap"
+msgstr "Sovrapposizione areale con il poligono"
+
+msgid "Point covered by parcel"
+msgstr "Punto coperto dalla particella"
+
+msgid "Spatial match"
+msgstr "Corrispondenza spaziale"
+
+msgid "Overlap area"
+msgstr "Superficie di sovrapposizione"
+
+msgid "Showing {shown} of {total} concession links."
+msgstr "Visualizzate {shown} di {total} corrispondenze con concessioni."
+
+msgid "Matches are calculated from the published geometries. A boundary point can match more than one parcel; this is a spatial link, not a cadastral or legal determination."
+msgstr "Le corrispondenze sono calcolate sulle geometrie pubblicate. Un punto sul confine può corrispondere a più particelle; si tratta di un collegamento spaziale, non di una determinazione catastale o giuridica."
+
+msgid "parcel and concession geometries"
+msgstr "geometrie della particella e della concessione"
+
 msgid "Source"
 msgstr "Fonte"
+
+msgid "Cadastral details"
+msgstr "Dettagli catastali"
+
+msgid "Economy and income"
+msgstr "Economia e redditi"
+
+msgid "Ground movement"
+msgstr "Movimento del suolo"
+
+msgid "Parcel dossier"
+msgstr "Scheda della particella"
+
+msgid "Generated {date} · Report ID {report_id}"
+msgstr "Generato il {date} · ID report {report_id}"
+
+msgid "Cadastral municipality code"
+msgstr "Codice catastale del comune"
+
+msgid "National cadastral reference"
+msgstr "Riferimento catastale nazionale"
+
+msgid "Area (m²)"
+msgstr "Superficie (m²)"
+
+msgid "Centroid (latitude, longitude)"
+msgstr "Centroide (latitudine, longitudine)"
+
+msgid "Field"
+msgstr "Campo"
+
+msgid "Available enrichment"
+msgstr "Dati di arricchimento disponibili"
+
+msgid "No enrichment blocks were available in the server read-model snapshot."
+msgstr "Nessun blocco di arricchimento era disponibile nell'istantanea del modello dati del server."
+
+msgid "Dataset version"
+msgstr "Versione del dataset"
+
+msgid "Model version"
+msgstr "Versione del modello"
+
+msgid "Spatial resolution"
+msgstr "Risoluzione spaziale"
+
+msgid "Match method"
+msgstr "Metodo di corrispondenza"
+
+msgid "No dataset or model version was reported by available blocks."
+msgstr "I blocchi disponibili non riportano una versione del dataset o del modello."
+
+msgid "{count} records; first {limit} listed"
+msgstr "{count} record; sono elencati i primi {limit}"
+
+msgid "The block is available, but has no printable scalar attributes."
+msgstr "Il blocco è disponibile, ma non contiene attributi scalari stampabili."
+
+msgid "Sources, dataset releases and licences"
+msgstr "Fonti, rilasci dei dataset e licenze"
+
+msgid "This register covers the sources attached to the available read-model blocks in this report."
+msgstr "Questo registro elenca le fonti associate ai blocchi disponibili nel modello dati di questo report."
+
+msgid "No source metadata was available in the read-model snapshot."
+msgstr "L'istantanea del modello dati non include metadati sulle fonti."
+
+msgid "Dataset release / vintage"
+msgstr "Rilascio / periodo del dataset"
+
+msgid "Catalog provider"
+msgstr "Fornitore nel catalogo"
+
+msgid "Provider URL"
+msgstr "Pagina del fornitore"
+
+msgid "Not available"
+msgstr "Non disponibile"
+
+msgid "Not reported by source metadata"
+msgstr "Non indicato nei metadati della fonte"
+
+msgid "Licence review status"
+msgstr "Stato della verifica della licenza"
+
+msgid "Catalog licence"
+msgstr "Licenza nel catalogo"
+
+msgid "No catalog match"
+msgstr "Nessuna corrispondenza nel catalogo"
+
+msgid "No catalog match; provider and licence review required"
+msgstr "Fonte non presente nel catalogo; occorre verificare fornitore e licenza"
+
+msgid "No catalog match; reported licence has not been independently reviewed"
+msgstr "Fonte non presente nel catalogo; la licenza riportata non è stata verificata in modo indipendente"
+
+msgid "Licence reported by source metadata; not independently reviewed"
+msgstr "Licenza riportata nei metadati della fonte; non verificata in modo indipendente"
+
+msgid "Official provider terms reviewed"
+msgstr "Condizioni ufficiali del fornitore verificate"
+
+msgid "Official provider methodology reviewed"
+msgstr "Metodologia ufficiale del fornitore verificata"
+
+msgid "Official general data policy reviewed; product licence pending"
+msgstr "Politica generale sui dati verificata; licenza specifica del prodotto in sospeso"
+
+msgid "Official reuse policy reviewed; no licence name asserted"
+msgstr "Politica ufficiale di riutilizzo verificata; non viene indicata una licenza formale"
+
+msgid "Provider product page reviewed"
+msgstr "Pagina prodotto del fornitore verificata"
+
+msgid "Upstream package contract; provider terms review pending"
+msgstr "Contratto del pacchetto upstream; verifica delle condizioni del fornitore in sospeso"
+
+msgid "Adapter declaration; official provider terms review pending"
+msgstr "Dichiarazione dell'adattatore; verifica delle condizioni ufficiali del fornitore in sospeso"
+
+msgid "Provider citation verified; licence review pending"
+msgstr "Citazione del fornitore verificata; verifica della licenza in sospeso"
+
+msgid "Provider terms review pending"
+msgstr "Verifica delle condizioni del fornitore in sospeso"
+
+msgid "Provider citation"
+msgstr "Citazione del fornitore"
+
+msgid "Use terms URL"
+msgstr "Pagina delle condizioni di riutilizzo"
+
+msgid "Provider use terms"
+msgstr "Condizioni di riutilizzo del fornitore"
+
+msgid "Provider attribution"
+msgstr "Attribuzione del fornitore"
+
+msgid "Contains information from OpenStreetMap, made available under the Open Database License (ODbL). © OpenStreetMap contributors. https://www.openstreetmap.org/copyright"
+msgstr "Contiene informazioni da OpenStreetMap, rese disponibili secondo la Open Database License (ODbL). © OpenStreetMap contributors. https://www.openstreetmap.org/copyright"
+
+msgid "Zornade lists this summary dataset under ODbL 1.0. Copernicus Land Monitoring Service conditions also apply to the underlying source product."
+msgstr "Zornade indica la licenza ODbL 1.0 per questo dataset riepilogativo. Si applicano anche le condizioni del Copernicus Land Monitoring Service relative alla fonte sottostante."
+
+msgid "Zornade Rischio Subsidenza Italia, derived from European Union's Copernicus Land Monitoring Service information. Contains modified Copernicus Sentinel data. Produced with funding by the European Union. This product is not endorsed by the European Union."
+msgstr "Zornade Rischio Subsidenza Italia, derivato da informazioni del Copernicus Land Monitoring Service dell'Unione europea. Contiene dati Copernicus Sentinel modificati. Prodotto con il finanziamento dell'Unione europea. Il prodotto non è approvato dall'Unione europea."
+
+msgid "Full, open and free access. The policy requires source and EU funding acknowledgement, identification of adapted or modified products, and no implied EU endorsement; no formal licence name is asserted here."
+msgstr "Accesso completo, aperto e gratuito. La politica richiede di citare la fonte e il finanziamento dell'UE, indicare i prodotti adattati o modificati e non suggerire un'approvazione dell'UE; qui non viene indicata una licenza formale."
+
+msgid "Generated using European Union's Copernicus Land Monitoring Service information. Contains modified Copernicus Sentinel data. Produced with funding by the European Union. This product is not endorsed by the European Union."
+msgstr "Generato utilizzando informazioni del Copernicus Land Monitoring Service dell'Unione europea. Contiene dati Copernicus Sentinel modificati. Prodotto con il finanziamento dell'Unione europea. Il prodotto non è approvato dall'Unione europea."
+
+msgid "The Department of Finance's Open Data methodology states CC BY 3.0 for its tax-return data."
+msgstr "La metodologia Open Data del Dipartimento delle Finanze indica la licenza CC BY 3.0 per i dati delle dichiarazioni dei redditi."
+
+msgid "Source: MEF – Dipartimento delle Finanze."
+msgstr "Fonte: MEF – Dipartimento delle Finanze."
+
+msgid "The published guide requires the source citation but does not state a named reuse licence; complete reuse terms remain unverified."
+msgstr "La guida pubblicata richiede la citazione della fonte ma non indica una licenza di riutilizzo specifica; le condizioni complete restano da verificare."
+
+msgid "ISPRA specifies CC BY-SA 4.0 for the 2020 PAI/PGRA hazard and risk dataset; cite the source and use the same licence for redistributed derived data."
+msgstr "ISPRA indica la licenza CC BY-SA 4.0 per il dataset 2020 di pericolosità e rischio PAI/PGRA; occorre citare la fonte e usare la stessa licenza per i dati derivati ridistribuiti."
+
+msgid "ISPRA (2020) Pericolosità e indicatori di rischio per frane e alluvioni. idrogeo.isprambiente.it. CC BY-SA 4.0."
+msgstr "ISPRA (2020) Pericolosità e indicatori di rischio per frane e alluvioni. idrogeo.isprambiente.it. CC BY-SA 4.0."
+
+msgid "NASA Earthdata says NASA-led mission data are CC0 unless marked with a restriction or licence; non-NASA data retain their provider terms. The adapter does not report a sensor-specific FIRMS collection, so no single product licence is asserted."
+msgstr "NASA Earthdata indica CC0 per i dati delle missioni guidate dalla NASA, salvo restrizioni o licenze esplicite; i dati di altri fornitori mantengono le relative condizioni. L'adattatore non indica una raccolta FIRMS specifica per sensore, quindi non viene attribuita una singola licenza al prodotto."
+
+msgid "NASA FIRMS active fire data. NASA should be acknowledged as the source where applicable; do not imply NASA endorsement. Check product metadata for non-NASA sensor terms."
+msgstr "Dati sugli incendi attivi di NASA FIRMS. Citare la NASA come fonte ove applicabile, senza suggerirne l'approvazione. Verificare i metadati del prodotto per le condizioni dei sensori non NASA."
+
+msgid "Not reported in source metadata"
+msgstr "Non indicato nei metadati della fonte"
+
+msgid "This report is an informational snapshot, not a cadastral certificate, appraisal, or legal determination. Verify source records and licences with the responsible providers."
+msgstr "Questo report è un'istantanea informativa, non un certificato catastale, una perizia o una determinazione giuridica. Verifica i dati e le licenze presso i fornitori responsabili."
+
+msgid "Report ID {report_id} · {date}"
+msgstr "ID report {report_id} · {date}"
+
+msgid "Dataset/model versions: {versions}"
+msgstr "Versioni dataset/modello: {versions}"
+
+msgid "Full version list is on the source register page."
+msgstr "L'elenco completo delle versioni è nella pagina del registro fonti."
+
+msgid "Yes"
+msgstr "Sì"
+
+msgid "No"
+msgstr "No"
+
+msgid "Not reported"
+msgstr "Non indicato"
+
+msgid "Licence"
+msgstr "Licenza"
+
+msgid "License"
+msgstr "Licenza"
+
+msgid "SISTER records"
+msgstr "Record SISTER"
+
+msgid "All OMI quotes for this municipality ({n})"
+msgstr "Tutte le quotazioni OMI per questo comune ({n})"
+
+msgid "Condition"
+msgstr "Stato di conservazione"
+
+msgid "Sale range (€/m²)"
+msgstr "Intervallo di vendita (€/m²)"
+
+msgid "Rent range (€/m²/month)"
+msgstr "Intervallo di locazione (€/m²/mese)"
+
+msgid "Gross yield"
+msgstr "Rendimento lordo"
+
+msgid "Sale percentile"
+msgstr "Percentile di vendita"
+
+msgid "Period"
+msgstr "Periodo"
+
+msgid "No valid sale quote is available for an estimate."
+msgstr "Non è disponibile una quotazione di vendita valida per la stima."
+
+msgid "The estimator selector shows the first {limit} sale quotes; the table lists all current quotes."
+msgstr "Il selettore della stima mostra le prime {limit} quotazioni di vendita; la tabella le mostra tutte per il semestre corrente."
+
+msgid "Age and sex distribution (Census 2021)"
+msgstr "Distribuzione per età e sesso (Censimento 2021)"
+
+msgid "Male residents"
+msgstr "Residenti maschi"
+
+msgid "Female residents"
+msgstr "Residenti femmine"
+
+msgid "Male"
+msgstr "Maschi"
+
+msgid "Female"
+msgstr "Femmine"
+
+msgid "Age"
+msgstr "Età"
+
+msgid "Under 5"
+msgstr "Meno di 5"
+
+msgid "5–9"
+msgstr "5–9"
+
+msgid "10–14"
+msgstr "10–14"
+
+msgid "15–19"
+msgstr "15–19"
+
+msgid "20–24"
+msgstr "20–24"
+
+msgid "25–29"
+msgstr "25–29"
+
+msgid "30–34"
+msgstr "30–34"
+
+msgid "35–39"
+msgstr "35–39"
+
+msgid "40–44"
+msgstr "40–44"
+
+msgid "45–49"
+msgstr "45–49"
+
+msgid "50–54"
+msgstr "50–54"
+
+msgid "55–59"
+msgstr "55–59"
+
+msgid "60–64"
+msgstr "60–64"
+
+msgid "65–69"
+msgstr "65–69"
+
+msgid "70–74"
+msgstr "70–74"
+
+msgid "75+"
+msgstr "75 e oltre"
+
+msgid "Counts describe residents of the 2021 census section containing the parcel, not residents of this parcel."
+msgstr "I conteggi si riferiscono ai residenti della sezione di censimento 2021 che contiene la particella, non ai residenti della particella."
+
+msgid "Bar length is scaled to the largest age-group count."
+msgstr "La lunghezza della barra è proporzionale al gruppo di età più numeroso."
+
+msgid "Panel sections"
+msgstr "Sezioni del pannello"
+
+msgid "These details were captured from the parcel panel when this report was requested."
+msgstr "Questi dettagli sono stati acquisiti dal pannello della particella al momento della richiesta del report."
+
+msgid "Panel state"
+msgstr "Stato della sezione"
+
+msgid "No section text was available."
+msgstr "Nessun testo della sezione disponibile."
+
+msgid "This register covers source metadata attached to the server read model and captured panel sections."
+msgstr "Questo registro include i metadati delle fonti associati al modello server e alle sezioni acquisite dal pannello."
+
+msgid "This report is an informational snapshot, not a cadastral certificate, appraisal, or legal determination. Panel details were captured from the browser response at export time. Verify source records and licences with the responsible providers."
+msgstr "Questo report è una fotografia informativa, non un certificato catastale, una perizia o una determinazione legale. I dettagli del pannello sono stati acquisiti dalla risposta del browser al momento dell'esportazione. Verificare dati e licenze presso i fornitori responsabili."
+
+msgid "Preparing report…"
+msgstr "Preparazione del report…"
+
+msgid "Loading report data: {loaded}/{total}"
+msgstr "Caricamento dati del report: {loaded}/{total}"
+
+msgid "Section text was shortened to fit the PDF request limit."
+msgstr "Il testo della sezione è stato abbreviato per rispettare il limite del report PDF."
+
+msgid "Energy"
+msgstr "Energia"
+
+msgid "Municipal solar potential"
+msgstr "Potenziale solare comunale"
+
+msgid "Municipal solar potential is not available for this municipality."
+msgstr "I dati sul potenziale solare comunale non sono disponibili per questo comune."
+
+msgid "Buildings included in the estimate"
+msgstr "Edifici inclusi nella stima"
+
+msgid "Estimated maximum PV capacity"
+msgstr "Potenza fotovoltaica massima stimata"
+
+msgid "Annual PV output (pessimistic)"
+msgstr "Produzione fotovoltaica annua (scenario prudenziale)"
+
+msgid "Annual PV output (modern)"
+msgstr "Produzione fotovoltaica annua (scenario moderno)"
+
+msgid "PV output per resident"
+msgstr "Produzione fotovoltaica per abitante"
+
+msgid "High viability"
+msgstr "Alta idoneità"
+
+msgid "Medium viability"
+msgstr "Idoneità media"
+
+msgid "Low viability"
+msgstr "Bassa idoneità"
+
+msgid "Not eligible"
+msgstr "Non idonei"
+
+msgid "Solar source observations"
+msgstr "Osservazioni della fonte solare"
+
+msgid "Municipal aggregates only. They are not estimates for this parcel, building, or roof."
+msgstr "Aggregati comunali. Non sono stime per questa particella, edificio o copertura."
+
+msgid "Report could not be prepared. Retry."
+msgstr "Impossibile preparare il report. Riprova."
+
+# Parcel panel and primary map UI reviewed 2026-10-09.
+msgid "The parcel identifier is not available."
+msgstr "L'identificativo della particella non è disponibile."
+
+msgid "Parcel surface"
+msgstr "Superficie della particella"
+
+msgid "Quality-of-life indicators are not available."
+msgstr "Gli indicatori sulla qualità della vita non sono disponibili."
+
+msgid "Zoom in to see cadastral parcels; administrative boundaries are not configured."
+msgstr "Ingrandisci per visualizzare le particelle catastali; i confini amministrativi non sono configurati."
+
+msgid "Zoom in to see cadastral parcels"
+msgstr "Ingrandisci per visualizzare le particelle catastali"
+
+msgid "Parcel details"
+msgstr "Dettagli particella"
+
+msgid "Saved"
+msgstr "Salvata"
+
+msgid "Save parcel"
+msgstr "Salva particella"
+
+msgid "Already saved"
+msgstr "Già salvata"
+
+msgid "Sign in to load saved parcels"
+msgstr "Accedi per caricare le particelle salvate"
+
+msgid "Sign in"
+msgstr "Accedi"
+
+msgid "to see your saved parcels."
+msgstr "per visualizzare le particelle salvate."
+
+msgid "Authentication required."
+msgstr "È richiesta l'autenticazione."
+
+msgid "Shortlist unavailable."
+msgstr "Elenco delle particelle non disponibile."
+
+msgid "All types"
+msgstr "Tutte le tipologie"
+
+msgid "Cadastral Map"
+msgstr "Mappa catastale"
+
+msgid "Toggle theme"
+msgstr "Cambia tema"
+
+msgid "Open analysis map"
+msgstr "Apri la mappa di analisi"
+
+msgid "Search a municipality or parcel"
+msgstr "Cerca un comune o una particella"
+
+msgid "Search municipality or parcel reference"
+msgstr "Cerca un comune o il riferimento della particella"
+
+msgid "Interactive cadastral map"
+msgstr "Mappa catastale interattiva"
+
+msgid "Map actions"
+msgstr "Azioni della mappa"
+
+msgid "Locate me"
+msgstr "Mostra la mia posizione"
+
+msgid "Copy map link"
+msgstr "Copia il link della mappa"
+
+msgid "Reset view"
+msgstr "Ripristina la vista"
+
+msgid "Attribute table"
+msgstr "Tabella degli attributi"
+
+msgid "Open Google Maps"
+msgstr "Apri Google Maps"
+
+msgid "Open Street View"
+msgstr "Apri Street View"
+
+msgid "Viewport"
+msgstr "Area visibile"
+
+msgid "Attributes"
+msgstr "Attributi"
+
+msgid "Close attribute table"
+msgstr "Chiudi la tabella degli attributi"
+
+msgid "Layer"
+msgstr "Livello"
+
+msgid "Filter…"
+msgstr "Filtra…"
+
+msgid "Map layers"
+msgstr "Livelli della mappa"
+
+msgid "Close layers"
+msgstr "Chiudi i livelli"
+
+msgid "Overlays"
+msgstr "Sovrapposizioni"
+
+msgid "Solar potential is aggregated by municipality from the Zornade PV model. Shading represents the share of assessed roof area with high suitability; values are estimates, not a permit or engineering assessment."
+msgstr "Il potenziale solare è aggregato per comune a partire dal modello fotovoltaico Zornade. L'ombreggiatura indica la quota di superficie dei tetti valutata come altamente idonea; i valori sono stime e non costituiscono un'autorizzazione né una valutazione tecnica."
+
+msgid "Live layers"
+msgstr "Livelli in tempo reale"
+
+msgid "Points of interest near the map center (schools, shops, hospitals…)"
+msgstr "Punti di interesse vicino al centro della mappa (scuole, negozi, ospedali…)"
+
+msgid "Explorer"
+msgstr "Esplora"
+
+msgid "POI radius"
+msgstr "Raggio dei punti di interesse"
+
+msgid "POI categories"
+msgstr "Categorie dei punti di interesse"
+
+msgid "Active fire detections nationwide (NASA FIRMS)"
+msgstr "Rilevamenti di incendi attivi in Italia (NASA FIRMS)"
+
+msgid "SISTER building records for the selected parcel"
+msgstr "Dati degli edifici SISTER per la particella selezionata"
+
+msgid "SISTER building records"
+msgstr "Dati degli edifici SISTER"
+
+msgid "Sales"
+msgstr "Vendite"
+
+msgid "Sale period"
+msgstr "Periodo di vendita"
+
+msgid "All records"
+msgstr "Tutti gli annunci"
+
+msgid "Upcoming"
+msgstr "In programma"
+
+msgid "Last 12 months"
+msgstr "Ultimi 12 mesi"
+
+msgid "Last 5 years"
+msgstr "Ultimi 5 anni"
+
+msgid "Property type"
+msgstr "Tipologia immobiliare"
+
+msgid "Sort sales"
+msgstr "Ordina le vendite"
+
+msgid "Auction date"
+msgstr "Data dell'asta"
+
+msgid "Price: low to high"
+msgstr "Prezzo: dal più basso al più alto"
+
+msgid "Saleability"
+msgstr "Vendibilità"
+
+msgid "Administrative layer"
+msgstr "Livello amministrativo"
+
+msgid "Color by"
+msgstr "Colora in base a"
+
+msgid "Enriched PVP auction listings, filtered below"
+msgstr "Annunci d'asta PVP arricchiti, con filtri disponibili qui sotto"
+
+msgid "Auction listings"
+msgstr "Annunci d'asta"
+
+msgid "Vehicles, goods & business assets"
+msgstr "Veicoli, beni e attività commerciali"
+
+msgid "Shops, offices & hospitality"
+msgstr "Negozi, uffici e strutture ricettive"
+
+msgid "Garages, storage & annexes"
+msgstr "Autorimesse, depositi e pertinenze"
+
+msgid "Homes"
+msgstr "Abitazioni"
+
+msgid "Industrial & agricultural buildings"
+msgstr "Fabbricati industriali e agricoli"
+
+msgid "Land & building plots"
+msgstr "Terreni e lotti edificabili"
+
+msgid "Whole or partial buildings"
+msgstr "Fabbricati interi o porzioni"
+
+msgid "Other"
+msgstr "Altro"
+
+msgid "Type not stated"
+msgstr "Tipologia non indicata"
+
+msgid "Max price (€)"
+msgstr "Prezzo massimo (€)"
+
+msgid "Upcoming only"
+msgstr "Solo aste future"
+
+msgid "Shortlist"
+msgstr "Selezione"
+
+msgid "Parcel shortlist"
+msgstr "Elenco delle particelle"
+
+msgid "Workspace"
+msgstr "Area di lavoro"
+
+msgid "Close shortlist"
+msgstr "Chiudi l'elenco"
+
+msgid "All"
+msgstr "Tutte"
+
+msgid "Priority"
+msgstr "Priorità"
+
+msgid "5 high"
+msgstr "5 — Alta"
+
+msgid "1 low"
+msgstr "1 — Bassa"
+
+msgid "Unset"
+msgstr "Non impostata"
+
+msgid "Active hazard only"
+msgstr "Solo con criticità attive"
+
+msgid "No shortlist loaded yet."
+msgstr "Non è ancora stato caricato alcun elenco."
+
+msgid "Selected parcel"
+msgstr "Particella selezionata"
+
+msgid "Copy link"
+msgstr "Copia link"
+
+msgid "Close parcel details"
+msgstr "Chiudi i dettagli della particella"
+
+msgid "Find adjacent parcels"
+msgstr "Trova particelle adiacenti"
+
+msgid "Clear selection"
+msgstr "Cancella selezione"
+
+msgid "Open analysis"
+msgstr "Apri analisi"
+
+msgid "Official service access reviewed; data reuse terms pending"
+msgstr "Condizioni ufficiali di accesso al servizio verificate; termini di riutilizzo dei dati da chiarire"
+
+msgid "Official public-access guide reviewed; reuse licence not stated"
+msgstr "Guida ufficiale all'accesso pubblico verificata; la licenza di riutilizzo non è specificata"
+
+msgid "OpenDemanio describes its open data as machine-readable and freely reusable. The reviewed page does not identify a named licence or dataset-specific conditions for these concession records, so no formal licence is asserted."
+msgstr "OpenDemanio descrive i propri dati aperti come informazioni leggibili da sistemi automatici e liberamente riutilizzabili. La pagina consultata non indica una licenza nominativa né condizioni specifiche per questi dati sulle concessioni; non viene quindi dichiarata alcuna licenza."
+
+msgid "Agenzia delle Entrate describes SISTER and Portale per i Comuni access to cadastral data as convention-based for authorized public bodies. The reviewed access guide does not establish downstream reuse rights for the parcel records used here; no licence is asserted."
+msgstr "Agenzia delle Entrate descrive l'accesso ai dati catastali tramite SISTER e Portale per i Comuni come basato su convenzioni per gli enti pubblici autorizzati. La guida consultata non definisce i diritti di riutilizzo successivo dei dati particellari usati qui; non viene dichiarata alcuna licenza."
+
+msgid "The official access guide describes SISTER as a channel for cadastral and mortgage data access on a convention basis. It does not state downstream reuse terms for the cached property records shown here; no licence is asserted."
+msgstr "La guida ufficiale descrive SISTER come canale di accesso ai dati catastali e ipotecari basato su convenzioni. Non specifica i termini di riutilizzo successivo dei dati immobiliari memorizzati qui; non viene dichiarata alcuna licenza."
+
+msgid "The official site guide describes public access to search and view sale notices without credentials. It does not state a general reuse licence for notice text, attachments, or derived records; no licence is asserted."
+msgstr "La guida ufficiale descrive l'accesso pubblico alla ricerca e alla consultazione degli avvisi di vendita senza credenziali. Non specifica una licenza generale di riutilizzo per i testi degli avvisi, gli allegati o i dati derivati; non viene dichiarata alcuna licenza."

@@ -8,22 +8,76 @@ the aecs4u-stats data stores are absent — check ``GET /enrichment/status``.
 """
 
 import asyncio
-import time
-from typing import Annotated, Dict, List, Optional
-
-from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import HTMLResponse, JSONResponse, Response
 import io
 import json
-from pydantic import BaseModel, Field
+import time
+import uuid
+from typing import Annotated, Dict, List, Literal, Optional
 
-from aecs4u_stats.web import enrichment as _aecs4u_stats_enrichment
 from aecs4u_stats.osm.config import POI_CATEGORIES
+from aecs4u_stats.web import enrichment as _aecs4u_stats_enrichment
+from fastapi import APIRouter, HTTPException, Path, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse, Response
+from pydantic import BaseModel, Field, ValidationError
+
 from land_registry import stats_service
 from land_registry.map_layers import get_map_layer_source
 from land_registry.models import EnrichmentDatasetStatus
 
 enrichment_router = APIRouter()
+
+
+class ParcelReportSection(BaseModel):
+    id: str = Field(..., min_length=1, max_length=64)
+    title: str = Field(..., min_length=1, max_length=120)
+    state: Literal["ready", "empty", "error", "idle", "loading"]
+    body: str = Field("", max_length=18_000)
+    metadata: dict[str, str] = Field(default_factory=dict, max_length=16)
+
+
+class ParcelReportSnapshot(BaseModel):
+    sections: list[ParcelReportSection] = Field(..., min_length=1, max_length=32)
+
+
+_REPORT_SECTION_IDS = {
+    "identity", "omi", "pvp", "address", "buildings", "opendata", "risks", "parcel-hazards",
+    "agenziademanio", "solar", "subsidence", "bulletin", "fires", "municipality", "income",
+    "census", "safety", "demographics", "quality", "pois", "coverage",
+}
+_MAX_REPORT_SNAPSHOT_BYTES = 240_000
+
+
+async def _parse_parcel_report_snapshot(request: Request) -> ParcelReportSnapshot:
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > _MAX_REPORT_SNAPSHOT_BYTES:
+                raise HTTPException(status_code=413, detail="Parcel report snapshot is too large")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid Content-Length") from None
+    chunks = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > _MAX_REPORT_SNAPSHOT_BYTES:
+            raise HTTPException(status_code=413, detail="Parcel report snapshot is too large")
+        chunks.append(chunk)
+    try:
+        payload = json.loads(b"".join(chunks))
+        snapshot = ParcelReportSnapshot.model_validate(payload)
+    except (json.JSONDecodeError, UnicodeDecodeError, ValidationError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail="Invalid parcel report snapshot") from exc
+
+    ids = [section.id for section in snapshot.sections]
+    if len(ids) != len(set(ids)) or any(section_id not in _REPORT_SECTION_IDS for section_id in ids):
+        raise HTTPException(status_code=422, detail="Unknown or duplicate parcel report section")
+    total = sum(len(section.body) for section in snapshot.sections)
+    for section in snapshot.sections:
+        if any(len(key) > 64 or len(value) > 500 for key, value in section.metadata.items()):
+            raise HTTPException(status_code=422, detail="Parcel report metadata is too long")
+    if total > 200_000:
+        raise HTTPException(status_code=413, detail="Parcel report section text is too large")
+    return snapshot
 
 
 @enrichment_router.get("/bulletin")
@@ -37,8 +91,45 @@ async def get_bulletin() -> dict:
 # Reuse upstream handlers for endpoints with identical behavior. The bulletin
 # uses the local adapter above because its source is now hazards PostgreSQL.
 enrichment_router.add_api_route("/fires", _aecs4u_stats_enrichment.get_fires, methods=["GET"])
+
+
+async def _get_risks_with_postgres_fallback(istat_code: str):
+    """Keep upstream hydrogeological data and fill seismic from PostgreSQL."""
+    try:
+        result = await _aecs4u_stats_enrichment.get_risks(istat_code)
+    except Exception:
+        result = None
+    if not isinstance(result, dict):
+        result = {"istat_code": str(istat_code), "seismic": None, "hydrogeological": None}
+    if not result.get("seismic"):
+        result["seismic"] = await stats_service.aget_seismic_by_istat_code(istat_code)
+    return result
+
+
+async def _get_quality_of_life(cadastral_code: str):
+    if not await stats_service.aquality_of_life_db_available():
+        raise HTTPException(status_code=503, detail="ISTAT BES store not built")
+    result = await stats_service.aget_quality_of_life_indicators(cadastral_code)
+    if result is None:
+        raise HTTPException(status_code=404, detail="No BES data found")
+    return result
+
+
+async def _get_quality_of_life_series(
+    cadastral_code: str, data_type: str, year: Optional[int] = None
+):
+    if not await stats_service.aquality_of_life_db_available():
+        raise HTTPException(status_code=503, detail="ISTAT BES store not built")
+    result = await stats_service.aget_quality_of_life_indicator(
+        cadastral_code, data_type, year=year
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="No BES data found")
+    return result
+
+
 enrichment_router.add_api_route(
-    "/risks/{istat_code}", _aecs4u_stats_enrichment.get_risks, methods=["GET"]
+    "/risks/{istat_code}", _get_risks_with_postgres_fallback, methods=["GET"]
 )
 enrichment_router.add_api_route(
     "/parcels/in-bbox/", _aecs4u_stats_enrichment.get_parcels_in_bbox, methods=["GET"]
@@ -54,12 +145,12 @@ enrichment_router.add_api_route(
 )
 enrichment_router.add_api_route(
     "/quality-of-life/{cadastral_code}",
-    _aecs4u_stats_enrichment.get_quality_of_life,
+    _get_quality_of_life,
     methods=["GET"],
 )
 enrichment_router.add_api_route(
     "/quality-of-life/{cadastral_code}/{data_type}",
-    _aecs4u_stats_enrichment.get_quality_of_life_series,
+    _get_quality_of_life_series,
     methods=["GET"],
 )
 enrichment_router.add_api_route(
@@ -198,7 +289,8 @@ async def get_poi_report(
         for category, items in (data.get("categories") or {}).items():
             for item in items:
                 if y < 48:
-                    pdf.showPage(); y = height - 48
+                    pdf.showPage()
+                    y = height - 48
                 name = str(item.get("name") or category)[:100]
                 distance = item.get("distance_km")
                 suffix = f" ({distance:g} km)" if isinstance(distance, (int, float)) else ""
@@ -276,6 +368,7 @@ async def get_omi_history(
     comune: str = Query(..., description="Catasto code (e.g. C773) or ISTAT code"),
     zona: str = Query(..., description="OMI zone (e.g. B1)"),
     cod_tipologia: Optional[str] = Query(None, description="Typology code filter"),
+    stato_conservazione: Optional[str] = Query(None, description="Conservation state filter"),
 ):
     """Full semester history of OMI quotes for one comune/zone (oldest-first)."""
     if not stats_service.omi_db_available_public():
@@ -283,7 +376,12 @@ async def get_omi_history(
             status_code=503,
             detail="OMI store not built. Run: python -m aecs4u_stats.omi.scripts.import_omi",
         )
-    return stats_service.get_omi_history(comune, zona, cod_tipologia=cod_tipologia)
+    return stats_service.get_omi_history(
+        comune,
+        zona,
+        cod_tipologia=cod_tipologia,
+        stato_conservazione=stato_conservazione,
+    )
 
 
 @enrichment_router.get("/omi/at-point")
@@ -291,9 +389,15 @@ async def get_omi_zone_at_point(
     province: str = Query(..., min_length=2, description="Province name used by the OMI boundary store"),
     lat: float = Query(..., ge=-90, le=90),
     lng: float = Query(..., ge=-180, le=180),
+    comune: Optional[str] = Query(None, description="Cadastral municipality code when known"),
 ):
     """OMI zone containing a point; unmatched/missing boundaries degrade gracefully."""
-    return stats_service.get_omi_zone_at_point(province, lat, lng)
+    result = await stats_service.aget_omi_zone_at_point(
+        province, lat, lng, cadastral_code=comune
+    )
+    if result is not None:
+        return result
+    return await asyncio.to_thread(stats_service.get_omi_zone_at_point, province, lat, lng)
 
 
 @enrichment_router.post("/omi/estimate")
@@ -312,10 +416,42 @@ async def estimate_omi_value(request: OmiEstimateRequest):
         area_sqm=request.area_sqm,
     )
     if result is None:
+        result = await stats_service.aestimate_omi_value(
+            comune=request.comune,
+            zona=request.zona,
+            cod_tipologia=request.cod_tipologia,
+            stato_conservazione=request.stato_conservazione,
+            area_sqm=request.area_sqm,
+        )
+    if result is None:
         raise HTTPException(
             status_code=404,
             detail="No unique OMI quote matches the requested zone, typology and conservation state",
         )
+    try:
+        income = await stats_service.aget_income_profile(request.comune)
+    except Exception:
+        income = None
+    try:
+        mean_income = float((income or {}).get("mean_taxable_income_eur"))
+        quote = result.get("quote") or {}
+        price_midpoint = (
+            float(quote.get("prezzo_min_eur_sqm")) + float(quote.get("prezzo_max_eur_sqm"))
+        ) / 2
+        price_to_income = (
+            request.area_sqm * price_midpoint / mean_income
+            if mean_income > 0 and price_midpoint >= 0
+            else None
+        )
+    except (TypeError, ValueError):
+        price_to_income = None
+    result["derived_metrics"] = {
+        "price_to_mean_taxable_income_years": round(price_to_income, 1) if price_to_income is not None else None,
+        "price_to_income_model_version": "omi-mef-price-income-v1",
+        "income_year": (income or {}).get("year"),
+        "income_dataset_version": (income or {}).get("dataset_version"),
+        "interpretation": "indicative property-value / one mean municipal taxpayer's annual taxable income; not household affordability",
+    }
     return result
 
 
@@ -331,6 +467,24 @@ async def get_income(cadastral_code: str, year: Optional[int] = Query(None)):
     if result is None:
         raise HTTPException(status_code=404, detail=f"No IRPEF data found for '{cadastral_code}'")
     return result
+
+
+@enrichment_router.get("/egms/subsidence")
+async def get_egms_subsidence(
+    lat: float = Query(..., ge=-90, le=90),
+    lng: float = Query(..., ge=-180, le=180),
+):
+    """EGMS vertical-motion summary for the 100 m cell covering a point."""
+    return await asyncio.to_thread(stats_service.get_subsidence_at_point, lat, lng)
+
+
+@enrichment_router.get("/mps04/pga")
+async def get_mps04_pga(
+    lat: float = Query(..., ge=-90, le=90),
+    lng: float = Query(..., ge=-180, le=180),
+):
+    """INGV MPS04 PGA at the nearest native grid point to a parcel centroid."""
+    return await asyncio.to_thread(stats_service.get_mps04_pga_at_point, lat, lng)
 
 
 _CADASTRAL_BUILD_HINT = (
@@ -381,6 +535,96 @@ async def get_parcel_by_reference(
     return result
 
 
+@enrichment_router.get("/parcel/hazards/{national_reference}")
+async def get_parcel_hazards(
+    national_reference: str,
+    id: Annotated[Optional[int], Query(ge=1, description="Canonical feature id hint from the selected parcel")] = None,
+):
+    """Intersect a canonical parcel polygon with the installed ISPRA mosaics."""
+    source = get_map_layer_source()
+    parcel = await get_parcel_by_reference(national_reference, id=id if source.available else None)
+    geometry = parcel.get("geometry") if isinstance(parcel, dict) else None
+    if not geometry:
+        raise HTTPException(status_code=404, detail="Parcel geometry is not available")
+    return await asyncio.to_thread(stats_service.get_parcel_hazard_intersections, geometry)
+
+
+@enrichment_router.get("/parcel/subsidence/{national_reference}")
+async def get_parcel_subsidence(
+    national_reference: str,
+    id: Annotated[Optional[int], Query(ge=1, description="Canonical feature id hint from the selected parcel")] = None,
+):
+    """Summarize EGMS grid cells intersecting the canonical parcel polygon."""
+    source = get_map_layer_source()
+    parcel = await get_parcel_by_reference(national_reference, id=id if source.available else None)
+    geometry = parcel.get("geometry") if isinstance(parcel, dict) else None
+    if not geometry:
+        raise HTTPException(status_code=404, detail="Parcel geometry is not available")
+    return await asyncio.to_thread(stats_service.get_parcel_subsidence_intersections, geometry)
+
+
+@enrichment_router.get("/parcel/report/{national_reference}")
+async def get_parcel_report(
+    national_reference: str,
+    request: Request,
+    id: Annotated[Optional[int], Query(ge=1, description="Canonical feature id from the selected parcel")] = None,
+):
+    """Download a server-rendered parcel dossier with a stable report ID."""
+    return await _build_parcel_report(national_reference, request, id=id)
+
+
+@enrichment_router.post("/parcel/report/{national_reference}")
+async def post_parcel_report(
+    national_reference: str,
+    request: Request,
+    id: Annotated[Optional[int], Query(ge=1, description="Canonical feature id from the selected parcel")] = None,
+):
+    """Download a parcel dossier including the independently loaded browser sections."""
+    snapshot = await _parse_parcel_report_snapshot(request)
+    return await _build_parcel_report(national_reference, request, id=id, sections=[
+        section.model_dump() for section in snapshot.sections
+    ])
+
+
+async def _build_parcel_report(
+    national_reference: str,
+    request: Request,
+    *,
+    id: Optional[int] = None,
+    sections: list[dict] | None = None,
+):
+    """Render a report using server identity/read-model data and optional panel text."""
+    from land_registry.i18n import detect_locale, make_gettext
+    from land_registry.parcel_report import profile_matches_parcel, render_parcel_report_pdf
+
+    parcel = await get_parcel_by_reference(national_reference, id=id)
+    try:
+        profile = await stats_service.aget_parcel_enrichment(national_reference)
+    except Exception:
+        profile = None
+    if not profile_matches_parcel(parcel, profile):
+        profile = None
+
+    report_id = f"PR-{uuid.uuid4().hex[:12].upper()}"
+    pdf_bytes = await asyncio.to_thread(
+        render_parcel_report_pdf,
+        national_reference,
+        parcel,
+        profile,
+        report_id,
+        make_gettext(detect_locale(request)),
+        sections,
+    )
+    return Response(
+        pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": 'attachment; filename="parcel-report.pdf"',
+            "X-Report-ID": report_id,
+        },
+    )
+
+
 @enrichment_router.get("/parcel/adjacent/{national_reference}")
 async def get_adjacent_parcels(
     national_reference: str,
@@ -408,6 +652,7 @@ async def get_adjacent_parcels(
 async def get_parcel_details(
     national_reference: str,
     refresh: bool = Query(False, description="Rebuild the parcel read-model row from source stores"),
+    view: Literal["full", "panel"] = Query("full", description="Return the complete legacy payload or the compact primary-map panel model"),
 ):
     """Read the parcel-keyed, materialized enrichment profile.
 
@@ -415,7 +660,10 @@ async def get_parcel_details(
     stores. Later requests use one indexed SQLite lookup, keeping the parcel
     details panel independent of the latency of the source databases.
     """
-    result = await stats_service.aget_parcel_enrichment(national_reference, refresh)
+    if view == "panel":
+        result = await stats_service.aget_parcel_enrichment(national_reference, refresh, view="panel")
+    else:
+        result = await stats_service.aget_parcel_enrichment(national_reference, refresh)
     if result is None:
         raise HTTPException(status_code=404, detail=f"No enrichment data found for '{national_reference}'")
     return result
@@ -423,8 +671,16 @@ async def get_parcel_details(
 
 @enrichment_router.get("/parcel/buildings/{national_reference}")
 async def get_parcel_buildings(national_reference: str):
-    """Return building categories for a parcel from the sister/SISTER cache."""
+    """Return parcel-linked SISTER building categories and cached addresses."""
     return stats_service.get_buildings_for_parcel(national_reference)
+
+
+@enrichment_router.get("/parcel/agenziademanio/{parcel_id}")
+async def get_parcel_agenziademanio_concessions(
+    parcel_id: Annotated[int, Path(ge=1, description="Canonical map ID of the selected parcel")],
+):
+    """Return Agenzia Demanio concessions spatially matched to this parcel."""
+    return await stats_service.aget_agenziademanio_concessions_for_parcel(parcel_id)
 
 
 def _parcel_reference_from_query(municipality: str, sheet: str, parcel: str) -> str:
@@ -525,15 +781,16 @@ _CENSUS_BUILD_HINT = (
 async def get_census_section_at_point(
     lat: float = Query(..., ge=-90, le=90),
     lng: float = Query(..., ge=-180, le=180),
+    comune: Optional[str] = Query(None, description="Cadastral municipality code when known"),
 ):
     """The 2021 census section containing a WGS84 point.
 
     Keep this static route above ``/census/{cadastral_code}`` so Starlette
     does not interpret ``at-point`` as a cadastral code.
     """
-    if not (stats_service.census_db_available() or stats_service.postgres_stats_available()):
+    if not await stats_service.acensus_db_available():
         raise HTTPException(status_code=503, detail=_CENSUS_BUILD_HINT)
-    result = stats_service.get_census_section_at_point(lat, lng)
+    result = await stats_service.aget_census_section_at_point(lat, lng, cadastral_code=comune)
     if result is None:
         raise HTTPException(status_code=404, detail="No census section at this point")
     return result
@@ -545,9 +802,9 @@ async def get_census_sections(cadastral_code: str, limit: int = Query(5000, gt=0
     FeatureCollection — population by age/sex, education, employment,
     foreign-resident, household-size and dwelling-occupancy indicators,
     plus derived rates, per section."""
-    if not (stats_service.census_db_available() or stats_service.postgres_stats_available()):
+    if not await stats_service.acensus_db_available():
         raise HTTPException(status_code=503, detail=_CENSUS_BUILD_HINT)
-    result = stats_service.get_census_sections(cadastral_code, limit=limit)
+    result = await stats_service.aget_census_sections(cadastral_code, limit=limit)
     if result is None:
         raise HTTPException(status_code=404, detail=f"No municipality found for cadastral code '{cadastral_code}'")
     return result

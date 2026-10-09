@@ -7,9 +7,9 @@
 
 The first implementation baseline delivers the direct MapLibre shell, catalog-
 driven MVT layers, raster fallback, parcel search/selection/enrichment, URL
-sharing, report hand-off, authenticated saves, and privacy-preserving map
-diagnostics. Upload and drawing parity remains intentionally isolated behind
-`/map-legacy`.
+sharing, a server-rendered parcel PDF, authenticated saves, and privacy-
+preserving map diagnostics. Upload and drawing parity remains intentionally
+isolated behind `/map-legacy`.
 
 ## 1. Purpose
 
@@ -38,7 +38,6 @@ The improved map shall let a user open the application, navigate to any supporte
 - Replacing source-data authorities or guaranteeing cadastral completeness.
 - Automated property valuation or financial advice.
 - Community profiles, leaderboards, or social features.
-- Server-rendered PDF generation beyond the existing browser print flow.
 
 ## 3. Product goals
 
@@ -352,9 +351,27 @@ Introduced with version 1.2 and delivered. See §13 for the conformance evidence
 
 - Administrative geometry below the parcel zoom threshold (issue 09) — done.
 - Confidence indicators on modelled values (issue 10) — done.
-- Dataset version identifiers for reproducible reports (issue 11) — done. This
-  unblocks the durable server-rendered report with a report ID, which remains
-  outstanding (gap analysis §2 item 18).
+- Dataset version identifiers for reproducible reports (issue 11) — done.
+- Server-rendered parcel PDF with a report ID, dataset/model version footer and
+  source register — shipped at
+  `/api/v1/enrichment/parcel/report/{national_reference}`. Static labels follow
+  the request locale. POST export adds all registered panel sections' captured
+  text, state and available provenance to the server parcel model; section text
+  is bounded, and any shortening is marked in the report. GET retains the
+  server-only report fallback. Missing licence/release metadata is stated
+  explicitly. A maintained provider catalog supplies links and licence-review
+  status; report-specific release/version values come from response metadata.
+  OSM attribution includes contributor credit, ODbL notice and the full
+  copyright URL. The source catalog distinguishes the ODbL-licensed Zornade
+  EGMS summary from the underlying Copernicus source, whose open-use conditions
+  and attribution requirements are recorded without assigning a named
+  licence. MEF CC BY 3.0 and its required citation are recorded from the
+  official methodology. ISPRA PAI/PGRA CC BY-SA 4.0 terms and the required
+  source citation are recorded from the 2020 dataset terms. OMI has a verified
+  source citation but no named reuse licence in its guide; NASA FIRMS has a
+  general data-use policy recorded while the collection-specific licence is
+  unresolved. Provider-term review for remaining sources and provisioned-data
+  acceptance remain open.
 - Benchmark framing for panel metrics (issue 12) — done.
 - Parcel shortlist and workspace (issue 13) — done.
 
@@ -392,14 +409,17 @@ not yet expose them.
   application does not claim national completeness where data is partial.
 - Saved parcels use the existing authenticated `/api/v1/saved-parcels`
   contract and its configured SQLite/PostgreSQL persistence backend.
-- Printable reports continue to use the existing browser print flow reached
-  through `/map-legacy?parcel=...&report=1`.
+- The direct map downloads the server-rendered parcel PDF. `/map-legacy` keeps
+  its existing browser print flow at `/map-legacy?parcel=...&report=1` for the
+  legacy analysis view.
 
 ## 13. Conformance status for version 1.2 requirements
 
-All requirements added in v1.2 are implemented. Re-audited against the primary
-map implementation on 2026-09-13; the evidence column records where each one
-lives so the claim can be re-checked rather than taken on trust.
+All requirements added in v1.2 have an implementation, with scoped report
+coverage and host-dependent data limits recorded below. Re-audited against the
+primary map implementation on 2026-10-09; MAP-FR-031 was re-audited after the
+parcel sections became collapsible. The evidence column records where each
+requirement lives so the claim can be re-checked rather than taken on trust.
 
 Several rows are scoped "met for current blocks" rather than unconditionally.
 That is deliberate: the envelope and rendering are general, and a block is
@@ -408,11 +428,13 @@ is required to extend them.
 
 | ID | Status | Evidence or gap |
 |---|---|---|
-| MAP-FR-050 | Met | `geo-boundaries` and `municipality-profiles` are exposed from the catalog with the `admin-substitute` role, and `map-v2.js` auto-enables one of those layers below the parcel threshold while keeping the zoom-in affordance visible. The auto layer is released again above the handoff unless the user explicitly chose it. |
+| MAP-FR-031 | Met for currently available enrichment sections | `/map` renders municipality, OMI, income, demographics, POI, and risk information in individual native `<details>` sections, open by default and collapsible from their summaries. The risk section adds parcel-centroid INGV MPS04 PGA using the nearest native-grid point and labels its 10%-in-50-years assumption; source coverage remains host-dependent. |
+| MAP-FR-035 | Met | `/map` posts a bounded snapshot of every registered panel section and combines it with the server parcel read model. The report includes a report ID, version footer and source register, checks reference-keyed enrichment against the selected polygon, follows the request locale, and retains a GET fallback. A maintained provider catalog supplies provider and terms links, reuse terms and review status while report-specific release/version values come from response metadata. OSM attribution includes contributor credit, ODbL notice and the full copyright URL. The catalog records EGMS derivative/source terms, MEF CC BY 3.0, ISPRA PAI/PGRA CC BY-SA 4.0, the INGV MPS04 citation and CC BY 4.0 under its general open-data notice, OMI citation with licence pending, and NASA general guidance without inferring a collection licence; other provider terms and provisioned-data acceptance remain open. |
+| MAP-FR-050 | Met | `geo-boundaries` is exposed from the catalog with the `admin-substitute` role, and `map-v2.js` auto-enables it below the parcel threshold while keeping the zoom-in affordance visible. The auto layer is released again above the handoff unless the user explicitly chose it. |
 | MAP-FR-051 | Met | FIRMS detections now render each observation as a relative age in both the parcel panel and live overlay tooltip/popup. FIRMS and DPC bulletin surfaces state the feed refresh/issue time when present and explicitly mark it as not provider-declared when absent. |
 | MAP-FR-052 | Met for current modelled population block | The population block is labelled "Popolazione modellata" and now carries `spatial_resolution`, `dataset_version`, and `model_version` metadata in the parcel read model. `parcel-enrichment.js` and the direct map preview render confidence or resolution chips only when those fields are present. Future modelled blocks should populate the same envelope fields. |
 | MAP-FR-053 | Met for current density, income, and OMI panel metrics | The parcel panel now renders inline benchmark context for census-section density, mean taxable income, and the selected OMI sale €/m² quote. Static national benchmarks are version-labelled for census density and IRPEF income; OMI uses the median of the currently loaded comparable municipal quotes to avoid a misleading national price reference. |
-| MAP-FR-054 | Met for current versioned blocks | The common parcel block envelope now carries `dataset_version` and `model_version`. Cadastral, population/demographics, economics, and valuation blocks populate meaningful versions; the OMI estimator returns `model_version` and `dataset_version`; the panel and direct map render the provenance in source footnotes. Blocks with no meaningful upstream version remain unchanged. |
+| MAP-FR-054 | Met for current versioned blocks | The common parcel block envelope carries `dataset_version` and `model_version` where the source provides them. Cadastral, population/demographics, economics, and valuation blocks populate meaningful versions; the OMI estimator returns `model_version` and `dataset_version`; municipal solar data carries `solar_data_version` and `updated_at` when present. The panel renders available provenance and does not invent missing versions. |
 | MAP-FR-055 | Met for OMI | The estimator lets the user set typology, conservation state and surface, and recomputes against a server-side calculation with a local preview. |
 | MAP-FR-056 – 062 | Met | `/api/v1/saved-parcels` now behaves as a shortlist: entries carry configurable lifecycle status, priority, notes, tags, timestamps, summary counts, and active-hazard filtering. Existing records migrate to the initial status without data loss. The direct map renders a shortlist workspace with status/priority/recency filters and opens entries through the same `?parcel=<national-reference>` restoration path. |
 
@@ -445,5 +467,5 @@ Version 1.2 adds MAP-FR-050 through MAP-FR-062, the supporting non-functional
 clauses, the Phase 5 delivery items, and the conformance audit in §13. The
 requirements derive from a live walkthrough of a competing Italian cadastral
 platform on 2026-09-13, and reflect presentation and provenance patterns rather
-than any transfer of data or implementation. The conformance status derives from
-reading this repository's own primary map implementation on the same date.
+than any transfer of data or implementation. The conformance status derives
+from reading this repository's primary map implementation on 2026-10-09.

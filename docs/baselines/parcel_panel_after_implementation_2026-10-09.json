@@ -1,0 +1,796 @@
+{
+  "captured_at": "2026-10-09T18:15:34+00:00",
+  "base_url": "http://127.0.0.1:8011",
+  "summary": {
+    "unique_parcels": 20,
+    "parcels_per_area": {
+      "roma-centro": 5,
+      "milano-centro": 5,
+      "tolfa-comune": 5,
+      "monte-romano-campagna": 5
+    },
+    "details_calls_ok": 40,
+    "details_calls_failed": 0,
+    "cold_build_seconds": {
+      "n": 40,
+      "median": 5.34,
+      "p95": 13.438,
+      "max": 16.834
+    },
+    "cache_hit_seconds": {
+      "n": 0
+    },
+    "cache_hits_observed": 0,
+    "details_bytes_median": 62480,
+    "block_coverage": {
+      "basic": "20/20",
+      "cadastral": "20/20",
+      "demographics": "20/20",
+      "economics": "20/20",
+      "population": "20/20",
+      "valuation": "20/20"
+    }
+  },
+  "rows": [
+    {
+      "area": "roma-centro",
+      "lat": 41.8986,
+      "lng": 12.4769,
+      "reference": "H501A048600.D",
+      "lookup_status": 200,
+      "lookup_seconds": 3.515,
+      "first": {
+        "status": 200,
+        "seconds": 13.438,
+        "bytes": 241808,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 8.103,
+        "bytes": 241808,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "roma-centro",
+      "lat": 41.8971,
+      "lng": 12.4769,
+      "reference": "H501A048600.114",
+      "lookup_status": 200,
+      "lookup_seconds": 0.241,
+      "first": {
+        "status": 200,
+        "seconds": 6.109,
+        "bytes": 239367,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 12.93,
+        "bytes": 239367,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "roma-centro",
+      "lat": 41.9001,
+      "lng": 12.4769,
+      "reference": "H501A048600.A",
+      "lookup_status": 200,
+      "lookup_seconds": 0.233,
+      "first": {
+        "status": 200,
+        "seconds": 6.627,
+        "bytes": 238809,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 5.139,
+        "bytes": 238809,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "roma-centro",
+      "lat": 41.8986,
+      "lng": 12.4749,
+      "reference": "H501A048500.351",
+      "lookup_status": 200,
+      "lookup_seconds": 0.225,
+      "first": {
+        "status": 200,
+        "seconds": 5.021,
+        "bytes": 239262,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 5.265,
+        "bytes": 239262,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "roma-centro",
+      "lat": 41.8986,
+      "lng": 12.4789,
+      "reference": "H501A048600.78",
+      "lookup_status": 200,
+      "lookup_seconds": 0.245,
+      "first": {
+        "status": 200,
+        "seconds": 5.49,
+        "bytes": 241775,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 5.386,
+        "bytes": 241775,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "milano-centro",
+      "lat": 45.4642,
+      "lng": 9.19,
+      "reference": "F205_039000.STRADA288",
+      "lookup_status": 200,
+      "lookup_seconds": 0.26,
+      "first": {
+        "status": 200,
+        "seconds": 5.305,
+        "bytes": 61186,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 5.161,
+        "bytes": 61186,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "milano-centro",
+      "lat": 45.4627,
+      "lng": 9.19,
+      "reference": "F205_043700.STRADA331",
+      "lookup_status": 200,
+      "lookup_seconds": 0.23,
+      "first": {
+        "status": 200,
+        "seconds": 5.146,
+        "bytes": 69961,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 5.862,
+        "bytes": 69961,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "milano-centro",
+      "lat": 45.4657,
+      "lng": 9.19,
+      "reference": "F205_039000.98",
+      "lookup_status": 200,
+      "lookup_seconds": 0.249,
+      "first": {
+        "status": 200,
+        "seconds": 5.344,
+        "bytes": 83372,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 5.351,
+        "bytes": 83372,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "milano-centro",
+      "lat": 45.4642,
+      "lng": 9.192,
+      "reference": "F205_039000.H",
+      "lookup_status": 200,
+      "lookup_seconds": 0.216,
+      "first": {
+        "status": 200,
+        "seconds": 5.887,
+        "bytes": 70878,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 5.213,
+        "bytes": 70878,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "milano-centro",
+      "lat": 45.4672,
+      "lng": 9.19,
+      "reference": "F205_038900.STRADA285",
+      "lookup_status": 200,
+      "lookup_seconds": 0.209,
+      "first": {
+        "status": 200,
+        "seconds": 5.125,
+        "bytes": 63774,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 5.005,
+        "bytes": 63774,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "tolfa-comune",
+      "lat": 42.1517,
+      "lng": 11.9394,
+      "reference": "L192_002300.STRADA114",
+      "lookup_status": 200,
+      "lookup_seconds": 0.246,
+      "first": {
+        "status": 200,
+        "seconds": 5.213,
+        "bytes": 59828,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 16.834,
+        "bytes": 59828,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "tolfa-comune",
+      "lat": 42.1502,
+      "lng": 11.9394,
+      "reference": "L192_002300.898",
+      "lookup_status": 200,
+      "lookup_seconds": 0.26,
+      "first": {
+        "status": 200,
+        "seconds": 8.565,
+        "bytes": 23072,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 5.128,
+        "bytes": 23072,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "tolfa-comune",
+      "lat": 42.1532,
+      "lng": 11.9394,
+      "reference": "L192_002300.STRADA103",
+      "lookup_status": 200,
+      "lookup_seconds": 0.257,
+      "first": {
+        "status": 200,
+        "seconds": 5.961,
+        "bytes": 67131,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 5.915,
+        "bytes": 67131,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "tolfa-comune",
+      "lat": 42.1517,
+      "lng": 11.9374,
+      "reference": "L192_002300.1368",
+      "lookup_status": 200,
+      "lookup_seconds": 0.266,
+      "first": {
+        "status": 200,
+        "seconds": 5.588,
+        "bytes": 22904,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 5.396,
+        "bytes": 22904,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "tolfa-comune",
+      "lat": 42.1517,
+      "lng": 11.9414,
+      "reference": "L192_002300.1459",
+      "lookup_status": 200,
+      "lookup_seconds": 0.235,
+      "first": {
+        "status": 200,
+        "seconds": 5.335,
+        "bytes": 22705,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 5.382,
+        "bytes": 22705,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "monte-romano-campagna",
+      "lat": 42.25,
+      "lng": 11.9,
+      "reference": "F603_003000.15",
+      "lookup_status": 200,
+      "lookup_seconds": 0.248,
+      "first": {
+        "status": 200,
+        "seconds": 5.435,
+        "bytes": 26556,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 5.196,
+        "bytes": 26556,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "monte-romano-campagna",
+      "lat": 42.2485,
+      "lng": 11.9,
+      "reference": "F603_003000.21",
+      "lookup_status": 200,
+      "lookup_seconds": 0.232,
+      "first": {
+        "status": 200,
+        "seconds": 5.056,
+        "bytes": 39304,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 5.211,
+        "bytes": 39304,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "monte-romano-campagna",
+      "lat": 42.2515,
+      "lng": 11.9,
+      "reference": "F603_003000.17",
+      "lookup_status": 200,
+      "lookup_seconds": 0.246,
+      "first": {
+        "status": 200,
+        "seconds": 5.171,
+        "bytes": 22687,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 5.194,
+        "bytes": 22687,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "monte-romano-campagna",
+      "lat": 42.253,
+      "lng": 11.9,
+      "reference": "F603_003000.55",
+      "lookup_status": 200,
+      "lookup_seconds": 0.218,
+      "first": {
+        "status": 200,
+        "seconds": 5.219,
+        "bytes": 40394,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 5.27,
+        "bytes": 40394,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "monte-romano-campagna",
+      "lat": 42.253,
+      "lng": 11.902,
+      "reference": "F603_003000.40",
+      "lookup_status": 200,
+      "lookup_seconds": 0.228,
+      "first": {
+        "status": 200,
+        "seconds": 5.076,
+        "bytes": 24490,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 6.193,
+        "bytes": 24490,
+        "cached": false,
+        "blocks_available": [
+          "basic",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    }
+  ]
+}

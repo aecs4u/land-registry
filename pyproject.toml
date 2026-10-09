@@ -25,6 +25,7 @@ dependencies = [
     "colorcet>=3.0.1",
     "xarray>=2024.1.0",
     "pillow>=10.0.0",
+    "reportlab>=4.2.0",
     # Basic utilities
     "requests>=2.25.0",
     "httpx>=0.25.0",

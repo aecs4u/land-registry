@@ -13,6 +13,7 @@ Targets:
 """
 
 import json
+
 import pytest
 
 from land_registry.sqlite_db import SQLiteDatabase
@@ -43,6 +44,23 @@ def _create_microzone(db: SQLiteDatabase, zone_id: int, user_id: str = "user1", 
         name=name,
         microzone_type="polygon",
     )
+
+
+def test_trim_parcel_enrichment_cache_keeps_recent_namespace_and_other_keys(db):
+    db.upsert_parcel_enrichment("old::panel", {"value": "old"}, "fingerprint")
+    db.upsert_parcel_enrichment("new::panel", {"value": "new"}, "fingerprint")
+    db.upsert_parcel_enrichment("legacy-full", {"value": "full"}, "fingerprint")
+    with db.get_connection() as connection:
+        connection.execute(
+            "UPDATE parcel_enrichment_read_model SET refreshed_at = CASE parcel_key "
+            "WHEN 'old::panel' THEN '2026-10-08' ELSE '2026-10-09' END"
+        )
+
+    db.trim_parcel_enrichment_cache("::panel", max_rows=1)
+
+    assert db.get_parcel_enrichment("old::panel") is None
+    assert db.get_parcel_enrichment("new::panel")["value"] == "new"
+    assert db.get_parcel_enrichment("legacy-full")["value"] == "full"
 
 
 # ---------------------------------------------------------------------------
@@ -489,7 +507,8 @@ class TestUpdateSavedMap:
 class TestIsSqliteAvailable:
 
     def test_exception_returns_false(self):
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         from land_registry.sqlite_db import is_sqlite_available
 
         mock_db = MagicMock()

@@ -14,6 +14,7 @@ import os
 import json
 import sqlite3
 import logging
+import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any, Generator
@@ -457,6 +458,26 @@ class SQLiteDatabase:
                     updated_at = CURRENT_TIMESTAMP
                 """,
                 (parcel_key, serialized, source_fingerprint),
+            )
+
+    def trim_parcel_enrichment_cache(self, key_suffix: str, max_rows: int = 500) -> None:
+        """Bound one namespaced read-model cache without evicting other entries."""
+        if not key_suffix or max_rows < 1:
+            raise ValueError("key_suffix and a positive max_rows are required")
+        with self.get_connection() as conn:
+            conn.execute(
+                """
+                DELETE FROM parcel_enrichment_read_model
+                WHERE substr(parcel_key, -length(?)) = ?
+                  AND parcel_key NOT IN (
+                      SELECT parcel_key
+                      FROM parcel_enrichment_read_model
+                      WHERE substr(parcel_key, -length(?)) = ?
+                      ORDER BY refreshed_at DESC
+                      LIMIT ?
+                  )
+                """,
+                (key_suffix, key_suffix, key_suffix, key_suffix, max_rows),
             )
 
     # -------------------------------------------------------------------------
@@ -1191,14 +1212,16 @@ class SQLiteDatabase:
 
 # Global database instance (lazy initialized)
 _sqlite_db: Optional[SQLiteDatabase] = None
+_sqlite_db_lock = threading.Lock()
 
 
 def get_sqlite_db() -> SQLiteDatabase:
     """Get the global SQLite database instance."""
     global _sqlite_db
-    if _sqlite_db is None:
-        _sqlite_db = SQLiteDatabase()
-    return _sqlite_db
+    with _sqlite_db_lock:
+        if _sqlite_db is None:
+            _sqlite_db = SQLiteDatabase()
+        return _sqlite_db
 
 
 def is_sqlite_available() -> bool:

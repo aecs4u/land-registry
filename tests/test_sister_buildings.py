@@ -89,6 +89,59 @@ def test_sister_query_returns_empty_when_no_cached_visura(tmp_path):
     assert result["buildings"] == []
 
 
+def test_sister_query_returns_bounded_unique_addresses_for_exact_parcel(tmp_path):
+    database = tmp_path / "sister.sqlite"
+    connection = sqlite3.connect(database)
+    connection.executescript(
+        """
+        CREATE TABLE cadastral_locations (
+            id INTEGER PRIMARY KEY,
+            province TEXT,
+            municipality TEXT,
+            sheet TEXT,
+            parcel TEXT,
+            subunit TEXT
+        );
+        CREATE TABLE visura_properties (
+            id INTEGER PRIMARY KEY,
+            location_id INTEGER,
+            property_type TEXT,
+            category TEXT,
+            cadastral_class TEXT,
+            consistency NUMERIC,
+            income NUMERIC,
+            census_zone TEXT,
+            address TEXT
+        );
+        INSERT INTO cadastral_locations
+            (id, province, municipality, sheet, parcel, subunit)
+        VALUES (1, 'Padova', 'Cittadella', '18', '1036', '1');
+        """
+    )
+    addresses = [f"Via Roma {number}" for number in range(1, 13)] + [" via roma 1 "]
+    connection.executemany(
+        """
+        INSERT INTO visura_properties
+            (location_id, property_type, category, cadastral_class, address)
+        VALUES (1, 'building', 'A/2', '3', ?)
+        """,
+        [(address,) for address in addresses],
+    )
+    connection.commit()
+    connection.close()
+
+    result = _SisterBuildingSource(database).buildings_for_parcel(
+        "C743_001800.1036",
+        "C743",
+        {"province": "Padova", "name": "Cittadella"},
+    )
+
+    assert result["addresses"] == [f"Via Roma {number}" for number in range(1, 11)]
+    assert result["address_count"] == 12
+    assert result["addresses_truncated"] is True
+    assert result["address_source"] == "SISTER SQLite visura_properties.address"
+
+
 def _create_document_schema(connection):
     connection.executescript(
         """

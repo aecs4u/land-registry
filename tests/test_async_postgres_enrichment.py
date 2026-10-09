@@ -2,6 +2,7 @@
 
 import sqlite3
 from contextlib import contextmanager
+from copy import deepcopy
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
@@ -135,6 +136,128 @@ async def test_missing_postgres_and_local_poi_stores_return_empty(monkeypatch):
     assert result["total"] == 0
     assert result["categories"] == {"schools": []}
     fetch.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_async_parcel_context_includes_optional_municipal_solar_aggregates(monkeypatch):
+    source = stats_service._AsyncPostgresSource("postgresql://localhost/stats")
+    municipality_row = {
+        "id": 17,
+        "canonical_name": "Roma",
+        "unit_type": "comune",
+        "istat_code": "058091",
+        "cadastral_code": "H501",
+        "observation_count": 4,
+        "tax_fact_count": 2,
+        "total_imponibile": 1200,
+        "market_zone_count": 3,
+        "pv_n_buildings": None,
+        "pv_pvout_pessimistic_kwh_year_total": None,
+        "pv_pvout_modern_kwh_year_total": None,
+        "pv_pvout_per_capita_kwh": None,
+        "pv_kwp_max_total": None,
+        "pv_high_viability_pct": None,
+        "pv_medium_viability_pct": None,
+        "pv_low_viability_pct": None,
+        "pv_not_eligible_pct": None,
+        "pv_observation_count": None,
+    }
+    solar_row = {
+        "pv_n_buildings": 120,
+        "pv_pvout_pessimistic_kwh_year_total": 540000,
+        "pv_pvout_modern_kwh_year_total": 690000,
+        "pv_kwp_max_total": 420,
+        "pv_high_viability_pct": 12.5,
+        "pv_medium_viability_pct": 44.0,
+        "pv_low_viability_pct": 31.0,
+        "pv_not_eligible_pct": 12.5,
+        "solar_data_version": "solar-comuni-2026-09",
+        "solar_updated_at": "2026-09-30",
+    }
+    fetchrow = AsyncMock(side_effect=[municipality_row, solar_row, None, None])
+    fetch = AsyncMock(return_value=[])
+    monkeypatch.setattr(source, "_relations_available", AsyncMock(return_value=True))
+    monkeypatch.setattr(source, "_fetchrow", fetchrow)
+    monkeypatch.setattr(source, "_fetch", fetch)
+
+    context = await source.context_for_parcel(
+        "IT.AGC.STAT.058091.001",
+        "H501",
+        {"lat": 41.9, "lng": 12.5},
+    )
+
+    assert context is not None
+    profile = context["municipality_profile"]
+    assert profile["pv_n_buildings"] == 120
+    assert profile["pv_pvout_modern_kwh_year_total"] == 690000
+    assert profile["solar_data_version"] == "solar-comuni-2026-09"
+    assert profile["solar_updated_at"] == "2026-09-30"
+    assert profile["solar_source"] == "aecs4u-stats solar.solar_potential_comuni"
+    assert "FROM solar.solar_potential_comuni" in fetchrow.await_args_list[1].args[0]
+    assert "ltrim(pro_com_t::text, '0')" in fetchrow.await_args_list[1].args[0]
+    fetch.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_panel_read_model_falls_back_to_local_cache_and_hits_on_repeat(monkeypatch):
+    reference = "H501_048600.D"
+    parcel = {
+        "type": "Feature",
+        "properties": {"municipality_code": "H501", "sheet_number": "486", "parcel_number": "D"},
+        "geometry": {"type": "Polygon", "coordinates": [[[12.47, 41.89], [12.48, 41.89], [12.48, 41.90], [12.47, 41.90], [12.47, 41.89]]]},
+    }
+    quotes = [{"zona": "B31", "prezzo_min": index, "prezzo_max": index + 1} for index in range(20)]
+    full_payload = {
+        "national_reference": reference,
+        "omi": {"quotes": quotes},
+        "blocks": {"valuation": {"available": True, "data": {"quotes": quotes}}},
+        "source": "fixture",
+    }
+    cache = {}
+    calls = {"build": 0}
+
+    def read_local(cache_key):
+        entry = cache.get(cache_key)
+        if entry is None:
+            return None
+        payload, fingerprint = entry
+        cached = deepcopy(payload)
+        cached["read_model"] = {
+            "key": cache_key,
+            "source_fingerprint": fingerprint,
+            "cached": True,
+        }
+        return cached
+
+    def write_local(cache_key, payload, fingerprint):
+        cache[cache_key] = (deepcopy(payload), fingerprint)
+
+    def build(_reference, **_kwargs):
+        calls["build"] += 1
+        return deepcopy(full_payload)
+
+    monkeypatch.setattr(stats_service, "_get_async_postgres_source", AsyncMock(return_value=None))
+    monkeypatch.setattr(stats_service, "_parcel_enrichment_fingerprint", lambda: "fixture-fingerprint")
+    monkeypatch.setattr(stats_service, "get_parcel_by_reference", lambda _reference: parcel)
+    monkeypatch.setattr(stats_service, "aget_municipality_by_cadastral_code", AsyncMock(return_value=None))
+    monkeypatch.setattr(stats_service, "aget_omi_quotes", AsyncMock(return_value={"quotes": []}))
+    monkeypatch.setattr(stats_service, "aget_income_profile", AsyncMock(return_value=None))
+    monkeypatch.setattr(stats_service, "_build_parcel_enrichment", build)
+    monkeypatch.setattr(stats_service, "_read_local_panel_read_model", read_local)
+    monkeypatch.setattr(stats_service, "_write_local_panel_read_model", write_local)
+
+    first = await stats_service.aget_parcel_enrichment(reference, view="panel")
+    second = await stats_service.aget_parcel_enrichment(reference, view="panel")
+
+    assert first["read_model"]["cached"] is False
+    assert first["blocks"]["valuation"]["data"]["quote_count"] == 20
+    assert len(first["blocks"]["valuation"]["data"]["quote_preview"]) == 8
+    assert second["read_model"]["cached"] is True
+    assert second["read_model"]["database"] == "land-registry application SQLite panel cache"
+    assert calls["build"] == 1
+    assert list(cache) == [f"{reference}{stats_service._LOCAL_PANEL_CACHE_SUFFIX}"]
+
+
 
 
 @pytest.mark.parametrize("relation", ["facts.poi", "source_osm_pois.osm_pois", None])

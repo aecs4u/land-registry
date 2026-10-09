@@ -29,6 +29,7 @@ import math
 import os
 import re
 import sqlite3
+import statistics
 import subprocess
 import sys
 import threading
@@ -95,10 +96,6 @@ except ImportError:
     def _census_sections_for_comune(*args, **kwargs):
         return None
 
-try:
-    from aecs4u_stats.census.config import CENSUS_STORE_PATH as _CENSUS_STORE_PATH
-except ImportError:
-    _CENSUS_STORE_PATH = None
 from aecs4u_stats.hazards import (
     active_fires as _active_fires,
     get_comune_hazards,
@@ -106,6 +103,34 @@ from aecs4u_stats.hazards import (
     seismic_zone,
     summarize_hazards,
 )
+try:
+    from aecs4u_stats.hazards.mps04 import (
+        mps04_db_available as _mps04_db_available,
+        pga_at_point as _mps04_pga_at_point,
+    )
+except ImportError:
+    _mps04_db_available = None
+    _mps04_pga_at_point = None
+try:
+    from aecs4u_stats.hazards.ispra_mosaics import (
+        flood_hazard_in_bbox as _flood_hazard_in_bbox,
+        ispra_mosaics_db_available as _ispra_mosaics_db_available,
+        landslide_hazard_in_bbox as _landslide_hazard_in_bbox,
+    )
+except ImportError:
+    _flood_hazard_in_bbox = None
+    _ispra_mosaics_db_available = None
+    _landslide_hazard_in_bbox = None
+try:
+    from aecs4u_stats.egms import EGMS_CONTRACT as _EGMS_CONTRACT
+    from aecs4u_stats.egms import egms_db_available as _egms_db_available
+    from aecs4u_stats.egms import subsidence_at_point as _subsidence_at_point
+    from aecs4u_stats.egms import subsidence_in_bbox as _subsidence_in_bbox
+except ImportError:
+    _EGMS_CONTRACT = None
+    _egms_db_available = None
+    _subsidence_at_point = None
+    _subsidence_in_bbox = None
 try:
     from aecs4u_stats.hazards.config import HAZARDS_DB_PATH as _HAZARDS_DB_PATH
 except ImportError:
@@ -139,6 +164,7 @@ except ImportError:
 from aecs4u_stats.osm.config import POI_CATEGORIES
 from aecs4u_stats.osm.pois import bbox_from_center, pois_within_radius, resolve_poi_db
 from shapely.geometry import Point, shape
+from shapely.ops import transform as _transform_geometry, unary_union as _unary_union
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +175,8 @@ _PARCEL_DETAIL_BLOCKS = (
     "land_use", "valuation", "valuation_history", "coastal_erosion",
     "cultural_heritage", "solar", "poi", "nightlights", "opendata", "pvp",
 )
+_EGMS_PARCEL_CANDIDATE_LIMIT = 5000
+_PARCEL_ADDRESS_LIMIT = 10
 
 _PARCEL_BENCHMARKS = {
     "population_density_per_km2": {
@@ -166,6 +194,21 @@ _PARCEL_BENCHMARKS = {
         "dataset_version": "MEF_IRPEF_2022",
     },
 }
+_SOLAR_PROFILE_QUERY = """
+    SELECT n_buildings AS pv_n_buildings,
+           pvout_pessimistic_kwh_year_total AS pv_pvout_pessimistic_kwh_year_total,
+           pvout_modern_kwh_year_total AS pv_pvout_modern_kwh_year_total,
+           kwp_max_total AS pv_kwp_max_total,
+           high_viability_pct AS pv_high_viability_pct,
+           medium_viability_pct AS pv_medium_viability_pct,
+           low_viability_pct AS pv_low_viability_pct,
+           not_eligible_pct AS pv_not_eligible_pct,
+           solar_data_version,
+           updated_at AS solar_updated_at
+    FROM solar.solar_potential_comuni
+    WHERE ltrim(pro_com_t::text, '0') = ltrim(%s::text, '0')
+    LIMIT 1
+"""
 
 
 def _omi_period_dataset_version(omi: Optional[Dict[str, Any]] = None) -> Optional[str]:
@@ -219,6 +262,7 @@ def _detail_block(
     *,
     source: Optional[str] = None,
     dataset_version: Optional[str] = None,
+    updated_at: Optional[str] = None,
     model_version: Optional[str] = None,
     spatial_resolution: Optional[str] = None,
     spatial_resolution_m: Optional[float] = None,
@@ -236,7 +280,7 @@ def _detail_block(
         "dataset_version": dataset_version,
         "model_version": model_version,
         "data_vintage": dataset_version,
-        "updated_at": None,
+        "updated_at": updated_at,
         "match_method": match_method,
         "match_distance_m": None,
         "coverage_status": "full" if is_available else "not_available",
@@ -346,20 +390,26 @@ class _SisterBuildingSource:
         cadastral_code: str,
         municipality: Optional[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        """Return SISTER building categories for one cadastral parcel."""
+        """Return SISTER building categories and parcel-linked address strings."""
         reference = str(national_reference or "").strip()
         prefix, separator, suffix = reference.partition("_")
         sheet_text, dot, parcel_text = suffix.partition(".")
         parcel_text = parcel_text.split("/", 1)[0]
         if not separator or not dot or not sheet_text or not parcel_text:
-            return {"buildings": [], "source": "SISTER SQLite", "available": False}
+            return {
+                "buildings": [], "addresses": [], "address_count": 0,
+                "addresses_truncated": False, "source": "SISTER SQLite", "available": False,
+            }
 
         sheet_values = self._parcel_values(sheet_text, sheet=True)
         parcel_values = self._parcel_values(parcel_text)
         province = str((municipality or {}).get("province") or "").strip()
         municipality_name = str((municipality or {}).get("name") or "").strip()
         if not province or not municipality_name:
-            return {"buildings": [], "source": "SISTER SQLite", "available": False}
+            return {
+                "buildings": [], "addresses": [], "address_count": 0,
+                "addresses_truncated": False, "source": "SISTER SQLite", "available": False,
+            }
 
         sheet_placeholders = ",".join("?" for _ in sheet_values)
         parcel_placeholders = ",".join("?" for _ in parcel_values)
@@ -479,7 +529,19 @@ class _SisterBuildingSource:
                 connection.close()
         except (OSError, sqlite3.Error) as exc:
             logger.warning("SISTER building lookup failed for %s: %s", reference, exc)
-            return {"buildings": [], "source": "SISTER SQLite", "available": False}
+            return {
+                "buildings": [], "addresses": [], "address_count": 0,
+                "addresses_truncated": False, "source": "SISTER SQLite", "available": False,
+            }
+
+        addresses = []
+        seen_addresses = set()
+        for row in results:
+            address = " ".join(str(row.get("address") or "").split())
+            address_key = address.casefold()
+            if address and address_key not in seen_addresses:
+                seen_addresses.add(address_key)
+                addresses.append(address)
 
         buildings = []
         seen = set()
@@ -511,6 +573,10 @@ class _SisterBuildingSource:
         return {
             "buildings": buildings,
             "count": len(buildings),
+            "addresses": addresses[:_PARCEL_ADDRESS_LIMIT],
+            "address_count": len(addresses),
+            "addresses_truncated": len(addresses) > _PARCEL_ADDRESS_LIMIT,
+            "address_source": "SISTER SQLite visura_properties.address",
             "available": bool(buildings),
             "source": "SISTER SQLite building_classifications",
         }
@@ -873,6 +939,8 @@ _POSTGRES_POI_RELATION_SQL = """
     SELECT CASE
         WHEN to_regclass('facts.poi') IS NOT NULL
          AND to_regclass('facts.poi_category') IS NOT NULL THEN 'facts.poi'
+        WHEN to_regclass('osm_pois.osm_pois') IS NOT NULL
+            THEN 'osm_pois.osm_pois'
         WHEN to_regclass('source_osm_pois.osm_pois') IS NOT NULL
             THEN 'source_osm_pois.osm_pois'
     END AS relation
@@ -887,10 +955,10 @@ def _postgres_poi_query(
         category = "c.code"
         geometry = "p.geom"
         tables = "facts.poi p JOIN facts.poi_category c ON c.id = p.category_id"
-    elif relation == "source_osm_pois.osm_pois":
+    elif relation in {"osm_pois.osm_pois", "source_osm_pois.osm_pois"}:
         category = "p.category"
         geometry = "ST_SetSRID(ST_MakePoint(p.longitude, p.latitude), 4326)"
-        tables = "source_osm_pois.osm_pois p"
+        tables = f"{relation} p"
     else:
         raise ValueError(f"Unsupported PostgreSQL POI relation: {relation}")
 
@@ -908,7 +976,7 @@ def _postgres_poi_query(
         )
     """
     params: list = [lng, lat, lng, lat, radius_km * 1000.0]
-    if relation == "source_osm_pois.osm_pois":
+    if relation in {"osm_pois.osm_pois", "source_osm_pois.osm_pois"}:
         # These numeric predicates are pushed to the remote POI database;
         # PostGIS only computes exact distances for the bounding-box rows.
         south, west, north, east = bbox_from_center(lat, lng, radius_km)
@@ -1127,6 +1195,11 @@ def _asyncpg_sql(sql: str) -> str:
     return re.sub(r"%s", replace, sql)
 
 
+def _quote_pg_identifier(identifier: str) -> str:
+    """Quote one identifier discovered from PostgreSQL metadata."""
+    return '"' + identifier.replace('"', '""') + '"'
+
+
 class _AsyncPostgresSource:
     """Async PostgreSQL adapter used by FastAPI enrichment endpoints.
 
@@ -1144,6 +1217,10 @@ class _AsyncPostgresSource:
         self._poi_relation_cache: tuple[str | None, float] | None = None
         self._read_model_relation_cache: tuple[bool, float] | None = None
         self._optional_relations_cache: dict[tuple[str, ...], tuple[bool, float]] = {}
+        self._quality_of_life_relation_cache: tuple[
+            tuple[str, dict[str, str]] | None, float
+        ] | None = None
+        self._census_relation_cache: tuple[str | None, float] | None = None
 
     async def _get_pool(self):
         if self._pool is None:
@@ -1226,11 +1303,345 @@ class _AsyncPostgresSource:
             )
         return available
 
+    async def _quality_of_life_relation(self) -> Optional[tuple[str, dict[str, str]]]:
+        """Find the source view in the quality_of_life schema by its BES columns."""
+        cached = self._quality_of_life_relation_cache
+        now = time.monotonic()
+        if cached is not None and now < cached[1]:
+            return cached[0]
+        rows = await self._fetch(
+            """
+            SELECT table_name, column_name
+            FROM information_schema.columns
+            WHERE table_schema = %s
+            ORDER BY table_name, ordinal_position
+            """,
+            ("quality_of_life",),
+        )
+        relations: dict[str, dict[str, str]] = {}
+        for row in rows:
+            table_name = str(row["table_name"])
+            column_name = str(row["column_name"])
+            relations.setdefault(table_name, {})[column_name.lower()] = column_name
+        column_aliases = {
+            "ref_area": ("ref_area", "nuts3_code_2021"),
+            "data_type": ("data_type", "indicator_name"),
+            "time_period": ("time_period", "edition_year"),
+            "value": ("value", "measured_value"),
+            "unit": ("unit", "unit_name"),
+            "temporal_reference": ("temporal_reference",),
+            "edition_label": ("edition_label",),
+            "is_covid_supplement": ("is_covid_supplement",),
+            "source_file": ("source_file",),
+            "source_row_number": ("source_row_number",),
+        }
+        candidates = []
+        for name, columns in relations.items():
+            resolved_columns = {
+                canonical: columns[next(alias for alias in aliases if alias in columns)]
+                for canonical, aliases in column_aliases.items()
+                if any(alias in columns for alias in aliases)
+            }
+            if all(
+                canonical in resolved_columns
+                for canonical in ("ref_area", "data_type", "time_period", "value")
+            ):
+                candidates.append((name, resolved_columns))
+        relation_priority = {
+            "v_quality_of_life_table": 0,
+            "istat_bes_quality_of_life": 1,
+            "v_quality_of_life_map": 2,
+        }
+        candidates.sort(key=lambda item: (relation_priority.get(item[0], 3), item[0]))
+        result = candidates[0] if candidates else None
+        self._quality_of_life_relation_cache = (
+            result,
+            now + (300 if result else 60),
+        )
+        if result is None:
+            logger.info("No BES source view with geography/indicator/year/value columns in quality_of_life")
+        return result
+
+    async def _census_relation(self) -> Optional[str]:
+        """Resolve the canonical Census FT, accepting its current legacy schema alias."""
+        cached = self._census_relation_cache
+        now = time.monotonic()
+        if cached is not None and now < cached[1]:
+            return cached[0]
+        row = await self._fetchrow(
+            """
+            SELECT CASE
+                     WHEN to_regclass('census.sections') IS NOT NULL THEN 'census.sections'
+                     WHEN to_regclass('census_sections.sections') IS NOT NULL
+                       THEN 'census_sections.sections'
+                   END AS relation
+            """
+        )
+        relation = row["relation"] if row else None
+        self._census_relation_cache = (
+            relation,
+            now + (300 if relation else 60),
+        )
+        return relation
+
+    async def quality_of_life_available(self) -> bool:
+        return await self._quality_of_life_relation() is not None
+
+    async def quality_of_life_indicators(self, nuts3: str) -> Optional[list[str]]:
+        relation = await self._quality_of_life_relation()
+        if relation is None:
+            return None
+        table_name, columns = relation
+        table = f"quality_of_life.{_quote_pg_identifier(table_name)}"
+        ref_area = _quote_pg_identifier(columns["ref_area"])
+        data_type = _quote_pg_identifier(columns["data_type"])
+        rows = await self._fetch(
+            f"""
+            SELECT DISTINCT {data_type}::text AS data_type
+            FROM {table}
+            WHERE UPPER({ref_area}::text) = UPPER(%s)
+              AND {data_type} IS NOT NULL
+            ORDER BY data_type
+            """,
+            (nuts3,),
+        )
+        return [str(row["data_type"]) for row in rows if row["data_type"]]
+
+    async def quality_of_life_indicator_clusters(
+        self, nuts3: str
+    ) -> Optional[Dict[str, Any]]:
+        """Return every QDV indicator grouped by its six 15-item domains."""
+        relation = await self._quality_of_life_relation()
+        if relation is None:
+            return None
+        table_name, columns = relation
+        required = (
+            "ref_area", "data_type", "time_period", "value", "unit",
+            "temporal_reference", "edition_label", "is_covid_supplement",
+            "source_file", "source_row_number",
+        )
+        if any(name not in columns for name in required):
+            return None
+        table = f"quality_of_life.{_quote_pg_identifier(table_name)}"
+        field = {
+            name: _quote_pg_identifier(columns[name])
+            for name in required
+        }
+        rows = await self._fetch(
+            f"""
+            SELECT {field['source_file']}::text AS source_file,
+                   {field['source_row_number']}::integer AS source_row_number,
+                   {field['time_period']}::integer AS edition_year,
+                   {field['edition_label']}::text AS edition_label,
+                   {field['is_covid_supplement']} AS is_covid_supplement,
+                   {field['data_type']}::text AS indicator_name,
+                   {field['value']} AS measured_value,
+                   {field['unit']}::text AS unit_name,
+                   {field['temporal_reference']}::text AS temporal_reference
+            FROM {table}
+            WHERE UPPER({field['ref_area']}::text) = UPPER(%s)
+            ORDER BY {field['time_period']},
+                     {field['is_covid_supplement']},
+                     {field['source_file']},
+                     {field['source_row_number']}
+            """,
+            (nuts3,),
+        )
+        if not rows:
+            return {"years": [], "indicators": [], "clusters": []}
+
+        # The published QDV releases store the 90 annual indicators in six
+        # consecutive blocks of 15. Their CSV order places Demografia before
+        # Ambiente; the display order below follows the published category list.
+        cluster_definitions = (
+            ("wealth_consumption", "Wealth and consumption"),
+            ("business_work", "Business and work"),
+            ("environment_services", "Environment and services"),
+            ("demography_society", "Demography and society"),
+            ("justice_safety", "Justice and safety"),
+            ("culture_leisure", "Culture and leisure"),
+            ("covid_supplement", "COVID-19 supplement"),
+        )
+        # source rows are grouped by release file so the rank is local to one
+        # annual edition, not affected by the number of previous years.
+        files: dict[str, list[Any]] = {}
+        for row in rows:
+            files.setdefault(str(row["source_file"] or ""), []).append(row)
+        rank_to_cluster = (
+            "wealth_consumption", "business_work", "demography_society",
+            "environment_services", "justice_safety", "culture_leisure",
+        )
+        definitions_by_key = {
+            key: label for key, label in cluster_definitions
+        }
+        clusters: dict[str, dict[tuple[str, str], Dict[str, Any]]] = {
+            key: {} for key, _label in cluster_definitions
+        }
+        year_order: dict[str, tuple[int, bool]] = {}
+        all_indicator_names: set[str] = set()
+        for file_rows in files.values():
+            file_rows.sort(key=lambda row: int(row["source_row_number"] or 0))
+            for index, row in enumerate(file_rows):
+                edition_year = int(row["edition_year"])
+                is_covid = bool(row["is_covid_supplement"])
+                year_label = str(row["edition_label"] or edition_year)
+                year_order[year_label] = (edition_year, is_covid)
+                cluster_key = (
+                    "covid_supplement" if is_covid
+                    else rank_to_cluster[min(index // 15, len(rank_to_cluster) - 1)]
+                )
+                indicator_name = " ".join(str(row["indicator_name"] or "").split())
+                if not indicator_name:
+                    continue
+                unit_name = " ".join(str(row["unit_name"] or "").split())
+                all_indicator_names.add(indicator_name)
+                identity = (indicator_name.casefold(), "")
+                indicator = clusters[cluster_key].setdefault(
+                    identity,
+                    {
+                        "name": indicator_name,
+                        "unit": unit_name or None,
+                        "values": {},
+                        "_units": set(),
+                    },
+                )
+                if unit_name:
+                    indicator["_units"].add(unit_name)
+                indicator["values"][year_label] = {
+                    "value": _postgres_scalar(row["measured_value"]),
+                    "unit": unit_name or None,
+                    "temporal_reference": row["temporal_reference"],
+                }
+
+        years = [
+            label for label, _order in sorted(
+                year_order.items(), key=lambda item: (item[1][0], item[1][1], item[0])
+            )
+        ]
+        result_clusters = []
+        for key, _label in cluster_definitions:
+            indicators = []
+            for indicator in clusters[key].values():
+                units = indicator.pop("_units")
+                indicator["unit_varies"] = len(units) > 1
+                indicators.append(indicator)
+            if indicators:
+                result_clusters.append({
+                    "key": key,
+                    "label": definitions_by_key[key],
+                    "indicators": sorted(
+                        indicators, key=lambda item: item["name"].casefold()
+                    ),
+                })
+        return {
+            "years": years,
+            "indicators": sorted(all_indicator_names, key=str.casefold),
+            "clusters": result_clusters,
+        }
+
+    async def quality_of_life_series(
+        self, nuts3: str, data_type_value: str, year: Optional[int] = None
+    ) -> Optional[list[Dict[str, Any]]]:
+        relation = await self._quality_of_life_relation()
+        if relation is None:
+            return None
+        table_name, columns = relation
+        table = f"quality_of_life.{_quote_pg_identifier(table_name)}"
+        ref_area = _quote_pg_identifier(columns["ref_area"])
+        data_type = _quote_pg_identifier(columns["data_type"])
+        period = _quote_pg_identifier(columns["time_period"])
+        value = _quote_pg_identifier(columns["value"])
+        optional = {
+            name: _quote_pg_identifier(columns[name]) + "::text"
+            if name in columns else "NULL::text"
+            for name in (
+                "sex", "domain", "unit", "temporal_reference", "edition_label",
+            )
+        }
+        covid = (
+            _quote_pg_identifier(columns["is_covid_supplement"])
+            if "is_covid_supplement" in columns else "NULL::boolean"
+        )
+        year_clause = f" AND {period}::text = %s" if year is not None else ""
+        params: tuple[Any, ...] = (nuts3, data_type_value)
+        if year is not None:
+            params += (str(year),)
+        rows = await self._fetch(
+            f"""
+            SELECT {period}::text AS year,
+                   {value} AS value,
+                   {optional['sex']} AS sex,
+                   {optional['domain']} AS domain,
+                   {optional['unit']} AS unit,
+                   {optional['temporal_reference']} AS temporal_reference,
+                   {optional['edition_label']} AS edition_label,
+                   {covid} AS is_covid_supplement
+            FROM {table}
+            WHERE UPPER({ref_area}::text) = UPPER(%s)
+              AND {data_type}::text = %s
+              {year_clause}
+            ORDER BY {period}::text
+            """,
+            params,
+        )
+        return [
+            {
+                "year": str(row["year"]),
+                "value": _postgres_scalar(row["value"]),
+                "sex": row["sex"],
+                "domain": row["domain"],
+                "unit": row["unit"],
+                "temporal_reference": row["temporal_reference"],
+                "edition_label": row["edition_label"],
+                "is_covid_supplement": row["is_covid_supplement"],
+            }
+            for row in rows
+        ]
+
+    async def agenziademanio_concessions_for_parcel(self, parcel_id: int) -> Dict[str, Any]:
+        """Read the optional spatial concession-to-parcel crosswalk."""
+        relation = "agenziademanio.concession_parcel_links"
+        if not await self._relations_available((relation,)):
+            return {"available": False, "total": 0, "matches": []}
+        rows = await self._fetch(
+            """
+            SELECT concession_row_id, idconc, admin_label, snapshot_id,
+                   concession_source_release, geometry_valid_4326,
+                   match_method, intersection_area_sqm, computed_at,
+                   COUNT(*) OVER() AS total_matches
+            FROM agenziademanio.concession_parcel_links
+            WHERE parcel_id = %s
+            ORDER BY (match_method = 'polygon_overlap') DESC,
+                     intersection_area_sqm DESC NULLS LAST,
+                     idconc NULLS LAST, snapshot_id DESC
+            LIMIT 100
+            """,
+            (parcel_id,),
+        )
+        total = int(rows[0]["total_matches"]) if rows else 0
+        fields = (
+            "concession_row_id", "idconc", "admin_label", "snapshot_id",
+            "concession_source_release", "geometry_valid_4326", "match_method",
+            "intersection_area_sqm", "computed_at",
+        )
+        return {
+            "available": True,
+            "total": total,
+            "truncated": total > len(rows),
+            "matches": [
+                {field: _postgres_scalar(row[field]) for field in fields}
+                for row in rows
+            ],
+            "source": "Agenzia del Demanio spatial crosswalk via aecs4u-stats",
+            "spatial_resolution": "parcel and concession geometries",
+            "match_method": "positive-area polygon intersection or point coverage",
+        }
+
     async def municipality_by_cadastral_code(self, cadastral_code: str) -> Optional[Dict[str, Any]]:
         if not await self._relations_available((
             "geo.geo_identifier", "geo.geo_unit", "geo.geo_relation", "serving.municipality_profile",
         )):
-            return None
+            return await self._serving_municipality_by_cadastral_code(cadastral_code)
         row = await self._fetchrow(
             """
             SELECT gi_cad.code AS cadastral_code,
@@ -1271,7 +1682,7 @@ class _AsyncPostgresSource:
             (cadastral_code.strip().upper(),),
         )
         if row is None:
-            return None
+            return await self._serving_municipality_by_cadastral_code(cadastral_code)
         values = {key: _postgres_scalar(row[key]) for key in row.keys()}
         istat_code = values.get("istat_code")
         try:
@@ -1302,11 +1713,108 @@ class _AsyncPostgresSource:
             "source": "aecs4u-stats PostgreSQL via asyncpg",
         }
 
+    async def _serving_municipality_by_cadastral_code(
+        self, cadastral_code: str
+    ) -> Optional[Dict[str, Any]]:
+        """Read the current serving municipality profile exposed by aecs4u-stats."""
+        relations = (
+            "serving.municipalities", "serving.provinces", "serving.regions",
+            "serving.municipality_population_stats", "serving.comune_population_by_year",
+        )
+        if not await self._relations_available(relations):
+            return None
+        row = await self._fetchrow(
+            """
+            SELECT m.id, m.cadastral_code, m.official_name, m.is_provincial_capital,
+                   m.latitude, m.longitude, m.postal_code, m.email, m.pec_email,
+                   m.website, m.wikipedia_url,
+                   p.name AS province, p.vehicle_code AS province_sigla,
+                   p.nuts3_2021 AS nuts3,
+                   r.name AS region,
+                   population.year AS population_year,
+                   population.resident_population
+            FROM serving.municipalities m
+            LEFT JOIN serving.provinces p ON p.id = m.province_id
+            LEFT JOIN serving.regions r ON r.id = m.region_id
+            LEFT JOIN LATERAL (
+                SELECT year, resident_population
+                FROM (
+                    SELECT year, resident_population
+                    FROM serving.municipality_population_stats
+                    WHERE municipality_id = m.id
+                    UNION ALL
+                    SELECT reference_year::bigint AS year, population::bigint AS resident_population
+                    FROM serving.comune_population_by_year
+                    WHERE LTRIM(comune_code, '0') = m.id::text
+                ) population_rows
+                ORDER BY year DESC
+                LIMIT 1
+            ) population ON TRUE
+            WHERE UPPER(m.cadastral_code) = UPPER(%s)
+            LIMIT 1
+            """,
+            (cadastral_code.strip().upper(),),
+        )
+        if row is None:
+            return None
+        values = {key: _postgres_scalar(row[key]) for key in row.keys()}
+        population = None
+        if values.get("population_year") is not None and values.get("resident_population") is not None:
+            population = {
+                "year": values["population_year"],
+                "resident_population": values["resident_population"],
+            }
+        history = await self._fetch(
+            """
+            SELECT year, resident_population
+            FROM (
+                SELECT year, resident_population
+                FROM serving.municipality_population_stats
+                WHERE municipality_id = %s
+                UNION ALL
+                SELECT reference_year::bigint AS year, population::bigint AS resident_population
+                FROM serving.comune_population_by_year
+                WHERE LTRIM(comune_code, '0') = %s
+            ) population_rows
+            ORDER BY year
+            """,
+            (values["id"], str(values["id"])),
+        )
+        return {
+            "cadastral_code": values.get("cadastral_code"),
+            "istat_code": str(values["id"]) if values.get("id") is not None else None,
+            "procom": values.get("id"),
+            "official_name": values.get("official_name"),
+            "name": values.get("official_name"),
+            "province": values.get("province"),
+            "province_sigla": values.get("province_sigla"),
+            "region": values.get("region"),
+            "nuts3_2021": values.get("nuts3"),
+            "nuts3": values.get("nuts3"),
+            "is_provincial_capital": values.get("is_provincial_capital"),
+            "latitude": values.get("latitude"),
+            "longitude": values.get("longitude"),
+            "postal_code": values.get("postal_code"),
+            "email": values.get("email"),
+            "pec_email": values.get("pec_email"),
+            "website": values.get("website"),
+            "wikipedia_url": values.get("wikipedia_url"),
+            "population": population,
+            "population_history": [
+                {
+                    "year": _postgres_scalar(item["year"]),
+                    "resident_population": _postgres_scalar(item["resident_population"]),
+                }
+                for item in history
+            ],
+            "source": "ISTAT municipality profile via aecs4u-stats PostgreSQL",
+        }
+
     async def omi_quotes_by_cadastral_code(self, cadastral_code: str) -> Optional[Dict[str, Any]]:
         if not await self._relations_available((
             "geo.geo_identifier", "spatial.market_zone", "facts.market_quote_fact",
         )):
-            return None
+            return await self._zornade_omi_quotes_by_cadastral_code(cadastral_code)
         rows = await self._fetch(
             """
             SELECT mz.omi_zone_key, q.period, q.typology, q.condition,
@@ -1355,7 +1863,100 @@ class _AsyncPostgresSource:
             "source": "Agenzia delle Entrate OMI via aecs4u-stats PostgreSQL via asyncpg",
         }
 
+    async def _zornade_omi_quotes_by_cadastral_code(
+        self, cadastral_code: str
+    ) -> Optional[Dict[str, Any]]:
+        """Read the current OMI quote fields carried by the published zone table."""
+        if not await self._relations_available(("zornade.zornade_zone_omi",)):
+            return None
+        rows = await self._fetch(
+            """
+            SELECT codzona, cod_tip_prev, descr_tipologia_en, stato_prev,
+                   compr_min, compr_max, loc_min, loc_max
+            FROM zornade.zornade_zone_omi
+            WHERE UPPER(codcom) = UPPER(%s)
+            ORDER BY codzona, cod_tip_prev, stato_prev
+            """,
+            (cadastral_code.strip().upper(),),
+        )
+        if not rows:
+            return None
+        quotes = []
+        for row in rows:
+            price_min = _postgres_scalar(row["compr_min"])
+            price_max = _postgres_scalar(row["compr_max"])
+            rent_min = _postgres_scalar(row["loc_min"])
+            rent_max = _postgres_scalar(row["loc_max"])
+            if all(value in (None, "") for value in (price_min, price_max, rent_min, rent_max)):
+                continue
+            quotes.append({
+                "zona": row["codzona"],
+                "period": None,
+                "anno": None,
+                "semestre": None,
+                "cod_tipologia": row["cod_tip_prev"],
+                "tipologia": row["descr_tipologia_en"] or row["cod_tip_prev"],
+                "stato_conservazione": row["stato_prev"],
+                "prezzo_min": price_min,
+                "prezzo_max": price_max,
+                "locazione_min": rent_min,
+                "locazione_max": rent_max,
+            })
+        return {
+            "comune": cadastral_code,
+            "zona": None,
+            "quotes": quotes,
+            "dataset_version": None,
+            "source": "Agenzia delle Entrate OMI current zone snapshot via aecs4u-stats PostgreSQL",
+        }
+
+    async def omi_zone_at_point(
+        self,
+        province: str,
+        lat: float,
+        lng: float,
+        cadastral_code: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Resolve an OMI zone from the current PostGIS zone table."""
+        if not await self._relations_available(("zornade.zornade_zone_omi",)):
+            return None
+        code_filter = "AND UPPER(codcom) = UPPER(%s)" if cadastral_code else ""
+        params: tuple = (lng, lat)
+        if cadastral_code:
+            params += (cadastral_code.strip().upper(),)
+        row = await self._fetchrow(
+            f"""
+            SELECT codzona, zona_descr
+            FROM zornade.zornade_zone_omi
+            WHERE ST_Covers(
+                geom,
+                ST_Transform(
+                    ST_SetSRID(ST_MakePoint(%s, %s), 4326),
+                    ST_SRID(geom)
+                )
+            )
+            {code_filter}
+            LIMIT 1
+            """,
+            params,
+        )
+        if row is None:
+            return None
+        return {
+            "province": province,
+            "point": {"lat": lat, "lng": lng},
+            "matched": True,
+            "zone": row["codzona"],
+            "description": row["zona_descr"],
+            "source": "Agenzia delle Entrate OMI zones via aecs4u-stats PostgreSQL",
+        }
+
     async def income_profile_by_cadastral_code(self, cadastral_code: str) -> Optional[Dict[str, Any]]:
+        # Prefer the stable MEF source projection so its additional geography
+        # labels and the dedicated average-income foreign tables can be used.
+        serving_profile = await self._serving_income_profile_by_cadastral_code(cadastral_code)
+        if serving_profile is not None:
+            return serving_profile
         if not await self._relations_available(("facts.tax_fact", "geo.geo_identifier")):
             return None
         rows = await self._fetch(
@@ -1405,6 +2006,137 @@ class _AsyncPostgresSource:
             "source": "MEF/IRPEF via aecs4u-stats PostgreSQL via asyncpg",
         }
 
+    async def _income_reference_averages(
+        self,
+        *,
+        year: int,
+        cadastral_code: str,
+        province: Optional[str],
+        region: Optional[str],
+        region_code: Optional[str],
+    ) -> Dict[str, Dict[str, Any]]:
+        """Read the four pre-aggregated values exposed by the MEF FDW views."""
+        relations = (
+            "mef_irpef.income_average_comune",
+            "mef_irpef.income_average_provincia",
+            "mef_irpef.income_average_regione",
+            "mef_irpef.income_average_italia",
+        )
+        if not await self._relations_available(relations):
+            return {}
+        rows = await self._fetch(
+            """
+            SELECT 'municipality'::text AS geography_level, nome,
+                   average_income_eur
+            FROM mef_irpef.income_average_comune
+            WHERE anno = %s AND UPPER(codice) = UPPER(%s)
+            UNION ALL
+            SELECT 'province'::text, nome, average_income_eur
+            FROM mef_irpef.income_average_provincia
+            WHERE anno = %s AND UPPER(provincia) = UPPER(%s)
+              AND UPPER(regione) = UPPER(%s)
+            UNION ALL
+            SELECT 'region'::text, nome, average_income_eur
+            FROM mef_irpef.income_average_regione
+            WHERE anno = %s AND codice = %s
+            UNION ALL
+            SELECT 'nation'::text, nome, average_income_eur
+            FROM mef_irpef.income_average_italia
+            WHERE anno = %s AND codice = 'IT'
+            """,
+            (
+                year, cadastral_code,
+                year, province or "", region or "",
+                year, str(region_code or ""),
+                year,
+            ),
+        )
+        return {
+            str(row["geography_level"]): {
+                "name": row["nome"],
+                "mean_taxable_income_eur": _postgres_scalar(row["average_income_eur"]),
+            }
+            for row in rows
+        }
+
+    async def _serving_income_profile_by_cadastral_code(
+        self, cadastral_code: str
+    ) -> Optional[Dict[str, Any]]:
+        """Adapt the current wide IRPEF view to the parcel panel's stable shape."""
+        if not await self._relations_available(("serving.irpef_comuni",)):
+            return None
+        row = await self._fetchrow(
+            """
+            SELECT cod_catastale, cod_istat, comune, provincia, regione,
+                   cod_istat_regione, anno,
+                   imponibile_freq, imponibile_amount,
+                   bracket_le_0_freq, bracket_0_10k_freq, bracket_10_15k_freq,
+                   bracket_15_26k_freq, bracket_26_55k_freq, bracket_55_75k_freq,
+                   bracket_75_120k_freq, bracket_over_120k_freq
+            FROM serving.irpef_comuni
+            WHERE UPPER(cod_catastale) = UPPER(%s)
+            ORDER BY anno DESC
+            LIMIT 1
+            """,
+            (cadastral_code.strip().upper(),),
+        )
+        if row is None:
+            return None
+        taxpayers = _postgres_scalar(row["imponibile_freq"])
+        amount = _postgres_scalar(row["imponibile_amount"])
+        try:
+            mean_income = float(amount) / float(taxpayers)
+        except (TypeError, ValueError, ZeroDivisionError):
+            mean_income = None
+        bracket_fields = (
+            ("le_0", "bracket_le_0_freq"),
+            ("0_10k", "bracket_0_10k_freq"),
+            ("10_15k", "bracket_10_15k_freq"),
+            ("15_26k", "bracket_15_26k_freq"),
+            ("26_55k", "bracket_26_55k_freq"),
+            ("55_75k", "bracket_55_75k_freq"),
+            ("75_120k", "bracket_75_120k_freq"),
+            ("over_120k", "bracket_over_120k_freq"),
+        )
+        distribution = []
+        for label, field in bracket_fields:
+            frequency = _postgres_scalar(row[field])
+            if frequency is None:
+                continue
+            try:
+                pct = round(float(frequency) / float(taxpayers) * 100, 1)
+            except (TypeError, ValueError, ZeroDivisionError):
+                pct = None
+            distribution.append({"bracket": label, "frequency": frequency, "pct": pct})
+        year = _postgres_scalar(row["anno"])
+        reference_averages = await self._income_reference_averages(
+            year=int(year),
+            cadastral_code=str(row["cod_catastale"] or cadastral_code),
+            province=row["provincia"],
+            region=row["regione"],
+            region_code=str(row["cod_istat_regione"]) if row["cod_istat_regione"] is not None else None,
+        )
+        reference_averages.setdefault("municipality", {
+            "name": row["comune"],
+            "mean_taxable_income_eur": round(mean_income, 2) if mean_income is not None else None,
+        })
+        national_average = (reference_averages.get("nation") or {}).get("mean_taxable_income_eur")
+        return {
+            "cadastral_code": row["cod_catastale"] or cadastral_code,
+            "istat_code": row["cod_istat"],
+            "municipality": row["comune"],
+            "province": row["provincia"],
+            "year": year,
+            "taxpayers": taxpayers,
+            "total_taxable_income_eur": amount,
+            "mean_taxable_income_eur": round(mean_income, 2) if mean_income is not None else None,
+            "income_reference_averages": reference_averages,
+            "benchmark_average_income_eur": national_average,
+            "income_distribution": distribution,
+            "dataset_version": f"MEF_IRPEF_{year}" if year is not None else None,
+            "source": "MEF/IRPEF via aecs4u-stats PostgreSQL serving.irpef_comuni",
+        }
+
     async def _get_poi_relation(self) -> str | None:
         cached = self._poi_relation_cache
         if cached is not None and time.monotonic() < cached[1]:
@@ -1430,11 +2162,163 @@ class _AsyncPostgresSource:
             })
         return grouped
 
+    async def census_section_at_point(
+        self, lat: float, lng: float, cadastral_code: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Find the 2021 census section in the provisioned PostGIS section table."""
+        relation = await self._census_relation()
+        if relation is None:
+            return None
+        procom = None
+        if cadastral_code and await self._relations_available(("serving.municipalities",)):
+            municipality = await self._fetchrow(
+                """
+                SELECT id
+                FROM serving.municipalities
+                WHERE UPPER(cadastral_code) = UPPER(%s)
+                LIMIT 1
+                """,
+                (cadastral_code.strip().upper(),),
+            )
+            if municipality is not None:
+                procom = municipality["id"]
+        if procom is None and await self._relations_available(("serving.comuni",)):
+            municipality = await self._fetchrow(
+                """
+                SELECT pro_com
+                FROM serving.comuni
+                WHERE ST_Covers(
+                    geom,
+                    ST_SetSRID(ST_MakePoint(%s, %s), 4326)
+                )
+                LIMIT 1
+                """,
+                (lng, lat),
+            )
+            if municipality is not None:
+                procom = municipality["pro_com"]
+        if procom is None:
+            return None
+        row = await self._fetchrow(
+            f"""
+            SELECT (to_jsonb(section) - 'geom') AS properties,
+                   ST_Area(section.geom) AS area_sqm
+            FROM {relation} AS section
+            WHERE section.procom = %s
+              AND ST_Covers(
+                  section.geom,
+                  ST_Transform(
+                      ST_SetSRID(ST_MakePoint(%s, %s), 4326),
+                      ST_SRID(section.geom)
+                  )
+              )
+            LIMIT 1
+            """,
+            (procom, lng, lat),
+        )
+        if row is None:
+            return None
+        properties = row["properties"]
+        if isinstance(properties, str):
+            properties = json.loads(properties)
+        properties = dict(properties or {})
+        properties["area_sqm"] = _postgres_scalar(row["area_sqm"])
+        properties["ratios"] = _census_ratios(properties)
+        return {
+            "type": "Feature",
+            "properties": properties,
+            "geometry": None,
+            "source": "ISTAT Permanent Census 2021 via aecs4u-stats PostgreSQL",
+        }
+
+    async def census_sections_for_comune(
+        self, procom: int, limit: int = 5000
+    ) -> Optional[Dict[str, Any]]:
+        """Read one comune's sections from the aecs4u-stats census foreign table."""
+        relation = await self._census_relation()
+        if relation is None:
+            return None
+        rows = await self._fetch(
+            f"""
+            SELECT (to_jsonb(section) - 'geom') AS properties,
+                   ST_AsGeoJSON(ST_Transform(section.geom, 4326)) AS geometry,
+                   ST_Area(section.geom)::double precision AS area_sqm
+            FROM {relation} AS section
+            WHERE section.procom = %s
+            ORDER BY section.sez21_id
+            LIMIT %s
+            """,
+            (int(procom), int(limit)),
+        )
+        features = []
+        for row in rows:
+            properties = row["properties"]
+            if isinstance(properties, str):
+                properties = json.loads(properties)
+            properties = {
+                key: _postgres_scalar(value)
+                for key, value in dict(properties or {}).items()
+            }
+            properties["area_sqm"] = _postgres_scalar(row["area_sqm"])
+            properties["ratios"] = _census_ratios(properties)
+            geometry = row["geometry"]
+            if isinstance(geometry, str):
+                geometry = json.loads(geometry)
+            features.append({
+                "type": "Feature",
+                "properties": properties,
+                "geometry": geometry,
+            })
+        return {
+            "type": "FeatureCollection",
+            "features": features,
+            "metadata": {
+                "procom": int(procom),
+                "count": len(features),
+                "source": "ISTAT Basi Territoriali 2021 via aecs4u-stats census foreign table",
+            },
+        }
+
+    async def seismic_by_istat_code(self, istat_code: str | int) -> Optional[Dict[str, Any]]:
+        """Read the municipality seismic classification from the current hazards view."""
+        if not await self._relations_available(("hazards.v_seismic_classification",)):
+            return None
+        try:
+            code = int(str(istat_code).strip())
+        except (TypeError, ValueError):
+            return None
+        row = await self._fetchrow(
+            """
+            SELECT istat_code, comune, regione, provincia, zone, zone_label
+            FROM hazards.v_seismic_classification
+            WHERE istat_code = %s
+            LIMIT 1
+            """,
+            (code,),
+        )
+        if row is None and await self._relations_available(("hazards.v_seismic_classification_map",)):
+            row = await self._fetchrow(
+                """
+                SELECT istat_code, comune, regione, provincia, zone, zone_label
+                FROM hazards.v_seismic_classification_map
+                WHERE istat_code = %s
+                LIMIT 1
+                """,
+                (code,),
+            )
+        if row is None:
+            return None
+        return {key: _postgres_scalar(row[key]) for key in row.keys()}
+
     async def context_for_parcel(
         self,
         national_reference: str,
         cadastral_code: str,
         point: Optional[Dict[str, float]],
+        *,
+        municipality: Optional[Dict[str, Any]] = None,
+        omi: Optional[Dict[str, Any]] = None,
+        income_profile: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Load optional spatial/tax context without leaving the event loop."""
         if not point:
@@ -1442,7 +2326,14 @@ class _AsyncPostgresSource:
         if not await self._relations_available((
             "geo.geo_identifier", "geo.geo_unit", "serving.municipality_profile",
         )):
-            return None
+            return await self._serving_context_for_parcel(
+                national_reference,
+                cadastral_code,
+                point,
+                municipality=municipality,
+                omi=omi,
+                income_profile=income_profile,
+            )
         row = await self._fetchrow(
             """
             SELECT u.id, u.canonical_name, u.unit_type,
@@ -1478,6 +2369,11 @@ class _AsyncPostgresSource:
             "pv_not_eligible_pct", "pv_observation_count",
         )
         profile = {key: values.pop(key, None) for key in profile_keys}
+        if values.get("istat_code") and await self._relations_available(("solar.solar_potential_comuni",)):
+            solar_row = await self._fetchrow(_SOLAR_PROFILE_QUERY, (values["istat_code"],))
+            if solar_row:
+                profile.update({key: _postgres_scalar(solar_row[key]) for key in solar_row.keys()})
+                profile["solar_source"] = "aecs4u-stats solar.solar_potential_comuni"
         x, y = point["lng"], point["lat"]
         omi_row = await self._fetchrow(
             """
@@ -1511,6 +2407,9 @@ class _AsyncPostgresSource:
             """,
             (municipality_id,),
         )
+        census = await self.census_section_at_point(
+            point["lat"], point["lng"], cadastral_code
+        )
         municipality = values
         municipality["profile"] = profile
         return {
@@ -1528,8 +2427,75 @@ class _AsyncPostgresSource:
                 {key: _postgres_scalar(row[key]) for key in row.keys()}
                 for row in tax_rows
             ],
-            "census": None,
+            "census": census,
             "source": "aecs4u-stats PostgreSQL via asyncpg",
+        }
+
+    async def _serving_context_for_parcel(
+        self,
+        national_reference: str,
+        cadastral_code: str,
+        point: Dict[str, float],
+        *,
+        municipality: Optional[Dict[str, Any]] = None,
+        omi: Optional[Dict[str, Any]] = None,
+        income_profile: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Build current read-model context from the schemas provisioned on this database."""
+        if municipality is None:
+            municipality = await self._serving_municipality_by_cadastral_code(cadastral_code)
+        if not municipality:
+            return None
+        if omi is None:
+            try:
+                omi = await self._zornade_omi_quotes_by_cadastral_code(cadastral_code)
+            except Exception:
+                omi = None
+        try:
+            zone_match = await self.omi_zone_at_point(
+                str(municipality.get("province") or ""),
+                point["lat"],
+                point["lng"],
+                cadastral_code,
+            )
+        except Exception:
+            zone_match = None
+        if income_profile is None:
+            income_profile = await self._serving_income_profile_by_cadastral_code(cadastral_code)
+        tax_facts = []
+        if income_profile:
+            year = income_profile.get("year")
+            taxpayers = income_profile.get("taxpayers")
+            total_income = income_profile.get("total_taxable_income_eur")
+            tax_facts.append({
+                "year": year, "measure": "imponibile",
+                "frequency": taxpayers, "amount": total_income,
+            })
+            for item in income_profile.get("income_distribution") or []:
+                tax_facts.append({
+                    "year": year,
+                    "measure": f"bracket_{item.get('bracket')}",
+                    "frequency": item.get("frequency"),
+                    "amount": None,
+                })
+        census = await self.census_section_at_point(
+            point["lat"], point["lng"], cadastral_code
+        )
+        profile = municipality.get("profile") or {}
+        return {
+            "parcel_spine_available": False,
+            "parcel_spine": None,
+            "parcel_spine_reference": national_reference,
+            "municipality": municipality,
+            "municipality_profile": profile,
+            "omi": (
+                {"omi_zone_key": zone_match["zone"], "source": zone_match.get("source")}
+                if zone_match and zone_match.get("matched") else None
+            ),
+            "postal_code": municipality.get("postal_code"),
+            "tax_facts": tax_facts,
+            "census": census,
+            "source": "aecs4u-stats PostgreSQL serving views",
         }
 
     async def get_read_model(self, parcel_key: str) -> Optional[Dict[str, Any]]:
@@ -1610,6 +2576,24 @@ async def _get_async_postgres_source(*, poi: bool = False) -> Optional[_AsyncPos
     return target
 
 
+async def aget_agenziademanio_concessions_for_parcel(parcel_id: int) -> Dict[str, Any]:
+    """Return spatially linked Agenzia Demanio concessions for one parcel."""
+    source = await _get_async_postgres_source()
+    if source is None:
+        return {"available": False, "total": 0, "matches": []}
+    try:
+        return await asyncio.wait_for(
+            source.agenziademanio_concessions_for_parcel(parcel_id), timeout=8
+        )
+    except Exception:
+        logger.warning(
+            "Agenzia Demanio parcel-link lookup failed for parcel %s",
+            parcel_id,
+            exc_info=True,
+        )
+        return {"available": False, "total": 0, "matches": []}
+
+
 async def aget_municipality_by_cadastral_code(cadastral_code: str) -> Optional[Dict[str, Any]]:
     """Async PostgreSQL-first municipality lookup with local fallback."""
     source = await _get_async_postgres_source()
@@ -1636,16 +2620,97 @@ async def aget_omi_quotes(comune: str, zona: Optional[str] = None) -> Dict[str, 
             )
             if result is None:
                 return await asyncio.to_thread(get_omi_quotes, comune, zona=zona, use_postgres=False)
+            result["quotes"] = _omi_quote_derived_metrics(result.get("quotes", []))
             if zona:
                 result["quotes"] = [
                     quote for quote in result.get("quotes", [])
                     if str(quote.get("zona", "")).upper() == zona.strip().upper()
                 ]
+            result["derived_metrics_model"] = "omi-quote-metrics-v1"
             return result
         except Exception:
             source._retry_at = time.monotonic() + 60
             logger.warning("Async PostgreSQL OMI lookup failed; using local fallback", exc_info=True)
     return await asyncio.to_thread(get_omi_quotes, comune, zona=zona, use_postgres=False)
+
+
+async def aget_omi_zone_at_point(
+    province: str,
+    lat: float,
+    lng: float,
+    cadastral_code: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Async PostgreSQL-first OMI zone lookup with the GeoJSON mirror as fallback."""
+    source = await _get_async_postgres_source()
+    if source is not None and time.monotonic() >= source._retry_at:
+        try:
+            result = await asyncio.wait_for(
+                source.omi_zone_at_point(province, lat, lng, cadastral_code), timeout=8
+            )
+            if result is not None:
+                return result
+        except Exception:
+            source._retry_at = time.monotonic() + 60
+            logger.warning("Async PostgreSQL OMI zone lookup failed; using local fallback", exc_info=True)
+    return await asyncio.to_thread(get_omi_zone_at_point, province, lat, lng)
+
+
+async def aestimate_omi_value(
+    comune: str,
+    zona: str,
+    cod_tipologia: str,
+    area_sqm: float,
+    stato_conservazione: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Estimate from the same current OMI snapshot used by the parcel panel."""
+    area = _number(area_sqm)
+    if area is None or area <= 0:
+        return None
+    payload = await aget_omi_quotes(comune, zona=zona)
+    type_code = str(cod_tipologia).strip().upper()
+    state = stato_conservazione.strip().casefold() if stato_conservazione else None
+    matches = [
+        quote for quote in payload.get("quotes", [])
+        if str(quote.get("cod_tipologia", "")).strip().upper() == type_code
+        and (
+            state is None
+            or str(quote.get("stato_conservazione", "")).strip().casefold() == state
+        )
+    ]
+    if len(matches) != 1:
+        return None
+    quote = matches[0]
+    low, high = _number(quote.get("prezzo_min")), _number(quote.get("prezzo_max"))
+    if low is None or high is None or low < 0 or high < low:
+        return None
+    return {
+        "methodology": "omi-area-range-v1",
+        "model_version": "omi-area-range-v1",
+        "dataset_version": payload.get("dataset_version"),
+        "input": {
+            "comune": comune,
+            "zona": zona.strip().upper(),
+            "cod_tipologia": str(quote.get("cod_tipologia", cod_tipologia)),
+            "stato_conservazione": quote.get("stato_conservazione"),
+            "area_sqm": area,
+        },
+        "quote": {
+            "anno": quote.get("anno"),
+            "semestre": quote.get("semestre"),
+            "tipologia": quote.get("tipologia"),
+            "prezzo_min_eur_sqm": low,
+            "prezzo_max_eur_sqm": high,
+        },
+        "value_range_eur": {
+            "min": round(area * low, 2),
+            "max": round(area * high, 2),
+        },
+        "disclaimer": (
+            "Indicative estimate obtained by multiplying the stated surface by "
+            "the selected OMI range. It is not an appraisal or a property valuation."
+        ),
+        "source": payload.get("source"),
+    }
 
 
 async def aget_income_profile(cadastral_code: str, year: Optional[int] = None) -> Optional[Dict[str, Any]]:
@@ -1657,11 +2722,133 @@ async def aget_income_profile(cadastral_code: str, year: Optional[int] = None) -
                 source.income_profile_by_cadastral_code(cadastral_code), timeout=8
             )
             if result is not None and (year is None or result.get("year") == year):
-                return result
+                return _income_profile_derived_metrics(result)
         except Exception:
             source._retry_at = time.monotonic() + 60
             logger.warning("Async PostgreSQL income lookup failed; using local fallback", exc_info=True)
     return await asyncio.to_thread(get_income_profile, cadastral_code, year=year, use_postgres=False)
+
+
+async def aget_census_section_at_point(
+    lat: float, lng: float, cadastral_code: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """Async PostgreSQL-first section lookup with the package store as fallback."""
+    source = await _get_async_postgres_source()
+    if source is not None and time.monotonic() >= source._retry_at:
+        try:
+            result = await asyncio.wait_for(
+                source.census_section_at_point(lat, lng, cadastral_code), timeout=8
+            )
+            if result is not None:
+                return result
+        except Exception:
+            source._retry_at = time.monotonic() + 60
+            logger.warning("Async PostgreSQL census lookup failed; using local fallback", exc_info=True)
+    return await asyncio.to_thread(get_census_section_at_point, lat, lng)
+
+
+async def aget_census_sections(
+    cadastral_code: str, limit: int = 5000
+) -> Optional[Dict[str, Any]]:
+    """Async PostgreSQL-first comune sections lookup with package API fallback."""
+    municipality = await aget_municipality_by_cadastral_code(cadastral_code)
+    procom = (municipality or {}).get("procom")
+    source = await _get_async_postgres_source()
+    if procom is not None and source is not None and time.monotonic() >= source._retry_at:
+        try:
+            result = await asyncio.wait_for(
+                source.census_sections_for_comune(int(procom), limit=limit), timeout=12
+            )
+            if result is not None:
+                result.setdefault("metadata", {})["cadastral_code"] = cadastral_code
+                return result
+        except Exception:
+            source._retry_at = time.monotonic() + 60
+            logger.warning("Async PostgreSQL census sections lookup failed; using package fallback", exc_info=True)
+    return await asyncio.to_thread(get_census_sections, cadastral_code, limit=limit)
+
+
+async def aquality_of_life_db_available() -> bool:
+    """Check the Stats quality-of-life schema, then the package snapshot."""
+    source = await _get_async_postgres_source()
+    if source is not None and time.monotonic() >= source._retry_at:
+        try:
+            if await asyncio.wait_for(source.quality_of_life_available(), timeout=6):
+                return True
+        except Exception:
+            source._retry_at = time.monotonic() + 60
+            logger.debug("aecs4u-stats quality_of_life schema is unavailable", exc_info=True)
+    return await asyncio.to_thread(bes_db_available)
+
+
+async def aget_quality_of_life_indicators(
+    cadastral_code: str,
+) -> Optional[Dict[str, Any]]:
+    """Read BES indicator codes from quality_of_life, with package fallback."""
+    municipality = await aget_municipality_by_cadastral_code(cadastral_code)
+    nuts3 = (municipality or {}).get("nuts3")
+    source = await _get_async_postgres_source()
+    if nuts3 and source is not None and time.monotonic() >= source._retry_at:
+        try:
+            clustered = await asyncio.wait_for(
+                source.quality_of_life_indicator_clusters(str(nuts3)), timeout=12
+            )
+            if clustered is not None:
+                if not clustered["indicators"]:
+                    return None
+                return {
+                    "cadastral_code": cadastral_code,
+                    "nuts3": nuts3,
+                    **clustered,
+                    "source": "ISTAT BES via aecs4u-stats quality_of_life",
+                }
+        except Exception:
+            source._retry_at = time.monotonic() + 60
+            logger.warning("PostgreSQL quality-of-life lookup failed; using package fallback", exc_info=True)
+    return await asyncio.to_thread(get_quality_of_life_indicators, cadastral_code)
+
+
+async def aget_quality_of_life_indicator(
+    cadastral_code: str, data_type: str, year: Optional[int] = None
+) -> Optional[Dict[str, Any]]:
+    """Read one BES series from quality_of_life, with package fallback."""
+    municipality = await aget_municipality_by_cadastral_code(cadastral_code)
+    nuts3 = (municipality or {}).get("nuts3")
+    source = await _get_async_postgres_source()
+    if nuts3 and source is not None and time.monotonic() >= source._retry_at:
+        try:
+            series = await asyncio.wait_for(
+                source.quality_of_life_series(str(nuts3), data_type, year=year), timeout=8
+            )
+            if series is not None:
+                if not series:
+                    return None
+                return {
+                    "cadastral_code": cadastral_code,
+                    "nuts3": nuts3,
+                    "data_type": data_type,
+                    "series": series,
+                    "source": "ISTAT BES via aecs4u-stats quality_of_life",
+                }
+        except Exception:
+            source._retry_at = time.monotonic() + 60
+            logger.warning("PostgreSQL quality-of-life series lookup failed; using package fallback", exc_info=True)
+    return await asyncio.to_thread(
+        get_quality_of_life_indicator, cadastral_code, data_type, year=year
+    )
+
+
+async def aget_seismic_by_istat_code(istat_code: str | int) -> Optional[Dict[str, Any]]:
+    source = await _get_async_postgres_source()
+    if source is not None and time.monotonic() >= source._retry_at:
+        try:
+            result = await asyncio.wait_for(source.seismic_by_istat_code(istat_code), timeout=6)
+            if result is not None:
+                return result
+        except Exception:
+            source._retry_at = time.monotonic() + 60
+            logger.warning("Async PostgreSQL seismic lookup failed", exc_info=True)
+    return await asyncio.to_thread(seismic_zone, istat_code, db_path=_hazards_sqlite_path())
 
 
 async def aget_pois_near(
@@ -2013,6 +3200,8 @@ class _PostgresStatsSource(_PostgresPoiSource):
         if not point:
             return None
         try:
+            solar_row = None
+            solar_columns = ()
             with self._connection() as connection:
                 with connection.cursor() as cursor:
                     cursor.execute("SET statement_timeout = '20s'")
@@ -2045,6 +3234,13 @@ class _PostgresStatsSource(_PostgresPoiSource):
                         return None
                     municipality_columns = [column.name for column in cursor.description]
                     municipality_values = dict(zip(municipality_columns, municipality_row, strict=True))
+
+                    cursor.execute("SELECT to_regclass('solar.solar_potential_comuni')")
+                    solar_relation = cursor.fetchone()
+                    if solar_relation and solar_relation[0] and municipality_values.get("istat_code"):
+                        cursor.execute(_SOLAR_PROFILE_QUERY, (municipality_values["istat_code"],))
+                        solar_row = cursor.fetchone()
+                        solar_columns = tuple(column.name for column in cursor.description)
 
                     municipality_id = municipality_values["id"]
                     point_sql = "ST_SetSRID(ST_MakePoint(%s, %s), 4326)"
@@ -2096,28 +3292,43 @@ class _PostgresStatsSource(_PostgresPoiSource):
                     )
                     tax_rows = cursor.fetchall()
 
-                    # Census geometry is stored in UTM 32N for this release;
-                    # the fixed CRS keeps the GiST candidate filter usable.
                     cursor.execute(
-                        f"""
-                        SELECT s.*, ST_Area(s.geom)::double precision AS area_sqm
-                        FROM census_sections.sections s
-                        WHERE s.procom = %s
-                          AND s.geom && ST_Transform({point_sql}, 32632)
-                          AND ST_Covers(
-                                s.geom,
-                                ST_Transform({point_sql}, 32632)
-                              )
-                        LIMIT 1
-                        """,
-                        (
-                            municipality_values["istat_code"],
-                            point["lng"], point["lat"],
-                            point["lng"], point["lat"],
-                        ),
+                        """
+                        SELECT CASE
+                                 WHEN to_regclass('census.sections') IS NOT NULL
+                                   THEN 'census.sections'
+                                 WHEN to_regclass('census_sections.sections') IS NOT NULL
+                                   THEN 'census_sections.sections'
+                               END
+                        """
                     )
-                    census_row = cursor.fetchone()
-                    census_columns = [column.name for column in cursor.description]
+                    census_relation_row = cursor.fetchone()
+                    census_relation = census_relation_row[0] if census_relation_row else None
+                    census_row = None
+                    census_columns = []
+                    if census_relation is not None:
+                        # The relation name comes from the two allow-listed
+                        # schemas above; geometry uses its declared SRID.
+                        cursor.execute(
+                            f"""
+                            SELECT s.*, ST_Area(s.geom)::double precision AS area_sqm
+                            FROM {census_relation} s
+                            WHERE s.procom = %s
+                              AND ST_Covers(
+                                    s.geom,
+                                    ST_Transform(
+                                        {point_sql}, ST_SRID(s.geom)
+                                    )
+                                  )
+                            LIMIT 1
+                            """,
+                            (
+                                municipality_values["istat_code"],
+                                point["lng"], point["lat"],
+                            ),
+                        )
+                        census_row = cursor.fetchone()
+                        census_columns = [column.name for column in cursor.description]
 
             municipality = {
                 key: _postgres_scalar(value)
@@ -2133,6 +3344,12 @@ class _PostgresStatsSource(_PostgresPoiSource):
                 "pv_observation_count",
             )
             profile = {key: municipality.pop(key, None) for key in profile_keys}
+            if solar_row:
+                profile.update({
+                    key: _postgres_scalar(value)
+                    for key, value in zip(solar_columns, solar_row, strict=True)
+                })
+                profile["solar_source"] = "aecs4u-stats solar.solar_potential_comuni"
             omi = None
             if omi_row:
                 omi = {
@@ -3443,22 +4660,11 @@ def _istat_sqlite_path() -> Path:
 
 
 def _census_store_path() -> Optional[Path]:
-    """Resolve the census store, including the shared volume fallback."""
-    configured_dir = os.getenv("ISTAT_DATA_DIR")
-    candidates = []
-    if _CENSUS_STORE_PATH is not None:
-        candidates.append(Path(_CENSUS_STORE_PATH))
-    if configured_dir:
-        candidates.append(Path(configured_dir).expanduser() / "census_sections.IT.duckdb")
-    candidates.append(Path("/data/istat/census_sections.IT.duckdb"))
-
-    for candidate in candidates:
-        try:
-            if candidate.exists() and candidate.stat().st_size > 0:
-                return candidate
-        except OSError:
-            continue
-    return candidates[0] if candidates else None
+    """Resolve the aecs4u-stats census API's canonical DuckDB compatibility store."""
+    configured_path = os.getenv("CENSUS_STORE_PATH")
+    if configured_path:
+        return Path(configured_path).expanduser()
+    return Path("/data/aecs4u.it/property-scraper/census/census_sections.IT.duckdb")
 
 
 def poi_db_available() -> bool:
@@ -3847,18 +5053,23 @@ def get_buildings_for_parcel(
     cadastral_code: Optional[str] = None,
     municipality: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Return cadastral building types cached by the sister application.
+    """Return cadastral building types and available address strings from SISTER.
 
     ``category`` is the Agenzia delle Entrate cadastral building category
     extracted from SISTER's ``BuildingClassification`` model (for example
     A/2, C/6 or D/1).  An empty result is a valid response when no building
-    visura has yet been cached for the selected parcel.
+    visura has yet been cached for the selected parcel. Addresses are drawn
+    from matching ``visura_properties.address`` values, de-duplicated and
+    capped for display; this is not a complete geocoded address source.
     """
     source = _get_sister_building_source()
     if source is None or not source.available():
         return {
             "buildings": [],
             "count": 0,
+            "addresses": [],
+            "address_count": 0,
+            "addresses_truncated": False,
             "available": False,
             "source": "SISTER SQLite",
         }
@@ -3873,6 +5084,9 @@ def get_buildings_for_parcel(
         return {
             "buildings": [],
             "count": 0,
+            "addresses": [],
+            "address_count": 0,
+            "addresses_truncated": False,
             "available": False,
             "source": "SISTER SQLite",
         }
@@ -4037,6 +5251,178 @@ def _fast_omi_quotes(
         return []
 
 
+def _omi_quote_derived_metrics(quotes: list[dict]) -> list[dict]:
+    """Attach versioned gross-yield and within-comune zone-percentile metrics.
+
+    Percentiles compare one sale-band midpoint per zone for the same OMI
+    typology and conservation state. Ties use the mid-rank convention. OMI
+    rental quotes are monthly €/m², so gross yield annualizes them by 12.
+    """
+    grouped: dict[tuple[str, str], dict[str, list[tuple[str, float]]]] = {}
+    quote_midpoints: list[float | None] = []
+    quote_keys: list[tuple[str, str]] = []
+    quote_zones: list[str] = []
+    for quote in quotes:
+        zone = str(quote.get("zona") or "").strip().upper()
+        typology = str(quote.get("cod_tipologia") or quote.get("tipologia") or "").strip().upper()
+        condition = str(quote.get("stato_conservazione") or "").strip().casefold()
+        key = (typology, condition)
+        low = _number(quote.get("prezzo_min"))
+        high = _number(quote.get("prezzo_max"))
+        midpoint = (low + high) / 2 if low is not None and high is not None and low > 0 and high >= low else None
+        quote_midpoints.append(midpoint)
+        quote_keys.append(key)
+        quote_zones.append(zone)
+        if midpoint is not None and zone and typology:
+            grouped.setdefault(key, {}).setdefault(zone, []).append((zone, midpoint))
+
+    zone_midpoints: dict[tuple[str, str], dict[str, float]] = {}
+    for key, zones in grouped.items():
+        zone_midpoints[key] = {
+            zone: statistics.median(value for _, value in values)
+            for zone, values in zones.items()
+        }
+
+    annotated = []
+    for quote, midpoint, key, zone in zip(quotes, quote_midpoints, quote_keys, quote_zones, strict=False):
+        rent_low = _number(quote.get("locazione_min"))
+        rent_high = _number(quote.get("locazione_max"))
+        rent_midpoint = (rent_low + rent_high) / 2 if rent_low is not None and rent_high is not None and rent_low >= 0 and rent_high >= rent_low else None
+        yield_pct = (rent_midpoint * 12 / midpoint * 100) if midpoint and rent_midpoint is not None else None
+        comparable = zone_midpoints.get(key, {})
+        values = list(comparable.values())
+        zone_value = comparable.get(zone)
+        percentile = None
+        if zone_value is not None and len(values) >= 5:
+            less = sum(value < zone_value for value in values)
+            equal = sum(value == zone_value for value in values)
+            percentile = (less + equal / 2) / len(values) * 100
+        annotated.append({
+            **quote,
+            "derived_metrics": {
+                "gross_rental_yield_pct": round(yield_pct, 2) if yield_pct is not None else None,
+                "gross_rental_yield_model_version": "omi-gross-rental-yield-v1",
+                "zone_percentile_pct": round(percentile, 1) if percentile is not None else None,
+                "zone_percentile_comparable_zones": len(values),
+                "zone_percentile_minimum_comparable_zones": 5,
+                "zone_percentile_model_version": "omi-zone-percentile-midrank-v1",
+            },
+        })
+    return annotated
+
+
+def _number(value: Any) -> Optional[float]:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+_MEF_BRACKET_MIDPOINTS = {
+    "le0": 0.0,
+    "0_10k": 5000.0,
+    "10_15k": 12500.0,
+    "15_26k": 20500.0,
+    "26_55k": 40500.0,
+    "55_75k": 65000.0,
+    "75_120k": 97500.0,
+    "over_120k": 150000.0,
+}
+
+
+def _mef_bracket_key(label: Any) -> Optional[str]:
+    normalized = re.sub(r"[^a-z0-9]+", "_", str(label or "").casefold()).strip("_")
+    aliases = {
+        "le_0": "le0", "0": "le0", "less_than_or_equal_to_0": "le0",
+        "0_10k": "0_10k", "0_10": "0_10k",
+        "10_15k": "10_15k", "10_15": "10_15k",
+        "15_26k": "15_26k", "15_26": "15_26k",
+        "26_55k": "26_55k", "26_55": "26_55k",
+        "55_75k": "55_75k", "55_75": "55_75k",
+        "75_120k": "75_120k", "75_120": "75_120k",
+        "over_120k": "over_120k", "120k": "over_120k",
+    }
+    return aliases.get(normalized)
+
+
+def _income_profile_derived_metrics(profile: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a grouped-data Gini estimate with explicit representative values."""
+    weights: dict[str, float] = {}
+    for row in profile.get("income_distribution") or []:
+        key = _mef_bracket_key(row.get("bracket"))
+        if not key:
+            continue
+        count = _number(row.get("taxpayers", row.get("frequency")))
+        if count is None:
+            pct = _number(row.get("pct"))
+            count = pct if pct is not None else None
+        if count is not None and count >= 0:
+            weights[key] = count
+
+    required = list(_MEF_BRACKET_MIDPOINTS)
+    metric = None
+    if len(weights) == len(required) and sum(weights.values()) > 0:
+        total_people = sum(weights.values())
+        total_income = sum(weights[key] * _MEF_BRACKET_MIDPOINTS[key] for key in required)
+        if total_income > 0:
+            population_share = 0.0
+            income_share = 0.0
+            area = 0.0
+            for key in required:
+                next_population = population_share + weights[key] / total_people
+                next_income = income_share + weights[key] * _MEF_BRACKET_MIDPOINTS[key] / total_income
+                area += (income_share + next_income) * (next_population - population_share)
+                population_share, income_share = next_population, next_income
+            metric = round(max(0.0, min(1.0, 1.0 - area)), 3)
+
+    return {
+        **profile,
+        "derived_metrics": {
+            "grouped_gini_estimate": metric,
+            "grouped_gini_model_version": "mef-grouped-gini-v1",
+            "grouped_gini_assumptions": {
+                "bracket_representatives_eur": _MEF_BRACKET_MIDPOINTS,
+                "method": "grouped Lorenz trapezoid",
+            },
+        },
+    }
+
+
+def _omi_history_trend_deltas(rows: list[dict]) -> list[dict]:
+    """Compare the latest sale midpoint with available semester horizons."""
+    by_period: dict[int, list[float]] = {}
+    for row in rows:
+        try:
+            year, semester = int(row["anno"]), int(row["semestre"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        low, high = _number(row.get("prezzo_min")), _number(row.get("prezzo_max"))
+        if semester not in (1, 2) or low is None or high is None or low <= 0 or high < low:
+            continue
+        by_period.setdefault(year * 2 + semester - 1, []).append((low + high) / 2)
+    if not by_period:
+        return []
+
+    values = {period: statistics.median(midpoints) for period, midpoints in by_period.items()}
+    latest_period = max(values)
+    latest_value = values[latest_period]
+    result = []
+    for horizon in (1, 2, 6, 10, 20):
+        eligible = [period for period in values if period <= latest_period - horizon]
+        if not eligible:
+            continue
+        baseline_period = max(eligible)
+        baseline_value = values[baseline_period]
+        result.append({
+            "horizon_semesters": horizon,
+            "from": f"{baseline_period // 2}-{baseline_period % 2 + 1}",
+            "to": f"{latest_period // 2}-{latest_period % 2 + 1}",
+            "change_pct": round((latest_value / baseline_value - 1) * 100, 1) if baseline_value else None,
+        })
+    return result
+
+
 def get_omi_quotes(
     comune: str, zona: Optional[str] = None, *, use_postgres: bool = False
 ) -> Dict[str, Any]:
@@ -4055,11 +5441,10 @@ def get_omi_quotes(
                 8,
                 comune,
             )
+            result["quotes"] = _omi_quote_derived_metrics(result.get("quotes", []))
             if zona:
-                result["quotes"] = [
-                    quote for quote in result.get("quotes", [])
-                    if str(quote.get("zona", "")).upper() == zona.strip().upper()
-                ]
+                result["quotes"] = [quote for quote in result["quotes"] if str(quote.get("zona", "")).upper() == zona.strip().upper()]
+            result["derived_metrics_model"] = "omi-quote-metrics-v1"
             return result
         except Exception:
             postgres_source._retry_at = time.monotonic() + 60
@@ -4073,19 +5458,30 @@ def get_omi_quotes(
     kwargs = {"db_path": db_path}
     if latest:
         kwargs.update({"anno": latest[0], "semestre": latest[1]})
-    rows = _fast_omi_quotes(comune, zona=zona, **kwargs)
+    # Fetch the comune's full latest quote set so every selected row can be
+    # compared with the other zones for its typology and conservation state.
+    rows = _fast_omi_quotes(comune, **kwargs)
     if rows is None:
-        rows = quotes_for_comune(comune, zona=zona, **kwargs)
+        rows = quotes_for_comune(comune, **kwargs)
+    rows = _omi_quote_derived_metrics(rows)
+    if zona:
+        rows = [quote for quote in rows if str(quote.get("zona", "")).upper() == zona.strip().upper()]
     return {
         "comune": comune,
         "zona": zona,
         "quotes": rows,
         "dataset_version": _omi_period_dataset_version({"quotes": rows}),
         "source": "Agenzia delle Entrate OMI via aecs4u-stats",
+        "derived_metrics_model": "omi-quote-metrics-v1",
     }
 
 
-def get_omi_history(comune: str, zona: str, cod_tipologia: Optional[str] = None) -> Dict[str, Any]:
+def get_omi_history(
+    comune: str,
+    zona: str,
+    cod_tipologia: Optional[str] = None,
+    stato_conservazione: Optional[str] = None,
+) -> Dict[str, Any]:
     """Full semester history (oldest-first) of OMI quotes for one comune/zone."""
     keys = _omi_istat_keys(comune)
     rows = []
@@ -4105,6 +5501,9 @@ def get_omi_history(comune: str, zona: str, cod_tipologia: Optional[str] = None)
             if cod_tipologia is not None:
                 sql += " AND CAST(cod_tipologia AS TEXT) = ?"
                 params.append(str(cod_tipologia))
+            if stato_conservazione is not None:
+                sql += " AND UPPER(COALESCE(stato_conservazione, '')) = ?"
+                params.append(stato_conservazione.strip().upper())
             sql += " ORDER BY anno, semestre"
             try:
                 rows = [dict(row) for row in connection.execute(sql, params).fetchall()]
@@ -4114,10 +5513,18 @@ def get_omi_history(comune: str, zona: str, cod_tipologia: Optional[str] = None)
             rows = []
     else:
         rows = quote_history(comune, zona, cod_tipologia=cod_tipologia, db_path=_omi_sqlite_path())
+        if stato_conservazione is not None:
+            state = stato_conservazione.strip().casefold()
+            rows = [
+                row for row in rows
+                if str(row.get("stato_conservazione") or "").strip().casefold() == state
+            ]
     return {
         "comune": comune,
         "zona": zona,
         "history": rows,
+        "trend_deltas": _omi_history_trend_deltas(rows),
+        "trend_model_version": "omi-semester-trend-v1",
         "source": "Agenzia delle Entrate OMI via aecs4u-stats",
     }
 
@@ -4277,7 +5684,7 @@ def get_income_profile(
                 cadastral_code,
             )
             if result is not None and (year is None or result.get("year") == year):
-                return result
+                return _income_profile_derived_metrics(result)
         except Exception:
             postgres_source._retry_at = time.monotonic() + 60
             logger.warning(
@@ -4287,7 +5694,7 @@ def get_income_profile(
     result = income_by_cadastral_code(cadastral_code, year=year, db_path=_mef_sqlite_path())
     if result is not None and result.get("year") and not result.get("dataset_version"):
         result["dataset_version"] = f"MEF_IRPEF_{result['year']}"
-    return result
+    return _income_profile_derived_metrics(result) if result is not None else None
 
 
 def get_environmental_risks(istat_code: int | str) -> Optional[Dict[str, Any]]:
@@ -4308,6 +5715,320 @@ def get_environmental_risks(istat_code: int | str) -> Optional[Dict[str, Any]]:
         "seismic": seismic,
         "hydrogeological": hazards,
     }
+
+
+def get_mps04_pga_at_point(lat: float, lng: float) -> Dict[str, Any]:
+    """Return INGV MPS04 PGA for the nearest native grid point to a parcel point.
+
+    PGA is reported for a 10% exceedance probability in 50 years. The match is
+    a nearest-grid lookup (not interpolation) and is limited to 5 km by the
+    upstream adapter. An absent local store or unmatched point stays explicit.
+    """
+    base = {
+        "source": "INGV MPS04 seismic hazard model",
+        "source_url": "https://mps04-ws.pi.ingv.it/",
+        "terms_url": "https://data.ingv.it/docs/note-legali.html",
+        "license": "CC BY 4.0",
+        "attribution": "INGV MPS04 seismic hazard model; data made available by INGV under CC BY 4.0.",
+        "model_version": "MPS04",
+        "spatial_resolution": "0.05° native grid; nearest grid point",
+        "match_method": "nearest_grid_point",
+        "exceedance_probability_pct": 10.0,
+        "exposure_period_years": 50,
+        "grid_variant": "native",
+        "max_distance_m": 5000,
+    }
+    if not _mps04_db_available or not _mps04_pga_at_point:
+        return {**base, "available": False, "reason": "mps04_not_supported"}
+    try:
+        if not _mps04_db_available():
+            return {**base, "available": False, "reason": "mps04_not_built"}
+        result = _mps04_pga_at_point(
+            lat,
+            lng,
+            exceedance_probability_pct=10.0,
+            grid_variant="native",
+            max_distance_m=5000,
+        )
+        if result is None:
+            return {**base, "available": True, "matched": False}
+        return {
+            **base,
+            "available": True,
+            "matched": True,
+            "point_id": result.get("point_id"),
+            "point_lat": result.get("point_lat"),
+            "point_lng": result.get("point_lon"),
+            "pga_g": result.get("value_median"),
+            "pga_p16_g": result.get("value_p16"),
+            "pga_p84_g": result.get("value_p84"),
+        }
+    except Exception:
+        logger.warning("MPS04 PGA lookup failed", exc_info=True)
+        return {**base, "available": False, "reason": "mps04_lookup_failed"}
+
+
+def get_parcel_hazard_intersections(geometry: Dict[str, Any]) -> Dict[str, Any]:
+    """Intersect an authoritative parcel polygon with local ISPRA hazard mosaics."""
+    base = {
+        "source": "ISPRA PAI/PGRA polygon mosaics",
+        "dataset_version": "ISPRA_PAI_2020_2021_PGRA_2020",
+        "spatial_resolution": "parcel polygon intersection",
+        "match_method": "parcel_polygon_intersection",
+    }
+    if not all((_ispra_mosaics_db_available, _landslide_hazard_in_bbox, _flood_hazard_in_bbox)):
+        return {**base, "available": False, "reason": "ispra_mosaics_not_supported"}
+    try:
+        if not _ispra_mosaics_db_available():
+            return {**base, "available": False, "reason": "ispra_mosaics_not_built"}
+        geometry_value = geometry.get("geometry") if geometry.get("type") == "Feature" else geometry
+        parcel = shape(geometry_value)
+        if parcel.is_empty:
+            return {**base, "available": False, "reason": "parcel_geometry_empty"}
+        if not parcel.is_valid:
+            parcel = parcel.buffer(0)
+        if parcel.is_empty or parcel.area <= 0:
+            return {**base, "available": False, "reason": "parcel_geometry_invalid"}
+
+        from pyproj import Transformer
+
+        projector = Transformer.from_crs("EPSG:4326", "EPSG:6933", always_xy=True)
+        projected_parcel = _transform_geometry(projector.transform, parcel)
+        parcel_area = projected_parcel.area
+        if not math.isfinite(parcel_area) or parcel_area <= 0:
+            return {**base, "available": False, "reason": "parcel_area_invalid"}
+
+        west, south, east, north = parcel.bounds
+        limit = 5000
+        landslide = _landslide_hazard_in_bbox(west, south, east, north, limit=limit)
+        flood = _flood_hazard_in_bbox(west, south, east, north, limit=limit)
+
+        def summarize(collection: Dict[str, Any], field: str, priority: Dict[str, int]) -> Dict[str, Any]:
+            intersections: dict[str, list[Any]] = {}
+            geometry_errors = 0
+            for feature in collection.get("features", []):
+                code = str((feature.get("properties") or {}).get(field) or "").strip().upper()
+                if not code:
+                    continue
+                try:
+                    hazard = shape(feature.get("geometry"))
+                    if not hazard.is_valid:
+                        hazard = hazard.buffer(0)
+                    overlap = projected_parcel.intersection(_transform_geometry(projector.transform, hazard))
+                except Exception:
+                    geometry_errors += 1
+                    continue
+                if not overlap.is_empty and overlap.area > 0:
+                    intersections.setdefault(code, []).append(overlap)
+
+            class_areas = []
+            all_geometries = []
+            for code, geometries in intersections.items():
+                merged = _unary_union(geometries)
+                area = min(parcel_area, max(0.0, merged.area))
+                all_geometries.append(merged)
+                class_areas.append({
+                    "code": code,
+                    "overlap_area_sqm": round(area, 1),
+                    "overlap_pct": round(area / parcel_area * 100, 2),
+                })
+            affected_area = min(parcel_area, _unary_union(all_geometries).area) if all_geometries else 0.0
+            class_areas.sort(key=lambda row: (-priority.get(row["code"], 0), row["code"]))
+            return {
+                "worst_class": class_areas[0]["code"] if class_areas else None,
+                "affected_area_sqm": round(affected_area, 1),
+                "affected_area_pct": round(affected_area / parcel_area * 100, 2),
+                "classes": class_areas,
+                "geometry_errors": geometry_errors,
+            }
+
+        landslide_summary = summarize(landslide, "hazard_code", {"AA": 0, "P1": 1, "P2": 2, "P3": 3, "P4": 4})
+        flood_summary = summarize(flood, "scenario_code", {"P1": 1, "P2": 2, "P3": 3})
+        candidate_limit_reached = any(
+            int((collection.get("metadata") or {}).get("total_count", 0)) >= limit
+            for collection in (landslide, flood)
+        )
+        geometry_errors = landslide_summary["geometry_errors"] + flood_summary["geometry_errors"]
+        complete = not candidate_limit_reached and geometry_errors == 0
+        return {
+            **base,
+            "available": True,
+            "status": "complete" if complete else "partial",
+            "coverage_complete": complete,
+            "candidate_limit_reached": candidate_limit_reached,
+            "geometry_errors": geometry_errors,
+            "parcel_area_sqm": round(parcel_area, 1),
+            "landslide": landslide_summary,
+            "flood": flood_summary,
+            "license": "CC BY-SA 4.0",
+        }
+    except Exception:
+        logger.warning("Parcel hazard intersection failed", exc_info=True)
+        return {**base, "available": False, "reason": "hazard_intersection_failed"}
+
+
+def get_subsidence_at_point(lat: float, lng: float) -> Dict[str, Any]:
+    """Read the Zornade EGMS-derived 100 m summary cell covering a WGS84 point."""
+    contract = _EGMS_CONTRACT
+    base = {
+        "source": getattr(contract, "source", None)
+        or "Zornade Rischio Subsidenza Italia (Copernicus EGMS L3 Ortho)",
+        "source_url": getattr(contract, "source_url", None),
+        "license": getattr(contract, "license", None),
+        "spatial_resolution": "100 m grid cell",
+        "match_method": "grid_cell_covers_point",
+    }
+    if not _egms_db_available or not _subsidence_at_point:
+        return {**base, "available": False, "reason": "egms_not_supported"}
+    try:
+        if not _egms_db_available():
+            return {**base, "available": False, "reason": "egms_not_built"}
+        feature = _subsidence_at_point(lat, lng, direction="U")
+        if feature is None:
+            return {**base, "available": True, "matched": False}
+        return {
+            **base,
+            "available": True,
+            "matched": True,
+            "properties": feature.get("properties") or {},
+        }
+    except Exception:
+        logger.warning("EGMS point lookup failed", exc_info=True)
+        return {**base, "available": False, "reason": "egms_lookup_failed"}
+
+
+def get_parcel_subsidence_intersections(geometry: Dict[str, Any]) -> Dict[str, Any]:
+    """Summarize EGMS cells intersecting a parcel, weighted by overlap area."""
+    contract = _EGMS_CONTRACT
+    base = {
+        "source": getattr(contract, "source", None)
+        or "Zornade Rischio Subsidenza Italia (Copernicus EGMS L3 Ortho)",
+        "source_url": getattr(contract, "source_url", None),
+        "license": getattr(contract, "license", None),
+        "spatial_resolution": "100 m EGMS grid cells intersecting parcel polygon",
+        "match_method": "parcel_polygon_intersection",
+    }
+    if not _egms_db_available or not _subsidence_in_bbox:
+        return {**base, "available": False, "reason": "egms_not_supported"}
+    try:
+        if not _egms_db_available():
+            return {**base, "available": False, "reason": "egms_not_built"}
+
+        geometry_value = geometry.get("geometry") if geometry.get("type") == "Feature" else geometry
+        parcel = shape(geometry_value)
+        if parcel.is_empty:
+            return {**base, "available": False, "reason": "parcel_geometry_empty"}
+        if not parcel.is_valid:
+            parcel = parcel.buffer(0)
+        if parcel.is_empty or parcel.area <= 0:
+            return {**base, "available": False, "reason": "parcel_geometry_invalid"}
+
+        from pyproj import Transformer
+
+        projector = Transformer.from_crs("EPSG:4326", "EPSG:6933", always_xy=True)
+        projected_parcel = _transform_geometry(projector.transform, parcel)
+        parcel_area = projected_parcel.area
+        if not math.isfinite(parcel_area) or parcel_area <= 0:
+            return {**base, "available": False, "reason": "parcel_area_invalid"}
+
+        candidate_limit = _EGMS_PARCEL_CANDIDATE_LIMIT
+        west, south, east, north = parcel.bounds
+        collection = _subsidence_in_bbox(
+            west, south, east, north, direction="U", limit=candidate_limit + 1
+        )
+        candidates = (collection or {}).get("features", [])
+        candidate_limit_reached = len(candidates) > candidate_limit
+        candidates = candidates[:candidate_limit]
+
+        def finite_number(value: Any) -> Optional[float]:
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                return None
+            return number if math.isfinite(number) else None
+
+        intersecting: list[tuple[float, Any, Dict[str, Any]]] = []
+        class_overlaps: dict[str, list[Any]] = {}
+        geometry_errors = 0
+        for feature in candidates:
+            properties = feature.get("properties") or {}
+            try:
+                cell = shape(feature.get("geometry"))
+                if not cell.is_valid:
+                    cell = cell.buffer(0)
+                overlap = projected_parcel.intersection(
+                    _transform_geometry(projector.transform, cell)
+                )
+                if overlap.is_empty or overlap.area <= 0:
+                    continue
+            except Exception:
+                geometry_errors += 1
+                continue
+
+            area = float(overlap.area)
+            intersecting.append((area, overlap, properties))
+            class_name = (
+                properties.get("risk_class_label")
+                or properties.get("velocity_class_label")
+                or properties.get("risk_class")
+            )
+            if class_name not in (None, ""):
+                class_overlaps.setdefault(str(class_name), []).append(overlap)
+
+        covered_geometries = [overlap for _, overlap, _ in intersecting]
+        covered_area = min(parcel_area, _unary_union(covered_geometries).area) if covered_geometries else 0.0
+
+        def weighted_mean(field: str) -> Optional[float]:
+            values = [
+                (number, area)
+                for area, _, properties in intersecting
+                if (number := finite_number(properties.get(field))) is not None
+            ]
+            total_area = sum(area for _, area in values)
+            if total_area <= 0:
+                return None
+            return round(sum(number * area for number, area in values) / total_area, 4)
+
+        velocities = [
+            number
+            for _, _, properties in intersecting
+            if (number := finite_number(properties.get("mean_velocity"))) is not None
+        ]
+        class_distribution = []
+        for class_name, overlaps in class_overlaps.items():
+            class_area = min(parcel_area, _unary_union(overlaps).area)
+            class_distribution.append({
+                "class": class_name,
+                "area_sqm": round(class_area, 1),
+                "area_pct": round(class_area / parcel_area * 100, 2),
+            })
+        class_distribution.sort(key=lambda row: (-row["area_sqm"], row["class"]))
+
+        query_complete = not candidate_limit_reached and geometry_errors == 0
+        return {
+            **base,
+            "available": True,
+            "matched": bool(intersecting),
+            "status": "complete" if query_complete else "partial",
+            "query_complete": query_complete,
+            "candidate_limit_reached": candidate_limit_reached,
+            "candidate_limit": candidate_limit,
+            "candidate_count": len(candidates),
+            "geometry_errors": geometry_errors,
+            "parcel_area_sqm": round(parcel_area, 1),
+            "covered_area_sqm": round(covered_area, 1),
+            "covered_area_pct": round(min(100.0, covered_area / parcel_area * 100), 2),
+            "cell_count": len(intersecting),
+            "mean_velocity_mm_per_year": weighted_mean("mean_velocity"),
+            "min_velocity_mm_per_year": round(min(velocities), 4) if velocities else None,
+            "max_velocity_mm_per_year": round(max(velocities), 4) if velocities else None,
+            "mean_acceleration_mm_per_year_squared": weighted_mean("acceleration"),
+            "class_distribution": class_distribution,
+            "dominant_class": class_distribution[0]["class"] if class_distribution else None,
+        }
+    except Exception:
+        logger.warning("Parcel EGMS intersection failed", exc_info=True)
+        return {**base, "available": False, "reason": "egms_intersection_failed"}
 
 
 def get_active_fires(radius_km: float = 50.0, lat: Optional[float] = None, lng: Optional[float] = None) -> Dict[str, Any]:
@@ -4855,7 +6576,7 @@ def _parcel_enrichment_fingerprint() -> str:
         hashlib.sha256(value.encode("utf-8")).hexdigest() if value else "-"
         for value in external_dsns
     ]
-    material = "parcel-read-model-v5|" + "|".join(parts) + "|postgres:" + postgres_marker + "|sister:" + sister_marker + "|external:" + "|".join(external_markers)
+    material = "parcel-read-model-v7|" + "|".join(parts) + "|postgres:" + postgres_marker + "|sister:" + sister_marker + "|external:" + "|".join(external_markers)
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
@@ -5023,7 +6744,7 @@ def _build_parcel_enrichment(
             "point": point,
             "matched": True,
             "zone": postgres_omi["omi_zone_key"],
-            "source": "aecs4u-stats PostgreSQL spatial.market_zone",
+            "source": postgres_omi.get("source") or "aecs4u-stats PostgreSQL zornade.zornade_zone_omi",
         }
     census = postgres_census or _census_section_for_parcel(point, municipality)
     tax_facts = (postgres_context or {}).get("tax_facts") or []
@@ -5062,6 +6783,33 @@ def _build_parcel_enrichment(
             },
             "source_facts": income_profile.get("income_distribution", []),
         }
+    municipality_profile = (postgres_context or {}).get("municipality_profile")
+    if not isinstance(municipality_profile, dict):
+        municipality_profile = ((postgres_context or {}).get("municipality") or {}).get("profile")
+    solar_data_keys = (
+        "pv_n_buildings", "pv_pvout_pessimistic_kwh_year_total",
+        "pv_pvout_modern_kwh_year_total", "pv_pvout_per_capita_kwh",
+        "pv_kwp_max_total", "pv_high_viability_pct", "pv_medium_viability_pct",
+        "pv_low_viability_pct", "pv_not_eligible_pct", "pv_observation_count",
+    )
+    solar_data = {
+        key: municipality_profile[key]
+        for key in solar_data_keys
+        if isinstance(municipality_profile, dict) and municipality_profile.get(key) is not None
+    }
+    address_block = _detail_block(
+        {
+            "addresses": buildings.get("addresses", []),
+            "count": buildings.get("address_count", 0),
+            "truncated": buildings.get("addresses_truncated", False),
+        },
+        source=buildings.get("address_source") or buildings.get("source"),
+        match_method="cadastral_reference",
+        spatial_resolution="SISTER cadastral property record",
+        available=bool(buildings.get("addresses")),
+    )
+    if address_block["available"]:
+        address_block["coverage_status"] = "partial"
     blocks = {
         name: _detail_block()
         for name in _PARCEL_DETAIL_BLOCKS
@@ -5113,12 +6861,24 @@ def _build_parcel_enrichment(
         ),
         "economics": _detail_block(
             economics,
-            source="MEF/IRPEF facts via aecs4u-stats PostgreSQL",
+            source=(income_profile or {}).get("source") or "MEF/IRPEF via aecs4u-stats PostgreSQL",
             dataset_version=_income_dataset_version(economics),
             benchmarks={
                 "average_income_eur": _PARCEL_BENCHMARKS["average_income_eur"],
             },
             match_method="municipality",
+        ),
+        "solar": _detail_block(
+            solar_data,
+            source=(municipality_profile or {}).get("solar_source")
+            or "aecs4u-stats serving.municipality_profile",
+            dataset_version=(municipality_profile or {}).get("solar_data_version")
+            if isinstance(municipality_profile, dict) else None,
+            updated_at=(municipality_profile or {}).get("solar_updated_at")
+            if isinstance(municipality_profile, dict) else None,
+            spatial_resolution="municipality",
+            match_method="municipality",
+            available=bool(solar_data),
         ),
         "buildings": _detail_block(
             buildings.get("buildings"),
@@ -5126,6 +6886,7 @@ def _build_parcel_enrichment(
             match_method="cadastral_reference",
             available=buildings.get("available") is True,
         ),
+        "address": address_block,
         "opendata": _detail_block(
             opendata.get("records"),
             source=opendata.get("source"),
@@ -5173,6 +6934,60 @@ def _build_parcel_enrichment(
         "postgres_context": postgres_context,
         "source": "aecs4u-stats PostgreSQL context with cadastral parcel fallback",
     }
+
+
+def parcel_panel_read_model(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Project a compact details response for the primary map panel.
+
+    The panel loads OMI quotes, buildings, OpenData and PVP through their
+    dedicated sections. Sending the legacy top-level copies as well as the
+    read-model blocks duplicates large datasets on every parcel click.
+    Keep a small OMI preview in the block for printable server-only fallback
+    reports; the default ``full`` details view remains unchanged for legacy
+    consumers.
+    """
+    source_blocks = payload.get("blocks")
+    blocks = source_blocks if isinstance(source_blocks, dict) else {}
+    compact_blocks = dict(blocks)
+    valuation = blocks.get("valuation")
+    if isinstance(valuation, dict) and isinstance(valuation.get("data"), dict):
+        valuation_data = valuation["data"]
+        quotes = valuation_data.get("quotes")
+        if isinstance(quotes, list):
+            compact_data = {key: value for key, value in valuation_data.items() if key != "quotes"}
+            compact_data["quote_count"] = len(quotes)
+            compact_data["quote_preview"] = quotes[:8]
+            compact_blocks["valuation"] = {**valuation, "data": compact_data}
+    return {
+        "national_reference": payload.get("national_reference"),
+        "blocks": compact_blocks,
+        "read_model": payload.get("read_model"),
+        "source": payload.get("source"),
+    }
+
+
+_LOCAL_PANEL_CACHE_SUFFIX = "::panel"
+_LOCAL_PANEL_CACHE_MAX_ROWS = 500
+
+
+def _read_local_panel_read_model(cache_key: str) -> Optional[Dict[str, Any]]:
+    """Read the compact panel fallback from the application's SQLite store."""
+    from land_registry.sqlite_db import get_sqlite_db
+
+    return get_sqlite_db().get_parcel_enrichment(cache_key)
+
+
+def _write_local_panel_read_model(
+    cache_key: str,
+    payload: Dict[str, Any],
+    source_fingerprint: str,
+) -> None:
+    """Persist a compact fallback and bound its namespace to recent parcels."""
+    from land_registry.sqlite_db import get_sqlite_db
+
+    database = get_sqlite_db()
+    database.upsert_parcel_enrichment(cache_key, payload, source_fingerprint)
+    database.trim_parcel_enrichment_cache(_LOCAL_PANEL_CACHE_SUFFIX, _LOCAL_PANEL_CACHE_MAX_ROWS)
 
 
 def get_parcel_enrichment(
@@ -5231,6 +7046,7 @@ def get_parcel_enrichment(
 async def aget_parcel_enrichment(
     national_reference: str,
     refresh: bool = False,
+    view: str = "full",
 ) -> Optional[Dict[str, Any]]:
     """Async PostgreSQL-backed parcel enrichment path.
 
@@ -5240,6 +7056,8 @@ async def aget_parcel_enrichment(
     reference = str(national_reference).strip()
     if not reference:
         return None
+    if view not in {"full", "panel"}:
+        raise ValueError(f"Unsupported parcel enrichment view: {view}")
 
     source = await _get_async_postgres_source()
     fingerprint = _parcel_enrichment_fingerprint()
@@ -5248,10 +7066,25 @@ async def aget_parcel_enrichment(
             cached = await source.get_read_model(reference)
             metadata = (cached or {}).get("read_model") or {}
             if cached is not None and metadata.get("source_fingerprint") == fingerprint:
-                return cached
+                return parcel_panel_read_model(cached) if view == "panel" else cached
         except Exception:
             source._retry_at = time.monotonic() + 60
             logger.warning("Async PostgreSQL parcel read-model unavailable; rebuilding locally", exc_info=True)
+
+    panel_cache_key = f"{reference}{_LOCAL_PANEL_CACHE_SUFFIX}"
+    if view == "panel" and not refresh:
+        try:
+            local_cached = await asyncio.to_thread(_read_local_panel_read_model, panel_cache_key)
+            metadata = (local_cached or {}).get("read_model") or {}
+            if local_cached is not None and metadata.get("source_fingerprint") == fingerprint:
+                metadata.update({
+                    "key": reference,
+                    "cached": True,
+                    "database": "land-registry application SQLite panel cache",
+                })
+                return local_cached
+        except Exception:
+            logger.warning("Local SQLite parcel panel cache unavailable; rebuilding", exc_info=True)
 
     parcel = await asyncio.to_thread(get_parcel_by_reference, reference)
     if parcel is None:
@@ -5274,7 +7107,15 @@ async def aget_parcel_enrichment(
     if source is not None and time.monotonic() >= source._retry_at:
         try:
             postgres_context = await asyncio.wait_for(
-                source.context_for_parcel(reference, cadastral_code, point), timeout=12
+                source.context_for_parcel(
+                    reference,
+                    cadastral_code,
+                    point,
+                    municipality=municipality,
+                    omi=omi,
+                    income_profile=income_profile,
+                ),
+                timeout=12,
             )
             if postgres_context and postgres_context.get("municipality"):
                 postgres_context["municipality"] = {
@@ -5313,7 +7154,33 @@ async def aget_parcel_enrichment(
         "cached": bool(cached_ok),
         "database": "aecs4u-stats PostgreSQL via asyncpg",
     }
-    return payload
+    if view != "panel":
+        return payload
+
+    panel_payload = parcel_panel_read_model(payload)
+    if not cached_ok:
+        try:
+            await asyncio.to_thread(
+                _write_local_panel_read_model,
+                panel_cache_key,
+                panel_payload,
+                fingerprint,
+            )
+            panel_payload["read_model"] = {
+                "key": reference,
+                "source_fingerprint": fingerprint,
+                "cached": False,
+                "database": "land-registry application SQLite panel cache",
+            }
+        except Exception:
+            logger.warning("Could not persist local SQLite parcel panel cache", exc_info=True)
+            panel_payload["read_model"] = {
+                "key": reference,
+                "source_fingerprint": fingerprint,
+                "cached": False,
+                "database": None,
+            }
+    return panel_payload
 
 
 def get_parcels_in_bbox(
@@ -5334,32 +7201,30 @@ def get_parcels_in_bbox(
 # ---------------------------------------------------------------------------
 
 def census_db_available() -> bool:
-    """True when the 2021 census-sections store has been built on this host."""
+    """True when the package-backed census compatibility store is available."""
     path = _census_store_path()
     if not path:
         return False
     try:
-        if _census_db_available(path):
-            return True
+        return bool(_census_db_available(path))
     except Exception:
         logger.debug("Installed census adapter could not inspect %s", path, exc_info=True)
-    # Older aecs4u-stats wheels do not ship the census package, but the shared
-    # volume can still contain the canonical DuckDB store.
-    try:
-        import duckdb
+    return False
 
-        connection = duckdb.connect(str(path), read_only=True)
+
+async def acensus_db_available() -> bool:
+    """Check the aecs4u-stats census foreign table, then the package store."""
+    source = await _get_async_postgres_source()
+    if source is not None and time.monotonic() >= source._retry_at:
         try:
-            return bool(
-                connection.execute(
-                    "SELECT 1 FROM information_schema.tables WHERE table_name = 'sections' LIMIT 1"
-                ).fetchone()
-            )
-        finally:
-            connection.close()
-    except Exception:
-        logger.debug("Local census store is unreadable: %s", path, exc_info=True)
-        return False
+            if await asyncio.wait_for(
+                source._census_relation(), timeout=6
+            ):
+                return True
+        except Exception:
+            source._retry_at = time.monotonic() + 60
+            logger.debug("aecs4u-stats census foreign table is unavailable", exc_info=True)
+    return await asyncio.to_thread(census_db_available)
 
 
 def _local_census_sections_for_comune(
@@ -5368,7 +7233,7 @@ def _local_census_sections_for_comune(
 ) -> Optional[Dict[str, Any]]:
     """Read census sections directly from the shared DuckDB compatibility store."""
     path = _census_store_path()
-    if path is None:
+    if path is None or not path.is_file():
         return None
     try:
         import duckdb
