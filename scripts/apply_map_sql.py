@@ -12,7 +12,9 @@ cannot run inside a transaction or a multi-statement batch).
 Every script here is safe to re-run. Scripts that change data or touch other
 databases are deliberately not in the list; run them by hand:
 ``map-parcel-field-backfill.sql`` (bulk UPDATE) and
-``pvp-enriched-modelview-map-view.sql`` (foreign data wrapper setup).
+``pvp-enriched-modelview-map-view.sql`` and
+``pvp-enriched-modelview-map-points.sql`` and
+``solar-map-foreign-tables.sql`` (foreign data wrapper setup).
 """
 
 import argparse

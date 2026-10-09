@@ -1,11 +1,11 @@
 """Public-auction sales (Portale delle Vendite Pubbliche) for the direct map.
 
-aecs4u-stats publishes the enriched PVP modelview as ``pvp.v_map_sales``: a
-postgres_fdw table over ``pvp_enriched_modelview.public.v_map_sales``, one row
-per sale with its first geocoded address (scripts/sql/
-pvp-enriched-modelview-map-view.sql).  The view has ~800k sales, of which
-~120k carry coordinates; nothing reaches the remote side as an index lookup,
-so a full read takes ~15 s.  The map therefore reads the geocoded rows once,
+aecs4u-stats publishes ``pvp.v_map_sale_points`` for bulk map loads and
+``pvp.v_map_sales`` for individual sale details. When a PVP modelview DSN is
+configured, the map reads those enriched views directly; otherwise it uses
+the stats FDW. The points view resolves addresses in batches instead of
+repeating the detail view's indexed lookups for every sale. The map reads
+geocoded rows once,
 keeps a compact in-memory copy (refreshed hourly, the last good copy kept if
 a refresh fails) and filters that copy per request.
 """
@@ -20,9 +20,11 @@ import re
 import time
 from collections import Counter
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Any, Iterable, Optional
+from urllib.parse import urlsplit, urlunsplit
 
-from land_registry.map_layers import _asyncpg_sql, get_map_layer_source
+from land_registry.map_layers import _asyncpg_sql, _AsyncpgConnectionSource, get_map_layer_source
 
 log = logging.getLogger(__name__)
 
@@ -91,11 +93,14 @@ POINT_FIELDS = ("id", "lng", "lat", "price", "date", "category", "approximate")
 
 # Columns read for the map points; only sale_id and a location are required,
 # so the loader keeps working while the view definition evolves.
-_POINT_COLUMNS = ("sale_id", "latitude", "longitude", "price", "sale_datetime", "property_type")
+_POINT_COLUMNS = (
+    "sale_id", "latitude", "longitude", "price", "sale_datetime", "property_type",
+    "coordinate_is_approximate", "description_hint",
+)
 _DETAIL_COLUMNS = (
     "sale_id", "detail_id", "source", "property_type", "description", "price", "sale_datetime",
     "city", "province", "postal_code", "address", "street", "house_number", "url",
-    "latitude", "longitude", "address_source", "geocoding_source",
+    "latitude", "longitude", "address_source", "geocoding_source", "coordinate_is_approximate",
 )
 
 
@@ -160,17 +165,77 @@ class PvpSalesStore:
         self._snapshot: Optional[dict[str, Any]] = None
         self._loaded_at = 0.0
         self._task: Optional[asyncio.Task] = None
+        self._active_source: Any = connection_source
+        self._active_relation = SALES_RELATION
+        self._source_candidates: Optional[list[tuple[Any, str]]] = None
         self.last_error: Optional[str] = None
+
+    def _sources(self) -> list[tuple[Any, str]]:
+        if self._source_candidates is not None:
+            return self._source_candidates
+        if self._connection_source is not None:
+            self._source_candidates = [(self._connection_source, SALES_RELATION)]
+            return self._source_candidates
+
+        # The enriched PVP database owns the complete view. Prefer its direct
+        # publication when configured; aecs4u-stats can serve the same view
+        # through postgres_fdw as a deployment-compatible fallback.
+        names = (
+            "AECS4U_PVP_ENRICHED_POSTGRES_DSN",
+            "PVP_ENRICHED_MODELVIEW_POSTGRES_DSN",
+            "PVP_MODELVIEW_DATABASE_URL",
+            "PROD_MODELVIEW_DATABASE_URL_PVP",
+        )
+        dsn = next(
+            (
+                os.getenv(name, "").strip()
+                for name in names
+                if os.getenv(name, "").strip().startswith(("postgres://", "postgresql://", "postgresql+"))
+            ),
+            None,
+        )
+        if not dsn:
+            # Local source credentials may live in property-scraper's .env.
+            # Read only its PVP-specific DSN, never its general DATABASE_URL.
+            try:
+                from dotenv import dotenv_values
+
+                sibling_env = Path(__file__).resolve().parents[2] / "property-scraper" / ".env"
+                dsn = str(dotenv_values(sibling_env).get("PROD_MODELVIEW_DATABASE_URL_PVP") or "").strip()
+            except (OSError, TypeError, ValueError):
+                dsn = ""
+        if not dsn:
+            for name in ("AECS4U_PVP_MODELVIEW_POSTGRES_DSN", "PVP_MODELVIEW_POSTGRES_DSN"):
+                legacy_dsn = os.getenv(name, "").strip()
+                if not legacy_dsn.startswith(("postgres://", "postgresql://", "postgresql+")):
+                    continue
+                parsed = urlsplit(legacy_dsn.replace("postgresql+asyncpg://", "postgresql://", 1))
+                database = parsed.path.rsplit("/", 1)[-1]
+                # The long-standing local variable name points at pvp_modelview,
+                # while the complete production superset is the pvp_enriched DB.
+                dsn = legacy_dsn if "enriched" in database.lower() else urlunsplit(parsed._replace(path="/pvp_enriched"))
+                break
+
+        candidates: list[tuple[Any, str]] = []
+        if dsn.startswith(("postgres://", "postgresql://", "postgresql+")):
+            pvp_source = _AsyncpgConnectionSource(dsn)
+            candidates.extend((pvp_source, relation) for relation in ("modelview.v_map_sales", "public.v_map_sales"))
+        stats_source = get_map_layer_source().connection_source
+        if stats_source is not None:
+            candidates.append((stats_source, SALES_RELATION))
+        self._source_candidates = candidates
+        return candidates
 
     @property
     def connection_source(self) -> Any:
-        if self._connection_source is None:
-            self._connection_source = get_map_layer_source().connection_source
-        return self._connection_source
+        if self._active_source is not None:
+            return self._active_source
+        candidates = self._sources()
+        return candidates[0][0] if candidates else None
 
     @property
     def available(self) -> bool:
-        return bool(self.connection_source)
+        return bool(self._sources())
 
     async def snapshot(self, wait: bool = True) -> Optional[dict[str, Any]]:
         """The cached sales, refreshed in the background once ``ttl`` expires.
@@ -191,12 +256,20 @@ class PvpSalesStore:
         await asyncio.shield(self._task)
         return self._snapshot
 
+    async def refresh(self) -> Optional[dict[str, Any]]:
+        """Force a complete reload after the source view or its data changes."""
+        if self._task is None or self._task.done():
+            self._loaded_at = 0.0
+            self._task = asyncio.ensure_future(self._refresh())
+        await asyncio.shield(self._task)
+        return self._snapshot
+
     async def _refresh(self) -> None:
         try:
             snapshot = await self._load()
         except Exception as exc:  # keep serving the previous copy
             self.last_error = str(exc)
-            log.warning("PVP sales load from %s failed: %s", SALES_RELATION, exc)
+            log.warning("PVP sales load from configured views failed: %s", exc)
             if self._snapshot is None:
                 raise
             return
@@ -204,59 +277,215 @@ class PvpSalesStore:
         self._loaded_at = time.monotonic()
         self.last_error = None
 
-    async def _columns(self, connection: Any) -> set[str]:
+    async def _columns(self, connection: Any, relation: str = SALES_RELATION) -> set[str]:
         rows = await connection.fetch(_asyncpg_sql("""
             SELECT attname::text AS name
             FROM pg_attribute
             WHERE attrelid = to_regclass(%s) AND attnum > 0 AND NOT attisdropped
-        """), SALES_RELATION)
+        """), relation)
         return {row["name"] for row in rows}
 
     @staticmethod
-    def _location_sql(columns: set[str]) -> tuple[str, str]:
+    def _location_sql(columns: set[str], relation: str = SALES_RELATION) -> tuple[str, str]:
         if {"latitude", "longitude"} <= columns:
             return "latitude", "longitude"
         if "geom" in columns:
             return "ST_Y(geom)", "ST_X(geom)"
-        raise RuntimeError(f"{SALES_RELATION} exposes no latitude/longitude or geom column")
+        raise RuntimeError(f"{relation} exposes no latitude/longitude or geom column")
 
     async def _load(self) -> dict[str, Any]:
         started = time.perf_counter()
         west, south, east, north = ITALY_BOUNDS
-        async with self.connection_source.connection() as connection:
-            columns = await self._columns(connection)
-            if not columns:
-                raise RuntimeError(f"{SALES_RELATION} is not published in this database")
-            if "sale_id" not in columns:
-                raise RuntimeError(f"{SALES_RELATION} has no sale_id column")
-            latitude, longitude = self._location_sql(columns)
-            optional = [name for name in _POINT_COLUMNS[3:] if name in columns]
-            if {"property_type", "description"} <= columns:
-                # Built-in functions ship to the remote view, so only a short
-                # prefix crosses the FDW, and only for untyped sales.
-                optional.append(
-                    "CASE WHEN NULLIF(btrim(property_type), '') IS NULL"
-                    f" THEN left(description, {DESCRIPTION_HINT_LENGTH}) END AS description_hint"
+        failures = []
+        candidates = [
+            (source, relation, detail_relation)
+            for source, detail_relation in self._sources()
+            for relation in (detail_relation.replace("v_map_sales", "v_map_sale_points"), detail_relation)
+        ]
+        for source, relation, detail_relation in candidates:
+            try:
+                async with source.connection() as connection:
+                    columns = await self._columns(connection, relation)
+                    if not columns:
+                        raise RuntimeError(f"{relation} is not published in this database")
+                    if "sale_id" not in columns:
+                        raise RuntimeError(f"{relation} has no sale_id column")
+                    latitude, longitude = self._location_sql(columns, relation)
+                    optional = [name for name in _POINT_COLUMNS[3:] if name in columns]
+                    if "description_hint" not in columns and {"property_type", "description"} <= columns:
+                        # Built-in functions ship to the remote view, so only a short
+                        # prefix crosses the FDW, and only for untyped sales.
+                        optional.append(
+                            "CASE WHEN NULLIF(btrim(property_type), '') IS NULL"
+                            f" THEN left(description, {DESCRIPTION_HINT_LENGTH}) END AS description_hint"
+                        )
+                    select = ", ".join(["sale_id", f"{latitude} AS latitude", f"{longitude} AS longitude", *optional])
+                    # Push the Italy bounds into the selected source so placeholder
+                    # and foreign coordinates are discarded before transfer.
+                    sql = f"""
+                        SELECT {select}
+                        FROM {relation}
+                        WHERE {latitude} BETWEEN {south!r} AND {north!r}
+                          AND {longitude} BETWEEN {west!r} AND {east!r}
+                    """
+                    async with connection.transaction():
+                        await connection.execute(f"SET LOCAL statement_timeout = '{self.LOAD_STATEMENT_TIMEOUT}'")
+                        if relation.endswith(".v_map_sale_points"):
+                            # Bulk hash joins/sorts need more than PostgreSQL's
+                            # default 4 MB. Limit this allowance to the map load.
+                            await connection.execute("SET LOCAL work_mem = '64MB'")
+                            await connection.execute("SET LOCAL jit = off")
+                        rows = await connection.fetch(sql, timeout=330)
+                        asset_references = []
+                        if relation in {"modelview.v_map_sale_points", "modelview.v_map_sales"}:
+                            asset_references = await self._asset_cadastral_references(
+                                connection, [row["sale_id"] for row in rows if row["sale_id"] is not None]
+                            )
+                cadastral_points = await self._resolve_cadastral_points(asset_references)
+                snapshot = self._build_snapshot(rows)
+                self._apply_cadastral_points(snapshot, cadastral_points)
+                snapshot["columns"] = sorted(columns)
+                snapshot["relation"] = relation
+                snapshot["database"] = (
+                    "pvp_enriched" if detail_relation == "modelview.v_map_sales"
+                    else "pvp_enriched_modelview" if detail_relation == "public.v_map_sales"
+                    else "aecs4u-stats"
                 )
-            select = ", ".join(["sale_id", f"{latitude} AS latitude", f"{longitude} AS longitude", *optional])
-            # Plain float comparisons ship to the remote view; the Italy box
-            # drops placeholder coordinates before they cross the FDW.
-            sql = f"""
-                SELECT {select}
-                FROM {SALES_RELATION}
-                WHERE {latitude} BETWEEN {south!r} AND {north!r}
-                  AND {longitude} BETWEEN {west!r} AND {east!r}
-            """
-            async with connection.transaction():
-                await connection.execute(f"SET LOCAL statement_timeout = '{self.LOAD_STATEMENT_TIMEOUT}'")
-                rows = await connection.fetch(sql, timeout=330)
-        snapshot = self._build_snapshot(rows)
-        snapshot["columns"] = sorted(columns)
-        log.info(
-            "PVP sales loaded from %s: %d geocoded sales in %.0f ms",
-            SALES_RELATION, len(snapshot["points"]), (time.perf_counter() - started) * 1000,
-        )
-        return snapshot
+                self._active_source, self._active_relation = source, detail_relation
+                log.info(
+                    "PVP sales loaded from %s: %d geocoded sales in %.0f ms",
+                    relation, len(snapshot["points"]), (time.perf_counter() - started) * 1000,
+                )
+                return snapshot
+            except Exception as exc:
+                failures.append(f"{relation}: {exc}")
+                log.debug("PVP map source %s unavailable: %s", relation, exc)
+        raise RuntimeError("No usable PVP map view found (" + "; ".join(failures) + ")")
+
+    @staticmethod
+    async def _asset_cadastral_references(
+        connection: Any, sale_ids: list[int]
+    ) -> list[tuple[int, str, str, str, str]]:
+        """Read explicit asset sheet/parcel pairs and their municipality."""
+        if not sale_ids:
+            return []
+        sql = _asyncpg_sql(r"""
+            SELECT asset.sale_id,
+                   COALESCE(address_municipality.name, municipality.name) AS municipality_name,
+                   COALESCE(address_municipality.province_code, municipality.province_code) AS province_code,
+                   reference[1] AS sheet,
+                   reference[2] AS parcel
+              FROM modelview.modelview_assets AS asset
+              JOIN modelview.modelview_sales AS sale ON sale.id = asset.sale_id
+              LEFT JOIN modelview.modelview_addresses AS address ON address.id = asset.address_id
+              LEFT JOIN modelview.map_pvp_municipalities AS address_municipality
+                ON address_municipality.code = address.municipality_code
+              LEFT JOIN LATERAL (
+                   SELECT candidate.name, candidate.province_code
+                     FROM modelview.map_pvp_municipalities AS candidate
+                     LEFT JOIN modelview.map_pvp_provinces AS province
+                       ON province.code = candidate.province_code
+                    WHERE address_municipality.code IS NULL
+                      AND lower(BTRIM(candidate.name)) = lower(BTRIM(sale.city))
+                      AND (NULLIF(BTRIM(sale.province), '') IS NULL
+                           OR lower(BTRIM(province.name)) = lower(BTRIM(sale.province))
+                           OR upper(BTRIM(province.code)) = upper(BTRIM(sale.province)))
+                    ORDER BY candidate.code
+                    LIMIT 1
+              ) AS municipality ON TRUE
+              CROSS JOIN LATERAL regexp_match(
+                   lower(asset.description),
+                   '(?:foglio|fgl?\.?)[[:space:],:;]*(?:n\.?[[:space:]]*)?([0-9]+[[:alpha:]]*(?:/[[:alnum:]]+)?)'
+                   '.{0,160}?(?:particella|part\.?|p\.lla|mappale|mapp\.?)[[:space:],:;]*(?:n\.?[[:space:]]*)?([0-9]+[[:alpha:]]*(?:/[[:alnum:]]+)?)'
+              ) AS reference
+             WHERE asset.sale_id = ANY(%s::bigint[])
+               AND NULLIF(BTRIM(asset.description), '') IS NOT NULL
+               AND asset.description ~* '(foglio|fgl?\.?)[[:space:]]*[0-9]+'
+               AND asset.description ~* '(particella|part\.?|p\.lla|mappale|mapp\.?)[[:space:]]*[0-9]+'
+        """)
+        try:
+            rows = await connection.fetch(sql, sale_ids, timeout=120)
+        except Exception:
+            # Older/enriched installations can omit one of the modelview
+            # relations. Auction address points remain usable in that case.
+            log.info("PVP asset cadastral references are unavailable", exc_info=True)
+            return []
+        return [
+            (
+                int(row["sale_id"]), str(row["municipality_name"]), str(row["province_code"]),
+                str(row["sheet"]), str(row["parcel"]),
+            )
+            for row in rows
+            if row["sale_id"] is not None and row["municipality_name"] and row["province_code"]
+            and row["sheet"] and row["parcel"]
+        ]
+
+    async def _resolve_cadastral_points(
+        self, references: list[tuple[int, str, str, str, str]]
+    ) -> dict[int, tuple[float, float]]:
+        """Resolve only unique municipality/sheet/parcel matches."""
+        cadastral_source = get_map_layer_source().cadastral_connection_source
+        if cadastral_source is None or not references:
+            return {}
+        # Repeated assets can name the same parcel; retain distinct sale keys
+        # and ask Postgres to reject sales with more than one matching parcel.
+        sale_ids, municipalities, provinces, sheets, parcels = zip(*set(references))
+        sql = _asyncpg_sql("""
+            WITH requested AS (
+                SELECT DISTINCT *
+                  FROM unnest(%s::bigint[], %s::text[], %s::text[], %s::text[], %s::text[])
+                       AS key(sale_id, municipality_name, province_code, sheet, parcel)
+            ), matches AS MATERIALIZED (
+                SELECT requested.sale_id,
+                       parcel.id,
+                       ST_X(ST_PointOnSurface(parcel.geom)) AS longitude,
+                       ST_Y(ST_PointOnSurface(parcel.geom)) AS latitude
+                  FROM requested
+                  JOIN spatial.cadastral_parcel AS parcel
+                    ON lower(BTRIM(parcel.municipality_name)) = lower(requested.municipality_name)
+                   AND upper(BTRIM(parcel.province)) = upper(requested.province_code)
+                   AND upper(BTRIM(parcel.sheet)) = upper(requested.sheet)
+                   AND upper(BTRIM(parcel.parcel)) = upper(requested.parcel)
+            )
+            SELECT sale_id, min(longitude) AS longitude, min(latitude) AS latitude
+              FROM matches
+             GROUP BY sale_id
+            HAVING count(DISTINCT id) = 1
+        """)
+        try:
+            async with cadastral_source.connection() as connection:
+                async with connection.transaction():
+                    await connection.execute("SET LOCAL statement_timeout = '120s'")
+                    await connection.execute("SET LOCAL work_mem = '128MB'")
+                    rows = await connection.fetch(
+                        sql, sale_ids, municipalities, provinces, sheets, parcels, timeout=125
+                    )
+        except Exception:
+            # Parcel enrichment is optional; never fail the auction map load.
+            log.info("Cadastral parcel coordinate lookup unavailable", exc_info=True)
+            return {}
+        result = {}
+        for row in rows:
+            longitude, latitude = _finite(row["longitude"]), _finite(row["latitude"])
+            if longitude is not None and latitude is not None and _in_italy(longitude, latitude):
+                result[int(row["sale_id"])] = (longitude, latitude)
+        return result
+
+    @staticmethod
+    def _apply_cadastral_points(
+        snapshot: dict[str, Any], cadastral_points: dict[int, tuple[float, float]]
+    ) -> None:
+        if not cadastral_points:
+            return
+        for point in snapshot["points"]:
+            parcel_point = cadastral_points.get(point[0])
+            if parcel_point is None:
+                continue
+            longitude, latitude = parcel_point
+            point[1], point[2] = round(longitude, 5), round(latitude, 5)
+            # PointOnSurface is a reliable pin within the parcel footprint,
+            # while still being an approximation of the property's entrance.
+            point[6] = 1
 
     @staticmethod
     def _build_snapshot(rows: Iterable[Any]) -> dict[str, Any]:
@@ -277,7 +506,7 @@ class PvpSalesStore:
                 round(price) if price is not None and price > 0 else None,  # whole euros
                 day.isoformat() if day else None,
                 sale_category(getter("property_type"), getter("description_hint")),
-                0,
+                1 if getter("coordinate_is_approximate") else 0,
             ])
             days.append(day)
         shared = Counter((point[1], point[2]) for point in points)
@@ -299,8 +528,9 @@ class PvpSalesStore:
         max_price: Optional[float] = None,
         today: Optional[date] = None,
         wait: bool = False,
+        refresh: bool = False,
     ) -> Optional[dict[str, Any]]:
-        snapshot = await self.snapshot(wait=wait)
+        snapshot = await (self.refresh() if refresh else self.snapshot(wait=wait))
         if snapshot is None:
             return None
         start, end = _period_start_end(period, today or date.today())
@@ -323,8 +553,8 @@ class PvpSalesStore:
             selected.append(point)
         return {
             "source": {
-                "relation": SALES_RELATION,
-                "database": "aecs4u-stats",
+                "relation": snapshot.get("relation", SALES_RELATION),
+                "database": snapshot.get("database", "aecs4u-stats"),
                 "loaded_at": snapshot["loaded_at"],
                 "geocoded_sales": len(snapshot["points"]),
             },
@@ -339,18 +569,30 @@ class PvpSalesStore:
         }
 
     async def sale_detail(self, sale_id: int) -> Optional[dict[str, Any]]:
-        async with self.connection_source.connection() as connection:
-            columns = await self._columns(connection)
-            wanted = [name for name in _DETAIL_COLUMNS if name in columns]
-            if "sale_id" not in wanted:
-                return None
-            async with connection.transaction():
-                await connection.execute(f"SET LOCAL statement_timeout = '{self.DETAIL_STATEMENT_TIMEOUT}'")
-                row = await connection.fetchrow(
-                    f"SELECT {', '.join(wanted)} FROM {SALES_RELATION} WHERE sale_id = $1 LIMIT 1",
-                    int(sale_id),
-                    timeout=30,
-                )
+        row = None
+        wanted = []
+        failures = []
+        candidates = [(self._active_source, self._active_relation)] if self._active_source is not None else self._sources()
+        for source, relation in candidates:
+            try:
+                async with source.connection() as connection:
+                    columns = await self._columns(connection, relation)
+                    wanted = [name for name in _DETAIL_COLUMNS if name in columns]
+                    if "sale_id" not in wanted:
+                        continue
+                    async with connection.transaction():
+                        await connection.execute(f"SET LOCAL statement_timeout = '{self.DETAIL_STATEMENT_TIMEOUT}'")
+                        row = await connection.fetchrow(
+                            f"SELECT {', '.join(wanted)} FROM {relation} WHERE sale_id = $1 LIMIT 1",
+                            int(sale_id),
+                            timeout=30,
+                        )
+                self._active_source, self._active_relation = source, relation
+                break
+            except Exception as exc:
+                failures.append(str(exc))
+        if row is None and failures and len(failures) == len(candidates):
+            raise RuntimeError("PVP sale detail source unavailable: " + "; ".join(failures))
         if row is None:
             return None
         detail: dict[str, Any] = {}

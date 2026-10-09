@@ -383,8 +383,9 @@ async def get_sales_map_points(
     category: Optional[str] = None,
     min_price: Optional[float] = None,
     max_price: Optional[float] = None,
+    refresh: bool = False,
 ):
-    """Geocoded public-auction sales (PVP) from the in-memory copy of ``pvp.v_map_sales``.
+    """Geocoded public-auction sales (PVP) from the enriched map-view cache.
 
     ``category`` is a comma-separated list of category keys. The first request
     after startup answers 503 + ``Retry-After`` while the copy loads.
@@ -400,6 +401,7 @@ async def get_sales_map_points(
     try:
         payload = await get_pvp_sales_store().map_points(
             period=period, categories=categories, min_price=min_price, max_price=max_price,
+            refresh=refresh,
         )
     except Exception as exc:
         logger.warning("PVP sales map points failed: %s", exc)
@@ -422,13 +424,14 @@ async def sales_map_points(
     category: Optional[str] = Query(None),
     min_price: Optional[float] = Query(None, ge=0),
     max_price: Optional[float] = Query(None, ge=0),
+    refresh: bool = Query(False),
 ):
     """Serve sales from the PVP view when the stats database is configured.
 
     Without it the request goes to the external sales service, as before.
     """
     if get_pvp_sales_store().available:
-        return await get_sales_map_points(period, category, min_price, max_price)
+        return await get_sales_map_points(period, category, min_price, max_price, refresh)
     return await proxy_sales_map_points(request)
 
 

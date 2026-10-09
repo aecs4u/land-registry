@@ -208,15 +208,16 @@ def test_direct_map_closes_enrichment_overlay_and_adjacency_gaps():
 
 
 def test_direct_map_closes_market_filter_and_attribute_table_gaps():
-    # Legacy Actions panel (index.html Market Filters section): auction
-    # toggle, type filter, price filter, active-only — same generic endpoint.
+    # The direct-map auction toggle reads the enriched PVP map feed, clusters
+    # its points, and applies the type, price, and upcoming filters locally.
     for value in (
         "toggleAuctionLayer",
-        "/api/v1/auction-properties/",
+        "/api/v1/sales/map-points?period=all",
         "auction-properties",
+        "auction-clusters",
         "applyAuctionFilter",
-        "marker_color",
-        "marker_size",
+        "/api/v1/sales/pvp/",
+        "pvp_record",
         "auctionTypeFilter",
         "auctionMaxPrice",
         "auctionActiveOnly",

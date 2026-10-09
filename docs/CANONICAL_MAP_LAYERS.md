@@ -38,12 +38,30 @@ reference search, adjacent parcels, and the Leaflet vector fallback use the
 same prepared source. Identity IDs represent a national cadastral entity;
 multiple imported polygon parts with the same reference share that ID.
 
-Postal zones read `cap_subcomunali.cap_subcomunali`, a view over the
-`source_cap.cap_subcomunali` foreign table. The foreign server needs PostGIS
-predicate pushdown so tile bounding boxes reach the source; apply
-`scripts/sql/map-postal-zones-fdw-pushdown.sql` as the foreign server owner.
-The local foreign view has no GiST index, so health checks rely on the remote
-bounding-box filter instead.
+Map layers use the consolidated `aecs4u-stats` relations directly: municipal,
+province, and region boundaries from `istat.v_*_map`; OMI zones from
+`zornade.zornade_zone_omi`; urban sections from `sezioni_urbane.sezioni_urbane`;
+postal areas from the `cap_subcomunali.cap_subcomunali` view over
+`geo_postal.cap_subcomunali`; and EGMS data from `geo_surface_change`.
+Flood, landslide, MPS04, and seismic-classification tiles connect directly to
+the corresponding `hazards.public` relations so their local GiST indexes serve
+tile requests. EGMS ground-movement tiles connect directly to
+`egms.public.egms_subsidenza` for the same reason. Configure
+`EGMS_POSTGRES_DSN` or `AECS4U_STATS_EGMS_DATABASE_URL` to override the
+default connection, which derives the `egms` database URL from
+`STATS_POSTGRES_DSN`. Configure `HAZARDS_POSTGRES_DSN` or
+`AECS4U_STATS_HAZARDS_DATABASE_URL`; when neither is set, the app derives a
+`hazards` database URL from `STATS_POSTGRES_DSN`.
+The solar layer joins `solar.solar_potential_comuni` to the canonical ISTAT
+municipality map at query time because the solar relation contains metrics but
+does not duplicate boundary geometry. These foreign-table sources have no
+local GiST index, so their foreign servers must push down spatial predicates
+for efficient tile reads. If either direct database is unavailable, map reads
+fall back to the stats foreign tables; apply
+`scripts/sql/map-hazards-fdw-pushdown.sql` on `aecs4u-stats` to enable PostGIS
+bbox pushdown for hazards fallback. The serving role must own `hazards_source`
+or run the script as a superuser. EGMS fallback requires `postgis` in the
+`egms_source` foreign server's `extensions` option for bbox pushdown.
 The census layer reads the stats database's `census_sections.sections` foreign
 table, mapped to `public.sections` in the `census_sections` database. Its
 foreign server must list `postgis` in its `extensions` option on both sides;
@@ -83,11 +101,10 @@ The following layers are rendered through PostGIS MVT, with bounded GeoJSON
 available for viewport fallback and popup inspection:
 
 - administrative boundaries, cadastral sheets, cadastral parcels;
-- cadastral urban sections, OMI market zones, postal zones;
-- hazard areas, census sections, points of interest;
-- hazard measurements, raster coverage footprints, MPS04 points;
-- municipality profiles, market-zone snapshots, and MIT/SID maritime-domain
-  concessions.
+- cadastral urban sections, OMI market zones, and postal zones;
+- flood and landslide areas, census sections, MPS04 and INGV seismic points;
+- EGMS ground movement, solar potential by municipality, and MIT/SID
+  maritime-domain concessions.
 
 Dense point data is tile-first. The GeoJSON endpoint refuses overly broad
 viewports and returns an empty collection with the required zoom level rather
@@ -103,8 +120,9 @@ foreign table `aecs4u-stats.agenziademanio.concessions`, mapped to
 `agenziademanio.agenziademanio.v_concession_map_features`. The foreign server
 targets the `agenziademanio` PostgreSQL database. This view reads the stored
 EPSG:4326 geometries and GiST index on `public.concessions`, without parsing or
-transforming source JSON during tile requests. Related detail foreign tables map to the database's
-`agenziademanio.v_*` views.
+transforming source JSON during tile requests. It also exposes the administrative
+label, source release, and geometry validation/repair flags used in map details.
+Related detail foreign tables map to the database's `agenziademanio.v_*` views.
 Run `scripts/sql/agenziademanio-map-features.sql` in the source database to
 prepare this view. The view includes polygon footprints and WGS84 point
 records, excluding duplicate point imports in other coordinate systems.
@@ -125,17 +143,38 @@ The concessions layer labels polygon footprints with their concession ID from
 zoom 15. Its legend separates polygon footprints from point records, and
 **Zoom to polygons** fits the native polygons in the current viewport, up to
 zoom 20. Native GeoJSON is used for this action so a very small footprint can
-be found even if it was omitted during vector-tile quantization. Some views
-contain only small footprints or point records; the control reports when no
-polygon is published in the viewport.
+be found even if it was omitted during vector-tile quantization. Enabling the
+layer leaves the camera in place; the user chooses when to zoom to its
+footprints. The popup presents the concession ID, administrative label,
+geometry and source metadata, snapshot date, and linked document/status records.
+Some views contain only small footprints or point records; the control reports
+when no polygon is published in the viewport.
 
-Enabling the concessions layer now closes the layer panel once native polygons
-are found. If the current view has no clearly visible polygon (at least 16 pixels
-across in both directions), it focuses the nearest actual footprint in the
-viewport and its small surrounding margin. This also covers footprints just
-outside a shorter browser window at the same shared map centre. Already visible
-polygons keep the existing camera, and a pan or zoom during the geometry request
-cancels automatic focusing. No polygon geometry is generated from markers.
+No polygon geometry is generated from markers. A point record is suppressed
+when its same-ID, same-snapshot polygon is drawable in the same tile; otherwise
+the point remains available as a separate map feature.
+
+## Auction sales
+
+The auction map bulk load reads `pvp_enriched.modelview.v_map_sale_points`.
+It validates each address once, ranks asset/lot/sale address links in batches,
+and resolves municipality fallbacks once per distinct city/province. The view
+reads live source tables and keeps the same coordinate selection as
+`modelview.v_map_sales`, including approximate municipality points for missing
+or mismatched coordinates. Individual marker details still query
+`modelview.v_map_sales` by sale ID.
+
+Run `scripts/sql/pvp-enriched-modelview-map-view.sql` for initial installation;
+it includes `pvp-enriched-modelview-map-points.sql`. Existing installations can
+run the points script directly. It creates covering indexes concurrently and
+exposes the compact view as `aecs4u-stats.pvp.v_map_sale_points`, with FDW batch
+size 10,000. The loader falls back to the full sales view when the compact
+view has not been installed.
+
+The map loader permits 64 MB of `work_mem` per sort/hash operation only within
+its bulk-load transaction. It keeps the hourly in-memory snapshot and shares
+an in-progress load between concurrent refresh requests. Source changes are
+visible on the next snapshot refresh without rebuilding a database cache.
 
 ## Release gate
 
@@ -146,4 +185,4 @@ cover both an MVT tile and a GeoJSON viewport. Cadastral nationwide coverage
 and the upstream urban-section count remain data-acquisition requirements;
 the map reports available canonical rows but does not claim national parity
 until those sources are loaded. The Cloud Run workflow separately verifies
-that the deployed service can reach all 15 catalog layers after rollout.
+that the deployed service can reach all 14 catalog layers after rollout.

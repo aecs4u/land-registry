@@ -13,7 +13,7 @@
   // Individual parcel outlines are too dense for a raster fallback below
   // this zoom; the canonical MVT layer retains its server-provided threshold.
   const PARCEL_MIN_ZOOM = 16;
-  const ADMIN_SUBSTITUTE_LAYER_IDS = ['geo-boundaries', 'municipality-profiles'];
+  const ADMIN_SUBSTITUTE_LAYER_IDS = ['geo-boundaries'];
   const SEARCH_DEBOUNCE_MS = 250;
   const LAST_VIEW_KEY = 'land-registry.map.lastView';
   const BASEMAPS = ['light', 'dark', 'satellite'];
@@ -34,6 +34,7 @@
     layerFailures: new Set(),
     activeLayers: null,
     adminSubstituteAutoLayers: new Set(),
+    adminSubstituteUserDisabled: new Set(),
     shortlistItems: [],
     shortlistStatuses: [],
     shortlistSummary: null,
@@ -49,6 +50,7 @@
     sourceHealthDown: false,
     sourceTileDown: false,
     layerOpacity: new Map(),
+    postalLabelsEnabled: false,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -57,7 +59,137 @@
     const text = (window._i18n && window._i18n[key]) || key;
     return values ? text.replace(/\{(\w+)\}/g, (_, name) => values[name] ?? '') : text;
   };
-  const LAYER_GROUPS = ['administrative', 'cadastral', 'market', 'risk', 'demographics', 'territory'];
+  const LAYER_GROUPS = ['administrative', 'cadastral', 'market', 'risk', 'demographics', 'energy', 'territory'];
+
+  // Progress belongs to a task, so an older request cannot dismiss a newer
+  // one. Quick operations stay invisible; elapsed time is not an estimate.
+  const mapTasks = new Map();
+  let mapTaskTimer = null;
+
+  function renderMapProgress() {
+    const panel = $('mapTaskProgress');
+    if (!panel) return;
+    const now = performance.now();
+    const tasks = [...mapTasks.values()].filter((task) => now - task.started >= 500);
+    panel.hidden = !tasks.length;
+    if (!tasks.length) return;
+    const task = tasks[0];
+    const label = $('mapTaskProgressLabel');
+    if (label.textContent !== task.name) label.textContent = task.name;
+    $('mapTaskProgressElapsed').textContent = `${Math.floor((now - task.started) / 1000)}s`;
+    const bar = $('mapTaskProgressBar');
+    bar.classList.toggle('is-indeterminate', task.percent === null);
+    bar.setAttribute('aria-valuetext', task.percent === null ? task.label : `${task.label} ${Math.round(task.percent)}%`);
+    if (task.percent === null) bar.removeAttribute('aria-valuenow');
+    else bar.setAttribute('aria-valuenow', String(Math.round(task.percent)));
+    $('mapTaskProgressFill').style.width = task.percent === null ? '' : `${task.percent}%`;
+    $('mapTaskProgressDetail').textContent = [
+      task.label !== task.name ? task.label : '',
+      task.detail,
+      tasks.length > 1 ? tr('{n} tasks in progress', { n: tasks.length }) : '',
+    ].filter(Boolean).join(' · ');
+  }
+
+  function beginMapProgress(key, label) {
+    mapTasks.get(key)?.finish();
+    const task = {
+      started: performance.now(), name: tr(label), label: tr(label), percent: null, detail: '', cleanup: null,
+      current: () => mapTasks.get(key) === task,
+      update(message, percent = null, detail = '') {
+        if (!task.current()) return;
+        task.label = tr(message);
+        task.percent = percent === null ? null : Math.max(0, Math.min(100, percent));
+        task.detail = detail;
+        renderMapProgress();
+      },
+      finish() {
+        task.cleanup?.();
+        task.cleanup = null;
+        if (task.current()) mapTasks.delete(key);
+        if (!mapTasks.size) { clearInterval(mapTaskTimer); mapTaskTimer = null; }
+        renderMapProgress();
+      },
+    };
+    mapTasks.set(key, task);
+    if (mapTaskTimer === null) mapTaskTimer = setInterval(renderMapProgress, 250);
+    renderMapProgress();
+    return task;
+  }
+
+  async function readMapJson(response, task) {
+    if (!response.body?.getReader) return response.json();
+    const length = Number(response.headers.get('Content-Length'));
+    const encoding = response.headers.get('Content-Encoding');
+    const total = length > 0 && (!encoding || encoding === 'identity') ? length : null;
+    const reader = response.body.getReader();
+    const cancelReader = () => { void reader.cancel().catch(() => {}); };
+    task.cleanup = cancelReader;
+    const decoder = new TextDecoder();
+    const chunks = [];
+    let received = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(decoder.decode(value, { stream: true }));
+        received += value.byteLength;
+        task.update('Downloading map records…', total ? received / total * 100 : null,
+          tr('{n} MB received', { n: (received / 1048576).toFixed(1) }));
+      }
+      chunks.push(decoder.decode());
+    } finally {
+      if (task.cleanup === cancelReader) task.cleanup = null;
+      reader.releaseLock();
+    }
+    if (!task.current()) throw new DOMException('Map task superseded', 'AbortError');
+    task.update('Reading map records…');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    return JSON.parse(chunks.join(''));
+  }
+
+  async function prepareSalesPoints(payload, points, task, markPvp = false) {
+    const features = [];
+    for (let offset = 0; offset < points.length; offset += 5000) {
+      if (!task.current()) return null;
+      expandPvpSalesPoints(payload, points.slice(offset, offset + 5000)).forEach((point) => {
+        const feature = salesPointFeature(point);
+        if (!feature) return;
+        if (markPvp) feature.properties.pvp_record = true;
+        features.push(feature);
+      });
+      const completed = Math.min(offset + 5000, points.length);
+      task.update('Preparing sale markers…', completed / points.length * 100,
+        tr('{n} of {total} records', { n: completed.toLocaleString(), total: points.length.toLocaleString() }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    return task.current() ? features : null;
+  }
+
+  function drawSaleMarkers(sourceId, task, draw) {
+    task.update('Drawing sale markers…');
+    // GeoJSON clustering happens in a worker after setData returns. Keep the
+    // bar until that source reports completion, rather than claiming 100%.
+    return new Promise((resolve, reject) => {
+      const map = state.map;
+      const cleanup = () => {
+        map.off('sourcedata', onData);
+        map.off('error', onError);
+        task.cleanup = null;
+      };
+      const onData = (event) => {
+        if (event.sourceId === sourceId && event.sourceDataType === 'content' && event.isSourceLoaded) { cleanup(); resolve(); }
+      };
+      const onError = (event) => {
+        if (event.sourceId !== sourceId) return;
+        cleanup();
+        reject(event.error || new Error('Sale markers could not be drawn'));
+      };
+      task.cleanup = () => { cleanup(); resolve(); };
+      map.on('sourcedata', onData);
+      map.on('error', onError);
+      try { draw(); } catch (error) { cleanup(); reject(error); }
+    });
+  }
 
   function syncMapNavigationAccessibility() {
     const lang = document.documentElement.lang.toLowerCase();
@@ -331,9 +463,9 @@
     const coverage = Array.isArray(layer.estimated_bounds)
       ? tr('Approximate data extent')
       : layer.coverage === 'partial'
-        ? `${tr('Partial coverage')}${layer.coverage_note ? ` · ${layer.coverage_note}` : ''}`
+        ? `${tr('Partial coverage')}${layer.coverage_note ? ` · ${tr(layer.coverage_note)}` : ''}`
         : layer.coverage === 'unknown'
-          ? tr('Coverage not reported')
+          ? `${tr('Coverage not reported')}${layer.coverage_note ? ` · ${tr(layer.coverage_note)}` : ''}`
           : `${tr('From zoom')} ${layer.min_zoom || 0}`;
     const freshness = (layer.properties || []).includes('source_release')
       ? tr('Source version shown in feature details')
@@ -485,6 +617,25 @@
     });
   }
 
+  function addPostalZoneLabels() {
+    if (!state.map || state.map.getLayer('label-postal-zones')) return;
+    state.map.addLayer({
+      id: 'label-postal-zones', type: 'symbol', source: layerSourceId({ id: 'postal-zones' }), 'source-layer': 'postal-zones',
+      minzoom: 10,
+      filter: ['!=', ['to-string', ['coalesce', ['get', 'cap'], '']], ''],
+      layout: {
+        'text-field': ['to-string', ['get', 'cap']],
+        'text-font': ['noto-sans-regular'],
+        'text-size': 12,
+        'text-allow-overlap': false,
+        'text-padding': 2,
+      },
+      paint: { 'text-color': '#5b4d20', 'text-halo-color': '#fff', 'text-halo-width': 1.5 },
+    });
+    if (!state.postalLabelsEnabled) state.map.setLayoutProperty('label-postal-zones', 'visibility', 'none');
+    reorderMapLayers();
+  }
+
   function handleLayerFailure(layer) {
     if (state.layerFailures.has(layer.id)) return;
     state.layerFailures.add(layer.id);
@@ -518,27 +669,22 @@
     if (state.map.getLayer(target)) state.map.setPaintProperty(target, property, value);
   }
 
-  async function zoomToLayerPolygons(layer, button, { automatic = false } = {}) {
+  async function zoomToLayerPolygons(layer, button) {
     const map = state.map || state.fallbackMap;
     if (!map || !layer.geojson_url) return;
     const viewport = map.getBounds();
-    const initialCenter = map.getCenter();
-    const initialZoom = map.getZoom();
-    // Include nearby footprints at the edge of a shorter viewport. The same
-    // shared map centre can put a small polygon just below the visible map.
-    const longitudePadding = automatic ? (viewport.getEast() - viewport.getWest()) * 0.25 : 0;
-    const latitudePadding = automatic ? (viewport.getNorth() - viewport.getSouth()) * 0.25 : 0;
     const params = new URLSearchParams({
-      west: String(Math.max(-180, viewport.getWest() - longitudePadding)),
-      south: String(Math.max(-90, viewport.getSouth() - latitudePadding)),
-      east: String(Math.min(180, viewport.getEast() + longitudePadding)),
-      north: String(Math.min(90, viewport.getNorth() + latitudePadding)),
+      west: String(Math.max(-180, viewport.getWest())),
+      south: String(Math.max(-90, viewport.getSouth())),
+      east: String(Math.min(180, viewport.getEast())),
+      north: String(Math.min(90, viewport.getNorth())),
       limit: String(Math.min(layer.max_features || 2000, 5000)),
     });
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
     button.disabled = true;
     mapStatus(tr('Loading polygon footprints…'));
+    const task = beginMapProgress(`polygons-${layer.id}`, 'Loading polygon footprints…');
     try {
       // Read native viewport geometry: tiny polygons can disappear during MVT
       // quantization, but their real footprint can still be inspected at zoom.
@@ -570,42 +716,17 @@
         return { west, south, east, north };
       }).filter(bounds => Number.isFinite(bounds.west) && Number.isFinite(bounds.south) && bounds.east > bounds.west && bounds.north > bounds.south);
       if (!footprints.length) throw new Error('Polygon bounds unavailable');
-      let fit = true;
-      if (automatic) {
-        const currentCenter = map.getCenter();
-        // An automatic reveal must not interrupt a pan or zoom made while
-        // its request was pending.
-        if (Math.abs(currentCenter.lng - initialCenter.lng) > 1e-8 || Math.abs(currentCenter.lat - initialCenter.lat) > 1e-8 || Math.abs(map.getZoom() - initialZoom) > 1e-8) return;
-        const project = coordinates => state.map
-          ? state.map.project(coordinates)
-          : state.fallbackMap.latLngToContainerPoint([coordinates[1], coordinates[0]]);
-        const width = $('directMap').clientWidth, height = $('directMap').clientHeight;
-        fit = !footprints.some(bounds => {
-          const corners = [[bounds.west, bounds.south], [bounds.west, bounds.north], [bounds.east, bounds.south], [bounds.east, bounds.north]].map(project);
-          const visibleWidth = Math.min(width - 50, Math.max(...corners.map(point => point.x))) - Math.max(50, Math.min(...corners.map(point => point.x)));
-          const visibleHeight = Math.min(height - 50, Math.max(...corners.map(point => point.y))) - Math.max(50, Math.min(...corners.map(point => point.y)));
-          return visibleWidth >= 16 && visibleHeight >= 16;
-        });
-        if (fit) {
-          const distance = bounds => {
-            const point = project([(bounds.west + bounds.east) / 2, (bounds.south + bounds.north) / 2]);
-            return Math.hypot(point.x - width / 2, point.y - height / 2);
-          };
-          // Fitting many tiny, scattered footprints would zoom out and keep
-          // them looking like dots. Reveal the nearest actual polygon.
-          footprints = [footprints.reduce((nearest, bounds) => distance(bounds) < distance(nearest) ? bounds : nearest)];
-        }
-      }
       const west = Math.min(...footprints.map(bounds => bounds.west)), south = Math.min(...footprints.map(bounds => bounds.south));
       const east = Math.max(...footprints.map(bounds => bounds.east)), north = Math.max(...footprints.map(bounds => bounds.north));
-      if (fit && state.map) state.map.fitBounds([[west, south], [east, north]], { padding: 80, maxZoom: 20, duration: 600 });
-      else if (fit) state.fallbackMap.fitBounds([[south, west], [north, east]], { padding: [80, 80], maxZoom: 20 });
+      if (state.map) state.map.fitBounds([[west, south], [east, north]], { padding: 80, maxZoom: 20, duration: 600 });
+      else state.fallbackMap.fitBounds([[south, west], [north, east]], { padding: [80, 80], maxZoom: 20 });
       $('mapLayersCard').hidden = true;
       $('layersToggle').setAttribute('aria-expanded', 'false');
       mapStatus(tr('Polygon footprints in view: {n}', { n: footprints.length }));
     } catch (_) {
       mapStatus(tr('Polygon footprints could not be loaded.'), true);
     } finally {
+      task.finish();
       clearTimeout(timeout);
       button.disabled = false;
     }
@@ -634,6 +755,22 @@
     const caption = document.createElement('span');
     caption.textContent = setting.label;
     opacity.append(caption, slider);
+    const labelControls = layer.id === 'postal-zones' ? document.createElement('label') : null;
+    if (labelControls) {
+      labelControls.className = 'map-layer-label-controls';
+      labelControls.hidden = !input.checked;
+      const labelInput = document.createElement('input');
+      labelInput.type = 'checkbox';
+      const labelText = document.createElement('span');
+      labelText.textContent = tr('Show CAP labels');
+      labelInput.addEventListener('change', () => {
+        state.postalLabelsEnabled = labelInput.checked;
+        if (labelInput.checked) addPostalZoneLabels();
+        const labelLayer = state.map?.getLayer('label-postal-zones');
+        if (labelLayer) state.map.setLayoutProperty('label-postal-zones', 'visibility', labelInput.checked ? 'visible' : 'none');
+      });
+      labelControls.append(labelInput, labelText);
+    }
     const geometryControls = layer.kind === 'mixed' ? document.createElement('div') : null;
     if (geometryControls) {
       geometryControls.className = 'map-layer-geometry-controls';
@@ -650,19 +787,20 @@
     }
     input.addEventListener('change', () => {
       state.adminSubstituteAutoLayers.delete(layer.id);
+      if (isAdministrativeSubstitute(layer)) {
+        if (input.checked) state.adminSubstituteUserDisabled.delete(layer.id);
+        else state.adminSubstituteUserDisabled.add(layer.id);
+      }
       if (state.activeLayers === null) state.activeLayers = new Set();
       if (input.checked) state.activeLayers.add(layer.id);
       else state.activeLayers.delete(layer.id);
       if (input.checked && (!state.map || !state.map.getSource(layerSourceId(layer)))) addCatalogLayer(layer);
       setLayerVisibility(layer.id, input.checked);
       opacity.hidden = !input.checked || !state.map;
+      if (labelControls) labelControls.hidden = !input.checked;
       if (geometryControls) geometryControls.hidden = !input.checked;
       reorderMapLayers();
       updateParcelZoomAffordance();
-      if (input.checked && layer.id === 'maritime-concessions') {
-        const zoomButton = geometryControls?.querySelector('.map-layer-zoom');
-        if (zoomButton) void zoomToLayerPolygons(layer, zoomButton, { automatic: true });
-      }
     });
     // Tiles are capped server-side, so dense areas can omit features; say so.
     const cap = layer.max_features ? ` · ${tr('Up to {n} features per tile', { n: Number(layer.max_features).toLocaleString('it-IT') })}` : '';
@@ -671,6 +809,7 @@
     copy.innerHTML = `<strong><i class="map-layer-swatch" style="background:${layerColor(layer.id)}"></i>${escapeHtml(tr(layer.title))}</strong><small class="map-layer-meta">${escapeHtml(layerMetadata(layer))}</small>`;
     row.append(input, copy);
     item.append(row, badges, opacity);
+    if (labelControls) item.appendChild(labelControls);
     if (geometryControls) item.appendChild(geometryControls);
     return { item, input };
   }
@@ -698,10 +837,6 @@
           if (state.activeLayers === null) state.activeLayers = new Set();
           state.activeLayers.add(layer.id);
           addCatalogLayer(layer);
-          if (initializingLayers && layer.id === 'maritime-concessions' && !new URLSearchParams(window.location.search).has('parcel')) {
-            const zoomButton = item.querySelector('.map-layer-zoom');
-            if (zoomButton) void zoomToLayerPolygons(layer, zoomButton, { automatic: true });
-          }
         }
       });
       list.appendChild(section);
@@ -816,6 +951,7 @@
       mapStatus('Zoom in to see cadastral parcels; administrative boundaries are not configured.', true);
       return;
     }
+    if (state.adminSubstituteUserDisabled.has(layer.id)) return;
     if (state.activeLayers === null) state.activeLayers = new Set();
     const alreadyActive = state.activeLayers.has(layer.id);
     if (state.map) {
@@ -843,7 +979,11 @@
     if (!map) return;
     const belowParcelZoom = map.getZoom() < parcelMinZoom();
     if (belowParcelZoom) enableAdministrativeSubstitute();
-    else releaseAdministrativeSubstitute();
+    else {
+      const substitute = administrativeSubstituteLayer();
+      if (substitute) state.adminSubstituteUserDisabled.delete(substitute.id);
+      releaseAdministrativeSubstitute();
+    }
     const panelOpen = !$('directParcelPanel')?.hidden;
     const bounds = map.getBounds?.();
     const parcels = state.catalog.find((layer) => layer.id === 'cadastral-parcels');
@@ -909,10 +1049,13 @@
         else meta.textContent = `Needs configuration${metadata}`;
         // A layer with no backing data cannot render, so a checkbox that
         // silently does nothing is worse than a disabled one. Only block
-        // turning it on; a layer already on can still be turned off.
+        // turning it on; a layer already on can still be turned off. Keep
+        // administrative substitutes toggleable: the low-zoom parcel
+        // affordance may activate one before this advisory health check runs,
+        // and users need to be able to control or retry that fallback.
         const input = row.querySelector('input[type="checkbox"]');
         if (input) {
-          const unusable = payload.available !== false && !health.available;
+          const unusable = payload.available !== false && !health.available && !isAdministrativeSubstitute(catalogLayer);
           if (unusable && input.checked) {
             input.checked = false;
             state.activeLayers?.delete(health.id);
@@ -952,8 +1095,8 @@
       ...idsFor('fill', isPolygonLayer), 'fill-enrichment-bulletin',
       ...idsFor('line', isPolygonLayer),
       ...idsFor('point', isPointLayer),
-      'point-enrichment-fires', 'point-auction-properties', 'point-sales-properties',
-      'label-cadastral-parcels', ...idsFor('label', layer => layer.kind === 'mixed'),
+      'point-enrichment-fires', 'auction-clusters', 'auction-cluster-count', 'point-auction-properties', 'point-sales-properties',
+      'label-cadastral-parcels', ...idsFor('label', layer => layer.id === 'postal-zones' || layer.kind === 'mixed'),
       'fill-adjacent-parcels', 'line-adjacent-parcels',
       'selected-parcel-fill', 'selected-parcel-line',
     ];
@@ -974,10 +1117,13 @@
     const value = visible ? 'visible' : 'none';
     ['fill', 'line', 'point', 'label'].forEach((prefix) => {
       const id = `${prefix}-${layerId}`;
+      const layerVisibility = prefix === 'label' && layerId === 'postal-zones'
+        ? (visible && state.postalLabelsEnabled ? 'visible' : 'none')
+        : value;
       // Skip no-op writes: any layout write marks the style dirty and forces
       // another render.
-      if (state.map.getLayer(id) && (state.map.getLayoutProperty(id, 'visibility') ?? 'visible') !== value) {
-        state.map.setLayoutProperty(id, 'visibility', value);
+      if (state.map.getLayer(id) && (state.map.getLayoutProperty(id, 'visibility') ?? 'visible') !== layerVisibility) {
+        state.map.setLayoutProperty(id, 'visibility', layerVisibility);
       }
     });
   }
@@ -1079,6 +1225,7 @@
     const button = $('parcelSaveButton');
     button.disabled = true;
     button.textContent = tr('Saving…');
+    const task = beginMapProgress('save-parcel', 'Saving parcel…');
     try {
       const response = await fetch('/api/v1/saved-parcels', {
         method: 'POST',
@@ -1106,7 +1253,7 @@
       button.disabled = false;
       button.textContent = tr('Save parcel');
       mapStatus(error.message || 'Could not save parcel', true);
-    }
+    } finally { task.finish(); }
   }
 
   function statusLabel(status) {
@@ -1218,6 +1365,7 @@
       return;
     }
     const hazardOnly = $('shortlistHazardFilter')?.checked;
+    const task = beginMapProgress('shortlist', 'Loading shortlist…');
     list.innerHTML = `<p class="map-muted">${escapeHtml(tr('Loading shortlist…'))}</p>`;
     try {
       const response = await fetch(`/api/v1/saved-parcels${hazardOnly ? '?active_hazard=true' : ''}`);
@@ -1235,7 +1383,7 @@
     } catch (error) {
       list.innerHTML = `<p class="map-muted">${escapeHtml(tr('Shortlist unavailable.'))}</p>`;
       mapStatus(error.message || 'Shortlist unavailable', true);
-    }
+    } finally { task.finish(); }
   }
 
   function showOverlayFeature(layer, feature, lngLat) {
@@ -1245,20 +1393,37 @@
       .addTo(state.map);
 
     const renderPopup = (details = null) => {
-      const rows = Object.entries(properties)
-        .filter(([, value]) => value !== null && value !== undefined && typeof value !== 'object')
-        .slice(0, 6)
-        .map(([key, value]) => `<tr><th>${escapeHtml(key.replaceAll('_', ' '))}</th><td>${escapeHtml(value)}</td></tr>`)
+      const concession = layer.id === 'maritime-concessions';
+      const displayProperties = details?.properties || properties;
+      const relatedItems = details?.related || {};
+      const scalarRows = entries => entries
+        .filter(([, value]) => value !== null && value !== undefined && typeof value !== 'object' && value !== '')
+        .map(([key, value]) => `<tr><th>${escapeHtml(key)}</th><td>${escapeHtml(value)}</td></tr>`)
         .join('');
-      const related = Object.entries(details?.related || {})
+      const snapshot = relatedItems.snapshot?.[0] || {};
+      const rows = concession
+        ? scalarRows([
+          [tr('Concession ID'), displayProperties.idconc],
+          [tr('Administrative label'), displayProperties.admin_label],
+          [tr('Geometry'), displayProperties.geometry_type],
+          [tr('Record type'), displayProperties.layer_kind],
+          [tr('Source release'), displayProperties.source_release],
+          [tr('Snapshot date'), snapshot.reference_date],
+          [tr('Geometry status'), displayProperties.geometry_repaired === true ? tr('Repaired for map') : null],
+        ])
+        : scalarRows(Object.entries(properties)
+          .filter(([, value]) => value !== null && value !== undefined && typeof value !== 'object')
+          .slice(0, 6)
+          .map(([key, value]) => [key.replaceAll('_', ' '), value]));
+      const related = Object.entries(relatedItems)
         .filter(([, value]) => Array.isArray(value) && value.length)
         .map(([name, items]) => {
           const label = {
-            online_documents: 'Concession documents',
-            online_document_matches: 'Matched documents',
-            resources: 'Source resources',
-            document_gaps: 'Document status',
-            snapshot: 'Snapshot',
+            online_documents: tr('Concession documents'),
+            online_document_matches: tr('Matched documents'),
+            resources: tr('Source resources'),
+            document_gaps: tr('Document status'),
+            snapshot: tr('Snapshot'),
           }[name] || name.replaceAll('_', ' ');
           const itemHtml = items.slice(0, 8).map(item => Object.entries(item || {})
             .filter(([, value]) => value !== null && value !== undefined && value !== '')
@@ -1267,11 +1432,20 @@
             .join('')).join('<hr>');
           return `<section class="map-document-group"><strong>${escapeHtml(label)}</strong>${itemHtml || '<small>No details</small>'}</section>`;
         }).join('');
-      const documentHint = details && !related
-        ? '<p class="map-muted">No concession documents are linked to this record.</p>'
+      const documents = relatedItems.online_documents || [];
+      const gaps = relatedItems.document_gaps || [];
+      const relatedSummary = concession && details && (documents.length || gaps.length)
+        ? `<p class="map-muted">${escapeHtml(tr('Related records'))}: ${documents.length} ${escapeHtml(tr('documents'))} · ${gaps.length} ${escapeHtml(tr('document status records'))}</p>`
         : '';
-      const heading = layer.id === 'geo-boundaries' && properties.canonical_name ? `${properties.unit_type ? `${properties.unit_type}: ` : ''}${properties.canonical_name}` : layer.title;
-      popup.setHTML(`<strong>${escapeHtml(heading)}</strong><table class="parcel-detail-table"><tbody>${rows || '<tr><td>No feature details</td></tr>'}</tbody></table>${related}${documentHint}<small>${escapeHtml(layer.source || 'Source not available')}</small>`);
+      const documentHint = concession && details && !documents.length
+        ? `<p class="map-muted">${escapeHtml(tr('No concession documents are linked to this record.'))}</p>`
+        : '';
+      const heading = concession
+        ? `${tr('Maritime concession')}${displayProperties.idconc ? ` · ${displayProperties.idconc}` : ''}`
+        : layer.id === 'geo-boundaries' && properties.canonical_name
+          ? `${properties.unit_type ? `${properties.unit_type}: ` : ''}${properties.canonical_name}`
+          : layer.title;
+      popup.setHTML(`<strong>${escapeHtml(heading)}</strong><table class="parcel-detail-table"><tbody>${rows || '<tr><td>No feature details</td></tr>'}</tbody></table>${relatedSummary}${related}${documentHint}<small>${escapeHtml(layer.source || 'Source not available')}</small>`);
     };
 
     renderPopup();
@@ -1310,6 +1484,7 @@
   async function loadParcelByReference(reference, flyTo = true, featureId = null) {
     if (!reference) return null;
     mapStatus('Loading parcel…');
+    const task = beginMapProgress('parcel', 'Loading parcel…');
     try {
       // A clicked tile feature's id lets the server resolve the parcel by
       // primary key instead of scanning the unindexed reference columns.
@@ -1348,14 +1523,16 @@
       writeUrl();
       mapStatus('Parcel selected');
       loadParcelEnrichment(state.selectedReference, feature);
+      if (sisterBuildingsOverlay.active) void loadSisterBuildingsOverlay();
       return feature;
     } catch (error) {
       mapStatus(error.message || 'Parcel unavailable', true);
       return null;
-    }
+    } finally { task.finish(); }
   }
 
   async function loadParcelEnrichment(reference, feature) {
+    const task = beginMapProgress('parcel-enrichment', 'Loading parcel details…');
     try {
       const response = await fetch(`/api/v1/enrichment/parcel/details/${encodeURIComponent(reference)}`);
       // Replace the loading placeholder either way; a 404 simply means no
@@ -1369,13 +1546,14 @@
     } catch (_) {
       // Identity remains useful without optional enrichment.
       if (state.selectedReference === reference) renderParcelPanel(feature, { unavailable: true });
-    }
+    } finally { task.finish(); }
   }
 
   async function identifyAtPoint(lngLat, renderedFeature = null) {
     const reference = renderedFeature && referenceFrom(renderedFeature.properties);
     if (reference) return loadParcelByReference(reference, false, Number(renderedFeature.properties?.id));
     const params = new URLSearchParams({ lat: String(lngLat.lat), lng: String(lngLat.lng) });
+    const task = beginMapProgress('identify-parcel', 'Finding parcel…');
     try {
       const response = await fetch(`/api/v1/enrichment/parcel/at-point?${params}`);
       if (!response.ok) throw new Error('No parcel at this point');
@@ -1385,6 +1563,7 @@
       state.selectedFeature = feature;
       renderParcelPanel(feature);
     } catch (error) { mapStatus(error.message, true); }
+    finally { task.finish(); }
   }
 
   function renderSearchResults(results) {
@@ -1484,6 +1663,7 @@
     state.sourceTileDown = false;
     updateSourceBanner();
     void loadLayerHealth();
+    window.dispatchEvent(new CustomEvent('cadastral-map-ready'));
     state.catalog.forEach((layer) => {
       const source = state.map?.getSource(layerSourceId(layer));
       const tiles = source?.serialize?.().tiles;
@@ -1517,6 +1697,7 @@
     const controller = new AbortController();
     state.searchController = controller;
     const timeout = setTimeout(() => controller.abort(), 6500);
+    const task = beginMapProgress('search', 'Searching…');
     $('mapSearchStatus').textContent = 'Searching…';
     try {
       const response = await fetch(`/api/v1/map/search?query=${encodeURIComponent(normalized)}`, { signal: controller.signal });
@@ -1555,6 +1736,7 @@
       if (error.name === 'AbortError') return;
       if (requestId === state.searchRequest) $('mapSearchStatus').textContent = 'Search unavailable';
     } finally {
+      task.finish();
       clearTimeout(timeout);
       if (state.searchController === controller) state.searchController = null;
     }
@@ -1573,6 +1755,11 @@
     state.selectedFeature = null;
     if (state.map?.getSource('selected-parcel')) state.map.getSource('selected-parcel').setData({ type: 'FeatureCollection', features: [] });
     state.map?.getSource('adjacent-parcels')?.setData({ type: 'FeatureCollection', features: [] });
+    sisterBuildingsOverlay.fetchToken += 1;
+    sisterBuildingsOverlay.records = [];
+    state.map?.getSource('sister-building-parcel')?.setData(emptyFeatureCollection());
+    if ($('sisterBuildingsCount')) $('sisterBuildingsCount').textContent = '';
+    if ($('sisterBuildingsStatus')) $('sisterBuildingsStatus').textContent = sisterBuildingsOverlay.active ? 'Select a parcel to check SISTER records.' : '';
     const adjacentResults = $('parcelAdjacentResults');
     if (adjacentResults) adjacentResults.innerHTML = '';
     $('directParcelPanel').hidden = true;
@@ -1657,11 +1844,11 @@
     fires: { active: false },
     bulletin: { active: false, fetchToken: 0 },
   };
+  const sisterBuildingsOverlay = { active: false, fetchToken: 0, records: [] };
 
   // ---- Sales map integration --------------------------------------------
-  // Sales remain an optional domain feed.  The land-registry API proxies the
-  // sibling app's /sales/map-points contract, so this map can use the same
-  // rich marker payload without coupling itself to the sales database.
+  // PVP map points come from the enriched v_map_sales database view through
+  // the land-registry API. Details are loaded only when a marker is opened.
   const salesOverlay = {
     active: false,
     points: [],
@@ -1689,7 +1876,7 @@
         ...point,
         display_title: labels[point.category] || 'Sale',
         display_date: point.date || undefined,
-        no_detail: true,
+        pvp_record: true,
       };
     });
   }
@@ -1719,15 +1906,13 @@
     return [...points].sort((left, right) => {
       const a = left.properties || {}; const b = right.properties || {};
       if (sort === 'price_asc') return (salesPrice(a) ?? Infinity) - (salesPrice(b) ?? Infinity);
-      if (sort === 'deadline_asc') return String(a.auction_date || a.offer_deadline || '9999').localeCompare(String(b.auction_date || b.offer_deadline || '9999'));
+      if (sort === 'deadline_asc') return String(a.auction_date || a.offer_deadline || a.display_date || a.date || a.sale_datetime || '9999').localeCompare(String(b.auction_date || b.offer_deadline || b.display_date || b.date || b.sale_datetime || '9999'));
       return (salesScore(b) ?? -Infinity) - (salesScore(a) ?? -Infinity);
     });
   }
 
   function salesGeoJson() {
-    const minimum = numberValue($('salesSaleabilityMin')?.value);
-    const filtered = salesOverlay.points.filter((feature) => minimum === null || (salesScore(feature.properties || {}) ?? -Infinity) >= minimum);
-    return { type: 'FeatureCollection', features: sortSales(filtered) };
+    return { type: 'FeatureCollection', features: sortSales(salesOverlay.points) };
   }
 
   function salesValueLabel(value, suffix = '') {
@@ -1739,7 +1924,10 @@
     const price = salesPrice(properties);
     const appraisal = numberValue(properties.appraisal_value, properties.market_value);
     const score = salesScore(properties);
-    const detail = properties.no_detail ? '' : (properties.detail_url || properties.source_link || (properties.id ? `/sales/${encodeURIComponent(properties.id)}` : ''));
+    const saleId = properties.sale_id ?? properties.id;
+    const detail = properties.pvp_record
+      ? (saleId ? `http://localhost:8016/sales/${encodeURIComponent(saleId)}` : '')
+      : (properties.no_detail ? '' : (properties.detail_url || properties.source_link || (properties.id ? `/sales/${encodeURIComponent(properties.id)}` : '')));
     const lat = numberValue(properties.lat, properties.latitude);
     const lng = numberValue(properties.lng, properties.longitude);
     const maps = lat !== null && lng !== null ? `https://www.google.com/maps/search/?api=1&query=${lat},${lng}` : '';
@@ -1753,7 +1941,13 @@
       + row('DSE', properties.dse_score == null ? '—' : `${salesValueLabel(properties.dse_score)}/100`)
       + row('Saleability', score === null ? '—' : salesValueLabel(score))
       + (properties.dse_effective_discount != null ? row('Effective discount', `${salesValueLabel(properties.dse_effective_discount)}%`) : '')
-      + `<div class="sales-popup-actions">${detail ? `<a href="${escapeHtml(detail)}" target="_blank" rel="noopener noreferrer">Details</a>` : ''}`
+      + (properties.approximate ? row('Location', 'Approximate geocoded location') : '')
+      + (properties.city || properties.province ? row('Place', [properties.city, properties.province].filter(Boolean).join(' · ')) : '')
+      + (properties.address ? row('Address', properties.address) : '')
+      + (properties.description ? row('Description', properties.description) : '')
+      + (properties.detail_error ? row('Details', 'Could not load this sale record') : '')
+      + `<div class="sales-popup-actions">${detail ? `<a href="${escapeHtml(detail)}" target="_blank" rel="noopener noreferrer">${properties.pvp_record ? 'Auction listing' : 'Details'}</a>` : ''}`
+      + (properties.url ? `<a href="${escapeHtml(properties.url)}" target="_blank" rel="noopener noreferrer">Source notice</a>` : '')
       + (maps ? `<a href="${maps}" target="_blank" rel="noopener noreferrer">Google Maps</a>` : '')
       + (street ? `<a href="${street}" target="_blank" rel="noopener noreferrer">Street View</a>` : '')
       + '</div></div>';
@@ -1765,8 +1959,8 @@
       state.map.addSource('sales-properties', { type: 'geojson', data: emptyFeatureCollection(), cluster: true, clusterMaxZoom: 14, clusterRadius: 45 });
     }
     if (!state.map.getLayer('sales-clusters')) state.map.addLayer({ id: 'sales-clusters', type: 'circle', source: 'sales-properties', filter: ['has', 'point_count'], paint: { 'circle-color': '#7c3aed', 'circle-radius': ['step', ['get', 'point_count'], 18, 25, 23, 100, 30], 'circle-opacity': .88, 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 } });
-    if (!state.map.getLayer('sales-cluster-count')) state.map.addLayer({ id: 'sales-cluster-count', type: 'symbol', source: 'sales-properties', filter: ['has', 'point_count'], layout: { 'text-field': ['get', 'point_count_abbreviated'], 'text-size': 11 }, paint: { 'text-color': '#fff' } });
-    if (!state.map.getLayer('sales-unclustered')) state.map.addLayer({ id: 'sales-unclustered', type: 'circle', source: 'sales-properties', filter: ['!', ['has', 'point_count']], paint: { 'circle-radius': 7, 'circle-color': ['interpolate', ['linear'], ['coalesce', ['get', 'saleability_score'], 0], 0, '#dc2626', 50, '#f59e0b', 100, '#16a34a'], 'circle-opacity': .9, 'circle-stroke-color': '#fff', 'circle-stroke-width': 1.5 } });
+    if (!state.map.getLayer('sales-cluster-count')) state.map.addLayer({ id: 'sales-cluster-count', type: 'symbol', source: 'sales-properties', filter: ['has', 'point_count'], layout: { 'text-field': ['get', 'point_count_abbreviated'], 'text-font': ['noto-sans-regular'], 'text-size': 11 }, paint: { 'text-color': '#fff' } });
+    if (!state.map.getLayer('sales-unclustered')) state.map.addLayer({ id: 'sales-unclustered', type: 'circle', source: 'sales-properties', filter: ['!', ['has', 'point_count']], paint: { 'circle-radius': ['case', ['==', ['get', 'approximate'], 1], 5, 7], 'circle-color': ['match', ['get', 'category'], 'residential', '#2563eb', 'land', '#16a34a', 'parking_storage', '#f59e0b', 'commercial', '#db2777', 'industrial', '#7c3aed', 'building', '#0891b2', 'movable', '#ea580c', '#64748b'], 'circle-opacity': ['case', ['==', ['get', 'approximate'], 1], .55, .92], 'circle-stroke-color': '#fff', 'circle-stroke-width': 1.5 } });
     state.map.on('click', 'sales-clusters', (event) => {
       const feature = event.features?.[0];
       if (!feature) return;
@@ -1774,9 +1968,22 @@
         if (!error) state.map.easeTo({ center: feature.geometry.coordinates, zoom });
       });
     });
-    state.map.on('click', 'sales-unclustered', (event) => {
+    state.map.on('click', 'sales-unclustered', async (event) => {
       const feature = event.features?.[0];
-      if (feature) new maplibregl.Popup({ maxWidth: '340px' }).setLngLat(event.lngLat).setHTML(salesPopupHtml(feature.properties || {})).addTo(state.map);
+      if (!feature) return;
+      const properties = feature.properties || {};
+      const popup = new maplibregl.Popup({ maxWidth: '360px' }).setLngLat(event.lngLat).setHTML(salesPopupHtml(properties)).addTo(state.map);
+      if (!properties.pvp_record || !properties.id) return;
+      const task = beginMapProgress('sale-detail', 'Loading auction details…');
+      try {
+        const response = await fetch(`/api/v1/sales/pvp/${encodeURIComponent(properties.id)}`, { credentials: 'same-origin' });
+        if (!response.ok) throw new Error('Sale details unavailable');
+        const detail = await response.json();
+        const combined = { ...properties, ...detail, display_title: detail.property_type || properties.display_title };
+        if (popup.isOpen()) popup.setHTML(salesPopupHtml(combined));
+      } catch (_) {
+        if (popup.isOpen()) popup.setHTML(salesPopupHtml({ ...properties, detail_error: true }));
+      } finally { task.finish(); }
     });
     ['sales-clusters', 'sales-unclustered'].forEach((layer) => {
       state.map.on('mouseenter', layer, () => { state.map.getCanvas().style.cursor = 'pointer'; });
@@ -1784,43 +1991,78 @@
     });
   }
 
-  function salesRequestUrl() {
+  function salesRequestUrl(forceRefresh = false) {
     const url = new URL(window.salesMapPointsUrl || '/api/v1/sales/map-points', window.location.origin);
     const current = new URLSearchParams(window.location.search);
     current.forEach((value, key) => { if (!['lat', 'lng', 'zoom', 'parcel', 'page'].includes(key)) url.searchParams.set(key, value); });
+    url.searchParams.set('period', $('salesPeriod')?.value || 'all');
+    const category = $('salesCategory')?.value || '';
+    if (category) url.searchParams.set('category', category);
+    else url.searchParams.delete('category');
     url.searchParams.set('limit', '60000');
     url.searchParams.set('order_by', $('salesSort')?.value || 'saleability_desc');
+    if (forceRefresh) url.searchParams.set('refresh', '1');
+    else url.searchParams.delete('refresh');
     return url.toString();
   }
 
-  async function loadSalesOverlay() {
+  async function loadSalesOverlay(forceRefresh = false, retryAttempt = 0, pendingTask = null) {
     if (!salesOverlay.active || !state.map) return;
-    addSalesOverlayLayers();
+    const task = pendingTask || beginMapProgress('sales', forceRefresh ? 'Refreshing sales…' : 'Loading sales…');
+    let retryScheduled = false;
     const token = ++salesOverlay.fetchToken;
     const status = $('salesMapStatus');
     if (status) status.textContent = 'Loading sales…';
     try {
-      const response = await fetch(salesRequestUrl(), { credentials: 'same-origin' });
+      addSalesOverlayLayers();
+      const response = await fetch(salesRequestUrl(forceRefresh), { credentials: 'same-origin' });
+      if (response.status === 503 && retryAttempt < 6) {
+        const retrySeconds = Number(response.headers.get('Retry-After')) || 5;
+        task.update('Preparing sales data…', null, tr('Retrying in {n}s', { n: retrySeconds }));
+        retryScheduled = true;
+        if (status) status.textContent = 'Sales data is loading…';
+        window.setTimeout(() => {
+          if (salesOverlay.active && token === salesOverlay.fetchToken) void loadSalesOverlay(false, retryAttempt + 1, task);
+          else task.finish();
+        }, Math.max(1000, retrySeconds * 1000));
+        return;
+      }
       if (!response.ok) throw new Error(response.status === 401 ? 'Sales feed requires sign-in' : 'Sales feed unavailable');
-      const payload = await response.json();
+      const payload = await readMapJson(response, task);
       if (token !== salesOverlay.fetchToken) return;
+      const categorySelect = $('salesCategory');
+      if (categorySelect && Array.isArray(payload.categories)) {
+        const selected = categorySelect.value;
+        const allTypesLabel = categorySelect.options[0]?.textContent || tr('All types');
+        const options = payload.categories.map((item) => `<option value="${escapeHtml(item.key)}">${escapeHtml(item.label)} (${Number(item.count || 0).toLocaleString()})</option>`).join('');
+        categorySelect.innerHTML = `<option value="">${escapeHtml(allTypesLabel)}</option>${options}`;
+        if ([...categorySelect.options].some((option) => option.value === selected)) categorySelect.value = selected;
+      }
       const points = Array.isArray(payload) ? payload : (payload.points || payload.data || []);
-      salesOverlay.points = expandPvpSalesPoints(payload, points).map(salesPointFeature).filter(Boolean);
-      state.map.getSource('sales-properties')?.setData(salesGeoJson());
-      const count = salesGeoJson().features.length;
+      const features = await prepareSalesPoints(payload, points, task);
+      if (!features || token !== salesOverlay.fetchToken || !salesOverlay.active) return;
+      salesOverlay.points = features;
+      const collection = salesGeoJson();
+      await drawSaleMarkers('sales-properties', task, () => state.map.getSource('sales-properties').setData(collection));
+      if (token !== salesOverlay.fetchToken || !salesOverlay.active) return;
+      const count = collection.features.length;
       if ($('salesCount')) $('salesCount').textContent = `(${count})`;
-      if (status) status.textContent = `${count} plotted sale(s)`;
-      if (count) {
+      if (status) status.textContent = `${count.toLocaleString()} mapped record(s) · ${payload.source?.relation || 'PVP view'}`;
+      // Avoid zooming a user out from a parcel or fitting a national set of
+      // tens of thousands of points. Small result sets can still be brought
+      // into view from the map's initial country-level extent.
+      if (count && count <= 5000 && state.map.getZoom() < 7) {
         const bounds = new maplibregl.LngLatBounds();
-        salesGeoJson().features.forEach((feature) => bounds.extend(feature.geometry.coordinates));
+        collection.features.forEach((feature) => bounds.extend(feature.geometry.coordinates));
         if (!bounds.isEmpty()) state.map.fitBounds(bounds, { padding: 70, maxZoom: 15, duration: 500 });
       }
     } catch (error) {
+      if (token !== salesOverlay.fetchToken || !salesOverlay.active) return;
       salesOverlay.points = [];
       state.map.getSource('sales-properties')?.setData(emptyFeatureCollection());
       if ($('salesCount')) $('salesCount').textContent = '';
       if (status) status.textContent = error.message || 'Sales feed unavailable';
-    }
+    } finally { if (!retryScheduled) task.finish(); }
   }
 
   function toggleSalesOverlay() {
@@ -1830,6 +2072,8 @@
     button?.setAttribute('aria-pressed', String(salesOverlay.active));
     if (salesOverlay.active) { void loadSalesGeoLayers(); loadSalesOverlay(); }
     else {
+      salesOverlay.fetchToken += 1;
+      mapTasks.get('sales')?.finish();
       salesOverlay.points = [];
       state.map?.getSource('sales-properties')?.setData(emptyFeatureCollection());
       if ($('salesCount')) $('salesCount').textContent = '';
@@ -1930,6 +2174,97 @@
     if (!state.map.getSource(id)) state.map.addSource(id, { type: 'geojson', data: emptyFeatureCollection() });
   }
 
+  function sisterBuildingPopupHtml(properties = {}) {
+    let records = Array.isArray(properties.records) ? properties.records : [];
+    if (!records.length && typeof properties.records_json === 'string') {
+      try { records = JSON.parse(properties.records_json); } catch (_) { records = []; }
+    }
+    const value = (record, ...keys) => keys.map((key) => record?.[key]).find((item) => item !== null && item !== undefined && item !== '');
+    const rows = records.map((record) => {
+      const category = value(record, 'category', 'building_type') || 'Building record';
+      const detail = [
+        ['Class', value(record, 'cadastral_class')],
+        ['Subunit', value(record, 'subunit')],
+        ['Address', value(record, 'address')],
+        ['Consistency', value(record, 'consistency')],
+        ['Cadastral income', value(record, 'cadastral_income')],
+      ].filter(([, item]) => item !== undefined).map(([label, item]) => `<div><small>${escapeHtml(label)}</small> ${escapeHtml(item)}</div>`).join('');
+      return `<section class="sister-building-record"><strong>${escapeHtml(category)}</strong>${detail || '<small>Additional SISTER details are available in the parcel panel.</small>'}</section>`;
+    }).join('');
+    return `<div class="sister-building-popup"><strong>${escapeHtml(properties.reference || 'Selected parcel')}</strong><p>${records.length} SISTER building record(s)</p>${rows || '<p>No building records for this parcel.</p>'}</div>`;
+  }
+
+  function addSisterBuildingsOverlayLayer() {
+    ensureOverlaySource('sister-building-parcel');
+    if (state.map.getLayer('fill-sister-building-parcel')) return;
+    state.map.addLayer({ id: 'fill-sister-building-parcel', type: 'fill', source: 'sister-building-parcel',
+      paint: { 'fill-color': '#9333ea', 'fill-opacity': .2 } });
+    state.map.addLayer({ id: 'line-sister-building-parcel', type: 'line', source: 'sister-building-parcel',
+      paint: { 'line-color': '#7e22ce', 'line-width': 3, 'line-opacity': 1 } });
+    state.map.on('mouseenter', 'fill-sister-building-parcel', () => { state.map.getCanvas().style.cursor = 'pointer'; });
+    state.map.on('mouseleave', 'fill-sister-building-parcel', () => { state.map.getCanvas().style.cursor = ''; });
+    state.map.on('click', 'fill-sister-building-parcel', (event) => {
+      const feature = event.features?.[0];
+      if (feature) new maplibregl.Popup({ maxWidth: '360px' }).setLngLat(event.lngLat).setHTML(sisterBuildingPopupHtml(feature.properties || {})).addTo(state.map);
+    });
+  }
+
+  async function loadSisterBuildingsOverlay() {
+    if (!sisterBuildingsOverlay.active || !state.map) return;
+    const reference = state.selectedReference;
+    const feature = state.selectedFeature;
+    const status = $('sisterBuildingsStatus');
+    const count = $('sisterBuildingsCount');
+    const token = ++sisterBuildingsOverlay.fetchToken;
+    addSisterBuildingsOverlayLayer();
+    state.map.getSource('sister-building-parcel')?.setData(emptyFeatureCollection());
+    sisterBuildingsOverlay.records = [];
+    if (count) count.textContent = '';
+    if (!reference || !feature?.geometry) {
+      if (status) status.textContent = 'Select a parcel to check SISTER records.';
+      return;
+    }
+    if (status) status.textContent = 'Loading SISTER records…';
+    const task = beginMapProgress('sister-buildings', 'Loading SISTER records…');
+    try {
+      const response = await fetch(`/api/v1/enrichment/parcel/buildings/${encodeURIComponent(reference)}`);
+      if (!response.ok) throw new Error('SISTER records are temporarily unavailable.');
+      const payload = await response.json();
+      if (token !== sisterBuildingsOverlay.fetchToken || reference !== state.selectedReference) return;
+      const records = Array.isArray(payload.buildings) ? payload.buildings : [];
+      sisterBuildingsOverlay.records = records;
+      if (records.length) {
+        state.map.getSource('sister-building-parcel')?.setData({
+          type: 'FeatureCollection',
+          features: [{ type: 'Feature', id: feature.id, geometry: feature.geometry, properties: { reference, records_json: JSON.stringify(records), record_count: records.length } }],
+        });
+      }
+      if (count) count.textContent = records.length ? `(${records.length})` : '(0)';
+      if (status) status.textContent = records.length
+        ? `${records.length} SISTER building record(s) for the selected parcel. Click its outline for details.`
+        : (payload.available ? 'No SISTER building records found for this parcel.' : 'SISTER building records are not available for this parcel.');
+    } catch (error) {
+      if (token !== sisterBuildingsOverlay.fetchToken) return;
+      if (status) status.textContent = error.message || 'SISTER records are temporarily unavailable.';
+    } finally { task.finish(); }
+  }
+
+  function toggleSisterBuildingsOverlay() {
+    sisterBuildingsOverlay.active = !sisterBuildingsOverlay.active;
+    const button = $('toggleSisterBuildings');
+    button?.classList.toggle('active', sisterBuildingsOverlay.active);
+    button?.setAttribute('aria-pressed', String(sisterBuildingsOverlay.active));
+    if (sisterBuildingsOverlay.active) void loadSisterBuildingsOverlay();
+    else {
+      sisterBuildingsOverlay.fetchToken += 1;
+      mapTasks.get('sister-buildings')?.finish();
+      sisterBuildingsOverlay.records = [];
+      state.map?.getSource('sister-building-parcel')?.setData(emptyFeatureCollection());
+      if ($('sisterBuildingsCount')) $('sisterBuildingsCount').textContent = '';
+      if ($('sisterBuildingsStatus')) $('sisterBuildingsStatus').textContent = '';
+    }
+  }
+
   function selectedPoiCategories() {
     const group = $('poiCategories');
     if (!group) return [];
@@ -2025,6 +2360,7 @@
     if (!enrichmentOverlays.poi.active || !state.map) return;
     const token = ++enrichmentOverlays.poi.fetchToken;
     const center = state.map.getCenter();
+    const task = beginMapProgress('poi', 'Loading points of interest…');
     try {
       const response = await fetch(`/api/v1/enrichment/pois/?${poiQueryParams(center).toString()}`);
       if (!response.ok || token !== enrichmentOverlays.poi.fetchToken) return;
@@ -2044,6 +2380,7 @@
       state.map.getSource('enrichment-poi')?.setData({ type: 'FeatureCollection', features });
       renderLegend('enrichmentPoiLegend', present.map((category) => [(POI_CATEGORY_META[category] || {}).color || '#666', (POI_CATEGORY_META[category] || {}).label || category]));
     } catch (_) { /* POI overlay is optional; the map stays usable without it */ }
+    finally { task.finish(); }
   }
 
   function refreshPoiOverlayDebounced() {
@@ -2062,6 +2399,8 @@
       refreshPoiOverlay();
     } else {
       state.map.off('moveend', refreshPoiOverlayDebounced);
+      enrichmentOverlays.poi.fetchToken += 1;
+      mapTasks.get('poi')?.finish();
       state.map.getSource('enrichment-poi')?.setData(emptyFeatureCollection());
       renderLegend('enrichmentPoiLegend', []);
     }
@@ -2118,6 +2457,7 @@
   async function refreshFiresOverlay() {
     if (!enrichmentOverlays.fires.active || !state.map) return;
     const countElement = $('enrichmentFiresCount');
+    const task = beginMapProgress('fires', 'Loading fire detections…');
     try {
       const response = await fetch('/api/v1/enrichment/fires');
       if (!response.ok) throw new Error('unavailable');
@@ -2133,7 +2473,7 @@
       if (countElement) countElement.textContent = data.count ? `(${data.count})` : '(0)';
     } catch (_) {
       if (countElement) countElement.textContent = '';
-    }
+    } finally { task.finish(); }
   }
 
   function toggleFiresOverlay() {
@@ -2143,6 +2483,7 @@
     button?.setAttribute('aria-pressed', String(enrichmentOverlays.fires.active));
     if (enrichmentOverlays.fires.active) { addFiresOverlayLayer(); refreshFiresOverlay(); }
     else {
+      mapTasks.get('fires')?.finish();
       state.map.getSource('enrichment-fires')?.setData(emptyFeatureCollection());
       const countElement = $('enrichmentFiresCount');
       if (countElement) countElement.textContent = '';
@@ -2173,11 +2514,19 @@
     const token = ++enrichmentOverlays.bulletin.fetchToken;
     const countElement = $('enrichmentBulletinCount');
     if (countElement) countElement.textContent = '(…)';
+    const task = beginMapProgress('bulletin', 'Loading weather alerts…');
     try {
       const response = await fetch('/api/v1/enrichment/bulletin');
       if (!response.ok || token !== enrichmentOverlays.bulletin.fetchToken) return;
       const data = await response.json();
       const topology = data?.today_zones;
+      if (data?.stale) {
+        state.map.getSource('enrichment-bulletin')?.setData(emptyFeatureCollection());
+        if (countElement) countElement.textContent = '';
+        renderLegend('enrichmentBulletinLegend', []);
+        mapStatus('Civil Protection bulletin has expired; current alerts are unavailable.', true);
+        return;
+      }
       const object = topology?.objects ? Object.values(topology.objects)[0] : null;
       if (!window.topojson) {
         // Without the parser the layer would look like "no alerts today".
@@ -2202,7 +2551,7 @@
       renderLegend('enrichmentBulletinLegend', ['red', 'orange', 'yellow', 'green'].map((key) => [BULLETIN_LEVELS[key].color, BULLETIN_LEVELS[key].label]));
     } catch (_) {
       if (countElement) countElement.textContent = '';
-    }
+    } finally { task.finish(); }
   }
 
   function toggleBulletinOverlay() {
@@ -2212,6 +2561,8 @@
     button?.setAttribute('aria-pressed', String(enrichmentOverlays.bulletin.active));
     if (enrichmentOverlays.bulletin.active) { addBulletinOverlayLayer(); refreshBulletinOverlay(); }
     else {
+      enrichmentOverlays.bulletin.fetchToken += 1;
+      mapTasks.get('bulletin')?.finish();
       state.map.getSource('enrichment-bulletin')?.setData(emptyFeatureCollection());
       const countElement = $('enrichmentBulletinCount');
       if (countElement) countElement.textContent = '';
@@ -2254,6 +2605,7 @@
     const button = $('parcelAdjacentButton');
     if (button) { button.disabled = true; button.textContent = 'Finding…'; }
     mapStatus('Looking for adjacent parcels…');
+    const task = beginMapProgress('adjacent-parcels', 'Looking for adjacent parcels…');
     try {
       const featureId = Number(state.selectedFeature?.id);
       const idHint = Number.isInteger(featureId) && featureId > 0 ? `?id=${featureId}` : '';
@@ -2268,47 +2620,103 @@
     } catch (error) {
       mapStatus(error.message || 'Adjacency lookup unavailable', true);
     } finally {
+      task.finish();
       if (button) { button.disabled = false; button.textContent = 'Find adjacent parcels'; }
     }
   }
 
   // ---- Auction/market filters (legacy Actions panel: toggleAuctionLayer,
   // filterAuctionsByType, filterAuctionsByPrice, filterActiveAuctions) ----
-  const auctionOverlay = { active: false };
+  const auctionOverlay = { active: false, points: [], fetchToken: 0 };
 
   function addAuctionOverlayLayer() {
-    ensureOverlaySource('auction-properties');
+    if (!state.map.getSource('auction-properties')) {
+      state.map.addSource('auction-properties', { type: 'geojson', data: emptyFeatureCollection(), cluster: true, clusterMaxZoom: 14, clusterRadius: 45 });
+    }
     if (state.map.getLayer('point-auction-properties')) return;
-    state.map.addLayer({ id: 'point-auction-properties', type: 'circle', source: 'auction-properties',
-      paint: { 'circle-radius': ['coalesce', ['get', 'marker_size'], 8], 'circle-color': ['coalesce', ['get', 'marker_color'], '#FF6B6B'], 'circle-stroke-color': '#fff', 'circle-stroke-width': 1, 'circle-opacity': .9 } });
+    state.map.addLayer({ id: 'auction-clusters', type: 'circle', source: 'auction-properties', filter: ['has', 'point_count'],
+      paint: { 'circle-color': '#0f766e', 'circle-radius': ['step', ['get', 'point_count'], 17, 25, 22, 100, 29], 'circle-opacity': .9, 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 } });
+    state.map.addLayer({ id: 'auction-cluster-count', type: 'symbol', source: 'auction-properties', filter: ['has', 'point_count'],
+      layout: { 'text-field': ['get', 'point_count_abbreviated'], 'text-font': ['noto-sans-regular'], 'text-size': 11 }, paint: { 'text-color': '#fff' } });
+    state.map.addLayer({ id: 'point-auction-properties', type: 'circle', source: 'auction-properties', filter: ['!', ['has', 'point_count']],
+      paint: { 'circle-radius': ['case', ['==', ['get', 'approximate'], 1], 5, 7],
+        'circle-color': ['match', ['get', 'category'], 'residential', '#2563eb', 'land', '#16a34a', 'parking_storage', '#f59e0b', 'commercial', '#db2777', 'industrial', '#7c3aed', 'building', '#0891b2', 'movable', '#ea580c', '#64748b'],
+        'circle-opacity': ['case', ['==', ['get', 'approximate'], 1], .55, .92], 'circle-stroke-color': '#fff', 'circle-stroke-width': 1.5 } });
+    state.map.on('click', 'auction-clusters', (event) => {
+      const feature = event.features?.[0];
+      if (!feature) return;
+      state.map.getSource('auction-properties')?.getClusterExpansionZoom(feature.properties.cluster_id, (error, zoom) => {
+        if (!error) state.map.easeTo({ center: feature.geometry.coordinates, zoom });
+      });
+    });
     state.map.on('mouseenter', 'point-auction-properties', () => { state.map.getCanvas().style.cursor = 'pointer'; });
     state.map.on('mouseleave', 'point-auction-properties', () => { state.map.getCanvas().style.cursor = ''; });
-    state.map.on('click', 'point-auction-properties', (event) => {
+    state.map.on('mouseenter', 'auction-clusters', () => { state.map.getCanvas().style.cursor = 'pointer'; });
+    state.map.on('mouseleave', 'auction-clusters', () => { state.map.getCanvas().style.cursor = ''; });
+    state.map.on('click', 'point-auction-properties', async (event) => {
       const feature = event.features?.[0];
       if (!feature) return;
       const props = feature.properties;
-      const price = Number(props.starting_price);
-      new maplibregl.Popup({ maxWidth: '280px' }).setLngLat(event.lngLat).setHTML(
-        `<div class="fires-popup"><strong>${escapeHtml(props.property_type || 'Property')}</strong><div>${escapeHtml(props.municipality || '')}</div>` +
-        `<div>${escapeHtml(props.status || '')}${Number.isFinite(price) ? ` · €${price.toLocaleString('it-IT')}` : ''}</div>` +
-        `${props.description ? `<div>${escapeHtml(props.description)}</div>` : ''}</div>`,
-      ).addTo(state.map);
+      const popup = new maplibregl.Popup({ maxWidth: '360px' }).setLngLat(event.lngLat).setHTML(salesPopupHtml(props)).addTo(state.map);
+      if (!props.id) return;
+      const task = beginMapProgress('sale-detail', 'Loading auction details…');
+      try {
+        const response = await fetch(`/api/v1/sales/pvp/${encodeURIComponent(props.id)}`, { credentials: 'same-origin' });
+        if (!response.ok) throw new Error('Sale details unavailable');
+        const detail = await response.json();
+        if (popup.isOpen()) popup.setHTML(salesPopupHtml({ ...props, ...detail, display_title: detail.property_type || props.display_title }));
+      } catch (_) {
+        if (popup.isOpen()) popup.setHTML(salesPopupHtml({ ...props, detail_error: true }));
+      } finally { task.finish(); }
     });
+    reorderMapLayers();
   }
 
-  async function loadAuctionOverlay() {
+  async function loadAuctionOverlay(forceRefresh = false, retryAttempt = 0, pendingTask = null) {
     if (!auctionOverlay.active || !state.map) return;
+    const task = pendingTask || beginMapProgress('auctions', forceRefresh ? 'Refreshing auction listings…' : 'Loading auction listings…');
+    let retryScheduled = false;
     const countElement = $('auctionCount');
+    const token = ++auctionOverlay.fetchToken;
+    if (countElement) countElement.textContent = '(…)';
     try {
-      const response = await fetch('/api/v1/auction-properties/');
-      if (!response.ok) throw new Error('unavailable');
-      const data = await response.json();
-      state.map.getSource('auction-properties')?.setData(data.geojson || emptyFeatureCollection());
-      if (countElement) countElement.textContent = data.count ? `(${data.count})` : '(0)';
-      applyAuctionFilter();
-    } catch (_) {
+      const response = await fetch(`/api/v1/sales/map-points?period=all${forceRefresh ? '&refresh=1' : ''}`, { credentials: 'same-origin' });
+      if (response.status === 503 && retryAttempt < 6) {
+        const retrySeconds = Number(response.headers.get('Retry-After')) || 5;
+        task.update('Preparing auction data…', null, tr('Retrying in {n}s', { n: retrySeconds }));
+        retryScheduled = true;
+        if (countElement) countElement.textContent = '(loading…)';
+        window.setTimeout(() => {
+          if (auctionOverlay.active && token === auctionOverlay.fetchToken) void loadAuctionOverlay(false, retryAttempt + 1, task);
+          else task.finish();
+        }, Math.max(1000, retrySeconds * 1000));
+        return;
+      }
+      if (!response.ok) throw new Error(response.status === 503 ? 'Enriched PVP sales data is unavailable' : 'Auction records unavailable');
+      const payload = await readMapJson(response, task);
+      if (token !== auctionOverlay.fetchToken) return;
+      const rawPoints = Array.isArray(payload.points) ? payload.points : [];
+      const features = await prepareSalesPoints(payload, rawPoints, task, true);
+      if (!features || token !== auctionOverlay.fetchToken || !auctionOverlay.active) return;
+      auctionOverlay.points = features;
+      const select = $('auctionTypeFilter');
+      if (select && Array.isArray(payload.categories)) {
+        const selected = select.value;
+        const allTypesLabel = select.options[0]?.textContent || 'All types';
+        const options = payload.categories.map((item) => `<option value="${escapeHtml(item.key)}">${escapeHtml(item.label)}</option>`).join('');
+        select.innerHTML = `<option value="">${escapeHtml(allTypesLabel)}</option>${options}`;
+        if ([...select.options].some((option) => option.value === selected)) select.value = selected;
+      }
+      await drawSaleMarkers('auction-properties', task, applyAuctionFilter);
+      if (token !== auctionOverlay.fetchToken || !auctionOverlay.active) return;
+      mapStatus(`${auctionOverlay.points.length.toLocaleString()} auction records from ${payload.source?.relation || 'PVP view'}`);
+    } catch (error) {
+      if (token !== auctionOverlay.fetchToken || !auctionOverlay.active) return;
+      auctionOverlay.points = [];
+      state.map.getSource('auction-properties')?.setData(emptyFeatureCollection());
       if (countElement) countElement.textContent = '';
-    }
+      mapStatus(error.message || 'Auction records unavailable', true);
+    } finally { if (!retryScheduled) task.finish(); }
   }
 
   function applyAuctionFilter() {
@@ -2316,11 +2724,18 @@
     const type = $('auctionTypeFilter')?.value || '';
     const activeOnly = $('auctionActiveOnly')?.checked;
     const maxPrice = Number($('auctionMaxPrice')?.value);
-    const clauses = ['all'];
-    if (type) clauses.push(['==', ['get', 'property_type'], type]);
-    if (activeOnly) clauses.push(['==', ['get', 'status'], 'active']);
-    if (Number.isFinite(maxPrice) && maxPrice > 0) clauses.push(['<=', ['to-number', ['get', 'starting_price']], maxPrice]);
-    state.map.setFilter('point-auction-properties', clauses.length > 1 ? clauses : null);
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const features = auctionOverlay.points.filter((feature) => {
+      const properties = feature.properties || {};
+      if (type && properties.category !== type) return false;
+      if (activeOnly && (!properties.date || properties.date < today)) return false;
+      const price = numberValue(properties.price);
+      return !(Number.isFinite(maxPrice) && maxPrice > 0) || (price !== null && price <= maxPrice);
+    });
+    state.map.getSource('auction-properties')?.setData({ type: 'FeatureCollection', features });
+    const countElement = $('auctionCount');
+    if (countElement) countElement.textContent = `(${features.length.toLocaleString()})`;
   }
 
   function toggleAuctionOverlay() {
@@ -2330,10 +2745,23 @@
     button?.setAttribute('aria-pressed', String(auctionOverlay.active));
     if (auctionOverlay.active) { addAuctionOverlayLayer(); loadAuctionOverlay(); }
     else {
+      auctionOverlay.fetchToken += 1;
+      mapTasks.get('auctions')?.finish();
+      mapTasks.get('auction-filter')?.finish();
+      auctionOverlay.points = [];
       state.map?.getSource('auction-properties')?.setData(emptyFeatureCollection());
       const countElement = $('auctionCount');
       if (countElement) countElement.textContent = '';
     }
+  }
+
+  function updateAuctionFilter() {
+    if (!auctionOverlay.active || !state.map?.getLayer('point-auction-properties')) return;
+    if (mapTasks.has('auctions')) { applyAuctionFilter(); return; }
+    const task = beginMapProgress('auction-filter', 'Updating auction markers…');
+    void drawSaleMarkers('auction-properties', task, applyAuctionFilter)
+      .catch((error) => { if (task.current()) mapStatus(error.message || 'Auction records unavailable', true); })
+      .finally(() => task.finish());
   }
 
   // ---- Attribute table (single-layer, viewport-scoped analogue of the
@@ -2424,6 +2852,7 @@
     tableView.controller?.abort();
     const controller = new AbortController();
     tableView.controller = controller;
+    const task = beginMapProgress('table', 'Loading attribute table…');
     try {
       const response = await fetch(`/api/v1/map/layers/${encodeURIComponent(tableView.layerId)}/features?${params}`, { signal: controller.signal });
       if (!response.ok) throw new Error('Attribute table unavailable');
@@ -2443,7 +2872,7 @@
       tableView.error = tr('Layer data could not be loaded. Try Refresh in a moment.');
       renderTable();
       if (status) status.textContent = error.message || 'Attribute table unavailable';
-    }
+    } finally { task.finish(); }
   }
 
   function setTableViewOpen(open) {
@@ -2454,6 +2883,9 @@
     if (open) {
       populateTableLayerSelect();
       void loadTableData();
+    } else {
+      tableView.controller?.abort();
+      mapTasks.get('table')?.finish();
     }
   }
 
@@ -2508,20 +2940,22 @@
     $('refreshFiresButton').addEventListener('click', refreshFiresOverlay);
     $('toggleEnrichmentBulletin').addEventListener('click', toggleBulletinOverlay);
     $('refreshBulletinButton').addEventListener('click', refreshBulletinOverlay);
+    $('toggleSisterBuildings')?.addEventListener('click', toggleSisterBuildingsOverlay);
     $('toggleAuctionLayer').addEventListener('click', toggleAuctionOverlay);
-    $('refreshAuctionButton')?.addEventListener('click', () => loadAuctionOverlay());
+    $('refreshAuctionButton')?.addEventListener('click', () => loadAuctionOverlay(true));
     $('toggleSalesLayer')?.addEventListener('click', toggleSalesOverlay);
-    $('refreshSalesButton')?.addEventListener('click', () => loadSalesOverlay());
+    $('refreshSalesButton')?.addEventListener('click', () => loadSalesOverlay(true));
     $('salesSort')?.addEventListener('change', () => { if (salesOverlay.active) loadSalesOverlay(); });
-    $('salesSaleabilityMin')?.addEventListener('input', () => { if (salesOverlay.active) state.map?.getSource('sales-properties')?.setData(salesGeoJson()); });
+    $('salesPeriod')?.addEventListener('change', () => { if (salesOverlay.active) loadSalesOverlay(); });
+    $('salesCategory')?.addEventListener('change', () => { if (salesOverlay.active) loadSalesOverlay(); });
     $('salesGeoLayerType')?.addEventListener('change', renderSalesGeoLayers);
     $('salesGeoMetric')?.addEventListener('change', renderSalesGeoLayers);
     syncSalesGeoControls();
     $('googleMapsButton')?.addEventListener('click', () => openMapAt('google'));
     $('streetViewButton')?.addEventListener('click', () => openMapAt('street'));
-    $('auctionTypeFilter').addEventListener('change', applyAuctionFilter);
-    $('auctionActiveOnly').addEventListener('change', applyAuctionFilter);
-    $('auctionMaxPrice').addEventListener('change', applyAuctionFilter);
+    $('auctionTypeFilter').addEventListener('change', updateAuctionFilter);
+    $('auctionActiveOnly').addEventListener('change', updateAuctionFilter);
+    $('auctionMaxPrice').addEventListener('change', updateAuctionFilter);
     $('tableToggle').addEventListener('click', () => setTableViewOpen($('mapTableCard').hidden));
     $('mapTableCloseButton').addEventListener('click', () => setTableViewOpen(false));
     $('mapTableCard').addEventListener('keydown', (event) => {
@@ -2554,8 +2988,40 @@
     });
     $('parcelCloseButton').addEventListener('click', () => { $('directParcelPanel').hidden = true; updateParcelZoomAffordance(); mapStatus(''); });
     $('layersCloseButton').addEventListener('click', () => { $('mapLayersCard').hidden = true; $('layersToggle').setAttribute('aria-expanded', 'false'); });
-    $('layersToggle').addEventListener('click', () => { const card = $('mapLayersCard'); card.hidden = !card.hidden; $('layersToggle').setAttribute('aria-expanded', String(!card.hidden)); });
-    document.querySelectorAll('input[name="basemap"]').forEach((input) => input.addEventListener('change', () => switchBasemap(input.value)));
+    const basemapToggle = $('basemapToggle');
+    const basemapPopover = $('mapBasemapPopover');
+    const setBasemapPickerOpen = (open) => {
+      basemapPopover.hidden = !open;
+      basemapToggle.setAttribute('aria-expanded', String(open));
+    };
+    basemapToggle.addEventListener('click', () => {
+      const open = basemapPopover.hidden;
+      if (open) {
+        $('mapLayersCard').hidden = true;
+        $('layersToggle').setAttribute('aria-expanded', 'false');
+      }
+      setBasemapPickerOpen(open);
+    });
+    document.addEventListener('click', (event) => {
+      if (!basemapPopover.hidden && !event.target.closest('.map-basemap-control')) setBasemapPickerOpen(false);
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && !basemapPopover.hidden) {
+        setBasemapPickerOpen(false);
+        basemapToggle.focus();
+      }
+    });
+    $('layersToggle').addEventListener('click', () => {
+      const card = $('mapLayersCard');
+      card.hidden = !card.hidden;
+      $('layersToggle').setAttribute('aria-expanded', String(!card.hidden));
+      if (!card.hidden) setBasemapPickerOpen(false);
+    });
+    document.querySelectorAll('input[name="basemap"]').forEach((input) => input.addEventListener('change', () => {
+      switchBasemap(input.value);
+      setBasemapPickerOpen(false);
+      basemapToggle.focus();
+    }));
     // The shared aecs4u-theme owns the navbar theme toggle. Keep the map
     // basemap in sync when the selected basemap is light/dark, while leaving
     // satellite imagery unchanged.
@@ -2598,15 +3064,29 @@
       }).addTo(state.fallbackMap);
       return;
     }
-    const center = state.map.getCenter(); const zoom = state.map.getZoom();
+    if (!state.map) return;
+    const previousStyle = state.map.getStyle();
+    const basemapStyle = styleForBasemap(kind);
+    // Keep live overlay data, filters and visibility in the next style.
+    // Style diffs can remove overlays without firing another style.load,
+    // so rebuilding them in that event left auction markers missing.
+    const overlaySources = Object.fromEntries(
+      Object.entries(previousStyle?.sources || {}).filter(([id]) => !id.startsWith('basemap')),
+    );
+    const overlayLayers = (previousStyle?.layers || []).filter((layer) => !layer.id.startsWith('basemap'));
     state.layerFailures.clear();
-    state.map.setStyle(styleForBasemap(kind));
-    state.map.once('style.load', () => { state.map.jumpTo({ center, zoom }); renderLayerCatalog(); if (state.selectedFeature) renderSelectedGeometry(state.selectedFeature); if (salesOverlay.active) void loadSalesOverlay(); if (salesOverlay.geo) renderSalesGeoLayers(); });
+    state.map.setStyle({
+      ...previousStyle,
+      ...basemapStyle,
+      sources: { ...basemapStyle.sources, ...overlaySources },
+      layers: [...basemapStyle.layers, ...overlayLayers],
+    });
   }
 
   async function loadCatalog() {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
+    const task = beginMapProgress('catalog', 'Loading layer catalog…');
     try {
       // Keep the canonical catalog endpoint explicit for deployment checks.
       // fetch('/api/v1/map/layers')
@@ -2625,6 +3105,7 @@
       $('mapLayerList').innerHTML = '<p class="map-muted">Layer catalog unavailable. The basemap remains usable.</p>';
       mapStatus('Map layer catalog unavailable', true);
     } finally {
+      task.finish();
       clearTimeout(timeout);
     }
   }
@@ -2824,8 +3305,17 @@
     window.addEventListener('resize', () => state.map?.resize());
     state.map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), 'bottom-right');
     state.map.addControl(new maplibregl.FullscreenControl(), 'bottom-right');
-    state.map.on('load', () => { state.tilesLoading = true; mapStatus('Loading map tiles…'); void finishMapInit(restored); });
-    state.map.on('dataloading', (event) => { if (event.dataType === 'source' && event.tile) state.tilesLoading = true; });
+    state.map.on('load', () => {
+      state.tilesLoading = true;
+      if (!mapTasks.has('map-tiles')) beginMapProgress('map-tiles', 'Loading map tiles…');
+      mapStatus('Loading map tiles…');
+      void finishMapInit(restored);
+    });
+    state.map.on('dataloading', (event) => {
+      if (event.dataType !== 'source' || !event.tile) return;
+      state.tilesLoading = true;
+      if (!mapTasks.has('map-tiles')) beginMapProgress('map-tiles', 'Loading map tiles…');
+    });
     state.map.on('sourcedata', (event) => {
       // Only a tile that actually loaded counts as recovery. setTiles() itself
       // fires a 'content' sourcedata event, so resetting on any such event
@@ -2843,6 +3333,7 @@
     state.map.on('idle', () => {
       if (!state.tilesLoading) return;
       state.tilesLoading = false;
+      mapTasks.get('map-tiles')?.finish();
       if (!state.mapReadyAnnounced && !state.tileErrors.size && !restored.invalidView && !restored.parcel) {
         state.mapReadyAnnounced = true;
         mapStatus('Map ready');
@@ -2879,6 +3370,17 @@
         if (layer) showOverlayFeature(layer, overlayFeature, event.lngLat);
         return;
       }
+      // Clicks on these dedicated interactive layers are handled by their own
+      // layer listeners below. They are not parcel-selection clicks, even
+      // though MapLibre also emits the map-level click event for them.
+      const handledLayerIds = state.map.getStyle().layers
+        .map((layer) => layer.id)
+        .filter((id) => [
+          'sales-clusters', 'sales-unclustered', 'auction-clusters',
+          'point-auction-properties', 'fill-sister-building-parcel',
+          'point-enrichment-fires', 'fill-enrichment-bulletin',
+        ].includes(id) || (id.startsWith('sales-geo-') && id.endsWith('-points')));
+      if (handledLayerIds.length && state.map.queryRenderedFeatures(event.point, { layers: handledLayerIds }).length) return;
       if (state.map.getZoom() < parcelMinZoom()) {
         mapStatus('Zoom in to select a parcel');
         return;
@@ -2886,6 +3388,11 @@
       identifyAtPoint(event.lngLat, null);
     });
   }
+
+  window.landRegistryPurchaseMap = {
+    selection: () => ({ feature: state.selectedFeature, reference: state.selectedReference }),
+    maps: () => ({ map: state.map, fallbackMap: state.fallbackMap }),
+  };
 
   document.addEventListener('DOMContentLoaded', init);
 })();

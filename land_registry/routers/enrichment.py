@@ -24,17 +24,17 @@ from land_registry.models import EnrichmentDatasetStatus
 
 enrichment_router = APIRouter()
 
-# Reuse aecs4u-stats's own implementations directly for the handful of
-# endpoints verified byte-for-byte equivalent to what this router used to
-# duplicate (bulletin, fires, risks, parcel bbox/comune listings, fogli — see
-# docs/AECS4U_STATS_CONSOLIDATION_PLAN.md). Registering the imported
-# functions themselves — rather than `app.include_router`-mounting the whole
-# upstream router — avoids duplicate OpenAPI operation IDs and a colliding
-# `EnrichmentDatasetStatus` schema name for every path land-registry already
-# overrides with its own richer handler below.
-enrichment_router.add_api_route(
-    "/bulletin", _aecs4u_stats_enrichment.get_bulletin, methods=["GET"]
-)
+
+@enrichment_router.get("/bulletin")
+async def get_bulletin() -> dict:
+    result = await asyncio.to_thread(stats_service.get_criticality_bulletin)
+    if result is None:
+        raise HTTPException(status_code=503, detail="No stored Civil Protection bulletin available")
+    return result
+
+
+# Reuse upstream handlers for endpoints with identical behavior. The bulletin
+# uses the local adapter above because its source is now hazards PostgreSQL.
 enrichment_router.add_api_route("/fires", _aecs4u_stats_enrichment.get_fires, methods=["GET"])
 enrichment_router.add_api_route(
     "/risks/{istat_code}", _aecs4u_stats_enrichment.get_risks, methods=["GET"]

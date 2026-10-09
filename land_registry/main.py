@@ -28,6 +28,7 @@ from land_registry.dependencies import MapSessionMiddleware, _map_state
 from land_registry.routers.api import api_router
 from land_registry.routers.auth_pages import router as auth_pages_router
 from land_registry.routers.enrichment import enrichment_router
+from land_registry.routers.cadastral_purchases import router as cadastral_purchases_router
 from land_registry.routers.api import account_workspace_snapshot, load_account_preferences
 from land_registry.routers.auth import get_current_user_optional
 from land_registry.legal_pages import PAGE_KEYS, build_page
@@ -613,6 +614,14 @@ if _THEME_AVAILABLE:
         static_url_path="/static/aecs4u-theme",
         templates_dir=_theme_overrides_dir,
     )
+    # Share purchase partials with the fallback map without exposing the app's
+    # base.html to the theme loader.
+    from jinja2 import ChoiceLoader, FileSystemLoader, PrefixLoader
+
+    _theme_setup.templates.env.loader = ChoiceLoader([
+        _theme_setup.templates.env.loader,
+        PrefixLoader({"partials": FileSystemLoader(_theme_overrides_dir.parent / "partials")}),
+    ])
 else:
     logger.warning("aecs4u-theme not installed - running without theme package")
 
@@ -641,6 +650,20 @@ if _AUTH_AVAILABLE:
 
 # Include the API router with /api/v1 prefix
 app.include_router(api_router, prefix="/api/v1")
+app.include_router(cadastral_purchases_router, prefix="/api/v1")
+
+# Use the shared billing services; the cadastral router owns its scoped checkout
+# and awaits fulfillment during signed callbacks so failed delivery is retried.
+from aecs4u_billing import BillingConfig, setup_billing
+
+setup_billing(
+    app,
+    config=BillingConfig(site_id="land-registry", site_name="AECS4U Land Registry"),
+    include_billing_routes=False,
+    include_webhook_routes=False,
+    register_default_webhook_handlers=False,
+    start_usage_tracking=False,
+)
 
 # Parcel enrichment backed by aecs4u-stats (ISTAT reference data, OSM POIs).
 # land_registry/routers/enrichment.py directly re-registers six handler
@@ -868,6 +891,37 @@ async def _build_main_map_shell_context(request: Request) -> dict:
         "{n} polygons on map": gt("{n} polygons on map"),
         "Loading...": gt("Loading..."),
         "Preparing...": gt("Preparing..."),
+        "Loading auction listings…": gt("Loading auction listings…"),
+        "Refreshing auction listings…": gt("Refreshing auction listings…"),
+        "Loading sales…": gt("Loading sales…"),
+        "Refreshing sales…": gt("Refreshing sales…"),
+        "Preparing auction data…": gt("Preparing auction data…"),
+        "Preparing sales data…": gt("Preparing sales data…"),
+        "Downloading map records…": gt("Downloading map records…"),
+        "Reading map records…": gt("Reading map records…"),
+        "Preparing sale markers…": gt("Preparing sale markers…"),
+        "Drawing sale markers…": gt("Drawing sale markers…"),
+        "Updating auction markers…": gt("Updating auction markers…"),
+        "{n} MB received": gt("{n} MB received"),
+        "{n} of {total} records": gt("{n} of {total} records"),
+        "{n} tasks in progress": gt("{n} tasks in progress"),
+        "Retrying in {n}s": gt("Retrying in {n}s"),
+        "Saving parcel…": gt("Saving parcel…"),
+        "Loading shortlist…": gt("Loading shortlist…"),
+        "Loading auction details…": gt("Loading auction details…"),
+        "Loading parcel…": gt("Loading parcel…"),
+        "Loading parcel details…": gt("Loading parcel details…"),
+        "Finding parcel…": gt("Finding parcel…"),
+        "Searching…": gt("Searching…"),
+        "Looking for adjacent parcels…": gt("Looking for adjacent parcels…"),
+        "Loading attribute table…": gt("Loading attribute table…"),
+        "Loading layer catalog…": gt("Loading layer catalog…"),
+        "Loading polygon footprints…": gt("Loading polygon footprints…"),
+        "Loading SISTER records…": gt("Loading SISTER records…"),
+        "Loading points of interest…": gt("Loading points of interest…"),
+        "Loading fire detections…": gt("Loading fire detections…"),
+        "Loading weather alerts…": gt("Loading weather alerts…"),
+        "Loading map tiles…": gt("Loading map tiles…"),
         "0 files": gt("0 files"),
         "0 features": gt("0 features"),
         "No data loaded": gt("No data loaded"),
@@ -977,7 +1031,7 @@ async def serve_direct_map(request: Request, user=Depends(get_current_user_optio
             "Pharmacies", "Hospitals", "Public transport", "Parks", "Restaurants",
             "Red alert", "Orange alert", "Yellow alert", "No alert", "Unavailable", "Alert area",
             "Administrative", "Cadastral", "Market", "Risk", "Demographics", "Territory",
-            "Opacity", "Fill", "Partial coverage: {layers}", "Zoom in: visible from zoom {n}",
+            "Opacity", "Fill", "Show CAP labels", "Partial coverage: {layers}", "Zoom in: visible from zoom {n}",
             "Outside coverage: {note}", "Up to {n} features per tile", "Default",
             "Administrative statistics are not configured.", "Turn on Sales to load administrative statistics.",
             "No statistics metrics available.", "Coverage not reported", "Approximate data extent",

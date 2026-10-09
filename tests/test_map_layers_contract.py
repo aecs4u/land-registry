@@ -34,6 +34,7 @@ def test_catalog_covers_every_canonical_spatial_relation():
         "serving.municipality_profile",
         "serving.market_zone_snapshot",
         "agenziademanio.concessions",
+        "solar.potential_by_municipality",
     } == tables
 
 

@@ -15,9 +15,9 @@ Data stores are built with the aecs4u-stats pipeline, e.g.:
     python -m aecs4u_stats.mef.scripts.import_irpef --year 2022
     python -m aecs4u_stats.hazards.scripts.import_seismic --file classificazione.xlsx
 
-The IdroGEO (flood/landslide), FIRMS (active fires) and DPC bulletin datasets
-are runtime API clients (no local store) — see ``get_environmental_risks``,
-``get_active_fires`` and ``get_criticality_bulletin`` below.
+IdroGEO (flood/landslide) and FIRMS (active fires) use runtime API clients.
+DPC bulletins are read from hazards PostgreSQL and refreshed independently
+of map requests — see ``land_registry.bulletin_store``.
 """
 
 import asyncio
@@ -102,7 +102,6 @@ except ImportError:
 from aecs4u_stats.hazards import (
     active_fires as _active_fires,
     get_comune_hazards,
-    latest_criticality_bulletin,
     seismic_db_available,
     seismic_zone,
     summarize_hazards,
@@ -1143,6 +1142,8 @@ class _AsyncPostgresSource:
         self._pool = None
         self._retry_at = 0.0
         self._poi_relation_cache: tuple[str | None, float] | None = None
+        self._read_model_relation_cache: tuple[bool, float] | None = None
+        self._optional_relations_cache: dict[tuple[str, ...], tuple[bool, float]] = {}
 
     async def _get_pool(self):
         if self._pool is None:
@@ -1172,7 +1173,64 @@ class _AsyncPostgresSource:
         async with pool.acquire() as connection:
             return await connection.fetchrow(_asyncpg_sql(sql), *params)
 
+    async def _read_model_available(self) -> bool:
+        """Check whether the optional serving cache is provisioned.
+
+        The serving schema is managed by deployment migrations. Request-path
+        code must tolerate installations where that migration has not run,
+        and must not attempt DDL using the application's database role.
+        """
+        cached = self._read_model_relation_cache
+        if cached is not None and time.monotonic() < cached[1]:
+            return cached[0]
+        row = await self._fetchrow(
+            "SELECT to_regclass('serving.parcel_enrichment_read_model') AS relation"
+        )
+        available = row is not None and row["relation"] is not None
+        self._read_model_relation_cache = (
+            available,
+            time.monotonic() + (300 if available else 60),
+        )
+        if not available:
+            logger.info("Serving parcel enrichment read model is not provisioned")
+        return available
+
+    async def _relations_available(self, relations: tuple[str, ...]) -> bool:
+        """Return whether an optional lookup's source tables are provisioned.
+
+        These enrichment datasets are not installed in every stats database.
+        Probe once per relation set and use the local fallback when absent,
+        instead of raising an expected UndefinedTableError for every request.
+        """
+        key = tuple(sorted(relations))
+        now = time.monotonic()
+        cached = self._optional_relations_cache.get(key)
+        if cached is not None and now < cached[1]:
+            return cached[0]
+        row = await self._fetchrow(
+            """
+            SELECT bool_and(to_regclass(relation_name) IS NOT NULL) AS available
+            FROM unnest($1::text[]) AS requested(relation_name)
+            """,
+            (list(key),),
+        )
+        available = bool(row and row["available"])
+        self._optional_relations_cache[key] = (
+            available,
+            now + (300 if available else 60),
+        )
+        if not available:
+            logger.info(
+                "Optional PostgreSQL lookup relations are not provisioned; using local fallback: %s",
+                ", ".join(key),
+            )
+        return available
+
     async def municipality_by_cadastral_code(self, cadastral_code: str) -> Optional[Dict[str, Any]]:
+        if not await self._relations_available((
+            "geo.geo_identifier", "geo.geo_unit", "geo.geo_relation", "serving.municipality_profile",
+        )):
+            return None
         row = await self._fetchrow(
             """
             SELECT gi_cad.code AS cadastral_code,
@@ -1244,7 +1302,11 @@ class _AsyncPostgresSource:
             "source": "aecs4u-stats PostgreSQL via asyncpg",
         }
 
-    async def omi_quotes_by_cadastral_code(self, cadastral_code: str) -> Dict[str, Any]:
+    async def omi_quotes_by_cadastral_code(self, cadastral_code: str) -> Optional[Dict[str, Any]]:
+        if not await self._relations_available((
+            "geo.geo_identifier", "spatial.market_zone", "facts.market_quote_fact",
+        )):
+            return None
         rows = await self._fetch(
             """
             SELECT mz.omi_zone_key, q.period, q.typology, q.condition,
@@ -1294,6 +1356,8 @@ class _AsyncPostgresSource:
         }
 
     async def income_profile_by_cadastral_code(self, cadastral_code: str) -> Optional[Dict[str, Any]]:
+        if not await self._relations_available(("facts.tax_fact", "geo.geo_identifier")):
+            return None
         rows = await self._fetch(
             """
             SELECT t.year, t.measure, t.frequency, t.amount
@@ -1374,6 +1438,10 @@ class _AsyncPostgresSource:
     ) -> Optional[Dict[str, Any]]:
         """Load optional spatial/tax context without leaving the event loop."""
         if not point:
+            return None
+        if not await self._relations_available((
+            "geo.geo_identifier", "geo.geo_unit", "serving.municipality_profile",
+        )):
             return None
         row = await self._fetchrow(
             """
@@ -1465,6 +1533,8 @@ class _AsyncPostgresSource:
         }
 
     async def get_read_model(self, parcel_key: str) -> Optional[Dict[str, Any]]:
+        if not await self._read_model_available():
+            return None
         row = await self._fetchrow(
             """
             SELECT parcel_key, payload, source_fingerprint, refreshed_at
@@ -1495,6 +1565,8 @@ class _AsyncPostgresSource:
     async def upsert_read_model(
         self, parcel_key: str, payload: Dict[str, Any], source_fingerprint: Optional[str]
     ) -> bool:
+        if not await self._read_model_available():
+            return False
         pool = await self._get_pool()
         serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
         async with pool.acquire() as connection:
@@ -1562,6 +1634,8 @@ async def aget_omi_quotes(comune: str, zona: Optional[str] = None) -> Dict[str, 
             result = await asyncio.wait_for(
                 source.omi_quotes_by_cadastral_code(comune), timeout=8
             )
+            if result is None:
+                return await asyncio.to_thread(get_omi_quotes, comune, zona=zona, use_postgres=False)
             if zona:
                 result["quotes"] = [
                     quote for quote in result.get("quotes", [])
@@ -3569,8 +3643,8 @@ def enrichment_status() -> Dict[str, Any]:
             "note": "NASA FIRMS — live API, requires FIRMS_MAP_KEY",
         },
         "hazards_bulletin": {
-            "available": True,
-            "note": "Protezione Civile — live API, requires network access",
+            "available": get_criticality_bulletin() is not None,
+            "note": "Protezione Civile — hazards PostgreSQL, refreshed by a separate scheduled job",
         },
     }
 
@@ -4262,9 +4336,10 @@ def get_active_fires(radius_km: float = 50.0, lat: Optional[float] = None, lng: 
 
 
 def get_criticality_bulletin() -> Optional[Dict[str, Any]]:
-    """Latest Protezione Civile hydro-criticality bulletin (allerta meteo), or
-    ``None`` if the live API is unreachable."""
-    return latest_criticality_bulletin()
+    """Latest stored DPC snapshot, without outbound HTTP during map requests."""
+    from land_registry.bulletin_store import get_bulletin
+
+    return get_bulletin()
 
 
 def cadastral_store_available() -> bool:

@@ -1164,6 +1164,9 @@ msgstr "Opacità"
 msgid "Fill"
 msgstr "Riempimento"
 
+msgid "Show CAP labels"
+msgstr "Mostra etichette CAP"
+
 msgid "Partial coverage: {layers}"
 msgstr "Copertura parziale: {layers}"
 
@@ -1459,3 +1462,270 @@ msgstr "Impossibile caricare i poligoni."
 
 msgid "Polygon footprints in view: {n}"
 msgstr "Poligoni nell'area visualizzata: {n}"
+
+msgid "MIT/SID snapshot; published coverage may be incomplete. Orange polygons are concession footprints; blue points are point records. A marker is hidden when its matching footprint is drawable in the same tile. Use “Zoom to polygons” to move the map to available footprints."
+msgstr "Istantanea MIT/SID; la copertura pubblicata potrebbe essere incompleta. I poligoni arancioni indicano le concessioni; i punti blu rappresentano record puntuali. Il marcatore viene nascosto quando il poligono corrispondente è visibile nella stessa tessera. Usa “Inquadra poligoni” per spostare la mappa sulle geometrie disponibili."
+
+msgid "Concession ID"
+msgstr "ID concessione"
+
+msgid "Administrative label"
+msgstr "Denominazione amministrativa"
+
+msgid "Geometry"
+msgstr "Geometria"
+
+msgid "Record type"
+msgstr "Tipo di record"
+
+msgid "Source release"
+msgstr "Versione della fonte"
+
+msgid "Snapshot date"
+msgstr "Data dell'istantanea"
+
+msgid "Geometry status"
+msgstr "Stato della geometria"
+
+msgid "Repaired for map"
+msgstr "Corretta per la mappa"
+
+msgid "Maritime concession"
+msgstr "Concessione del demanio marittimo"
+
+msgid "Related records"
+msgstr "Record collegati"
+
+msgid "documents"
+msgstr "documenti"
+
+msgid "document status records"
+msgstr "record sullo stato dei documenti"
+
+msgid "Concession documents"
+msgstr "Documenti della concessione"
+
+msgid "Matched documents"
+msgstr "Documenti associati"
+
+msgid "Source resources"
+msgstr "Risorse della fonte"
+
+msgid "Document status"
+msgstr "Stato dei documenti"
+
+msgid "Snapshot"
+msgstr "Istantanea"
+
+msgid "No concession documents are linked to this record."
+msgstr "Nessun documento della concessione è collegato a questo record."
+
+msgid "MIT/SID snapshot; published coverage may be incomplete"
+msgstr "Istantanea MIT/SID; la copertura pubblicata potrebbe essere incompleta"
+
+msgid "Cadastral query purchases"
+msgstr "Acquisti di visure catastali"
+
+msgid "Purchased results are visible only to you and administrators."
+msgstr "I risultati acquistati sono visibili solo a te e agli amministratori."
+
+msgid "Provider"
+msgstr "Fornitore"
+
+msgid "Registry"
+msgstr "Catasto"
+
+msgid "Land"
+msgstr "Terreni"
+
+msgid "Municipality cadastral code"
+msgstr "Codice catastale del comune"
+
+msgid "Subaltern (optional)"
+msgstr "Subalterno (facoltativo)"
+
+msgid "Check the cadastral identifiers before requesting a quote."
+msgstr "Verifica gli identificativi catastali prima di richiedere un preventivo."
+
+msgid "Get quote"
+msgstr "Richiedi preventivo"
+
+msgid "Pay with secure checkout"
+msgstr "Paga con pagamento sicuro"
+
+msgid "My purchases"
+msgstr "I miei acquisti"
+
+msgid "Purchased record"
+msgstr "Risultato acquistato"
+
+msgid "Download cadastral document"
+msgstr "Scarica il documento catastale"
+
+msgid "Purchase cadastral query"
+msgstr "Acquista visura catastale"
+
+msgid "Unable to load purchases."
+msgstr "Impossibile caricare gli acquisti."
+
+msgid "Customer purchases"
+msgstr "Acquisti dei clienti"
+
+msgid "No purchases yet. Select a parcel to request a query."
+msgstr "Nessun acquisto. Seleziona una particella per richiedere una visura."
+
+msgid "Getting quote"
+msgstr "Richiesta preventivo"
+
+msgid "Quote ready"
+msgstr "Preventivo disponibile"
+
+msgid "Opening checkout"
+msgstr "Apertura del pagamento"
+
+msgid "Awaiting payment"
+msgstr "In attesa di pagamento"
+
+msgid "Paid · waiting for provider"
+msgstr "Pagato · in attesa del fornitore"
+
+msgid "Query in progress"
+msgstr "Visura in elaborazione"
+
+msgid "Provider failed · contact support"
+msgstr "Errore del fornitore · contatta l’assistenza"
+
+msgid "Cancelled"
+msgstr "Annullato"
+
+msgid "Continue purchase"
+msgstr "Continua l’acquisto"
+
+msgid "View purchased record"
+msgstr "Visualizza il risultato acquistato"
+
+msgid "Show on map"
+msgstr "Mostra sulla mappa"
+
+msgid "Your cadastral query is ready and available on the map."
+msgstr "La tua visura catastale è pronta e disponibile sulla mappa."
+
+msgid "A cadastral purchase is ready. Open My purchases to view it."
+msgstr "Una visura acquistata è pronta. Apri I miei acquisti per visualizzarla."
+
+msgid "Document available for download."
+msgstr "Documento disponibile per il download."
+
+msgid "Quote expires"
+msgstr "Scadenza del preventivo"
+
+msgid "Review this quote, then continue to secure checkout."
+msgstr "Verifica il preventivo, quindi procedi al pagamento sicuro."
+
+msgid "Sign in to purchase cadastral queries."
+msgstr "Accedi per acquistare visure catastali."
+
+msgid "Select a parcel to purchase a cadastral query."
+msgstr "Seleziona una particella per acquistare una visura catastale."
+
+msgid "Purchases are not configured yet. Your existing orders remain accessible."
+msgstr "Gli acquisti non sono ancora configurati. I tuoi ordini precedenti restano accessibili."
+
+msgid "Getting quote…"
+msgstr "Richiesta preventivo…"
+
+msgid "Opening secure checkout…"
+msgstr "Apertura del pagamento sicuro…"
+
+msgid "Payment is being processed. Your result will appear after delivery."
+msgstr "Il pagamento è in elaborazione. Il risultato apparirà dopo la consegna."
+
+msgid "Loading auction listings…"
+msgstr "Caricamento degli annunci d'asta…"
+
+msgid "Refreshing auction listings…"
+msgstr "Aggiornamento degli annunci d'asta…"
+
+msgid "Loading sales…"
+msgstr "Caricamento delle vendite…"
+
+msgid "Refreshing sales…"
+msgstr "Aggiornamento delle vendite…"
+
+msgid "Preparing auction data…"
+msgstr "Preparazione dei dati delle aste…"
+
+msgid "Preparing sales data…"
+msgstr "Preparazione dei dati delle vendite…"
+
+msgid "Downloading map records…"
+msgstr "Download dei dati della mappa…"
+
+msgid "Reading map records…"
+msgstr "Lettura dei dati della mappa…"
+
+msgid "Preparing sale markers…"
+msgstr "Preparazione dei marcatori delle vendite…"
+
+msgid "Drawing sale markers…"
+msgstr "Visualizzazione dei marcatori delle vendite…"
+
+msgid "Updating auction markers…"
+msgstr "Aggiornamento dei marcatori delle aste…"
+
+msgid "{n} MB received"
+msgstr "{n} MB ricevuti"
+
+msgid "{n} of {total} records"
+msgstr "{n} di {total} record"
+
+msgid "{n} tasks in progress"
+msgstr "{n} operazioni in corso"
+
+msgid "Retrying in {n}s"
+msgstr "Nuovo tentativo tra {n}s"
+
+msgid "Saving parcel…"
+msgstr "Salvataggio della particella…"
+
+msgid "Loading shortlist…"
+msgstr "Caricamento dell'elenco delle particelle…"
+
+msgid "Loading auction details…"
+msgstr "Caricamento dei dettagli dell'asta…"
+
+msgid "Loading parcel…"
+msgstr "Caricamento della particella…"
+
+msgid "Loading parcel details…"
+msgstr "Caricamento dei dettagli della particella…"
+
+msgid "Finding parcel…"
+msgstr "Ricerca della particella…"
+
+msgid "Searching…"
+msgstr "Ricerca in corso…"
+
+msgid "Looking for adjacent parcels…"
+msgstr "Ricerca delle particelle adiacenti…"
+
+msgid "Loading attribute table…"
+msgstr "Caricamento della tabella degli attributi…"
+
+msgid "Loading layer catalog…"
+msgstr "Caricamento del catalogo dei livelli…"
+
+msgid "Loading SISTER records…"
+msgstr "Caricamento dei dati SISTER…"
+
+msgid "Loading points of interest…"
+msgstr "Caricamento dei punti di interesse…"
+
+msgid "Loading fire detections…"
+msgstr "Caricamento dei rilevamenti degli incendi…"
+
+msgid "Loading weather alerts…"
+msgstr "Caricamento delle allerte meteo…"
+
+msgid "Loading map tiles…"
+msgstr "Caricamento delle tessere della mappa…"

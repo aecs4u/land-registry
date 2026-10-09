@@ -868,6 +868,7 @@
 
     function _renderBulletin(bulletinData, muniName) {
         if (!bulletinData) return _emptyState('Bollettino Protezione Civile non disponibile.');
+        if (bulletinData.stale) return _emptyState('Bollettino scaduto: allerte odierne non disponibili.') + _feedRefreshNote(bulletinData);
         const zone = _findBulletinZone(bulletinData, muniName);
         if (!zone) return _emptyState('Comune non trovato nel bollettino odierno.') + _feedRefreshNote(bulletinData);
         const risks = [

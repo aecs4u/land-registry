@@ -148,8 +148,10 @@ def test_first_load_does_not_block_and_failures_keep_the_last_copy():
 
 
 class _Connection:
-    def __init__(self, columns, rows=(), detail=None):
+    def __init__(self, columns, rows=(), detail=None, *, point_columns=(), points_error=None):
         self.columns = columns
+        self.point_columns = point_columns
+        self.points_error = points_error
         self.rows = list(rows)
         self.detail = detail
         self.sql = []
@@ -164,7 +166,10 @@ class _Connection:
     async def fetch(self, sql, *params, timeout=None):
         self.sql.append(sql)
         if "pg_attribute" in sql:
-            return [{"name": name} for name in self.columns]
+            columns = self.point_columns if params[0].endswith('.v_map_sale_points') else self.columns
+            return [{"name": name} for name in columns]
+        if "FROM pvp.v_map_sale_points" in sql and self.points_error is not None:
+            raise self.points_error
         return self.rows
 
     async def fetchrow(self, sql, *params, timeout=None):
@@ -193,6 +198,61 @@ def test_loader_reads_only_published_columns_inside_italy():
     assert "sale_datetime" not in load_sql
     assert any("SET LOCAL statement_timeout" in sql for sql in connection.sql)
     assert snapshot["points"][0][:6] == [1, 12.2, 44.1, 9, None, "land"]
+
+
+def test_bulk_points_view_preserves_classification_and_uses_detail_view_for_popups():
+    point_columns = {
+        "sale_id", "latitude", "longitude", "price", "sale_datetime", "property_type",
+        "coordinate_is_approximate", "description_hint",
+    }
+    detail_columns = point_columns - {"description_hint"} | {"description", "city"}
+    connection = _Connection(detail_columns, rows=[
+        {**_row(1, 37.03, 15.21, kind=""), "description_hint": "box auto", "coordinate_is_approximate": True},
+    ], detail={**dict.fromkeys(detail_columns), "sale_id": 1, "description": "Full notice", "city": "Siracusa"},
+       point_columns=point_columns)
+    store = PvpSalesStore(_Source(connection))
+    snapshot = asyncio.run(store._load())
+    detail = asyncio.run(store.sale_detail(1))
+
+    assert snapshot["relation"] == "pvp.v_map_sale_points"
+    assert snapshot["points"][0][5:] == ["parking_storage", 1]
+    assert detail["description"] == "Full notice" and detail["city"] == "Siracusa"
+    assert any("FROM pvp.v_map_sales WHERE sale_id" in sql for sql in connection.sql)
+    assert any("SET LOCAL work_mem" in sql for sql in connection.sql)
+
+
+def test_failed_bulk_points_query_falls_back_to_live_sales_view():
+    columns = {"sale_id", "latitude", "longitude"}
+    connection = _Connection(columns, rows=[_row(1, 37.03, 15.21)], point_columns=columns,
+                             points_error=RuntimeError("points view unavailable"))
+    snapshot = asyncio.run(PvpSalesStore(_Source(connection))._load())
+    assert snapshot["relation"] == "pvp.v_map_sales"
+    assert snapshot["points"][0][:3] == [1, 15.21, 37.03]
+
+
+def test_concurrent_force_refresh_requests_share_one_database_load():
+    async def scenario():
+        store = PvpSalesStore(connection_source=object())
+        started, release = asyncio.Event(), asyncio.Event()
+        calls = []
+
+        async def load():
+            calls.append(1)
+            started.set()
+            await release.wait()
+            return store._build_snapshot([_row(1, 37.03, 15.21)])
+
+        store._load = load
+        first = asyncio.create_task(store.refresh())
+        await started.wait()
+        second = asyncio.create_task(store.refresh())
+        await asyncio.sleep(0)
+        release.set()
+        snapshots = await asyncio.gather(first, second)
+        assert snapshots[0] is snapshots[1]
+        assert len(calls) == 1
+
+    asyncio.run(scenario())
 
 
 def test_sale_detail_offers_only_absolute_links():
@@ -257,8 +317,9 @@ def test_sales_map_points_falls_back_to_proxy_without_stats_database(monkeypatch
     import land_registry.pvp_sales as pvp_sales
     from land_registry.main import app
 
-    monkeypatch.setattr(pvp_sales, "_store", PvpSalesStore(connection_source=None))
-    monkeypatch.setattr("land_registry.pvp_sales.get_map_layer_source", lambda: type("S", (), {"connection_source": None})())
+    store = PvpSalesStore(connection_source=None)
+    monkeypatch.setattr(store, "_sources", list)
+    monkeypatch.setattr(pvp_sales, "_store", store)
     monkeypatch.setenv("LAND_REGISTRY_SALES_BASE_URL", "http://127.0.0.1:1")  # nothing listens
     response = TestClient(app).get("/api/v1/sales/map-points")
     assert response.status_code == 503

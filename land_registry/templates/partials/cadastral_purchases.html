@@ -1,0 +1,34 @@
+<dialog id="cadastralPurchaseDialog" class="cadastral-purchase-dialog" aria-labelledby="cadastralPurchaseTitle">
+  <div class="map-card-heading">
+    <h2 id="cadastralPurchaseTitle">{{ _('Cadastral query purchases') }}</h2>
+    <button type="button" class="map-card-close" id="purchaseCloseButton" aria-label="{{ _('Close') }}">×</button>
+  </div>
+  <p>{{ _('Purchased results are visible only to you and administrators.') }}</p>
+  <p id="purchaseNotice" class="map-muted" role="status" aria-live="polite"></p>
+  <form id="cadastralPurchaseForm" hidden>
+    <p id="purchaseParcelReference"></p>
+    <div class="purchase-fields">
+      <label>{{ _('Provider') }}<select id="purchaseProvider" required></select></label>
+      <label>{{ _('Registry') }}<select id="purchaseRegistry"><option value="land">{{ _('Land') }}</option><option value="buildings">{{ _('Buildings') }}</option></select></label>
+      <label>{{ _('Municipality cadastral code') }}<input id="purchaseMunicipality" required pattern="[A-Za-z][0-9]{3}" maxlength="4" placeholder="H501"></label>
+      <label>{{ _('Sheet') }}<input id="purchaseSheet" required pattern="[A-Za-z0-9/-]+" maxlength="16"></label>
+      <label>{{ _('Parcel') }}<input id="purchaseParcel" required pattern="[A-Za-z0-9/-]+" maxlength="16"></label>
+      <label>{{ _('Subaltern (optional)') }}<input id="purchaseSubaltern" pattern="[A-Za-z0-9/-]+" maxlength="16"></label>
+    </div>
+    <p class="map-muted">{{ _('Check the cadastral identifiers before requesting a quote.') }}</p>
+    <button class="secondary-action" id="purchaseQuoteButton" type="submit">{{ _('Get quote') }}</button>
+  </form>
+  <section id="purchaseQuote" hidden>
+    <p id="purchaseQuoteSummary"></p>
+    <button type="button" class="secondary-action" id="purchasePayButton">{{ _('Pay with secure checkout') }}</button>
+  </section>
+  <section aria-labelledby="purchaseListTitle">
+    <div class="map-card-heading"><h3 id="purchaseListTitle">{{ _('My purchases') }}</h3><button type="button" class="secondary-action" id="purchaseRefreshButton">{{ _('Refresh') }}</button></div>
+    <div id="purchaseList"></div>
+  </section>
+  <section id="purchaseResult" hidden aria-live="polite">
+    <h3>{{ _('Purchased record') }}</h3>
+    <pre id="purchaseRecord"></pre>
+    <a id="purchaseDocument" class="secondary-action" hidden>{{ _('Download cadastral document') }}</a>
+  </section>
+</dialog>

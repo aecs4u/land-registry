@@ -11,6 +11,7 @@
 {{ super() }}
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" integrity="sha384-MinO0mNliZ3vwppuPOUnGa+iq619pfMhLVUXfC4LHwSCvF9H+6P/KO4Q7qBOYV5V" crossorigin="anonymous" />
 <link rel="stylesheet" href="{{ asset_url('map-v2.css') }}" />
+<link rel="stylesheet" href="{{ asset_url('cadastral-purchases.css') }}" />
 {% endblock %}
 
 {% block sidebar_content %}
@@ -61,6 +62,20 @@
     <div id="directMap" class="direct-map" role="region" aria-label="{{ _('Interactive cadastral map') }}"></div>
 
     <div class="map-utility-stack" aria-label="{{ _('Map actions') }}">
+      <div class="map-basemap-control">
+        <button type="button" class="map-round-button btn btn-light" id="basemapToggle" title="{{ _('Basemap') }}" aria-label="{{ _('Basemap') }}" aria-controls="mapBasemapPopover" aria-expanded="false"><i class="fas fa-map" aria-hidden="true"></i></button>
+        <div class="map-basemap-popover" id="mapBasemapPopover" role="group" aria-label="{{ _('Basemap') }}" hidden>
+          <div class="layer-section-title">{{ _('Basemap') }}</div>
+          <div class="basemap-options" role="radiogroup" aria-label="{{ _('Basemap') }}">
+            <label><input type="radio" name="basemap" value="light" checked> <span>{{ _('Light') }}</span></label>
+            <label><input type="radio" name="basemap" value="dark"> <span>{{ _('Dark') }}</span></label>
+            <label><input type="radio" name="basemap" value="satellite"> <span>{{ _('Satellite') }}</span></label>
+          </div>
+          <p class="map-muted basemap-hint">{{ _('Light and Dark follow the page theme; Satellite stays selected until you change it.') }}</p>
+          <p class="map-muted map-provider-disclosure">{{ _('Basemap tiles are loaded from external map providers. See the privacy page for details.') }} <a href="/privacy">{{ _('Privacy') }}</a></p>
+        </div>
+      </div>
+      <button type="button" class="map-round-button" id="purchasesOpenButton" title="{{ _('My purchases') }}" aria-label="{{ _('My purchases') }}">€</button>
       <button type="button" class="map-round-button btn btn-light" id="locateButton" title="{{ _('Locate me') }}" aria-label="{{ _('Locate me') }}"><i class="fas fa-location-arrow" aria-hidden="true"></i></button>
       <button type="button" class="map-round-button btn btn-light" id="shareButton" title="{{ _('Copy map link') }}" aria-label="{{ _('Copy map link') }}"><i class="fas fa-share-alt" aria-hidden="true"></i></button>
       <button type="button" class="map-round-button btn btn-light" id="resetButton" title="{{ _('Reset view') }}" aria-label="{{ _('Reset view') }}"><i class="fas fa-home" aria-hidden="true"></i></button>
@@ -96,16 +111,10 @@
         <h2>{{ _('Layers') }}</h2>
         <button type="button" class="map-card-close" id="layersCloseButton" aria-label="{{ _('Close layers') }}">×</button>
       </div>
-      <div class="layer-section-title">{{ _('Basemap') }}</div>
-      <div class="basemap-options" role="radiogroup" aria-label="{{ _('Basemap') }}">
-        <label><input type="radio" name="basemap" value="light" checked> <span>{{ _('Light') }}</span></label>
-        <label><input type="radio" name="basemap" value="dark"> <span>{{ _('Dark') }}</span></label>
-        <label><input type="radio" name="basemap" value="satellite"> <span>{{ _('Satellite') }}</span></label>
-      </div>
-      <p class="map-muted basemap-hint">{{ _('Light and Dark follow the page theme; Satellite stays selected until you change it.') }}</p>
-      <p class="map-muted map-provider-disclosure">{{ _('Basemap tiles are loaded from external map providers. See the privacy page for details.') }} <a href="/privacy">{{ _('Privacy') }}</a></p>
       <div class="layer-section-title">{{ _('Overlays') }}</div>
       <div id="mapLayerList" class="map-layer-list"><p class="map-muted">{{ _('Loading layer catalog…') }}</p></div>
+      <p class="map-muted map-layer-meta maritime-layer-disclosure">{{ _('MIT/SID snapshot; published coverage may be incomplete. Orange polygons are concession footprints; blue points are point records. A marker is hidden when its matching footprint is drawable in the same tile. Use “Zoom to polygons” to move the map to available footprints.') }}</p>
+      <p class="map-muted map-layer-meta solar-layer-disclosure">{{ _('Solar potential is aggregated by municipality from the Zornade PV model. Shading represents the share of assessed roof area with high suitability; values are estimates, not a permit or engineering assessment.') }}</p>
       <div id="mapCoverageStatus" class="map-coverage-status" aria-live="polite"></div>
 
       <div class="layer-section-title">{{ _('Live layers') }}</div>
@@ -138,6 +147,13 @@
           <button type="button" class="secondary-action compact btn btn-outline-secondary" id="refreshBulletinButton">{{ _('Refresh') }}</button>
         </div>
         <div id="enrichmentBulletinLegend" class="enrichment-legend"></div>
+        <div class="map-live-layer-row">
+          <button type="button" class="map-live-toggle btn btn-outline-secondary" id="toggleSisterBuildings" aria-pressed="false"
+                  title="{{ _('SISTER building records for the selected parcel') }}">
+            {{ _('SISTER building records') }} <span id="sisterBuildingsCount"></span>
+          </button>
+        </div>
+        <div id="sisterBuildingsStatus" class="map-layer-meta" aria-live="polite"></div>
       </div>
 
       <div class="layer-section-title">{{ _('Market') }}</div>
@@ -148,8 +164,9 @@
           <button type="button" class="secondary-action compact btn btn-outline-secondary" id="refreshSalesButton">{{ _('Refresh') }}</button>
         </div>
         <div class="map-market-filters">
-          <label><span>{{ _('Sort sales') }}</span><select id="salesSort"><option value="saleability_desc">{{ _('Saleability') }}</option><option value="price_asc">{{ _('Price: low to high') }}</option><option value="deadline_asc">{{ _('Auction date') }}</option></select></label>
-          <label><span>{{ _('Minimum saleability') }}</span><input type="number" id="salesSaleabilityMin" min="0" max="100" step="1" placeholder="0"></label>
+          <label><span>{{ _('Sale period') }}</span><select id="salesPeriod"><option value="all">{{ _('All records') }}</option><option value="upcoming">{{ _('Upcoming') }}</option><option value="12m">{{ _('Last 12 months') }}</option><option value="5y">{{ _('Last 5 years') }}</option></select></label>
+          <label><span>{{ _('Property type') }}</span><select id="salesCategory"><option value="">{{ _('All types') }}</option></select></label>
+          <label><span>{{ _('Sort sales') }}</span><select id="salesSort"><option value="deadline_asc">{{ _('Auction date') }}</option><option value="price_asc">{{ _('Price: low to high') }}</option><option value="saleability_desc">{{ _('Saleability') }}</option></select></label>
           <label><span>{{ _('Administrative layer') }}</span><select id="salesGeoLayerType"><option value="none">{{ _('None') }}</option><option value="region">{{ _('Regions') }}</option><option value="province">{{ _('Provinces') }}</option><option value="municipality">{{ _('Municipalities') }}</option></select></label>
           <label><span>{{ _('Color by') }}</span><select id="salesGeoMetric"><option value="none">{{ _('Default') }}</option></select></label>
         </div>
@@ -159,7 +176,7 @@
       <div class="map-live-layers" id="mapMarketLayer">
         <div class="map-live-layer-row">
           <button type="button" class="map-live-toggle btn btn-outline-secondary" id="toggleAuctionLayer" aria-pressed="false"
-                  title="{{ _('Judicial auction listings, filtered below') }}">
+                  title="{{ _('Enriched PVP auction listings, filtered below') }}">
             {{ _('Auction listings') }} <span id="auctionCount"></span>
           </button>
           <button type="button" class="secondary-action compact btn btn-outline-secondary" id="refreshAuctionButton">{{ _('Refresh') }}</button>
@@ -168,14 +185,19 @@
           <label><span>{{ _('Type') }}</span>
             <select id="auctionTypeFilter">
               <option value="">{{ _('All Types') }}</option>
-              <option value="residential">{{ _('Residential') }}</option>
-              <option value="commercial">{{ _('Commercial') }}</option>
-              <option value="agricultural">{{ _('Agricultural') }}</option>
-              <option value="industrial">{{ _('Industrial') }}</option>
+              <option value="movable">{{ _('Vehicles, goods & business assets') }}</option>
+              <option value="commercial">{{ _('Shops, offices & hospitality') }}</option>
+              <option value="parking_storage">{{ _('Garages, storage & annexes') }}</option>
+              <option value="residential">{{ _('Homes') }}</option>
+              <option value="industrial">{{ _('Industrial & agricultural buildings') }}</option>
+              <option value="land">{{ _('Land & building plots') }}</option>
+              <option value="building">{{ _('Whole or partial buildings') }}</option>
+              <option value="other">{{ _('Other') }}</option>
+              <option value="unspecified">{{ _('Type not stated') }}</option>
             </select>
           </label>
           <label><span>{{ _('Max price (€)') }}</span><input type="number" id="auctionMaxPrice" placeholder="150000"></label>
-          <label class="shortlist-hazard-filter"><input type="checkbox" id="auctionActiveOnly"><span>{{ _('Active only') }}</span></label>
+          <label class="shortlist-hazard-filter"><input type="checkbox" id="auctionActiveOnly"><span>{{ _('Upcoming only') }}</span></label>
         </div>
       </div>
     </aside>
@@ -209,6 +231,7 @@
     </aside>
 
     <div class="map-status-pill" id="mapStatus" aria-live="polite"></div>
+    {% include 'partials/map_task_progress.html' %}
 
     <aside class="parcel-detail-card" id="directParcelPanel" aria-labelledby="directParcelTitle" hidden>
       <div class="map-card-heading">
@@ -217,6 +240,7 @@
       </div>
       <div id="directParcelContent" class="parcel-detail-content"></div>
       <div class="parcel-detail-actions">
+        <button type="button" id="parcelPurchaseButton" class="secondary-action">{{ _('Purchase cadastral query') }}</button>
         <button type="button" id="parcelSaveButton" class="secondary-action btn btn-outline-primary">{{ _('Save parcel') }}</button>
         <button type="button" id="parcelAdjacentButton" class="secondary-action btn btn-outline-secondary">{{ _('Find adjacent parcels') }}</button>
         <button type="button" id="parcelShareButton" class="secondary-action btn btn-outline-secondary">{{ _('Copy link') }}</button>
@@ -227,6 +251,7 @@
       <div id="parcelAdjacentResults" class="parcel-adjacent-results" aria-live="polite"></div>
     </aside>
 
+    {% include "partials/cadastral_purchases.html" %}
     <div class="map-help-note" id="mapHelpNote">{{ _('Zoom in to see cadastral parcels') }}</div>
   </section>
 </div>
@@ -246,6 +271,7 @@
 {# Only used for the Civil Protection bulletin overlay, which is published as TopoJSON. #}
 <script src="https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/topojson-client.min.js" integrity="sha384-Ukv1p/xTma6P4/2bY5KzWBw+ydSpXmhCMtyciIQVDJ1RmOxtCYNMF1uXT9T63H67" crossorigin="anonymous" defer></script>
 <script src="{{ asset_url('map-v2.js') }}" defer></script>
+<script src="{{ asset_url('cadastral-purchases.js') }}" defer></script>
 {% endblock %}
 
 {# The generic theme prompt claims analytics and personalized cookies that

@@ -635,6 +635,12 @@
         if (token !== bulletinFetchToken || !bulletinActive) return;
         bulletinLayerGroup.clearLayers();
 
+        if (data?.stale) {
+            if (countEl) countEl.textContent = '';
+            if (legendEl) legendEl.innerHTML = '<span class="enrichment-legend-meta">Bollettino scaduto: allerte odierne non disponibili</span>';
+            return;
+        }
+
         const topology = data && data.today_zones;
         const object = topology && topology.objects ? Object.values(topology.objects)[0] : null;
         if (!topology || !object || !window.topojson || typeof window.topojson.feature !== 'function') {

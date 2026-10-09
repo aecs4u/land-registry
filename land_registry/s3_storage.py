@@ -165,15 +165,24 @@ class S3Storage:
             if self.settings.endpoint_url:
                 client_kwargs["endpoint_url"] = self.settings.endpoint_url
 
-            # Use credentials if provided, otherwise try unsigned for public buckets
+            # Prefer explicit credentials, then boto3's normal credential chain
+            # (instance/task role, web identity, shared config, etc.). Only use
+            # unsigned requests when no credentials are available, for public
+            # buckets. Skipping the default chain here made role-based access
+            # silently anonymous and caused private S3 objects to return 403.
             if self.settings.aws_access_key_id and self.settings.aws_secret_access_key:
                 client_kwargs["aws_access_key_id"] = self.settings.aws_access_key_id
                 client_kwargs["aws_secret_access_key"] = self.settings.aws_secret_access_key
+                self._client = boto3.client(**client_kwargs)
             else:
-                # Try unsigned requests for public buckets
-                client_kwargs["config"] = Config(signature_version=UNSIGNED)
-
-            self._client = boto3.client(**client_kwargs)
+                session = boto3.Session()
+                if session.get_credentials() is not None:
+                    self._client = session.client("s3", **client_kwargs)
+                else:
+                    # Preserve support for publicly readable buckets where
+                    # the runtime intentionally has no AWS credentials.
+                    client_kwargs["config"] = Config(signature_version=UNSIGNED)
+                    self._client = boto3.client(**client_kwargs)
             logger.info(f"Boto3 S3 client initialized for bucket: {self.settings.bucket_name}")
 
         return self._client

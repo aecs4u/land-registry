@@ -1,0 +1,11 @@
+.cadastral-purchase-dialog { width: min(620px, calc(100vw - 32px)); max-height: 85vh; overflow: auto; border: 1px solid var(--direct-map-border); border-radius: 12px; padding: 22px; color: var(--direct-map-text); background: var(--direct-map-panel); box-shadow: var(--direct-map-shadow); }
+.cadastral-purchase-dialog::backdrop { background: rgba(15, 23, 42, .55); }
+.purchase-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.purchase-fields label { display: grid; gap: 4px; font-size: 14px; }
+.purchase-fields input, .purchase-fields select { width: 100%; padding: 8px; border: 1px solid var(--direct-map-border); border-radius: 6px; background: var(--direct-map-panel); color: inherit; }
+.purchase-item { padding: 12px 0; border-top: 1px solid var(--direct-map-border); }
+.purchase-item p { margin: 4px 0 8px; }
+#purchaseRecord { max-height: 280px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+#purchaseNotice[data-error="true"] { color: #b42318; }
+#purchaseQuote { margin: 16px 0; padding: 12px; border: 1px solid var(--direct-map-border); border-radius: 8px; }
+@media (max-width: 420px) { .purchase-fields { grid-template-columns: 1fr; } }
