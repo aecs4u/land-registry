@@ -146,7 +146,7 @@ MAP_LAYERS: tuple[MapLayerSpec, ...] = (
         ),
         kind="mixed", group="territory", color="#1f8ea3", z_order=130,
         polygon_color="#e45724", fill_opacity=0.42, line_width=3.0,
-        require_gist_index=False, tile_revision="2",
+        require_gist_index=False, tile_revision="3",
     ),
 )
 
@@ -767,24 +767,38 @@ class PostgresMapLayerSource:
             # from both classes, then spend the tile cap on polygons first so
             # points cannot hide the concession boundaries.
             column_names = ", ".join(layer.properties)
+            # Sub-pixel footprints collapse to nothing in ST_AsMVTGeom. Drop
+            # them in the remote-pushable filter so they neither cross the FDW
+            # nor consume the tile cap. Source units are degrees (or metres
+            # for projected sources); the Mercator pixel is never smaller than
+            # this, so only polygons that would vanish are skipped.
+            min_polygon_area = 0.25 * (tile_width / 4096) ** 2
             point_filter = ""
             if layer.id == "maritime-concessions":
                 # Keep marker-only concessions, but do not place a marker over
                 # a matching footprint that survives clipping/quantization.
+                # Probe a deduplicated key CTE: anti-joining against the
+                # geometry-bearing polygon CTE was planned as a nested loop
+                # (points x polygons) and took ~4s on a dense z7 tile.
                 point_filter = """
                     AND NOT EXISTS (
-                        SELECT 1 FROM polygon_features AS p
+                        SELECT 1 FROM polygon_keys AS p
                         WHERE p.idconc = t.idconc AND p.snapshot_id = t.snapshot_id
-                          AND p.geom IS NOT NULL AND ST_Dimension(p.geom) = 2
                     )
                 """
             feature_ctes = f"""
                 polygon_features AS (
-                    SELECT {columns},
-                           ST_AsMVTGeom(ST_Transform({geometry}, 3857), bounds.tile, 4096, 64, true) AS geom
-                    FROM {relation} AS t {self._source_join(layer)} CROSS JOIN bounds
-                    WHERE {spatial_filter} AND ST_Dimension({geometry_ref}) = 2
+                    SELECT * FROM (
+                        SELECT {columns},
+                               ST_AsMVTGeom(ST_Transform({geometry}, 3857), bounds.tile, 4096, 64, true) AS geom
+                        FROM {relation} AS t {self._source_join(layer)} CROSS JOIN bounds
+                        WHERE {spatial_filter} AND ST_Dimension({geometry_ref}) = 2
+                          AND ST_Area({geometry_ref}) >= {min_polygon_area!r}
+                    ) AS clipped
+                    WHERE geom IS NOT NULL
                     LIMIT %s
+                ), polygon_keys AS (
+                    SELECT DISTINCT idconc, snapshot_id FROM polygon_features
                 ), point_features AS (
                     SELECT {columns},
                            ST_AsMVTGeom(ST_Transform(t.{layer.geometry_column}, 3857), bounds.tile, 4096, 64, true) AS geom

@@ -9,6 +9,7 @@
 
 {% block styles %}
 {{ super() }}
+<link rel="preconnect" href="https://unpkg.com" crossorigin />
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" integrity="sha384-MinO0mNliZ3vwppuPOUnGa+iq619pfMhLVUXfC4LHwSCvF9H+6P/KO4Q7qBOYV5V" crossorigin="anonymous" />
 <link rel="stylesheet" href="{{ asset_url('map-v2.css') }}" />
 <link rel="stylesheet" href="{{ asset_url('cadastral-purchases.css') }}" />

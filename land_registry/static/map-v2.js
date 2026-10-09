@@ -559,25 +559,39 @@
         addParcelLabels();
         state.map.on('mouseenter', 'fill-cadastral-parcels', () => { state.map.getCanvas().style.cursor = 'pointer'; });
         state.map.on('mouseleave', 'fill-cadastral-parcels', () => { state.map.getCanvas().style.cursor = ''; });
+        // One popup instance, re-anchored on the cursor. The key used to
+        // include the cursor position, so every mouse move destroyed and
+        // rebuilt a DOM popup; now the markup changes only with the parcel.
         let hoverPopup = null;
         let hoverKey = null;
-        state.map.on('mousemove', 'fill-cadastral-parcels', (event) => {
-          const feature = event.features?.[0];
-          const props = feature?.properties || {};
+        let hoverFrame = 0;
+        let hoverEvent = null;
+        const renderHover = () => {
+          hoverFrame = 0;
+          const event = hoverEvent;
+          hoverEvent = null;
+          if (!event) return;
+          const props = event.features?.[0]?.properties || {};
           const parcel = props.parcel || props.particella || props.LABEL || props.canonical_reference;
           if (!parcel) return;
-          const key = `${parcel}:${event.lngLat.lng.toFixed(5)}:${event.lngLat.lat.toFixed(5)}`;
-          if (hoverKey === key) return;
-          hoverKey = key;
-          if (hoverPopup) hoverPopup.remove();
-          hoverPopup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 8 })
-            .setLngLat(event.lngLat)
-            .setHTML(`<strong>Parcel ${escapeHtml(parcel)}</strong><br><small>${escapeHtml(props.municipality_name || props.municipality || props.municipality_id || '')}</small>`)
-            .addTo(state.map);
+          const municipality = props.municipality_name || props.municipality || props.municipality_id || '';
+          const key = `${parcel}:${municipality}`;
+          if (!hoverPopup) hoverPopup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 8 });
+          hoverPopup.setLngLat(event.lngLat);
+          if (hoverKey !== key) {
+            hoverKey = key;
+            hoverPopup.setHTML(`<strong>Parcel ${escapeHtml(parcel)}</strong><br><small>${escapeHtml(municipality)}</small>`);
+          }
+          if (!hoverPopup.isOpen()) hoverPopup.addTo(state.map);
+        };
+        state.map.on('mousemove', 'fill-cadastral-parcels', (event) => {
+          hoverEvent = event;
+          if (!hoverFrame) hoverFrame = requestAnimationFrame(renderHover);
         });
         state.map.on('mouseleave', 'fill-cadastral-parcels', () => {
           hoverKey = null;
-          if (hoverPopup) { hoverPopup.remove(); hoverPopup = null; }
+          hoverEvent = null;
+          if (hoverPopup) hoverPopup.remove();
         });
       }
       reorderMapLayers();
@@ -1085,7 +1099,17 @@
     } finally { clearTimeout(timeout); }
   }
 
+  // Every layer add/toggle asks for a re-stack, and a restored session adds
+  // many layers in one tick. Coalesce the requests so the (comparatively
+  // expensive) re-stack runs once per burst instead of once per layer.
+  let reorderQueued = false;
   function reorderMapLayers() {
+    if (!state.map || reorderQueued) return;
+    reorderQueued = true;
+    queueMicrotask(() => { reorderQueued = false; applyMapLayerOrder(); });
+  }
+
+  function applyMapLayerOrder() {
     if (!state.map) return;
     // Catalog layers stack by their server-side ``z_order``; live overlays
     // (bulletin, fires, auctions, sales) have fixed slots above them.
@@ -1100,7 +1124,13 @@
       'fill-adjacent-parcels', 'line-adjacent-parcels',
       'selected-parcel-fill', 'selected-parcel-line',
     ];
-    bottomToTop.forEach((id) => { if (state.map.getLayer(id)) state.map.moveLayer(id); });
+    const present = bottomToTop.filter((id) => state.map.getLayer(id));
+    // Each moveLayer dirties the style and forces a re-render. When the managed
+    // layers already sit in order at the top of the stack (the common case),
+    // skip the pass entirely.
+    const current = state.map.getLayersOrder?.();
+    if (current && present.length && current.slice(-present.length).join('\u0000') === present.join('\u0000')) return;
+    present.forEach((id) => state.map.moveLayer(id));
   }
 
   function setLayerVisibility(layerId, visible) {

@@ -152,6 +152,24 @@ def test_mvt_query_is_allowlisted_and_attribute_bearing():
     assert "market-zones" in connection.params
 
 
+def test_mixed_tile_query_avoids_polygon_point_nested_loop():
+    """Marker suppression must probe a key set, not the geometry CTE.
+
+    Anti-joining points against the geometry-bearing polygon CTE was planned as
+    a nested loop and took ~4s on a dense z7 tile.
+    """
+    connection = _Connection()
+    source = PostgresMapLayerSource(_ConnectionSource(connection))
+
+    assert asyncio.run(source.read_mvt("maritime-concessions", 7, 67, 46)) == b"mvt"
+    sql = connection.sql
+    assert "polygon_keys AS" in sql and "FROM polygon_keys AS p" in sql
+    assert "ST_Dimension(p.geom)" not in sql
+    # Sub-pixel footprints are dropped remotely, and the cap applies afterwards.
+    assert "ST_Area(" in sql
+    assert sql.index("WHERE geom IS NOT NULL") < sql.index("LIMIT %s".replace("%s", "$1"))
+
+
 def test_geojson_query_transforms_projected_census_geometry():
     connection = _Connection(rows=[{
         "sez21_id": 123, "procom": "H501", "cod_reg": "001", "pop21": 100, "fam21": 40,
