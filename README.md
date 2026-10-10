@@ -187,6 +187,10 @@ uv run flake8
 
 ## Technical Details
 
+### Real-Estate Development Strategist PoC
+- The opportunity strategies, candidate gates, ranking evaluation, and post-PoC implementation decisions are in [docs/DEVELOPMENT_STRATEGIST.md](docs/DEVELOPMENT_STRATEGIST.md).
+- The source requirements are in [docs/real-estates_development_strategist.md](docs/real-estates_development_strategist.md).
+
 ### Zone Workflow Architecture and Plan
 - See `docs/ZONE_WORKFLOW_ARCHITECTURE_AND_PLAN.md` for:
   - Target zone/microzone architecture

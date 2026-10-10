@@ -46,6 +46,39 @@ The compatibility map uses the Folium-rendered Leaflet pattern:
 3. **`window.map` is often null** — use the Folium map pattern (`getFoliumMapInstance()`) when adding layers dynamically
 4. `map.js` functions like `addGeoJsonToMap()` only work when a client-side map div exists (not in Folium mode)
 
+## Development Strategist PoC Direction
+
+The optional real-estate Development Strategist is at the PoC strategy stage;
+see [`docs/DEVELOPMENT_STRATEGIST.md`](docs/DEVELOPMENT_STRATEGIST.md) and its
+source SRS. Do not begin production module/API implementation until the PoC
+has been executed and reviewed and the user supplies the Ocular workflow
+contract.
+
+- Focus the PoC on identifying and ranking opportunities with separate
+  strategy profiles, explicit eligibility gates, per-criterion explanations,
+  and evidence provenance. Unknown required zoning or building evidence stays
+  `unverified`; do not convert it to a neutral score.
+- Use Ocular workflows for imagery-based building-footprint extraction and
+  preserve workflow/model version, imagery date, confidence, and manual
+  corrections. Keep scoring deterministic; do not add local ML or DSE's
+  optional ML/calibration paths.
+- The local `aecs4u-dse` approach is design guidance only: its gates,
+  explainable weighted profiles, and versioned provenance are useful, but its
+  lot-specific KO rules, seven auction sub-scores, and auction `/deals` API do
+  not fit cadastral parcel ranking. Do not add it as a direct dependency for
+  this feature.
+- Render PoC results as a separate, bounded opportunity overlay synchronized
+  with the ranked list, using canonical parcel identity and existing map
+  selection. Do not promote temporary results into the canonical layer
+  catalog. Broader discovery should use server-side aggregation/clustering,
+  not national GeoJSON in the browser.
+- Builtly's public Maps / feasibility-study descriptions suggest a future
+  clustered plot radar and exportable shortlist, an explicit area ledger and
+  denominator, score explanations and near-tie warnings, and a separate
+  assumption-driven residual-land-value study. Treat these as workflow ideas;
+  map them to authoritative Italian planning definitions rather than copying
+  Norwegian rules or metrics.
+
 ## Key Dependencies
 
 - **FastAPI** (>=0.100.0) - Web framework
