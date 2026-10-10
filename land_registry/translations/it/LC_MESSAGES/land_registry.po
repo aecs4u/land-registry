@@ -3569,3 +3569,21 @@ msgstr "Scaricate {rows} richieste SISTER per {parcels} particelle."
 
 msgid "Zoom in to see more"
 msgstr "Aumenta lo zoom per visualizzarne altre"
+
+msgid "zoom in"
+msgstr "ingrandisci"
+
+msgid "Zoom in to see auction listings (from zoom {z})"
+msgstr "Ingrandisci per vedere le aste (da zoom {z})"
+
+msgid "Zoom in to see sales (from zoom {z})"
+msgstr "Ingrandisci per vedere le vendite (da zoom {z})"
+
+msgid "{n} auction records shown of {total} in view; zoom in for more"
+msgstr "{n} aste mostrate su {total} nella vista; ingrandisci per vederne altre"
+
+msgid "of {n} in view; zoom in for more"
+msgstr "su {n} nella vista; ingrandisci per vederne altre"
+
+msgid "mapped record(s)"
+msgstr "record sulla mappa"

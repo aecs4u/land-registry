@@ -6,7 +6,7 @@
 **Screenshots:** [`docs/map-all-layers-audit-2026-10-10/`](map-all-layers-audit-2026-10-10/) (indexed in §9).
 **Related:** [APP_AUDIT_2026-10-09.md](APP_AUDIT_2026-10-09.md) covers the rest of the site and the parcel sheet in isolation; findings from it that recur here are cross-referenced as *(10-09 …)*.
 
-**Requirement recorded from this review:** *only the data that can be visualised in the current view should be loaded, not all the items.* Finding C1 is the main violation; §7 lists the other places that need the same treatment.
+**Requirement recorded from this review:** *only the data that can be visualised in the current view should be loaded, not all the items.* Finding C1 was the main violation and is **fixed and verified** (§8); §7 lists the other places that still need the same treatment.
 
 ---
 
@@ -14,7 +14,7 @@
 
 With a single layer on, the map is fast and legible. With everything on it is neither: the whole dataset of one live layer is downloaded and parsed in the browser, the tile fan-out takes up to 20 s to settle, the two right-hand panels cover each other, and the selected parcel cannot be told apart from the layers around it.
 
-- **The auction layer loads the entire national dataset** (717,150 sales points, 8.5 MB gzipped, 8–9 s per request, no cache header) regardless of what is in view, then prepares 710,000 markers in the browser. JS heap reached **446 MB** (C1).
+- **The auction layer loaded the entire national dataset** (717,150 sales points, 8.5 MB gzipped, 8–9 s per request, no cache header) regardless of what was in view, then prepared 710,000 markers in the browser. JS heap reached **446 MB** (C1). *Fixed: it now loads only the viewport, 0.6 MB in 0.1–0.3 s, heap 14–49 MB.*
 - **Enabling all layers is a request storm.** 160 tile requests at z13 took 19.5 s to settle with a 1.7 s main-thread block; at z14–15 on the same Postgres the developer's log shows `sorry, too many clients already` and a wall of 503s for census, solar, maritime, subsidence and boundaries tiles (C2).
 - **The parcel sheet is covered by the Layers panel** by 292 px at 1440 px, and by half its height on a phone (H1).
 - **The selected parcel disappears**: its highlight (`#f08a24`) sits among parcel outlines (`#d97925`) and the EGMS grid (`#c45c2d`), a 12 px orange square on a field of orange (H2).
@@ -109,13 +109,27 @@ Tile statuses were all 200 in my runs; the 503 storm below comes from the develo
 - Sales is "disabled when signed out" but the same national dataset loads through Auction listings (M7).
 - Related whole-dataset or oversized loads: `/api/v1/enrichment/bulletin` returns the national bulletin (**1.3 MB**) for any view; `/api/v1/sales/pvp/{id}` is called once per nearby sale at load (8 calls in the first 8 s, an N+1 pattern); `/api/v1/map/layers/cadastral-parcels/features` is fetched for "Highlight requests".
 - **Requirement (from this review):** only the data that can be visualised in the current view is loaded. See §7 for the design.
+- **Status: fixed for sales and auction points** (§8). `map-points` accepts `bbox` and `limit`; the client sends the viewport, refetches on `moveend`, aborts stale requests, and shows "Zoom in to see auction listings (from zoom 8)" below z8 instead of loading anything. Measured on the same machine and data:
+
+| | Before | After |
+|---|---|---|
+| Request | `period=all` (national) | `period=all&limit=20000&bbox=7.35,44.87,8.03,45.15` |
+| Payload (gzip) | 8,478,035 B | 589–613 KB (10,290–11,490 points in view) |
+| Server time | 7.9–9.0 s, every call | 0.05–0.12 s warm |
+| Client heap after load | 446 MB | 14–49 MB |
+| Pan of 60 px | – | 0 requests (inside the loaded box) |
+| Far move / zoom in | – | 1 request, `truncated:true` when the view holds more than the cap |
+| National zoom (< z8) | 717k markers prepared | 0 requests, hint shown |
+
+  The first request after a server restart still waits for the shared snapshot to load (about a minute for 717k rows); that cold start is a separate item (§7, point 2).
 
 #### C2. Everything on exhausts Postgres connections and fans out into a request storm
 - **Fan-out:** at z13, 10 tile layers × 16 tiles + 3 × 12 = **160 tile requests** in one burst, 17.5–19.9 s per tile (mostly queueing: browsers allow 6 HTTP/1.1 connections per host and the app's map pool is 8), settle 19.5 s, and a 1.7 s main-thread long task from decoding about 1.9 MB of MVT.
 - **Connection exhaustion:** the developer's log of a z14/15 session shows `could not connect to server "census_sections_source" / "solar_source" / "agenziademanio_source" / "consolidate_istat"` and `sorry, too many clients already`, producing 503 for census, solar, maritime, subsidence and boundaries tiles within one second, then a POI request that failed the same way.
 - `pg_stat_activity` at idle shows **70 of 100** connections, about 35 of them idle `postgres_fdw` backends (zornade 5, istat 5, omi 5, eurostat 4, sister 3, mef_irpef 3, census_sections 2, hazards 2, …). Every pooled connection that reads a foreign table keeps one remote backend per server, and `market-zones` goes through two hops (zornade → omi). Together with DBeaver sessions and sibling dev apps, a burst runs out of the 97 usable slots.
 - In my own runs the same scenario produced no 503 (the machine was less loaded), so this is pressure-dependent; the 7.5–8.6 s first tiles for subsidence, census, solar and maritime at z15 are cold foreign-server connections.
-- **Fix:** bound per-source concurrency server-side (a semaphore per foreign server, queue instead of connect); cap total tile fan-out in the client (see H4); raise `max_connections` or add a pooler (PgBouncer in transaction mode) in front of Postgres; make foreign-table connections short-lived (`keep_connections 'off'` on the foreign servers) so idle pooled connections stop holding remote slots.
+- The same developer log shows the client requesting **z17 and z18 tiles of municipality-scale layers** (`solar-potential/18/…`, `census-sections/18/…`, `market-zones/18/…`, `flood-hazard/18/…`, `maritime-concessions/18/…`): the geometry is identical at every zoom above ~16, so each of those requests is pure waste and each one opens foreign-server work.
+- **Status: mitigated.** Every vector source now has `maxzoom` from the catalog (`tile_max_zoom`, 16): measured at z18 the browser requested only z16 tiles (26) and z10 tiles (12), none at z17 or z18, i.e. 4–16× fewer requests per layer at the highest zooms. The map's Postgres pools default to **4 connections instead of 8** (`MAP_DB_POOL_MAX`), and wait up to 15 s for a free one instead of failing after 5 s, which halves the number of idle foreign-server backends the app can hold. Not yet done: a per-foreign-server semaphore, `keep_connections 'off'` on the foreign servers, and a pooler in front of Postgres.
 
 ### High
 
@@ -221,7 +235,7 @@ Heap reached 446 MB with all layers on at z15, and the Chromium instance driven 
 
 Principle: **a request is made only for features that intersect the viewport (plus a small buffer) at the current zoom, in the smallest representation that can be drawn.** Concrete changes, in order of value:
 
-1. **Sales / auction points (C1).** Replace `GET /api/v1/sales/map-points?period=all` with a bbox query: `GET /api/v1/sales/map-points?bbox=west,south,east,north&zoom=z&period=…`. Below z9–10 return server-side aggregates (grid or H3 counts), above that return individual points, capped (for example 5,000) with a `truncated` flag. The client refetches on `moveend` with a debounce, cancels the in-flight request, and merges by id. Cache by `(bbox rounded to tile grid, period)`. *Implemented as part of this audit; see §8.*
+1. **Sales / auction points (C1). Done.** `GET /api/v1/sales/map-points?period=…&bbox=west,south,east,north&limit=N` returns only the points inside the box, capped (default 20,000, nearest the centre first) with `matched` and `truncated`. Without `bbox` the legacy national feed is unchanged for existing consumers. The client refetches on `moveend` (350 ms debounce), aborts the in-flight request, skips the fetch when the view is still inside the loaded box, and loads nothing below z8. Still open: server-side aggregation (grid or H3 counts) so a national view can show clusters honestly instead of a hint.
 2. **Make the points a tile layer** (the better long-term form): `/api/v1/tiles/sales-points/{z}/{x}/{y}.pbf` with PostGIS `ST_AsMVT` and server-side clustering, so MapLibre handles bbox, caching and cancellation and the client drops its 700k-record preparation step.
 3. **Bulletin.** Request only the municipalities intersecting the view (`?bbox=`), or tile the bulletin zones; today every view receives the national 1.3 MB TopoJSON.
 4. **Nearby sales.** Return the fields the sheet needs in `nearby-points` instead of one `/sales/pvp/{id}` call per point.
@@ -233,7 +247,21 @@ Principle: **a request is made only for features that intersect the viewport (pl
 
 ## 8. Changes made during this audit
 
-Nothing is committed. See the report in the session summary for the exact file list; the sales-points change is described in §7.1.
+Nothing is committed.
+
+| Area | Files | What |
+|---|---|---|
+| Sales/auction points (C1, §7.1) | `land_registry/pvp_sales.py`, `land_registry/routers/api.py` | `bbox` (+`limit`) on `/api/v1/sales/map-points`; grid-index candidate selection; `matched`/`truncated`; category counts describe the viewport; 400 on malformed or inverted boxes |
+| | `land_registry/static/map-v2.js` | `viewportBbox`, `viewportLoaded`, `bindViewportReload`, abortable requests, `POINT_OVERLAY_MIN_ZOOM = 8`, truncation message; both the Auction and Sales overlays |
+| | `tests/test_pvp_sales.py`, `tests/test_map_v2_contract.py` | 4 server tests (bbox, limit/truncation, viewport category counts, endpoint validation) and a client contract |
+| Tile fan-out (C2) | `land_registry/map_layers.py`, `land_registry/static/map-v2.js` | `tile_max_zoom` (16) in the catalog and as the vector source `maxzoom`; pool default 4 (`MAP_DB_POOL_MAX`), acquire wait 15 s |
+| | `tests/test_map_layers_contract.py` | catalog cap and pool-size tests |
+| Italian | `land_registry/translations/it/LC_MESSAGES/land_registry.po` | 6 new strings (the `.mo` is not rebuilt: `msgfmt` already fails on two pre-existing duplicates, "Not available" and "Parcel") |
+| Earlier this session | `land_registry/pg_ssl.py`, `bulletin_store.py`, `datashader_service.py` | TLS off for loopback psycopg2 (the bulletin segfault) |
+
+**Tests.** The four focused suites report 107 passed and 12 failed. All 12 fail without these changes: the 11 recorded in the 10-09 audit (stale layer ids such as `hazard-areas`, plus the `uploaded-file` string) and `test_adjacent_parcels_endpoint_returns_feature_collection`, which fails because the working tree's `get_adjacent_parcels` now passes an extra `method=` argument that the test does not expect.
+
+**Dev-server note.** Saving Python files restarts the reload worker; in-flight tile requests are then cancelled ("timeout graceful shutdown exceeded", HTTP 500 in the log) and the first sales request afterwards waits for the cold snapshot. Neither is an application fault.
 
 ---
 

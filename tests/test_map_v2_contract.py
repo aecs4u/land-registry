@@ -446,6 +446,9 @@ def test_point_overlays_load_only_the_current_viewport():
         "signal: nextViewportSignal(auctionOverlay)",
         "signal: nextViewportSignal(salesOverlay)",
         "payload.truncated",
+        # Hundreds of thousands of points are not readable nationwide.
+        "POINT_OVERLAY_MIN_ZOOM",
+        "belowPointOverlayZoom()",
         # Vector sources stop requesting finer tiles at the catalog's cap.
         "layer.tile_max_zoom",
     ):

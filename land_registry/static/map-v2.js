@@ -311,12 +311,22 @@
     const lat = Number(params.get('lat'));
     const lng = Number(params.get('lng'));
     const zoom = Number(params.get('zoom'));
+    const requestedBasemap = params.get('basemap');
+    const basemapSelector = $('basemapEngineSelect');
+    const basemap = requestedBasemap && basemapSelector
+      && [...basemapSelector.options].some((option) => option.value === requestedBasemap)
+      ? requestedBasemap : null;
+    const layers = params.has('layers')
+      ? params.get('layers').split(',').map((layerId) => layerId.trim()).filter(Boolean)
+      : null;
     const hasView = Number.isFinite(lat) && Number.isFinite(lng)
       && lat >= ITALY_BOUNDS[0][1] && lat <= ITALY_BOUNDS[1][1]
       && lng >= ITALY_BOUNDS[0][0] && lng <= ITALY_BOUNDS[1][0];
     return {
       center: hasView ? [lng, lat] : DEFAULT_CENTER,
       zoom: Number.isFinite(zoom) ? Math.min(22, Math.max(5, zoom)) : DEFAULT_ZOOM,
+      basemap,
+      layers,
       parcel: params.get('parcel') || null,
       invalidParcel: Boolean(params.get('parcel') && !(/^[A-Z]\d{3}[A-Z]?\d{4}\d{2}\.\w+$/i.test(params.get('parcel')) || /^[A-Z]\d{3}[_-].+\..+$/.test(params.get('parcel')))),
       parcelId: /^\d+$/.test(params.get('parcel_id') || '') ? Number(params.get('parcel_id')) : null,
@@ -339,11 +349,28 @@
     params.set('lat', center.lat.toFixed(6));
     params.set('lng', center.lng.toFixed(6));
     params.set('zoom', map.getZoom().toFixed(2));
+    params.set('basemap', currentBasemap());
+    if (state.activeLayers !== null) {
+      params.set('layers', [...state.activeLayers].sort().join(','));
+    }
     if (state.selectedReference) {
       params.set('parcel', state.selectedReference);
       if (state.selectedFeature?.id != null) params.set('parcel_id', String(state.selectedFeature.id));
       else params.delete('parcel_id');
     } else { params.delete('parcel'); params.delete('parcel_id'); }
+    window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}${window.location.hash}`);
+  }
+
+  function writeBasemapUrl() {
+    const params = new URLSearchParams(window.location.search);
+    params.set('basemap', currentBasemap());
+    window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}${window.location.hash}`);
+  }
+
+  function writeSelectedLayersUrl() {
+    if (state.activeLayers === null) return;
+    const params = new URLSearchParams(window.location.search);
+    params.set('layers', [...state.activeLayers].sort().join(','));
     window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}${window.location.hash}`);
   }
 
@@ -874,6 +901,7 @@
       if (geometryControls) geometryControls.hidden = !input.checked;
       reorderMapLayers();
       updateParcelZoomAffordance();
+      writeSelectedLayersUrl();
     });
     // Tiles are capped server-side, so dense areas can omit features; say so.
     const cap = layer.max_features ? ` · ${tr('Up to {n} features per tile', { n: Number(layer.max_features).toLocaleString('it-IT') })}` : '';
@@ -893,6 +921,7 @@
     const sisterLayerOptions = $('sisterLayerOptions');
     list.replaceChildren();
     const initializingLayers = state.activeLayers === null;
+    if (initializingLayers) state.activeLayers = new Set();
     const visible = state.catalog.filter((layer) => layer.id !== 'raster-coverage');
     const groups = [...new Set([...LAYER_GROUPS, ...visible.map((layer) => layer.group || 'territory')])];
     groups.forEach((group) => {
@@ -919,6 +948,7 @@
     reorderMapLayers();
     updateParcelZoomAffordance();
     updateCoverageStatus();
+    writeSelectedLayersUrl();
   }
 
   function updateCoverageStatus() {
@@ -1038,6 +1068,7 @@
     if (!alreadyActive) state.adminSubstituteAutoLayers.add(layer.id);
     setLayerVisibility(layer.id, true);
     syncLayerCheckbox(layer.id, true);
+    writeSelectedLayersUrl();
   }
 
   function releaseAdministrativeSubstitute() {
@@ -1047,6 +1078,7 @@
       syncLayerCheckbox(layerId, false);
     });
     state.adminSubstituteAutoLayers.clear();
+    writeSelectedLayersUrl();
   }
 
   function updateParcelZoomAffordance() {
@@ -2646,6 +2678,14 @@
   const VIEWPORT_POINT_LIMIT = 20000;
   const VIEWPORT_MARGIN = 0.15;
   const VIEWPORT_RELOAD_DEBOUNCE_MS = 350;
+  // Below this zoom a viewport holds hundreds of thousands of points that
+  // cannot be told apart, and a capped sample would misrepresent them, so the
+  // overlays ask the user to zoom in instead of loading anything.
+  const POINT_OVERLAY_MIN_ZOOM = 8;
+
+  function belowPointOverlayZoom() {
+    return !!state.map && state.map.getZoom() < POINT_OVERLAY_MIN_ZOOM;
+  }
 
   function roundOut(value, step, up) { return (up ? Math.ceil(value / step) : Math.floor(value / step)) * step; }
 
@@ -2718,6 +2758,19 @@
 
   async function loadSalesOverlay(forceRefresh = false, retryAttempt = 0, pendingTask = null, viewportRefresh = false) {
     if (!salesOverlay.active || !state.map) return;
+    if (belowPointOverlayZoom()) {
+      addSalesOverlayLayers();
+      bindViewportReload(salesOverlay, loadSalesOverlay);
+      salesOverlay.fetchToken += 1;
+      salesOverlay.abort?.abort();
+      salesOverlay.points = [];
+      salesOverlay.loaded = null;
+      state.map.getSource('sales-properties')?.setData(emptyFeatureCollection());
+      pendingTask?.finish();
+      if ($('salesCount')) $('salesCount').textContent = `(${tr('zoom in')})`;
+      if ($('salesMapStatus')) $('salesMapStatus').textContent = tr('Zoom in to see sales (from zoom {z})', { z: POINT_OVERLAY_MIN_ZOOM });
+      return;
+    }
     const task = pendingTask || beginMapProgress('sales', forceRefresh ? 'Refreshing sales…' : 'Loading sales…');
     let retryScheduled = false;
     const token = ++salesOverlay.fetchToken;
@@ -2728,6 +2781,7 @@
       bindViewportReload(salesOverlay, loadSalesOverlay);
       const requestedBbox = viewportBbox();
       const requestedZoom = state.map.getZoom();
+      salesOverlay.loaded = { bbox: requestedBbox, truncated: false, zoom: requestedZoom };
       const response = await fetch(salesRequestUrl(forceRefresh), { credentials: 'same-origin', signal: nextViewportSignal(salesOverlay) });
       if (response.status === 503 && retryAttempt < 6) {
         const retrySeconds = Number(response.headers.get('Retry-After')) || 5;
@@ -3725,6 +3779,18 @@
 
   async function loadAuctionOverlay(forceRefresh = false, retryAttempt = 0, pendingTask = null, viewportRefresh = false) {
     if (!auctionOverlay.active || !state.map) return;
+    if (belowPointOverlayZoom()) {
+      bindViewportReload(auctionOverlay, loadAuctionOverlay);
+      auctionOverlay.fetchToken += 1;
+      auctionOverlay.abort?.abort();
+      auctionOverlay.points = [];
+      auctionOverlay.loaded = null;
+      state.map.getSource('auction-properties')?.setData(emptyFeatureCollection());
+      pendingTask?.finish();
+      if ($('auctionCount')) $('auctionCount').textContent = `(${tr('zoom in')})`;
+      mapStatus(tr('Zoom in to see auction listings (from zoom {z})', { z: POINT_OVERLAY_MIN_ZOOM }));
+      return;
+    }
     const task = pendingTask || beginMapProgress('auctions', forceRefresh ? 'Refreshing auction listings…' : 'Loading auction listings…');
     let retryScheduled = false;
     const countElement = $('auctionCount');
@@ -3734,6 +3800,8 @@
       bindViewportReload(auctionOverlay, loadAuctionOverlay);
       const bbox = viewportBbox();
       const zoom = state.map.getZoom();
+      // Record the requested box now so a pan inside it does not start a second request.
+      auctionOverlay.loaded = { bbox, truncated: false, zoom };
       const query = new URLSearchParams({ period: 'all', limit: String(VIEWPORT_POINT_LIMIT) });
       if (bbox) query.set('bbox', bbox.join(','));
       if (forceRefresh) query.set('refresh', '1');
@@ -4910,6 +4978,7 @@
   }
 
   function switchBasemap(kind) {
+    writeBasemapUrl();
     if (!state.map && state.fallbackMap) {
       if (state.fallbackBasemap) state.fallbackMap.removeLayer(state.fallbackBasemap);
       const tiles = basemapEngine(kind);
@@ -5031,6 +5100,7 @@
     $('themeToggle')?.setAttribute('aria-pressed', String(state.dark));
     const selector = $('basemapEngineSelect');
     if (selector) selector.value = kind;
+    writeBasemapUrl();
   }
 
   function loadScriptOnce(src, integrity) {
@@ -5137,10 +5207,11 @@
       state.initializing = false;
       return;
     }
-    const restored = urlState();
     state.preferences = await loadPreferences();
-    const basemap = BASEMAPS.includes(state.preferences?.default_basemap) ? state.preferences.default_basemap : (document.documentElement.getAttribute('data-bs-theme') === 'dark' ? 'dark' : 'light');
+    const restored = urlState();
+    const basemap = restored.basemap || (BASEMAPS.includes(state.preferences?.default_basemap) ? state.preferences.default_basemap : (document.documentElement.getAttribute('data-bs-theme') === 'dark' ? 'dark' : 'light'));
     if (Array.isArray(state.preferences?.default_layers)) state.defaultLayers = new Set(state.preferences.default_layers);
+    if (restored.layers !== null) state.defaultLayers = new Set(restored.layers);
     applyInitialBasemap(basemap);
     let initialView = restored;
     if (!restored.hasView && state.preferences?.start_view === 'last') {
