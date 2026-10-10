@@ -558,5 +558,8 @@ body.direct-map-page > .direct-map-shell { height: 100vh; flex: 0 0 100vh; }
 .parcel-sheet .parcel-detail-actions { gap: 6px; }
 .parcel-sheet .parcel-detail-actions .secondary-action { font-size: 12px; padding: 5px 8px; }
 @media (min-width: 1025px) {
+  /* Both cards are right-anchored; with the sheet open the Layers card sits
+     to its left (sheet width + 12px gap) instead of covering its values. */
+  .direct-map-shell:has(.parcel-sheet:not([hidden])) .map-layers-card { right: calc(65px + clamp(380px, 36vw, 540px) + 12px); }
   .direct-map-shell:has(.parcel-sheet:not([hidden])) .map-task-progress { left: 20px; transform: none; width: min(380px, calc(100% - clamp(380px, 36vw, 540px) - 160px)); }
 }

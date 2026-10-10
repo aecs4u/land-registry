@@ -26,7 +26,8 @@ def test_direct_map_has_one_authoritative_map_and_migration_escape_hatch():
     assert 'id="directMap"' in TEMPLATE
     assert "new maplibregl.Map" in SCRIPT
     assert 'href="/map-legacy"' in TEMPLATE
-    assert "uploaded-file analysis" in SCRIPT or "uploaded-file" in SCRIPT
+    assert 'id="legacyAnalysisLink"' in TEMPLATE
+    assert "`/map-legacy?parcel=" in SCRIPT
     assert 'async def serve_map_shell' in MAIN
     assert 'return await serve_direct_map(request' in MAIN
     assert '@app.get("/map-legacy"' in MAIN
@@ -457,3 +458,12 @@ def test_point_overlays_load_only_the_current_viewport():
     # The unbounded national request must not come back.
     assert "map-points?period=all${" not in SCRIPT
     assert "limit', '60000'" not in SCRIPT
+
+
+def test_layers_card_clears_the_open_parcel_sheet_on_desktop():
+    # Both cards are right-anchored; without this the Layers card (z-index 7)
+    # covers the sheet's values and buttons.
+    assert (
+        ".direct-map-shell:has(.parcel-sheet:not([hidden])) .map-layers-card"
+        " { right: calc(65px + clamp(380px, 36vw, 540px) + 12px); }"
+    ) in STYLES
