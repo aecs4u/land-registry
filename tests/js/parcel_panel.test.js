@@ -320,21 +320,39 @@ test('omi load throws with the HTTP status so the UI can explain it', async () =
   assert.equal(await section('omi').load(makeCtx({ cadastralCode: null })), null);
 });
 
-test('pvp only links http(s) listings and flags unresolved municipalities', async () => {
+test('pvp only links http(s) listings and keeps nearby counts separate', async () => {
   const ctx = makeCtx();
   const html = section('pvp').render({
-    source: 'PVP',
-    records: [
-      { source_url: 'javascript:alert(1)', sale_id: 1, minimum_offer: 1000 },
-      { source_url: 'https://pvp.example/1', base_auction_price: 5000, street: 'Via X', house_number: '1' },
-    ],
+    matchData: {
+      source: 'PVP',
+      records: [
+        { source_url: 'javascript:alert(1)', sale_id: 1, minimum_offer: 1000 },
+        { source_url: 'https://pvp.example/1', base_auction_price: 5000, street: 'Via X', house_number: '1' },
+      ],
+    },
+    matchAvailable: true,
+    nearbyPoints: [],
+    nearbySource: null,
+    nearbyError: false,
+    centroid: null,
   }, ctx);
   assert.equal((html.body.match(/<a href=/g) || []).length, 1);
   assert.doesNotMatch(html.body, /javascript:/);
-  assert.equal(html.badge, 2);
-  assert.match(section('pvp').render({ unresolved: true }, ctx).body, /municipality is not identified/);
-  const unresolved = makeCtx({ municipality: async () => ({ name: 'X' }) });
-  assert.deepEqual(await section('pvp').load(unresolved), { unresolved: true });
+  assert.equal(html.badge, 0);
+  const nearbyOnly = section('pvp').render({
+    matchAvailable: false, matchData: null, nearbyPoints: [], nearbySource: null,
+    nearbyError: false, centroid: ctx.centroid,
+  }, ctx);
+  assert.match(nearbyOnly.body, /Distance is measured in a straight line/);
+  assert.doesNotMatch(nearbyOnly.body, /Listings matched to this parcel/);
+  const calls = [];
+  const unresolved = makeCtx({
+    municipality: async () => ({ name: 'X' }),
+    fetchJson: async (url) => { calls.push(url); return { ok: true, status: 200, data: {} }; },
+  });
+  const result = await section('pvp').load(unresolved);
+  assert.equal(result.matchAvailable, false);
+  assert.equal(calls.some((url) => url.includes('/parcel/pvp?')), false);
 });
 
 test('risks are labelled as municipality-level and graded', () => {
@@ -499,6 +517,52 @@ test('indicator sections preview a few series and say they are province-level', 
   assert.equal(section('demographics').render({ series: [{ code: 'a', latest: null }] }, ctx).empty, true);
 });
 
+test('socioeconomic fallbacks translate labels and interpolate their geographic scope', () => {
+  const translations = {
+    country: 'paese',
+    Italy: 'Italia',
+    'Resident Population': 'Popolazione residente',
+    'Municipality-level indicators for {municipality}.': 'Indicatori a livello comunale per {municipality}.',
+    'Country-level relocation indicators for {country}; these values do not describe the province or parcel.': 'Indicatori nazionali per {country}; questi valori non descrivono la provincia né la particella.',
+    'Safety index': 'Indice di sicurezza',
+    'Country-level safety index; it is not a count of reported crimes in this province or municipality.': 'Indice di sicurezza nazionale; non è un conteggio dei reati locali.',
+  };
+  const ctx = makeCtx({
+    tr: (key, values) => Core.translate((item) => translations[item] || item, key, values),
+  });
+  const demographics = section('demographics').render({
+    series: [{ code: 'resident_population', latest: { year: 2024, value: 2800000, unit: 'residents' } }],
+    total: 1,
+    municipality: 'Roma',
+    spatial_resolution: 'municipality',
+    source: 'ISTAT',
+  }, ctx);
+  assert.match(demographics.body, /Popolazione residente/);
+  assert.match(demographics.body, /Indicatori a livello comunale per Roma/);
+
+  const quality = section('quality').render({
+    years: ['2024'],
+    spatial_resolution: 'country',
+    country_name: 'Italy',
+    scope_note: 'Country-level relocation indicators for {country}; these values do not describe the province or parcel.',
+    clusters: [{
+      key: 'safety', label: 'Safety', indicators: [{
+        name: 'Safety index', values: { '2024': { value: 71.5, unit: 'index' } },
+      }],
+    }],
+  }, ctx);
+  assert.match(quality.body, /Indice di sicurezza/);
+  assert.match(quality.body, /Indicatori nazionali per Italy/);
+  assert.equal(quality.meta.spatial_resolution, 'paese');
+
+  const safety = section('safety').render({
+    country: 'Italy', year: 2024, safety_index: 71.5, spatial_resolution: 'country',
+    scope_note: 'Country-level safety index; it is not a count of reported crimes in this province or municipality.',
+  }, ctx);
+  assert.equal(safety.meta.spatial_resolution, 'paese');
+  assert.match(safety.body, /Indice di sicurezza nazionale; non è un conteggio dei reati locali/);
+});
+
 test('pois groups by category, most numerous first', () => {
   const html = section('pois').render({ total: 3, source: 'OSM', categories: { Schools: [1], Shops: [1, 2], Parks: [] } }, makeCtx());
   assert.ok(html.body.indexOf('Shops') < html.body.indexOf('Schools'));
@@ -512,9 +576,39 @@ test('coverage counts available blocks and never presents a missing block as zer
   const html = section('coverage').render({ blocks: { basic: { available: true }, valuation: { available: true }, risk: { available: false } } }, ctx);
   assert.equal(html.badge, `2/${Panel.coverageBlocks.length}`);
   assert.match(html.body, /Not available/);
+  assert.match(html.body, /parcel read model only/);
+  assert.match(html.body, /Separately loaded sections may contain data/);
   assert.match(html.body, /never shown as zero/);
-  assert.equal(section('coverage').render({ unavailable: true }, ctx).empty, true);
-  assert.equal(section('coverage').render({ blocks: {} }, ctx).empty, true);
+  const unavailable = section('coverage').render({ unavailable: true }, ctx);
+  assert.match(unavailable.body, /temporarily unavailable/);
+  assert.match(unavailable.body, /role="tablist"/);
+  assert.equal(unavailable.empty, undefined);
+  const notBuilt = section('coverage').render({ blocks: {} }, ctx);
+  assert.match(notBuilt.body, /No data profile has been built/);
+  assert.equal(notBuilt.empty, undefined);
+});
+
+test('coverage marks partial blocks and escapes source/version metadata', () => {
+  const ctx = makeCtx();
+  const html = section('coverage').render({ blocks: {
+    address: {
+      available: true,
+      coverage: 'partial',
+      coverage_status: 'partial',
+      source: 'SISTER <img src=x>',
+      dataset_version: 'release-1',
+    },
+  } }, ctx);
+  assert.match(html.body, /Partial coverage/);
+  assert.match(html.body, /SISTER &lt;img src=x&gt; · release-1/);
+  assert.doesNotMatch(html.body, /<img src=x>/);
+});
+
+test('coverage accepts the typed unavailable state', () => {
+  const html = section('coverage').render({ blocks: {
+    risk: { available: false, coverage: 'unavailable' },
+  } }, makeCtx());
+  assert.match(html.body, /Not available/);
 });
 
 test('coverage lists exactly the blocks the backend declares', () => {
@@ -527,10 +621,11 @@ test('coverage lists exactly the blocks the backend declares', () => {
   assert.deepEqual(declared.filter((name) => !ignored.has(name)).sort(), listed.slice().sort());
 });
 
-test('opendata and pvp do not query without a resolvable sheet and parcel', async () => {
+test('pvp skips parcel matching without a resolvable sheet and parcel', async () => {
   const calls = [];
-  const ctx = makeCtx({ props: { municipality_code: 'H501' }, reference: 'H501A048600.D', fetchJson: async (url) => { calls.push(url); return { ok: true, status: 200, data: {} }; } });
-  assert.equal(await section('opendata').load(ctx), null);
-  assert.deepEqual(await section('pvp').load(ctx), { unresolved: true });
-  assert.equal(calls.length, 0);
+  const ctx = makeCtx({ props: { municipality_code: 'H501' }, reference: 'H501', fetchJson: async (url) => { calls.push(url); return { ok: true, status: 200, data: {} }; } });
+  const pvp = await section('pvp').load(ctx);
+  assert.equal(pvp.matchAvailable, false);
+  assert.ok(calls.some((url) => url.includes('/sales/nearby-points?')));
+  assert.equal(calls.some((url) => url.includes('/parcel/pvp?')), false);
 });

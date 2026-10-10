@@ -86,6 +86,9 @@
     <!-- aecs4u-theme JS (dark-mode toggle, sidebar collapse) -->
     <script src="/static/aecs4u-theme/js/theme.js"></script>
 
+    <!-- Shared client-side selection, table and GeoJSON helpers for both maps. -->
+    <script src="{{ asset_url('map-workbench.js') }}"></script>
+
     {% block map_js %}
     <script src="{{ asset_url('progressive-loader.js') }}"></script>
     <script src="{{ asset_url('map.js') }}"></script>

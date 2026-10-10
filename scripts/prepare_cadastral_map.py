@@ -4,8 +4,10 @@
     .venv/bin/python scripts/prepare_cadastral_map.py --dry-run
     .venv/bin/python scripts/prepare_cadastral_map.py
 
-No source rows are copied or changed. Identity indexes are built concurrently;
-the views are published together only after every source has been validated.
+No source rows are copied or changed. Parcel tables gain ``has_visura`` and
+``is_auction_sale`` columns when missing, and the parcel view exposes them.
+Identity indexes are built concurrently; the views are published together
+only after every source has been validated.
 """
 
 from __future__ import annotations
@@ -72,6 +74,23 @@ async def prepare(dsn: str, *, dry_run: bool = False) -> None:
             columns = {r[0] for r in await connection.fetch(
                 "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1", table
             )}
+            if parcels and "has_visura" not in columns:
+                statement = f'ALTER TABLE public."{table}" ADD COLUMN IF NOT EXISTS has_visura boolean'
+                if dry_run:
+                    print(statement + ";", flush=True)
+                else:
+                    await connection.execute(statement)
+                columns.add("has_visura")
+            if parcels and "is_auction_sale" not in columns:
+                statement = (
+                    f'ALTER TABLE public."{table}" '
+                    "ADD COLUMN IF NOT EXISTS is_auction_sale boolean NOT NULL DEFAULT false"
+                )
+                if dry_run:
+                    print(statement + ";", flush=True)
+                else:
+                    await connection.execute(statement)
+                columns.add("is_auction_sale")
             if required - columns:
                 raise RuntimeError(f"{table}: missing columns {sorted(required - columns)}")
 

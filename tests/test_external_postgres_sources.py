@@ -65,6 +65,53 @@ def test_opendata_source_decodes_json_and_queries_only_selected_location():
     assert "Cittadella" in cursor.params
 
 
+def test_opendata_source_filters_encoded_urban_section():
+    cursor = _Cursor([("query-1", '{"immobili": [{"categoria": "A/2"}]}')])
+    source = stats_service._OpenDataPostgresSource("postgresql://localhost/opendata")
+
+    @contextmanager
+    def connection():
+        yield _Connection(cursor)
+
+    source._connection = connection
+    result = source.parcel_data(
+        "H501A048600.D",
+        {"province": "Roma", "name": "Roma"},
+    )
+
+    assert result["available"] is True
+    assert "coalesce(cl.section" in cursor.sql
+    assert cursor.params[2] == "A"
+
+
+def test_opendata_json_fallback_requires_section_when_reference_has_one():
+    result = {
+        "immobili": [
+            {"sezione": "B", "foglio": "486", "particella": "D"},
+            {"sezione": "A", "foglio": "486", "particella": "D"},
+        ]
+    }
+
+    assert stats_service._open_data_result_matches(
+        result,
+        "Roma",
+        "Roma",
+        ["048600", "48600", "486"],
+        ["D"],
+        cadastral_code="H501",
+        section="A",
+    ) is True
+    assert stats_service._open_data_result_matches(
+        {"immobili": [{"foglio": "486", "particella": "D"}]},
+        "Roma",
+        "Roma",
+        ["048600", "48600", "486"],
+        ["D"],
+        cadastral_code="H501",
+        section="A",
+    ) is False
+
+
 def test_pvp_source_retains_one_to_many_records():
     cursor = _Cursor([(1, None), (2, None)])
     source = stats_service._PvpPostgresSource("postgresql://localhost/pvp")
@@ -83,6 +130,26 @@ def test_pvp_source_retains_one_to_many_records():
     assert result["records"][0]["id"] == 1
     assert "modelview_registries" in cursor.sql
     assert result["match_method"] == "municipality+code+sheet+parcel"
+
+
+def test_pvp_source_filters_encoded_urban_section():
+    cursor = _Cursor([(1, None)])
+    source = stats_service._PvpPostgresSource("postgresql://localhost/pvp")
+
+    @contextmanager
+    def connection():
+        yield _Connection(cursor)
+
+    source._connection = connection
+    result = source.parcel_data(
+        "H501A048600.D",
+        {"province": "Roma", "name": "Roma", "istat_code": "058091"},
+    )
+
+    assert result["count"] == 1
+    assert "coalesce(r.section" in cursor.sql
+    assert cursor.params[-1] == "A"
+    assert result["match_method"] == "municipality+section+sheet+parcel"
 
 
 class _RelationCursor:

@@ -174,7 +174,7 @@ async def test_async_parcel_context_includes_optional_municipal_solar_aggregates
         "solar_data_version": "solar-comuni-2026-09",
         "solar_updated_at": "2026-09-30",
     }
-    fetchrow = AsyncMock(side_effect=[municipality_row, solar_row, None, None])
+    fetchrow = AsyncMock(side_effect=[municipality_row, solar_row, None, None, None])
     fetch = AsyncMock(return_value=[])
     monkeypatch.setattr(source, "_relations_available", AsyncMock(return_value=True))
     monkeypatch.setattr(source, "_fetchrow", fetchrow)
@@ -196,6 +196,93 @@ async def test_async_parcel_context_includes_optional_municipal_solar_aggregates
     assert "FROM solar.solar_potential_comuni" in fetchrow.await_args_list[1].args[0]
     assert "ltrim(pro_com_t::text, '0')" in fetchrow.await_args_list[1].args[0]
     fetch.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_country_relocation_indicators_keep_country_scope_and_units(monkeypatch):
+    source = stats_service._AsyncPostgresSource("postgresql://localhost/stats")
+    fetch = AsyncMock(side_effect=[
+        [{"relation_name": "serving.relocation_safety_index"}],
+        [
+            {"table_name": "relocation_safety_index", "column_name": "country_code"},
+            {"table_name": "relocation_safety_index", "column_name": "year"},
+            {"table_name": "relocation_safety_index", "column_name": "score"},
+            {"table_name": "relocation_safety_index", "column_name": "unit"},
+        ],
+        [{"payload": {"country_code": "IT", "year": 2024, "score": 71.5, "unit": "index"}}],
+    ])
+    monkeypatch.setattr(source, "_fetch", fetch)
+
+    result = await source.relocation_quality_indicators()
+
+    assert result["spatial_resolution"] == "country"
+    assert result["country_code"] == "IT"
+    assert result["years"] == ["2024"]
+    safety = result["clusters"][0]["indicators"][0]
+    assert safety["name"] == "Safety Index"
+    assert safety["values"]["2024"] == {
+        "value": 71.5,
+        "unit": "index",
+        "temporal_reference": None,
+    }
+    assert "not describe the province or parcel" in result["scope_note"]
+
+
+@pytest.mark.asyncio
+async def test_municipality_demographic_series_reports_its_scope(monkeypatch):
+    source = stats_service._AsyncPostgresSource("postgresql://localhost/stats")
+    monkeypatch.setattr(source, "_relations_available", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        source,
+        "_serving_municipality_by_cadastral_code",
+        AsyncMock(return_value={"istat_code": "058091", "official_name": "Roma"}),
+    )
+    columns = [
+        {"column_name": "reference_year"},
+        {"column_name": "population"},
+        {"column_name": "comune_code"},
+        {"column_name": "population_lt12"},
+        {"column_name": "population_ge12"},
+    ]
+    rows = [
+        {"year": 2023, "population": 2750000, "population_lt12": 290000, "population_ge12": 2460000},
+    ]
+    monkeypatch.setattr(source, "_fetch", AsyncMock(side_effect=[columns, rows, columns, rows]))
+
+    catalog = await source.municipality_demographic_indicators("H501")
+    series = await source.municipality_demographic_series("H501", "resident_population")
+
+    assert catalog["spatial_resolution"] == "municipality"
+    assert catalog["municipality"] == "Roma"
+    assert catalog["series_by_indicator"]["population_under_12"][0]["value"] == 290000
+    assert series["series"] == [{"year": 2023, "value": 2750000, "unit": "residents"}]
+
+
+@pytest.mark.asyncio
+async def test_municipality_demographics_work_without_optional_age_columns(monkeypatch):
+    source = stats_service._AsyncPostgresSource("postgresql://localhost/stats")
+    monkeypatch.setattr(source, "_relations_available", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        source,
+        "_serving_municipality_by_cadastral_code",
+        AsyncMock(return_value={"istat_code": "058091", "official_name": "Roma"}),
+    )
+    fetch = AsyncMock(side_effect=[
+        [{"column_name": "reference_year"}, {"column_name": "population"}, {"column_name": "comune_code"}],
+        [{"year": 2023, "population": 2750000, "population_lt12": None, "population_ge12": None}],
+    ])
+    monkeypatch.setattr(source, "_fetch", fetch)
+
+    result = await source.municipality_demographic_indicators("H501")
+
+    assert result["indicators"] == ["resident_population"]
+    assert result["series_by_indicator"] == {
+        "resident_population": [{"year": 2023, "value": 2750000, "unit": "residents"}],
+    }
+    query, params = fetch.await_args_list[1].args
+    assert "NULL AS population_lt12" in query
+    assert "NULL AS population_ge12" in query
+    assert params == ("058091",)
 
 
 @pytest.mark.asyncio
@@ -246,16 +333,229 @@ async def test_panel_read_model_falls_back_to_local_cache_and_hits_on_repeat(mon
     monkeypatch.setattr(stats_service, "_read_local_panel_read_model", read_local)
     monkeypatch.setattr(stats_service, "_write_local_panel_read_model", write_local)
 
+    full = await stats_service.aget_parcel_enrichment(reference, view="full")
     first = await stats_service.aget_parcel_enrichment(reference, view="panel")
     second = await stats_service.aget_parcel_enrichment(reference, view="panel")
 
+    assert full["read_model"]["cached"] is False
+    assert full["read_model"]["database"] is None
     assert first["read_model"]["cached"] is False
+    assert first["read_model"]["database"] == "land-registry application SQLite panel cache"
     assert first["blocks"]["valuation"]["data"]["quote_count"] == 20
     assert len(first["blocks"]["valuation"]["data"]["quote_preview"]) == 8
     assert second["read_model"]["cached"] is True
     assert second["read_model"]["database"] == "land-registry application SQLite panel cache"
-    assert calls["build"] == 1
+    assert calls["build"] == 2
     assert list(cache) == [f"{reference}{stats_service._LOCAL_PANEL_CACHE_SUFFIX}"]
+
+
+@pytest.mark.asyncio
+async def test_feature_specific_read_models_use_distinct_cache_keys(monkeypatch):
+    reference = "H501_048600.D"
+    parcels = {
+        101: {
+            "type": "Feature",
+            "id": 101,
+            "properties": {"municipality_code": "H501", "sheet_number": "486", "parcel_number": "D"},
+            "geometry": {"type": "Polygon", "coordinates": [[[12.47, 41.89], [12.48, 41.89], [12.48, 41.90], [12.47, 41.90], [12.47, 41.89]]]},
+        },
+        202: {
+            "type": "Feature",
+            "id": 202,
+            "properties": {"municipality_code": "H501", "sheet_number": "486", "parcel_number": "D"},
+            "geometry": {"type": "Polygon", "coordinates": [[[12.50, 41.89], [12.51, 41.89], [12.51, 41.90], [12.50, 41.90], [12.50, 41.89]]]},
+        },
+        303: {
+            "type": "Feature",
+            "id": 303,
+            "properties": {"municipality_code": "H501", "sheet_number": "486", "parcel_number": "D"},
+            "geometry": {"type": "Polygon", "coordinates": [[[12.53, 41.89], [12.54, 41.89], [12.54, 41.90], [12.53, 41.90], [12.53, 41.89]]]},
+        },
+    }
+
+    class FakeSource:
+        _retry_at = 0.0
+
+        def __init__(self):
+            self.rows = {}
+            self.read_keys = []
+            self.write_keys = []
+
+        async def get_read_model(self, key):
+            self.read_keys.append(key)
+            payload = self.rows.get(key)
+            if payload is None:
+                return None
+            result = deepcopy(payload)
+            result["read_model"].update({
+                "key": key,
+                "source_fingerprint": "feature-cache-fingerprint",
+                "cached": True,
+                "database": "aecs4u-stats PostgreSQL via asyncpg",
+            })
+            return result
+
+        async def upsert_read_model(self, key, payload, source_fingerprint):
+            self.write_keys.append(key)
+            self.rows[key] = deepcopy(payload)
+            return True
+
+        async def context_for_parcel(self, *args, **kwargs):
+            return None
+
+    class FakeMapSource:
+        available = True
+
+        async def read_feature_by_reference(self, layer_id, national_reference, *, feature_id):
+            assert layer_id == "cadastral-parcels"
+            assert national_reference == reference
+            return deepcopy(parcels[feature_id])
+
+    source = FakeSource()
+    source.rows[f"{reference}::feature:303"] = {
+        "national_reference": reference,
+        "parcel": deepcopy(parcels[101]),
+        "blocks": {},
+        "source": "stale fixture",
+        "read_model": {"feature_id": 101},
+    }
+    local_reads = []
+    builds = []
+
+    async def no_data(*_args, **_kwargs):
+        return None
+
+    def read_local(key):
+        local_reads.append(key)
+        return None
+
+    def build(_reference, **kwargs):
+        parcel = kwargs["parcel_override"]
+        builds.append(parcel["id"])
+        return {
+            "national_reference": reference,
+            "parcel": parcel,
+            "blocks": {},
+            "source": "fixture",
+        }
+
+    monkeypatch.setattr(stats_service, "_get_async_postgres_source", AsyncMock(return_value=source))
+    monkeypatch.setattr(stats_service, "_parcel_enrichment_fingerprint", lambda: "feature-cache-fingerprint")
+    monkeypatch.setattr(stats_service, "aget_municipality_by_cadastral_code", no_data)
+    monkeypatch.setattr(stats_service, "aget_omi_quotes", no_data)
+    monkeypatch.setattr(stats_service, "aget_income_profile", no_data)
+    monkeypatch.setattr(stats_service, "_parcel_centroid", lambda _parcel: None)
+    monkeypatch.setattr(stats_service, "_build_parcel_enrichment", build)
+    monkeypatch.setattr(stats_service, "_read_local_panel_read_model", read_local)
+    monkeypatch.setattr(stats_service, "_write_local_panel_read_model", lambda *_args: None)
+    monkeypatch.setattr("land_registry.map_layers.get_map_layer_source", lambda: FakeMapSource())
+
+    first = await stats_service.aget_parcel_enrichment(reference, view="panel", feature_id=101)
+    other = await stats_service.aget_parcel_enrichment(reference, view="panel", feature_id=202)
+    stale = await stats_service.aget_parcel_enrichment(reference, view="panel", feature_id=303)
+    repeat = await stats_service.aget_parcel_enrichment(reference, view="panel", feature_id=101)
+
+    assert builds == [101, 202, 303]
+    assert source.read_keys == [
+        f"{reference}::feature:101",
+        f"{reference}::feature:202",
+        f"{reference}::feature:303",
+        f"{reference}::feature:101",
+    ]
+    assert source.write_keys == [
+        f"{reference}::feature:101",
+        f"{reference}::feature:202",
+        f"{reference}::feature:303",
+    ]
+    assert local_reads == [
+        f"{reference}::feature:101{stats_service._LOCAL_PANEL_CACHE_SUFFIX}",
+        f"{reference}::feature:202{stats_service._LOCAL_PANEL_CACHE_SUFFIX}",
+        f"{reference}::feature:303{stats_service._LOCAL_PANEL_CACHE_SUFFIX}",
+    ]
+    assert first["read_model"]["feature_id"] == 101
+    assert other["read_model"]["feature_id"] == 202
+    assert stale["read_model"]["feature_id"] == 303
+    assert repeat["read_model"]["feature_id"] == 101
+    assert repeat["read_model"]["cached"] is True
+    assert repeat["read_model"]["key"] == reference
+
+
+@pytest.mark.asyncio
+async def test_feature_id_survives_local_panel_cache_fallback(monkeypatch):
+    reference = "H501_048600.D"
+    feature_id = 707
+    parcel = {
+        "type": "Feature",
+        "id": feature_id,
+        "properties": {"municipality_code": "H501", "sheet_number": "486", "parcel_number": "D"},
+        "geometry": {"type": "Polygon", "coordinates": [[[12.47, 41.89], [12.48, 41.89], [12.48, 41.90], [12.47, 41.90], [12.47, 41.89]]]},
+    }
+    local_cache = {}
+    expected_key = f"{reference}::feature:{feature_id}{stats_service._LOCAL_PANEL_CACHE_SUFFIX}"
+    local_cache[expected_key] = {
+        "national_reference": reference,
+        "blocks": {},
+        "source": "stale fixture",
+        "read_model": {
+            "feature_id": 606,
+            "source_fingerprint": "local-feature-fingerprint",
+        },
+    }
+    local_reads = []
+    builds = []
+
+    class FakeMapSource:
+        available = True
+
+        async def read_feature_by_reference(self, *_args, **_kwargs):
+            return deepcopy(parcel)
+
+    async def no_data(*_args, **_kwargs):
+        return None
+
+    def read_local(key):
+        local_reads.append(key)
+        cached = local_cache.get(key)
+        return deepcopy(cached) if cached is not None else None
+
+    def write_local(key, payload, fingerprint):
+        local_cache[key] = deepcopy(payload)
+        local_cache[key]["read_model"]["source_fingerprint"] = fingerprint
+
+    def build(_reference, **kwargs):
+        builds.append(kwargs["parcel_override"]["id"])
+        return {
+            "national_reference": reference,
+            "parcel": kwargs["parcel_override"],
+            "blocks": {},
+            "source": "fixture",
+        }
+
+    monkeypatch.setattr(stats_service, "_get_async_postgres_source", AsyncMock(return_value=None))
+    monkeypatch.setattr(stats_service, "_parcel_enrichment_fingerprint", lambda: "local-feature-fingerprint")
+    monkeypatch.setattr(stats_service, "aget_municipality_by_cadastral_code", no_data)
+    monkeypatch.setattr(stats_service, "aget_omi_quotes", no_data)
+    monkeypatch.setattr(stats_service, "aget_income_profile", no_data)
+    monkeypatch.setattr(stats_service, "_parcel_centroid", lambda _parcel: None)
+    monkeypatch.setattr(stats_service, "_build_parcel_enrichment", build)
+    monkeypatch.setattr(stats_service, "_read_local_panel_read_model", read_local)
+    monkeypatch.setattr(stats_service, "_write_local_panel_read_model", write_local)
+    monkeypatch.setattr("land_registry.map_layers.get_map_layer_source", lambda: FakeMapSource())
+
+    first = await stats_service.aget_parcel_enrichment(
+        reference, view="panel", feature_id=feature_id
+    )
+    second = await stats_service.aget_parcel_enrichment(
+        reference, view="panel", feature_id=feature_id
+    )
+
+    assert local_reads == [expected_key, expected_key]
+    assert list(local_cache) == [expected_key]
+    assert builds == [feature_id]
+    assert first["read_model"]["feature_id"] == feature_id
+    assert second["read_model"]["feature_id"] == feature_id
+    assert second["read_model"]["cached"] is True
+    assert second["read_model"]["database"] == "land-registry application SQLite panel cache"
 
 
 

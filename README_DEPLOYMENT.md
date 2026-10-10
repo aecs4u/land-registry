@@ -146,7 +146,39 @@ gcloud projects add-iam-policy-binding PROJECT_ID \
 The Cloud Run deployment workflow enables `STATS_POSTGRES_ENABLE=1`,
 injects this DSN as a secret, and verifies all 15 canonical map layers after
 deployment. The database role needs `SELECT` on the canonical and serving
-relations plus network access from Cloud Run.
+data relations plus network access from Cloud Run. To enable the parcel
+enrichment warm-read cache, a database owner must first apply
+[`scripts/sql/parcel-enrichment-read-model.sql`](scripts/sql/parcel-enrichment-read-model.sql)
+to `aecs4u-stats`, passing the PostgreSQL username in `STATS_POSTGRES_DSN` as
+`stats_app_role` (not the Cloud Run IAM service-account email). The script
+grants that database role `SELECT`, `INSERT`, and `UPDATE` on the cache table
+only; it does not grant writes on source data.
+
+Verify using the same DSN configured for Cloud Run:
+
+```sql
+SELECT current_user,
+       r.rolsuper,
+       has_schema_privilege(current_user, 'serving', 'USAGE') AS schema_usage,
+       has_table_privilege(current_user, 'serving.parcel_enrichment_read_model', 'SELECT') AS can_select,
+       has_table_privilege(current_user, 'serving.parcel_enrichment_read_model', 'INSERT') AS can_insert,
+       has_table_privilege(current_user, 'serving.parcel_enrichment_read_model', 'UPDATE') AS can_update,
+       has_table_privilege(current_user, 'serving.parcel_enrichment_read_model', 'DELETE') AS can_delete
+FROM pg_roles AS r
+WHERE r.rolname = current_user;
+```
+
+The expected production role is non-superuser, has schema usage and the three
+cache privileges, and has no `DELETE` privilege. As of 2026-10-10, the
+operator reports that Cloud Run uses database username `postgres`; the
+configured `aecs4u-stats` connection confirms that role is a superuser. The
+cache migration is applied there, but table-level grants do not limit a
+superuser's existing powers. Neon is the likely production target. Before
+cutover, create a dedicated non-superuser runtime role, grant only the required
+canonical read access and cache-table privileges, update the Cloud Run secret,
+and repeat this check against Neon. GCP Secret Manager could not be inspected
+independently in this review because its credentials require interactive
+reauthentication.
 
 ## 📊 Monitoring and Logging
 

@@ -67,7 +67,12 @@ CadastralLookupResponse = _compat_schema("CadastralLookupResponse", CadastralLoo
 CadastralStatistics = _compat_schema("CadastralStatistics", CadastralStatisticsBase)
 ComuniSearchResponse = _compat_schema("ComuniSearchResponse", ComuniSearchResponseBase)
 DataBlock = _compat_schema("DataBlock", DataBlockBase)
-EnrichmentDatasetStatus = _compat_schema("EnrichmentDatasetStatus", EnrichmentDatasetStatusBase)
+EnrichmentDatasetStatus = _compat_schema(
+    "EnrichmentDatasetStatus",
+    EnrichmentDatasetStatusBase,
+    __annotations__={"reason": str | None},
+    reason=None,
+)
 ErrorResponse = _compat_schema("ErrorResponse", ErrorResponseBase)
 FileAvailabilityStats = _compat_schema("FileAvailabilityStats", FileAvailabilityStatsBase)
 FreshnessMetadata = _compat_schema("FreshnessMetadata", FreshnessMetadataBase)

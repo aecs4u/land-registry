@@ -33,7 +33,8 @@
       "economics": "20/20",
       "population": "20/20",
       "valuation": "20/20"
-    }
+    },
+    "percentile_method": "nearest_rank"
   },
   "rows": [
     {

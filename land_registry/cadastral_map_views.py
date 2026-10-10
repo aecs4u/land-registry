@@ -92,9 +92,10 @@ def view_branch(table: str) -> str:
         if parcels else
         "national_zoning_reference AS sheet_reference, level, level_name"
     )
+    parcel_flags = ", has_visura, is_auction_sale" if parcels else ""
     return (
         f"SELECT {identity} AS id, {specific}, NULL::bigint AS municipality_id, "
         f"area_sqm, '{table}'::text AS source_release, region, province, "
-        f"municipality_code, municipality_name, inspire_localid, geom "
+        f"municipality_code, municipality_name, inspire_localid, geom{parcel_flags} "
         f"FROM public.\"{table}\""
     )

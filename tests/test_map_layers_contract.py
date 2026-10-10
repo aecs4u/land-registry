@@ -3,7 +3,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
@@ -260,6 +260,40 @@ async def test_point_enrichment_falls_back_to_canonical_source():
 
     assert result == feature
     source.read_feature_at_point.assert_awaited_once_with("cadastral-parcels", 42.07, 11.85)
+
+
+@pytest.mark.asyncio
+async def test_point_enrichment_prefers_canonical_feature_id_over_local_copy():
+    feature = {"type": "Feature", "id": 42, "properties": {"national_cadastral_reference": "C773_002800.29"}}
+    source = MagicMock(available=True)
+    source.read_feature_at_point = AsyncMock(return_value=feature)
+    local_lookup = Mock(return_value={"type": "Feature", "properties": {"national_cadastral_reference": "C773_002800.29"}})
+
+    with patch.object(enrichment_module.stats_service, "cadastral_store_available", return_value=True), \
+         patch.object(enrichment_module.stats_service, "get_parcel_at_point", local_lookup), \
+         patch.object(enrichment_module, "get_map_layer_source", return_value=source):
+        result = await enrichment_module.get_parcel_at_point(42.07, 11.85)
+
+    assert result == feature
+    assert result["id"] == 42
+    local_lookup.assert_not_called()
+    source.read_feature_at_point.assert_awaited_once_with("cadastral-parcels", 42.07, 11.85)
+
+
+@pytest.mark.asyncio
+async def test_point_enrichment_uses_local_copy_when_canonical_query_fails():
+    feature = {"type": "Feature", "properties": {"national_cadastral_reference": "C773_002800.29"}}
+    source = MagicMock(available=True)
+    source.read_feature_at_point = AsyncMock(side_effect=RuntimeError("database unavailable"))
+    local_lookup = Mock(return_value=feature)
+
+    with patch.object(enrichment_module.stats_service, "cadastral_store_available", return_value=True), \
+         patch.object(enrichment_module.stats_service, "get_parcel_at_point", local_lookup), \
+         patch.object(enrichment_module, "get_map_layer_source", return_value=source):
+        result = await enrichment_module.get_parcel_at_point(42.07, 11.85)
+
+    assert result == feature
+    local_lookup.assert_called_once_with(42.07, 11.85)
 
 
 @pytest.mark.asyncio
@@ -543,3 +577,27 @@ def test_sales_color_by_controls_explain_why_they_are_inert():
     assert "function syncSalesGeoControls" in script and "salesGeoHint" in script
     for name in ("map_v2.html", "theme_overrides/map_v2.html"):
         assert 'id="salesGeoHint"' in (Path(__file__).parents[1] / "land_registry" / "templates" / name).read_text(encoding="utf-8")
+
+
+def test_catalog_caps_tile_requests_so_high_zooms_overzoom_instead_of_fanning_out():
+    from land_registry.map_layers import map_layer_catalog
+
+    for layer in map_layer_catalog():
+        assert 1 <= layer["tile_max_zoom"] <= 22, layer["id"]
+        # A source must be requestable at its own minimum zoom.
+        assert layer["tile_max_zoom"] >= layer["min_zoom"], layer["id"]
+
+
+def test_map_pool_defaults_to_four_connections_and_honours_the_environment(monkeypatch):
+    from land_registry.map_layers import _AsyncpgConnectionSource
+
+    monkeypatch.delenv("MAP_DB_POOL_MAX", raising=False)
+    assert _AsyncpgConnectionSource("postgresql://u@h/db").max_connections == 4
+    monkeypatch.setenv("MAP_DB_POOL_MAX", "6")
+    assert _AsyncpgConnectionSource("postgresql://u@h/db").max_connections == 6
+    monkeypatch.setenv("MAP_DB_POOL_MAX", "not-a-number")
+    assert _AsyncpgConnectionSource("postgresql://u@h/db").max_connections == 4
+    monkeypatch.setenv("MAP_DB_POOL_MAX", "500")
+    assert _AsyncpgConnectionSource("postgresql://u@h/db").max_connections == 32
+    # An explicit size (the dedicated cadastral pools use 2) is never overridden.
+    assert _AsyncpgConnectionSource("postgresql://u@h/db", max_connections=2).max_connections == 2

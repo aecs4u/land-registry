@@ -25,9 +25,30 @@ database, prepare map views over its `public.<region>__fogli` and
 
 The script validates WGS84 geometry and existing spatial indexes, builds
 identity indexes concurrently, and publishes `spatial.cadastral_sheet` and
-`spatial.cadastral_parcel` views without copying or changing source rows.
-Rerun it after adding a regional table. The app prefers existing canonical
-relations in aecs4u-stats and uses these views when those relations are absent.
+`spatial.cadastral_parcel` views without copying source rows. It also ensures
+each regional parcel table has a nullable `has_visura` column and an
+`is_auction_sale` boolean defaulting to false, and exposes both from
+`spatial.cadastral_parcel`. The auction refresh reads structured
+`modelview.modelview_registries.sheet` and `.parcel` values in `pvp_enriched`,
+joins them through the asset and sale to resolve municipality/province, and
+matches cadastral parcel identities. Explicit parcel lists are expanded; only
+unambiguous matches are marked true, and old flags without a structured match
+are cleared.
+Populate or refresh the stored parcel flags after preparing the regional view:
+
+```bash
+.venv/bin/python scripts/refresh_cadastral_parcel_visura.py --dry-run
+.venv/bin/python scripts/refresh_cadastral_parcel_visura.py
+.venv/bin/python scripts/refresh_cadastral_parcel_auction.py --dry-run
+.venv/bin/python scripts/refresh_cadastral_parcel_auction.py --apply
+```
+
+The refresh also adds `has_visura` when `spatial.cadastral_parcel` is a
+populated physical table in the stats database. SISTER-unavailable batches
+are left unchanged; unmatched references are not marked false. Rerun the map
+preparation after adding a regional table, then refresh its SISTER flags. The
+app prefers existing canonical relations in aecs4u-stats and uses these views
+when those relations are absent.
 `CADASTRAL_POSTGRES_DSN` overrides the dedicated connection; by default it
 uses the stats connection's host and credentials with database `cadastral`.
 The application role needs `SELECT` on these views and `USAGE` on their schema.

@@ -1,12 +1,14 @@
 """Phase 0 contract and parcel identity regression tests."""
 
 from datetime import date, datetime, timezone
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
 import pytest
 from pydantic import ValidationError
 
+from land_registry import stats_service
 from land_registry.main import app, health_check
 from land_registry.models import (
     ComuniSearchResponse,
@@ -57,9 +59,10 @@ def test_openapi_exposes_the_authoritative_health_schema():
 
     assert "ErrorResponse" in document["components"]["schemas"]
 
-    assert document["paths"]["/health"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] == (
-        "#/components/schemas/HealthResponse"
-    )
+    health_ref = document["paths"]["/health"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+    assert health_ref.startswith("#/components/schemas/")
+    health_schema_name = health_ref.removeprefix("#/components/schemas/")
+    assert document["components"]["schemas"][health_schema_name] == HealthResponse.model_json_schema()
     assert "/api/v1/enrichment/status" in document["paths"]
     status_schema = document["paths"]["/api/v1/enrichment/status"]["get"]["responses"]["200"]["content"][
         "application/json"
@@ -82,18 +85,181 @@ def test_openapi_exposes_the_authoritative_health_schema():
 
 @pytest.mark.asyncio
 async def test_enrichment_status_preserves_existing_dataset_keys_and_is_typed():
-    with patch(
-        "land_registry.stats_service.enrichment_status",
-        return_value={
-            "cadastral_parcels": {"available": True, "note": "regional stores"},
-            "istat_municipalities": {"available": False, "path": "/data/istat.sqlite"},
-        },
+    with (
+        patch(
+            "land_registry.stats_service.enrichment_status",
+            return_value={
+                "cadastral_parcels": {"available": True, "note": "regional stores"},
+                "istat_municipalities": {"available": False, "path": "/data/istat.sqlite"},
+            },
+        ),
+        patch(
+            "land_registry.stats_service._get_async_postgres_source",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
     ):
         payload = await get_enrichment_status()
 
     assert payload
     assert "cadastral_parcels" in payload
     assert all(EnrichmentDatasetStatus.model_validate(value).available in (True, False) for value in payload.values())
+    assert payload["parcel_enrichment_read_model"]["reason"] == "not_configured"
+
+
+def test_optional_store_status_explains_missing_support_build_and_probe_errors():
+    assert "reason" in EnrichmentDatasetStatus.model_json_schema()["properties"]
+    assert stats_service._optional_store_status(None) == {
+        "available": False,
+        "reason": "not_supported",
+    }
+    assert stats_service._optional_store_status(lambda: True, None) == {
+        "available": False,
+        "reason": "not_supported",
+    }
+    assert stats_service._optional_store_status(lambda: False, lambda: True) == {
+        "available": False,
+        "reason": "not_built",
+    }
+
+    def adapter_requires_arguments(_lat, _lng):
+        raise AssertionError("readiness must not invoke the query adapter")
+
+    assert stats_service._optional_store_status(lambda: True, adapter_requires_arguments) == {
+        "available": True,
+        "reason": None,
+    }
+
+    def failed_probe():
+        raise RuntimeError("store unavailable")
+
+    assert stats_service._optional_store_status(failed_probe) == {
+        "available": False,
+        "reason": "probe_failed",
+    }
+
+
+@pytest.mark.parametrize(
+    ("availability_name", "checker_name"),
+    (
+        ("safety_db_available", "safety_available"),
+        ("bes_db_available", "bes_available"),
+        ("demographic_db_available", "demographic_available"),
+    ),
+)
+def test_unbuilt_istat_source_is_unavailable_without_traceback(
+    monkeypatch, caplog, availability_name, checker_name
+):
+    def missing_source():
+        raise FileNotFoundError("SQLite source not found")
+
+    monkeypatch.setattr(
+        stats_service,
+        "_istat_query_engine",
+        lambda: SimpleNamespace(**{checker_name: missing_source}),
+    )
+    monkeypatch.setattr(stats_service, "_istat_sqlite_table_available", lambda _table: False)
+    monkeypatch.setattr(stats_service, "_istat_bes_rows", lambda: ())
+
+    with caplog.at_level("DEBUG", logger="land_registry.stats_service"):
+        assert getattr(stats_service, availability_name)() is False
+
+    assert "store is not built" in caplog.text
+    assert "Traceback" not in caplog.text
+
+
+def test_missing_bes_sqlite_snapshot_does_not_log_open_error(monkeypatch, tmp_path, caplog):
+    missing_snapshot = tmp_path / "eurostat.IT.sqlite"
+    monkeypatch.setenv("ISTAT_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(stats_service, "_istat_sqlite_path", lambda: missing_snapshot)
+    stats_service._istat_bes_rows.cache_clear()
+    try:
+        with caplog.at_level("DEBUG", logger="land_registry.stats_service"):
+            assert stats_service._istat_bes_rows() == ()
+    finally:
+        stats_service._istat_bes_rows.cache_clear()
+
+    assert "SQLite BES snapshot could not be read" not in caplog.text
+    assert "Traceback" not in caplog.text
+
+
+def test_enrichment_status_exposes_parcel_spatial_store_readiness(monkeypatch):
+    false_probes = (
+        "istat_db_available", "postgres_stats_available", "cadastral_store_available",
+        "census_db_available", "sister_buildings_available", "sister_documents_available",
+        "safety_db_available", "bes_db_available", "demographic_db_available", "poi_db_available",
+        "omi_db_available_public", "zone_boundaries_available", "mef_db_available_public",
+        "seismic_db_available", "_mps04_db_available", "_ispra_mosaics_db_available",
+        "_egms_db_available",
+    )
+    for name in false_probes:
+        monkeypatch.setattr(stats_service, name, lambda *args, **kwargs: False)
+    for name in (
+        "_get_sister_postgres_source", "_get_opendata_postgres_source", "_get_pvp_postgres_source",
+    ):
+        monkeypatch.setattr(stats_service, name, lambda: None)
+    monkeypatch.setattr(stats_service, "get_criticality_bulletin", lambda: None)
+    monkeypatch.setattr(stats_service, "_mps04_pga_at_point", lambda *args, **kwargs: None)
+    monkeypatch.setattr(stats_service, "_landslide_hazard_in_bbox", lambda *args, **kwargs: {})
+    monkeypatch.setattr(stats_service, "_flood_hazard_in_bbox", lambda *args, **kwargs: {})
+    monkeypatch.setattr(stats_service, "_subsidence_in_bbox", lambda *args, **kwargs: {})
+
+    status = stats_service.enrichment_status()
+
+    assert status["hazards_mps04"]["available"] is False
+    assert status["hazards_mps04"]["reason"] == "not_built"
+    assert status["hazards_mps04"]["source_version"] == "MPS04"
+    assert status["hazards_ispra_mosaics"]["available"] is False
+    assert status["hazards_ispra_mosaics"]["reason"] == "not_built"
+    assert status["egms_subsidence"]["available"] is False
+    assert status["egms_subsidence"]["reason"] == "not_built"
+    typed_status = EnrichmentDatasetStatus.model_validate(status["hazards_mps04"])
+    assert typed_status.model_dump()["reason"] == "not_built"
+
+
+@pytest.mark.asyncio
+async def test_parcel_read_model_status_distinguishes_unprovisioned_and_probe_failure(monkeypatch):
+    class Source:
+        def __init__(self, available=False, error=None):
+            self.available = available
+            self.error = error
+
+        async def _read_model_available(self):
+            if self.error:
+                raise self.error
+            return self.available
+
+    async def source_factory(source):
+        return source
+
+    monkeypatch.setattr(stats_service, "enrichment_status", lambda: {})
+    monkeypatch.setattr(
+        stats_service,
+        "_get_async_postgres_source",
+        lambda: source_factory(None),
+    )
+    assert (await stats_service.aenrichment_status())["parcel_enrichment_read_model"]["reason"] == "not_configured"
+
+    monkeypatch.setattr(
+        stats_service,
+        "_get_async_postgres_source",
+        lambda: source_factory(Source()),
+    )
+    assert (await stats_service.aenrichment_status())["parcel_enrichment_read_model"]["reason"] == "not_built"
+
+    monkeypatch.setattr(
+        stats_service,
+        "_get_async_postgres_source",
+        lambda: source_factory(Source(error=RuntimeError("database probe failed"))),
+    )
+    assert (await stats_service.aenrichment_status())["parcel_enrichment_read_model"]["reason"] == "probe_failed"
+
+    monkeypatch.setattr(
+        stats_service,
+        "_get_async_postgres_source",
+        lambda: source_factory(Source(available=True)),
+    )
+    assert (await stats_service.aenrichment_status())["parcel_enrichment_read_model"]["available"] is True
 
 
 def test_lineage_contract_preserves_crs_units_and_nullability():
@@ -221,7 +387,14 @@ async def test_enrichment_status_runs_off_the_event_loop_and_is_cached():
         return {"cadastral_parcels": {"available": True}}
 
     enrichment_router_module._status_cache = None
-    with patch("land_registry.stats_service.enrichment_status", probe):
+    with (
+        patch("land_registry.stats_service.enrichment_status", probe),
+        patch(
+            "land_registry.stats_service._get_async_postgres_source",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+    ):
         first = await get_enrichment_status()
         second = await get_enrichment_status()
 
@@ -243,7 +416,14 @@ async def test_enrichment_status_recomputes_after_the_cache_expires(monkeypatch)
 
     enrichment_router_module._status_cache = None
     monkeypatch.setattr(enrichment_router_module, "_STATUS_CACHE_SECONDS", 0.0)
-    with patch("land_registry.stats_service.enrichment_status", probe):
+    with (
+        patch("land_registry.stats_service.enrichment_status", probe),
+        patch(
+            "land_registry.stats_service._get_async_postgres_source",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+    ):
         await get_enrichment_status()
         await get_enrichment_status()
 

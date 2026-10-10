@@ -4,7 +4,8 @@ Adapter over the ``aecs4u-stats`` package: Italian public reference data
 income, natural hazards) consumed by the parcel-enrichment endpoints.
 
 All lookups degrade gracefully: when the underlying data stores have not been
-built on this host (see ``ISTAT_DATA_DIR``, default ``~/.aecs4u_stats/istat``),
+built on this host (see ``ISTAT_DATA_DIR``, default ``/data/istat`` from
+``aecs4u_stats.istat.config``),
 functions return ``None``/empty results instead of raising, so the map keeps
 working without the enrichment layer.
 
@@ -34,10 +35,11 @@ import subprocess
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from xml.etree import ElementTree
 
 try:
@@ -169,6 +171,16 @@ from shapely.ops import transform as _transform_geometry, unary_union as _unary_
 logger = logging.getLogger(__name__)
 
 
+# Readiness probes touch several independent stores and must not block the
+# request loop. Keep them on a small, dedicated pool rather than the default
+# executor used by parcel reads and other request work.
+_STATUS_PROBE_EXECUTOR = ThreadPoolExecutor(
+    max_workers=2,
+    thread_name_prefix="enrichment-status",
+)
+_STATUS_PROBE_POLL_SECONDS = 0.02
+
+
 _PARCEL_DETAIL_BLOCKS = (
     "basic", "cadastral", "address", "addresses", "risk", "subsidence", "terrain",
     "population", "buildings", "economics", "demographics", "land_cover",
@@ -198,6 +210,7 @@ _SOLAR_PROFILE_QUERY = """
     SELECT n_buildings AS pv_n_buildings,
            pvout_pessimistic_kwh_year_total AS pv_pvout_pessimistic_kwh_year_total,
            pvout_modern_kwh_year_total AS pv_pvout_modern_kwh_year_total,
+           pvout_per_capita_kwh AS pv_pvout_per_capita_kwh,
            kwp_max_total AS pv_kwp_max_total,
            high_viability_pct AS pv_high_viability_pct,
            medium_viability_pct AS pv_medium_viability_pct,
@@ -270,9 +283,11 @@ def _detail_block(
     benchmarks: Optional[Dict[str, Any]] = None,
     match_method: Optional[str] = None,
     available: Optional[bool] = None,
+    coverage: Optional[Literal["full", "partial", "unavailable"]] = None,
 ) -> Dict[str, Any]:
     """Return the common block envelope described by the parcel reference."""
     is_available = bool(data) if available is None else bool(available)
+    coverage_value = "unavailable" if not is_available else (coverage or "full")
     return {
         "available": is_available,
         "data": data if is_available else None,
@@ -283,7 +298,8 @@ def _detail_block(
         "updated_at": updated_at,
         "match_method": match_method,
         "match_distance_m": None,
-        "coverage_status": "full" if is_available else "not_available",
+        "coverage": coverage_value,
+        "coverage_status": coverage_value,
         "confidence": confidence,
         "spatial_resolution": spatial_resolution,
         "spatial_resolution_m": spatial_resolution_m,
@@ -392,17 +408,18 @@ class _SisterBuildingSource:
     ) -> Dict[str, Any]:
         """Return SISTER building categories and parcel-linked address strings."""
         reference = str(national_reference or "").strip()
-        prefix, separator, suffix = reference.partition("_")
-        sheet_text, dot, parcel_text = suffix.partition(".")
-        parcel_text = parcel_text.split("/", 1)[0]
-        if not separator or not dot or not sheet_text or not parcel_text:
+        reference_code, sheet_values, parcel_values = _parcel_reference_parts(reference)
+        if (
+            not sheet_values
+            or not parcel_values
+            or reference_code != str(cadastral_code or "").strip().upper()
+        ):
             return {
                 "buildings": [], "addresses": [], "address_count": 0,
                 "addresses_truncated": False, "source": "SISTER SQLite", "available": False,
             }
 
-        sheet_values = self._parcel_values(sheet_text, sheet=True)
-        parcel_values = self._parcel_values(parcel_text)
+        section = _parcel_reference_section(reference)
         province = str((municipality or {}).get("province") or "").strip()
         municipality_name = str((municipality or {}).get("name") or "").strip()
         if not province or not municipality_name:
@@ -437,12 +454,26 @@ class _SisterBuildingSource:
                     ).fetchall()
                 }
                 classifications = "building_classifications"
+                location_columns = (
+                    self._columns(connection, "cadastral_locations")
+                    if "cadastral_locations" in tables
+                    else set()
+                )
                 results: list[dict] = []
 
                 # Structured property rows are the direct equivalent of the
                 # sister query used by its result page (category is the
                 # cadastral building type).
-                if {"visura_properties", "cadastral_locations"}.issubset(tables):
+                if (
+                    {"visura_properties", "cadastral_locations"}.issubset(tables)
+                    and (not section or "section" in location_columns)
+                ):
+                    section_clause = (
+                        " AND upper(trim(coalesce(cl.section, ''))) = ?"
+                        if section and "section" in location_columns
+                        else ""
+                    )
+                    section_params = (section,) if section_clause else ()
                     rows = connection.execute(
                         f"""
                         SELECT vp.property_type, vp.category, vp.cadastral_class,
@@ -452,6 +483,7 @@ class _SisterBuildingSource:
                         JOIN cadastral_locations cl ON cl.id = vp.location_id
                         WHERE lower(trim(cl.province)) = lower(trim(?))
                           AND lower(trim(cl.municipality)) = lower(trim(?))
+                          {section_clause}
                           AND {parcel_filter('cl.sheet')}
                           AND (trim(cl.parcel) IN ({parcel_placeholders})
                                OR ltrim(trim(cl.parcel), '0') IN ({parcel_placeholders}))
@@ -459,7 +491,13 @@ class _SisterBuildingSource:
                                OR vp.category IS NOT NULL)
                         ORDER BY vp.id
                         """,
-                        (province, municipality_name, *parcel_params(sheet_values), *parcel_params(parcel_values)),
+                        (
+                            province,
+                            municipality_name,
+                            *section_params,
+                            *parcel_params(sheet_values),
+                            *parcel_params(parcel_values),
+                        ),
                     ).fetchall()
                     results.extend(dict(row) for row in rows)
 
@@ -470,23 +508,43 @@ class _SisterBuildingSource:
                     identifier_columns = self._columns(connection, "building_identifiers")
                     classification_columns = self._columns(connection, classifications)
                     if {"province", "municipality", "sheet", "parcel"}.issubset(identifier_columns):
+                        section_supported = not section or "section" in identifier_columns
+                        section_clause = "AND upper(trim(coalesce(bi.section, ''))) = ? " if section else ""
+                        section_params = (section,) if section_clause else ()
                         location_filter = (
                             "lower(trim(bi.province)) = lower(trim(?)) "
                             "AND lower(trim(bi.municipality)) = lower(trim(?)) "
+                            f"{section_clause}"
                             f"AND {parcel_filter('bi.sheet')} "
                             f"AND (trim(bi.parcel) IN ({parcel_placeholders}) "
                             f"OR ltrim(trim(bi.parcel), '0') IN ({parcel_placeholders}))"
+                        ) if section_supported else "0"
+                        location_params = (
+                            province,
+                            municipality_name,
+                            *section_params,
+                            *parcel_params(sheet_values),
+                            *parcel_params(parcel_values),
                         )
-                        location_params = (province, municipality_name, *parcel_params(sheet_values), *parcel_params(parcel_values))
                     elif "location_id" in identifier_columns and "cadastral_locations" in tables:
+                        section_supported = not section or "section" in location_columns
+                        section_clause = "AND upper(trim(coalesce(cl.section, ''))) = ? " if section else ""
+                        section_params = (section,) if section_clause else ()
                         location_filter = (
                             "lower(trim(cl.province)) = lower(trim(?)) "
                             "AND lower(trim(cl.municipality)) = lower(trim(?)) "
+                            f"{section_clause}"
                             f"AND {parcel_filter('cl.sheet')} "
                             f"AND (trim(cl.parcel) IN ({parcel_placeholders}) "
                             f"OR ltrim(trim(cl.parcel), '0') IN ({parcel_placeholders}))"
+                        ) if section_supported else "0"
+                        location_params = (
+                            province,
+                            municipality_name,
+                            *section_params,
+                            *parcel_params(sheet_values),
+                            *parcel_params(parcel_values),
                         )
-                        location_params = (province, municipality_name, *parcel_params(sheet_values), *parcel_params(parcel_values))
                     else:
                         location_filter = "0"
                         location_params = ()
@@ -735,6 +793,7 @@ class _SisterDocumentSource:
         parcels: set[str],
         province_values: set[str],
         municipality_values: set[str],
+        section: str | None = None,
     ) -> bool:
         if not isinstance(content, str) or not content.strip():
             return False
@@ -755,6 +814,16 @@ class _SisterDocumentSource:
             parcel = cls._normalized_values(attrs.get("ParticellaNum"))
             if not sheet.intersection(sheets) or not parcel.intersection(parcels):
                 continue
+            if section:
+                actual_section = str(
+                    attrs.get("SezUrbana")
+                    or attrs.get("SezioneUrbana")
+                    or attrs.get("SezCensuaria")
+                    or attrs.get("SezioneCensuaria")
+                    or ""
+                ).strip().upper()
+                if actual_section != section:
+                    continue
             request = next((item for item in requests if item.get("CodiceComune") == code), {})
             actual_code = str(attrs.get("CodiceComune") or request.get("CodiceComune") or "").strip().upper()
             if actual_code and actual_code != code:
@@ -805,6 +874,7 @@ class _SisterDocumentSource:
     ) -> Dict[str, Any]:
         reference = str(national_reference or "").strip()
         code, sheets, parcels = _parcel_reference_parts(reference)
+        section = _parcel_reference_section(reference)
         if code != str(cadastral_code or code).strip().upper() or not sheets or not parcels:
             return {"records": [], "count": 0, "available": False, "source": "SISTER SQLite documents"}
         municipality = municipality or {}
@@ -834,10 +904,23 @@ class _SisterDocumentSource:
                     return {"records": [], "count": 0, "available": False, "source": "SISTER SQLite documents"}
                 has_metadata = "document_metadata" in tables
                 has_locations = "cadastral_locations" in tables
+                location_columns = (
+                    {str(row[1]) for row in connection.execute("PRAGMA table_info(cadastral_locations)").fetchall()}
+                    if has_locations
+                    else set()
+                )
                 metadata_join = "LEFT JOIN document_metadata m ON m.id = d.id" if has_metadata else ""
                 location_join = "LEFT JOIN cadastral_locations l ON l.id = m.location_id" if has_metadata and has_locations else ""
                 select_metadata = ", m.*" if has_metadata else ""
-                select_location = ", l.province AS location_province, l.municipality AS location_municipality, l.sheet AS location_sheet, l.parcel AS location_parcel" if has_metadata and has_locations else ""
+                select_location = (
+                    ", l.province AS location_province, l.municipality AS location_municipality, "
+                    "l.sheet AS location_sheet, l.parcel AS location_parcel, "
+                    "l.section AS location_section"
+                    if has_metadata and has_locations and "section" in location_columns
+                    else ", l.province AS location_province, l.municipality AS location_municipality, l.sheet AS location_sheet, l.parcel AS location_parcel"
+                    if has_metadata and has_locations
+                    else ""
+                )
                 rows = connection.execute(
                     f"""
                     SELECT d.*{select_metadata}{select_location}
@@ -858,9 +941,17 @@ class _SisterDocumentSource:
         records = []
         seen = set()
         for row in rows:
+            location_keys = set(row.keys())
             location_match = (
                 bool(self._normalized_values(row["location_sheet"], sheet=True).intersection(sheets_set))
                 and bool(self._normalized_values(row["location_parcel"]).intersection(parcels_set))
+                and (
+                    not section
+                    or (
+                        "location_section" in location_keys
+                        and str(row["location_section"] or "").strip().upper() == section
+                    )
+                )
                 and (
                     not municipality_values
                     or str(row["location_municipality"] or "").strip().casefold() in municipality_values
@@ -877,6 +968,7 @@ class _SisterDocumentSource:
                 parcels_set,
                 province_values,
                 municipality_values,
+                section,
             )
             if not location_match and not content_match:
                 continue
@@ -1215,8 +1307,9 @@ class _AsyncPostgresSource:
         self._pool = None
         self._retry_at = 0.0
         self._poi_relation_cache: tuple[str | None, float] | None = None
-        self._read_model_relation_cache: tuple[bool, float] | None = None
+        self._read_model_status_cache: tuple[dict[str, Any], float] | None = None
         self._optional_relations_cache: dict[tuple[str, ...], tuple[bool, float]] = {}
+        self._census_srid_cache: dict[int, int] = {}
         self._quality_of_life_relation_cache: tuple[
             tuple[str, dict[str, str]] | None, float
         ] | None = None
@@ -1250,27 +1343,259 @@ class _AsyncPostgresSource:
         async with pool.acquire() as connection:
             return await connection.fetchrow(_asyncpg_sql(sql), *params)
 
-    async def _read_model_available(self) -> bool:
-        """Check whether the optional serving cache is provisioned.
+    async def sister_buildings_for_parcel(
+        self,
+        national_reference: str,
+        cadastral_code: str,
+        municipality: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """Read parcel-linked building and land properties from SISTER views.
+
+        The SISTER foreign views contain both structured property rows and
+        document metadata. This panel needs only the non-owner fields from
+        ``v_sister_property_by_cadastral_parcel``; document rows by themselves
+        do not provide a structured address or building classification.
+        Building units and land records remain separate for per-unit valuation.
+        ``None`` means the optional view is not installed, while an empty
+        result with ``available=True`` means the query succeeded and found no
+        matching property rows.
+        """
+        source_name = "aecs4u-stats PostgreSQL sister.v_sister_property_by_cadastral_parcel"
+
+        def result_empty(*, available: bool, match_method: str | None = None) -> Dict[str, Any]:
+            return {
+                "buildings": [],
+                "count": 0,
+                "valuation_units": [],
+                "land": [],
+                "addresses": [],
+                "address_count": 0,
+                "addresses_truncated": False,
+                "address_source": f"{source_name}.address",
+                "available": available,
+                "source": source_name,
+                "match_method": match_method,
+            }
+
+        code, sheets, parcels = _parcel_reference_parts(national_reference)
+        if (
+            not sheets
+            or not parcels
+            or code != str(cadastral_code or "").strip().upper()
+        ):
+            return result_empty(available=False)
+        if not await self._relations_available(("sister.v_sister_property_by_cadastral_parcel",)):
+            return None
+
+        municipality = municipality or {}
+        municipality_values = {
+            str(value).strip().casefold()
+            for value in (municipality.get("name"), municipality.get("official_name"), municipality.get("municipality"))
+            if value not in (None, "")
+        }
+        province_values = {
+            str(value).strip().casefold()
+            for value in (municipality.get("province"), municipality.get("province_sigla"))
+            if value not in (None, "")
+        }
+        # The parcel number and sheet are not unique across municipalities.
+        # Require both location names so an incomplete SISTER key cannot
+        # attach another comune's address to the selected map feature.
+        if not municipality_values or not province_values:
+            return result_empty(available=True, match_method="location_unresolved")
+
+        section = _parcel_reference_section(national_reference)
+        section_clause = "AND upper(trim(coalesce(section, ''))) = %s" if section else ""
+        section_params = [section] if section else []
+        rows = await self._fetch(
+            f"""
+            SELECT cadastre_type, property_type, address, category, cadastral_class,
+                   consistency, income, census_zone, area,
+                   sheet, parcel, subunit
+            FROM sister.v_sister_property_by_cadastral_parcel
+            WHERE upper(trim(coalesce(cadastre_type, ''))) IN ('F', 'T')
+              AND lower(trim(coalesce(province, ''))) = ANY(%s)
+              AND lower(trim(coalesce(municipality, ''))) = ANY(%s)
+              AND (
+                    trim(coalesce(sheet, '')) = ANY(%s)
+                    OR ltrim(trim(coalesce(sheet, '')), '0') = ANY(%s)
+                  )
+              AND (
+                    trim(split_part(coalesce(parcel, ''), '/', 1)) = ANY(%s)
+                    OR ltrim(trim(split_part(coalesce(parcel, ''), '/', 1)), '0') = ANY(%s)
+                  )
+              AND (
+                    upper(trim(coalesce(cadastre_type, ''))) = 'T'
+                    OR lower(trim(coalesce(property_type, ''))) = 'building'
+                    OR category IS NOT NULL
+                  )
+              {section_clause}
+            ORDER BY sheet, parcel, subunit, property_type, category
+            LIMIT 100
+            """,
+            (
+                sorted(province_values),
+                sorted(municipality_values),
+                sheets,
+                sheets,
+                parcels,
+                parcels,
+                *section_params,
+            ),
+        )
+
+        properties = [
+            {
+                key: _postgres_scalar(row[key])
+                for key in (
+                    "cadastre_type", "property_type", "address", "category", "cadastral_class",
+                    "consistency", "income", "census_zone", "area",
+                    "sheet", "parcel", "subunit",
+                )
+            }
+            for row in rows
+        ]
+        addresses = []
+        seen_addresses = set()
+        for row in properties:
+            address = " ".join(str(row.get("address") or "").split())
+            key = address.casefold()
+            if address and key not in seen_addresses:
+                seen_addresses.add(key)
+                addresses.append(address)
+
+        buildings = []
+        land = []
+        valuation_units = []
+        seen_buildings = set()
+        seen_land = set()
+        for row in properties:
+            cadastre_type = str(row.get("cadastre_type") or "").strip().upper()
+            if cadastre_type == "T":
+                key = (
+                    row.get("sheet"), row.get("parcel"), row.get("subunit"),
+                    row.get("area"), row.get("address"), row.get("property_type"),
+                )
+                if key in seen_land:
+                    continue
+                seen_land.add(key)
+                land.append({
+                    "cadastre_type": cadastre_type,
+                    "property_type": row.get("property_type") or "land",
+                    "category": row.get("category"),
+                    "area": row.get("area"),
+                    "address": row.get("address"),
+                    "sheet": row.get("sheet"),
+                    "parcel": row.get("parcel"),
+                    "subunit": row.get("subunit"),
+                })
+                continue
+            if cadastre_type != "F":
+                continue
+            key = (row.get("category"), row.get("cadastral_class"), row.get("subunit"))
+            if key in seen_buildings:
+                continue
+            seen_buildings.add(key)
+            building = {
+                "cadastre_type": cadastre_type,
+                "property_type": row.get("property_type") or "building",
+                "building_type": row.get("category"),
+                "category": row.get("category"),
+                "cadastral_class": row.get("cadastral_class"),
+                "consistency": row.get("consistency"),
+                "cadastral_income": row.get("income"),
+                "census_zone": row.get("census_zone"),
+                "area": row.get("area"),
+                "address": row.get("address"),
+                "sheet": row.get("sheet"),
+                "parcel": row.get("parcel"),
+                "subunit": row.get("subunit"),
+            }
+            buildings.append(building)
+            valuation_units.append(building)
+
+        return {
+            "buildings": buildings,
+            "count": len(buildings),
+            "valuation_units": valuation_units,
+            "land": land,
+            "addresses": addresses[:_PARCEL_ADDRESS_LIMIT],
+            "address_count": len(addresses),
+            "addresses_truncated": len(addresses) > _PARCEL_ADDRESS_LIMIT,
+            "address_source": f"{source_name}.address",
+            "available": True,
+            "source": source_name,
+            "match_method": "municipality+province+section+sheet+parcel",
+        }
+
+    async def _read_model_status(self) -> dict[str, Any]:
+        """Check cache provisioning and the privileges the request path needs.
 
         The serving schema is managed by deployment migrations. Request-path
         code must tolerate installations where that migration has not run,
-        and must not attempt DDL using the application's database role.
+        and must not attempt DDL using the application's database role. A
+        table is ready only when the current role can read and upsert its rows.
         """
-        cached = self._read_model_relation_cache
+        cached = self._read_model_status_cache
         if cached is not None and time.monotonic() < cached[1]:
-            return cached[0]
+            return dict(cached[0])
         row = await self._fetchrow(
-            "SELECT to_regclass('serving.parcel_enrichment_read_model') AS relation"
+            """
+            WITH target AS (
+                SELECT to_regclass('serving.parcel_enrichment_read_model') AS relation,
+                       to_regnamespace('serving') AS schema_oid
+            )
+            SELECT COALESCE(app_role.rolsuper, FALSE) AS role_is_superuser,
+                   target.relation IS NOT NULL AS relation_exists,
+                   CASE WHEN target.schema_oid IS NULL THEN FALSE
+                        ELSE has_schema_privilege(current_user, target.schema_oid, 'USAGE')
+                   END AS schema_usage,
+                   CASE WHEN target.relation IS NULL THEN FALSE
+                        ELSE has_table_privilege(current_user, target.relation, 'SELECT')
+                   END AS can_select,
+                   CASE WHEN target.relation IS NULL THEN FALSE
+                        ELSE has_table_privilege(current_user, target.relation, 'INSERT')
+                   END AS can_insert,
+                   CASE WHEN target.relation IS NULL THEN FALSE
+                        ELSE has_table_privilege(current_user, target.relation, 'UPDATE')
+                   END AS can_update
+              FROM target
+              LEFT JOIN pg_roles AS app_role ON app_role.rolname = current_user
+            """
         )
-        available = row is not None and row["relation"] is not None
-        self._read_model_relation_cache = (
-            available,
-            time.monotonic() + (300 if available else 60),
+        permissions = {
+            "schema_usage": bool(row and row["schema_usage"]),
+            "select": bool(row and row["can_select"]),
+            "insert": bool(row and row["can_insert"]),
+            "update": bool(row and row["can_update"]),
+        }
+        relation_exists = bool(row and row["relation_exists"])
+        permissions_ok = all(permissions.values())
+        reason = (
+            "probe_failed" if row is None
+            else "not_built" if not relation_exists
+            else "insufficient_privileges" if not permissions_ok
+            else None
         )
-        if not available:
-            logger.info("Serving parcel enrichment read model is not provisioned")
-        return available
+        status = {
+            "available": reason is None,
+            "reason": reason,
+            "role_is_superuser": bool(row and row["role_is_superuser"]),
+            "permissions": permissions,
+        }
+        self._read_model_status_cache = (
+            status,
+            time.monotonic() + 60,
+        )
+        if not status["available"]:
+            logger.info(
+                "Serving parcel enrichment read model unavailable: %s", reason
+            )
+        return dict(status)
+
+    async def _read_model_available(self) -> bool:
+        """Return whether the cache is provisioned and usable by this role."""
+        return bool((await self._read_model_status())["available"])
 
     async def _relations_available(self, relations: tuple[str, ...]) -> bool:
         """Return whether an optional lookup's source tables are provisioned.
@@ -1597,6 +1922,287 @@ class _AsyncPostgresSource:
             }
             for row in rows
         ]
+
+    async def relocation_quality_indicators(
+        self, country_code: str = "IT"
+    ) -> Optional[Dict[str, Any]]:
+        """Return country-level relocation indicators when local BES is absent.
+
+        These views describe countries, so the result keeps that scope instead
+        of presenting the values as provincial or parcel measurements.
+        """
+        relations = (
+            "serving.relocation_climate_score",
+            "serving.relocation_healthcare_quality",
+            "serving.relocation_safety_index",
+            "serving.relocation_life_expectancy",
+            "serving.relocation_healthy_life_years",
+            "serving.relocation_connectivity",
+        )
+        relation_rows = await self._fetch(
+            """
+            SELECT relation_name
+            FROM unnest(%s::text[]) AS requested(relation_name)
+            WHERE to_regclass(relation_name) IS NOT NULL
+            """,
+            (list(relations),),
+        )
+        available = [str(row["relation_name"]) for row in relation_rows]
+        if not available:
+            return None
+
+        table_names = [name.split(".", 1)[1] for name in available]
+        column_rows = await self._fetch(
+            """
+            SELECT table_name, column_name
+            FROM information_schema.columns
+            WHERE table_schema = %s AND table_name = ANY(%s::text[])
+            ORDER BY table_name, ordinal_position
+            """,
+            ("serving", table_names),
+        )
+        columns: dict[str, list[str]] = {}
+        for row in column_rows:
+            columns.setdefault(str(row["table_name"]), []).append(str(row["column_name"]))
+
+        country_aliases = (
+            "country_code", "country_iso2", "country_iso3", "iso2", "iso3",
+            "iso_code", "country", "country_name", "ref_area",
+        )
+        year_aliases = ("year", "reference_year", "time_period", "edition_year")
+        value_aliases = (
+            "score", "value", "index_value", "indicator_value", "measurement",
+            "climate_score", "healthcare_quality", "safety_index", "connectivity_score",
+        )
+        groups = {
+            "climate_score": ("environment", "Environment"),
+            "healthcare_quality": ("health", "Health"),
+            "safety_index": ("safety", "Safety"),
+            "life_expectancy": ("health", "Health"),
+            "healthy_life_years": ("health", "Health"),
+            "connectivity": ("connectivity", "Connectivity"),
+        }
+        country_values = tuple(dict.fromkeys((country_code.upper(), "ITA", "ITALY")))
+
+        async def rows_for(table_name: str):
+            table_columns = columns.get(table_name, [])
+            by_lower = {name.lower(): name for name in table_columns}
+            country_column = next((by_lower[name] for name in country_aliases if name in by_lower), None)
+            year_column = next((by_lower[name] for name in year_aliases if name in by_lower), None)
+            if country_column is None or year_column is None:
+                return []
+            table = f"serving.{_quote_pg_identifier(table_name)}"
+            country_field = _quote_pg_identifier(country_column)
+            year_field = _quote_pg_identifier(year_column)
+            query_rows = await self._fetch(
+                f"""
+                SELECT to_jsonb(source_row) AS payload
+                FROM {table} AS source_row
+                WHERE UPPER({country_field}::text) = ANY(%s::text[])
+                ORDER BY {year_field} DESC
+                LIMIT 40
+                """,
+                (list(country_values),),
+            )
+            values = []
+            for query_row in query_rows:
+                payload = query_row["payload"]
+                if isinstance(payload, str):
+                    try:
+                        payload = json.loads(payload)
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        continue
+                if isinstance(payload, dict):
+                    values.append(payload)
+            return values
+
+        table_rows = await asyncio.gather(*(rows_for(name) for name in table_names))
+        clusters: dict[str, dict[str, Dict[str, Any]]] = {}
+        year_set: set[str] = set()
+        for table_name, records in zip(table_names, table_rows, strict=True):
+            suffix = table_name.removeprefix("relocation_")
+            group_key, _group_label = groups.get(
+                suffix, ("country_profile", "Country profile")
+            )
+            table_columns = {name.lower(): name for name in columns.get(table_name, [])}
+            year_key = next((table_columns[name] for name in year_aliases if name in table_columns), None)
+            if year_key is None:
+                continue
+            value_keys = [table_columns[name] for name in value_aliases if name in table_columns]
+            value_key = value_keys[0] if value_keys else None
+            sex_key = next((table_columns[name] for name in ("sex", "gender") if name in table_columns), None)
+            unit_key = next((table_columns[name] for name in ("unit", "unit_name") if name in table_columns), None)
+            ignored = {
+                year_key.lower(), "id", "country_code", "iso2", "iso_code", "country",
+                "country_name", "ref_area", "rank", "position", "population",
+            }
+            for record in records:
+                year = record.get(year_key)
+                if year is None:
+                    continue
+                year_label = str(year)
+                year_set.add(year_label)
+                measurements = []
+                if value_key and record.get(value_key) is not None:
+                    measurements.append((value_key, record[value_key]))
+                else:
+                    for key, value in record.items():
+                        if key.lower() in ignored or value is None or isinstance(value, (dict, list, bool)):
+                            continue
+                        if key.lower().endswith("_id") or key.lower().startswith("id_"):
+                            continue
+                        try:
+                            float(value)
+                        except (TypeError, ValueError):
+                            continue
+                        measurements.append((key, value))
+                for measure_key, raw_value in measurements:
+                    try:
+                        numeric_value = float(raw_value)
+                    except (TypeError, ValueError):
+                        continue
+                    if not math.isfinite(numeric_value):
+                        continue
+                    if value_key and measure_key == value_key:
+                        indicator_name = suffix.replace("_", " ").title()
+                    else:
+                        indicator_name = f"{suffix.replace('_', ' ').title()} — {measure_key.replace('_', ' ').title()}"
+                    sex = record.get(sex_key) if sex_key else None
+                    if sex:
+                        indicator_name = f"{indicator_name} ({sex})"
+                    indicator = clusters.setdefault(group_key, {}).setdefault(
+                        indicator_name,
+                        {"name": indicator_name, "unit": record.get(unit_key) if unit_key else None, "values": {}},
+                    )
+                    indicator["values"][year_label] = {
+                        "value": _postgres_scalar(numeric_value),
+                        "unit": record.get(unit_key) if unit_key else None,
+                        "temporal_reference": None,
+                    }
+
+        if not clusters or not year_set:
+            return None
+        group_labels = {
+            "environment": "Environment", "health": "Health", "safety": "Safety",
+            "connectivity": "Connectivity", "country_profile": "Country profile",
+        }
+        ordered_years = sorted(
+            year_set, key=lambda value: (int(value) if value.isdigit() else 0, value)
+        )
+        years = ordered_years[-6:]
+        retained_years = set(years)
+        for group in clusters.values():
+            for indicator in group.values():
+                indicator["values"] = {
+                    year: value for year, value in indicator["values"].items()
+                    if year in retained_years
+                }
+        country_name = "Italy" if country_code.upper() in {"IT", "ITA"} else country_code.upper()
+        return {
+            "years": years,
+            "indicators": sorted(
+                (indicator["name"] for group in clusters.values() for indicator in group.values()),
+                key=str.casefold,
+            ),
+            "clusters": [
+                {"key": key, "label": group_labels.get(key, key.title()),
+                 "indicators": sorted(group.values(), key=lambda item: item["name"].casefold())}
+                for key, group in clusters.items()
+            ],
+            "country_code": country_code.upper(),
+            "country_name": country_name,
+            "spatial_resolution": "country",
+            "scope_note": "Country-level relocation indicators for {country}; these values do not describe the province or parcel.",
+            "source": "aecs4u-stats serving.relocation_* views",
+        }
+
+    async def municipality_demographic_indicators(
+        self, cadastral_code: str
+    ) -> Optional[Dict[str, Any]]:
+        """Read the municipality population/age-band series from serving views."""
+        if not await self._relations_available(("serving.comune_population_by_year",)):
+            return None
+        municipality = await self._serving_municipality_by_cadastral_code(cadastral_code)
+        istat_code = (municipality or {}).get("istat_code")
+        if not istat_code:
+            return None
+        column_rows = await self._fetch(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = %s AND table_name = %s
+            """,
+            ("serving", "comune_population_by_year"),
+        )
+        columns = {
+            str(row["column_name"]).lower(): str(row["column_name"])
+            for row in column_rows
+        }
+        required = ("reference_year", "population", "comune_code")
+        if any(name not in columns for name in required):
+            return None
+        year_field = _quote_pg_identifier(columns["reference_year"])
+        population_field = _quote_pg_identifier(columns["population"])
+        municipality_field = _quote_pg_identifier(columns["comune_code"])
+        lt12_field = next(
+            (columns[name] for name in ("population_lt12", "population_under_12") if name in columns),
+            None,
+        )
+        ge12_field = next(
+            (columns[name] for name in ("population_ge12", "population_12_plus") if name in columns),
+            None,
+        )
+        lt12_sql = _quote_pg_identifier(lt12_field) if lt12_field else "NULL"
+        ge12_sql = _quote_pg_identifier(ge12_field) if ge12_field else "NULL"
+        rows = await self._fetch(
+            f"""
+            SELECT {year_field} AS year, {population_field} AS population,
+                   {lt12_sql} AS population_lt12, {ge12_sql} AS population_ge12
+            FROM serving.comune_population_by_year
+            WHERE LTRIM({municipality_field}::text, '0') = LTRIM(%s::text, '0')
+            ORDER BY {year_field}
+            """,
+            (str(istat_code),),
+        )
+        series = {key: [] for key in ("resident_population", "population_under_12", "population_12_plus")}
+        for row in rows:
+            year = _postgres_scalar(row["year"])
+            for key, field in (
+                ("resident_population", "population"),
+                ("population_under_12", "population_lt12"),
+                ("population_12_plus", "population_ge12"),
+            ):
+                value = _postgres_scalar(row[field])
+                if year is not None and value is not None:
+                    series[key].append({"year": year, "value": value, "unit": "residents"})
+        indicators = [key for key, values in series.items() if values]
+        if not indicators:
+            return None
+        return {
+            "indicators": indicators,
+            "series_by_indicator": {key: series[key] for key in indicators},
+            "municipality": municipality.get("official_name"),
+            "spatial_resolution": "municipality",
+            "source": "ISTAT municipal population series via aecs4u-stats serving.comune_population_by_year",
+        }
+
+    async def municipality_demographic_series(
+        self, cadastral_code: str, data_type: str
+    ) -> Optional[Dict[str, Any]]:
+        catalog = await self.municipality_demographic_indicators(cadastral_code)
+        if catalog is None:
+            return None
+        values = catalog.get("series_by_indicator", {}).get(data_type)
+        if values is None:
+            return None
+        return {
+            "cadastral_code": cadastral_code,
+            "data_type": data_type,
+            "series": values,
+            "municipality": catalog.get("municipality"),
+            "spatial_resolution": catalog.get("spatial_resolution"),
+            "source": catalog.get("source"),
+        }
 
     async def agenziademanio_concessions_for_parcel(self, parcel_id: int) -> Dict[str, Any]:
         """Read the optional spatial concession-to-parcel crosswalk."""
@@ -2199,22 +2805,38 @@ class _AsyncPostgresSource:
                 procom = municipality["pro_com"]
         if procom is None:
             return None
+        procom_key = int(procom)
+        srid = self._census_srid_cache.get(procom_key)
+        if srid is None:
+            srid_row = await self._fetchrow(
+                f"""
+                SELECT ST_SRID(geom) AS srid
+                FROM {relation}
+                WHERE procom = %s AND geom IS NOT NULL
+                LIMIT 1
+                """,
+                (procom_key,),
+            )
+            if srid_row is None or srid_row["srid"] is None:
+                return None
+            srid = int(srid_row["srid"])
+            self._census_srid_cache[procom_key] = srid
         row = await self._fetchrow(
             f"""
             SELECT (to_jsonb(section) - 'geom') AS properties,
                    ST_Area(section.geom) AS area_sqm
             FROM {relation} AS section
+            CROSS JOIN (
+                SELECT ST_Transform(
+                    ST_SetSRID(ST_MakePoint(%s, %s), 4326), %s::integer
+                ) AS geom
+            ) AS target
             WHERE section.procom = %s
-              AND ST_Covers(
-                  section.geom,
-                  ST_Transform(
-                      ST_SetSRID(ST_MakePoint(%s, %s), 4326),
-                      ST_SRID(section.geom)
-                  )
-              )
+              AND section.geom && target.geom
+              AND ST_Covers(section.geom, target.geom)
             LIMIT 1
             """,
-            (procom, lng, lat),
+            (lng, lat, srid, procom_key),
         )
         if row is None:
             return None
@@ -2482,6 +3104,15 @@ class _AsyncPostgresSource:
             point["lat"], point["lng"], cadastral_code
         )
         profile = municipality.get("profile") or {}
+        istat_code = municipality.get("istat_code")
+        if istat_code and await self._relations_available(("solar.solar_potential_comuni",)):
+            try:
+                solar_row = await self._fetchrow(_SOLAR_PROFILE_QUERY, (istat_code,))
+                if solar_row:
+                    profile.update({key: _postgres_scalar(solar_row[key]) for key in solar_row.keys()})
+                    profile["solar_source"] = "aecs4u-stats solar.solar_potential_comuni"
+            except Exception:
+                logger.debug("Solar municipality profile lookup failed", exc_info=True)
         return {
             "parcel_spine_available": False,
             "parcel_spine": None,
@@ -2747,6 +3378,97 @@ async def aget_census_section_at_point(
     return await asyncio.to_thread(get_census_section_at_point, lat, lng)
 
 
+async def aget_demographic_indicators(cadastral_code: str) -> Optional[Dict[str, Any]]:
+    """Read the municipality population series from aecs4u-stats first."""
+    source = await _get_async_postgres_source()
+    if source is not None and time.monotonic() >= source._retry_at:
+        try:
+            result = await asyncio.wait_for(
+                source.municipality_demographic_indicators(cadastral_code), timeout=8
+            )
+            if result is not None:
+                return result
+        except Exception:
+            source._retry_at = time.monotonic() + 60
+            logger.warning("PostgreSQL municipality demographics lookup failed", exc_info=True)
+    return None
+
+
+async def aget_demographic_indicator(
+    cadastral_code: str, data_type: str
+) -> Optional[Dict[str, Any]]:
+    """Read one municipality demographic series from aecs4u-stats."""
+    source = await _get_async_postgres_source()
+    if source is not None and time.monotonic() >= source._retry_at:
+        try:
+            result = await asyncio.wait_for(
+                source.municipality_demographic_series(cadastral_code, data_type), timeout=8
+            )
+            if result is not None:
+                return result
+        except Exception:
+            source._retry_at = time.monotonic() + 60
+            logger.warning("PostgreSQL municipality demographic series lookup failed", exc_info=True)
+    return None
+
+
+async def aget_country_quality_of_life_indicators() -> Optional[Dict[str, Any]]:
+    """Country-scope fallback for the quality-of-life card."""
+    source = await _get_async_postgres_source()
+    if source is None or time.monotonic() < source._retry_at:
+        return None
+    try:
+        return await asyncio.wait_for(source.relocation_quality_indicators("IT"), timeout=10)
+    except Exception:
+        source._retry_at = time.monotonic() + 60
+        logger.warning("PostgreSQL country quality indicators lookup failed", exc_info=True)
+        return None
+
+
+async def aget_country_quality_of_life_indicator(
+    data_type: str, year: Optional[int] = None
+) -> Optional[Dict[str, Any]]:
+    """Return one country-level indicator series from relocation views."""
+    catalog = await aget_country_quality_of_life_indicators()
+    if catalog is None:
+        return None
+    for cluster in catalog.get("clusters", []):
+        for indicator in cluster.get("indicators", []):
+            if str(indicator.get("name", "")).casefold() != data_type.casefold():
+                continue
+            series = [
+                {"year": label, **value}
+                for label, value in (indicator.get("values") or {}).items()
+                if year is None or str(label) == str(year)
+            ]
+            if not series:
+                return None
+            return {
+                "data_type": data_type,
+                "series": series,
+                "country_code": catalog.get("country_code"),
+                "spatial_resolution": "country",
+                "source": catalog.get("source"),
+            }
+    return None
+
+
+async def aget_country_safety_profile() -> Optional[Dict[str, Any]]:
+    """Return the national safety index if local province crime facts are absent."""
+    series = await aget_country_quality_of_life_indicator("Safety Index")
+    if not series or not series.get("series"):
+        return None
+    latest = max(series["series"], key=lambda row: str(row.get("year", "")))
+    return {
+        "country": "Italy",
+        "year": latest.get("year"),
+        "safety_index": latest.get("value"),
+        "spatial_resolution": "country",
+        "scope_note": "Country-level safety index; it is not a count of reported crimes in this province or municipality.",
+        "source": series.get("source"),
+    }
+
+
 async def aget_census_sections(
     cadastral_code: str, limit: int = 5000
 ) -> Optional[Dict[str, Any]]:
@@ -2906,11 +3628,10 @@ class _PostgresStatsSource(_PostgresPoiSource):
     def _ensure_read_model(self) -> bool:
         """Check that the migrated parcel cache exists, without doing DDL.
 
-        Serving schema objects are deployment artifacts.  A GET endpoint must
-        not attempt to create tables, both because the application role should
-        be read-only and because concurrent cold requests could race schema
-        changes.  ``migration.canonical_views.ensure_serving_schema`` owns
-        provisioning this table.
+        Serving schema objects are deployment artifacts. A GET endpoint must
+        not attempt to create tables, because deployment migrations own DDL
+        and concurrent cold requests must not race schema changes. Provision
+        this table with ``scripts/sql/parcel-enrichment-read-model.sql``.
         """
         if self._read_model_ready:
             return True
@@ -3532,12 +4253,27 @@ def _json_value(value: Any) -> Any:
 
 
 def _parcel_reference_parts(national_reference: str) -> tuple[str, list[str], list[str]]:
-    """Return cadastral code, equivalent sheet values, and parcel values."""
-    reference = str(national_reference or "").strip()
-    code, separator, suffix = reference.partition("_")
-    sheet, dot, parcel = suffix.partition(".")
-    if not separator or not dot:
-        return code.strip().upper(), [], []
+    """Return cadastral municipality code, equivalent sheet values and parcels.
+
+    AdE data uses both ``H501A048600.D`` (municipality, urban section, sheet,
+    parcel) and ``H501_048600.D`` (municipality, sheet, parcel).  Keep the
+    optional section out of the municipality code so lookups use the same
+    administrative key for either spelling.
+    """
+    reference = str(national_reference or "").strip().upper()
+    if "_" in reference:
+        raw_code, suffix = reference.split("_", 1)
+        code_match = re.fullmatch(r"([A-Z]\d{3})([A-Z]?)", raw_code)
+        code = code_match.group(1) if code_match else raw_code
+        sheet, dot, parcel = suffix.partition(".")
+        if not dot:
+            return code, [], []
+    else:
+        match = re.fullmatch(r"([A-Z]\d{3})([A-Z]?)(\d+)\.(.+)", reference)
+        if not match:
+            code_match = re.match(r"([A-Z]\d{3})", reference)
+            return (code_match.group(1) if code_match else reference), [], []
+        code, _section, sheet, parcel = match.groups()
     parcel = parcel.split("/", 1)[0]
 
     def values(value: str, sheet_value: bool = False) -> list[str]:
@@ -3552,6 +4288,17 @@ def _parcel_reference_parts(national_reference: str) -> tuple[str, list[str], li
         return list(dict.fromkeys(result))
 
     return code.strip().upper(), values(sheet, True), values(parcel)
+
+
+def _parcel_reference_section(national_reference: str) -> str | None:
+    """Return the optional urban cadastral section encoded in an AdE reference."""
+    reference = str(national_reference or "").strip().upper()
+    if "_" in reference:
+        raw_code = reference.split("_", 1)[0]
+        match = re.fullmatch(r"[A-Z]\d{3}([A-Z])", raw_code)
+    else:
+        match = re.match(r"^[A-Z]\d{3}([A-Z])\d+\.", reference)
+    return match.group(1) if match else None
 
 
 def _open_data_result_preview(result: Any) -> Any:
@@ -3580,6 +4327,7 @@ def _open_data_result_matches(
     parcels: list[str],
     check_administration: bool = True,
     cadastral_code: str = "",
+    section: str | None = None,
 ) -> bool:
     """Match legacy OpenData JSON when normalized parameter tables are absent."""
     sheet_set = {value.lstrip("0") or "0" for value in sheets}
@@ -3605,6 +4353,12 @@ def _open_data_result_matches(
             parcel = folded.get("particella") or folded.get("parcel")
             municipality = folded.get("comune") or folded.get("municipality")
             province_value = folded.get("provincia") or folded.get("province")
+            section_value = (
+                folded.get("sezione")
+                or folded.get("section")
+                or folded.get("sez_urbana")
+                or folded.get("sezione_urbana")
+            )
             cadastral_value = (
                 folded.get("codice_comune")
                 or folded.get("cod_comune")
@@ -3629,7 +4383,18 @@ def _open_data_result_matches(
                     cadastral_code_fold == item.casefold()
                     for item in scalar_values(cadastral_value)
                 )
-                if sheet_matches and parcel_matches and municipality_matches and province_matches and code_matches:
+                section_matches = not section or (
+                    section_value is not None
+                    and any(section == item.strip().upper() for item in scalar_values(section_value))
+                )
+                if (
+                    sheet_matches
+                    and parcel_matches
+                    and municipality_matches
+                    and province_matches
+                    and code_matches
+                    and section_matches
+                ):
                     return True
             return any(visit(child) for child in value.values())
         if isinstance(value, list):
@@ -3654,6 +4419,7 @@ class _OpenDataPostgresSource(_ExternalPostgresSource):
 
     def parcel_data(self, national_reference: str, municipality: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         code, sheets, parcels = _parcel_reference_parts(national_reference)
+        section = _parcel_reference_section(national_reference)
         if not sheets or not parcels:
             return {"records": [], "count": 0, "available": False, "source": "OpenData PostgreSQL"}
         municipality = municipality or {}
@@ -3669,6 +4435,8 @@ class _OpenDataPostgresSource(_ExternalPostgresSource):
               AND lower(trim(cl.municipality)) = lower(trim(%s))
             """
             municipality_params = [province, municipality_name]
+        section_filter = "AND upper(trim(coalesce(cl.section, ''))) = %s" if section else ""
+        section_params = [section] if section else []
         sql = f"""
             SELECT q.id, q.endpoint, q.status, q.timestamp, q.query_datetime,
                    q.result, cl.cadastre_type, cl.province, cl.municipality,
@@ -3680,6 +4448,7 @@ class _OpenDataPostgresSource(_ExternalPostgresSource):
             AND lower(trim(coalesce(q.status, ''))) NOT LIKE '%error%'
             AND lower(trim(coalesce(q.status, ''))) NOT LIKE '%fail%'
               {municipality_filter}
+              {section_filter}
               AND (
                    trim(cl.sheet) IN ({sheet_params})
                    OR ltrim(trim(cl.sheet), '0') IN ({sheet_params})
@@ -3691,7 +4460,7 @@ class _OpenDataPostgresSource(_ExternalPostgresSource):
             ORDER BY q.timestamp DESC
             LIMIT 8
         """
-        params = [*municipality_params, *sheets, *sheets, *parcels, *parcels]
+        params = [*municipality_params, *section_params, *sheets, *sheets, *parcels, *parcels]
         with self._connection() as connection:
             with connection.cursor() as cursor:
                 try:
@@ -3734,7 +4503,8 @@ class _OpenDataPostgresSource(_ExternalPostgresSource):
                     records = [
                         record for record in _rows_as_dicts(cursor)
                         if _open_data_result_matches(
-                            record.get("result"), municipality_name, province, sheets, parcels
+                            record.get("result"), municipality_name, province, sheets, parcels,
+                            cadastral_code=code, section=section,
                         )
                     ][:8]
                 if not records:
@@ -3760,7 +4530,7 @@ class _OpenDataPostgresSource(_ExternalPostgresSource):
                             if _open_data_result_matches(
                                 record.get("result"), municipality_name, province,
                                 sheets, parcels, check_administration=False,
-                                cadastral_code=code,
+                                cadastral_code=code, section=section,
                             )
                         ][:8]
                         if records:
@@ -3774,7 +4544,12 @@ class _OpenDataPostgresSource(_ExternalPostgresSource):
             "count": len(records),
             "available": bool(records),
             "source": "OpenData PostgreSQL cadastral_queries",
-            "match_method": "municipality+sheet+parcel" if municipality_filter else "sheet+parcel",
+            "match_method": (
+                "municipality+section+sheet+parcel" if section and municipality_filter
+                else "section+sheet+parcel" if section
+                else "municipality+sheet+parcel" if municipality_filter
+                else "sheet+parcel"
+            ),
             "cadastral_code": code,
         }
 
@@ -4116,6 +4891,7 @@ class _PvpPostgresSource(_ExternalPostgresSource):
 
     def parcel_data(self, national_reference: str, municipality: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         code, sheets, parcels = _parcel_reference_parts(national_reference)
+        section = _parcel_reference_section(national_reference)
         if not sheets or not parcels:
             return {"records": [], "count": 0, "available": False, "source": "PVP modelview PostgreSQL"}
         municipality = municipality or {}
@@ -4142,6 +4918,8 @@ class _PvpPostgresSource(_ExternalPostgresSource):
               )
             """
             municipality_params = [pvp_municipality_code, municipality_name, province]
+        section_filter = "AND upper(trim(coalesce(r.section, ''))) = %s" if section else ""
+        section_params = [section] if section else []
         sql = f"""
             SELECT r.id AS registry_id, r.asset_id, a.id AS asset_pk,
                    r.section, r.sheet, r.parcel,
@@ -4179,11 +4957,17 @@ class _PvpPostgresSource(_ExternalPostgresSource):
                     OR ltrim(split_part(trim(r.parcel), '/', 1), '0') IN ({parcel_params})
                   )
               {municipality_filter}
+              {section_filter}
             ORDER BY s.sale_date DESC NULLS LAST, r.id
             LIMIT 25
         """
-        params = [*sheets, *sheets, *parcels, *parcels, *municipality_params]
-        match_method = "municipality+code+sheet+parcel" if municipality_filter else "code+sheet+parcel"
+        params = [*sheets, *sheets, *parcels, *parcels, *municipality_params, *section_params]
+        match_method = (
+            "municipality+section+sheet+parcel" if section and municipality_filter
+            else "section+sheet+parcel" if section
+            else "municipality+code+sheet+parcel" if municipality_filter
+            else "code+sheet+parcel"
+        )
         relations_resolved = False
         relation_error = None
         relation_context: dict[str, Any] = {}
@@ -4336,18 +5120,30 @@ class _SisterPostgresSource(_ExternalPostgresSource):
         ))
 
     @staticmethod
-    def _match_location(row: dict, sheets: set[str], parcels: set[str], province_values: set[str], municipality_values: set[str]) -> bool:
+    def _match_location(
+        row: dict,
+        sheets: set[str],
+        parcels: set[str],
+        province_values: set[str],
+        municipality_values: set[str],
+        section: str | None = None,
+    ) -> bool:
         sheet_values = _SisterDocumentSource._normalized_values(row.get("location_sheet"), sheet=True)
         parcel_values = _SisterDocumentSource._normalized_values(row.get("location_parcel"))
         return (
             bool(sheet_values.intersection(sheets))
             and bool(parcel_values.intersection(parcels))
+            and (
+                not section
+                or str(row.get("location_section") or "").strip().upper() == section
+            )
             and (not province_values or str(row.get("location_province") or "").strip().casefold() in province_values)
             and (not municipality_values or str(row.get("location_municipality") or "").strip().casefold() in municipality_values)
         )
 
     def parcel_data(self, national_reference: str, municipality: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         code, sheets, parcels = _parcel_reference_parts(national_reference)
+        section = _parcel_reference_section(national_reference)
         if not sheets or not parcels:
             return {"records": [], "count": 0, "available": False, "source": "SISTER PostgreSQL documents"}
         municipality = municipality or {}
@@ -4375,7 +5171,8 @@ class _SisterPostgresSource(_ExternalPostgresSource):
                            m.reference_date, m.registry_view_type, m.service_type,
                            m.generation_date, l.province AS location_province,
                            l.municipality AS location_municipality,
-                           l.sheet AS location_sheet, l.parcel AS location_parcel
+                           l.sheet AS location_sheet, l.parcel AS location_parcel,
+                           to_jsonb(l)->>'section' AS location_section
                     FROM public.visura_documents d
                     LEFT JOIN public.document_metadata m ON m.id = d.id
                     LEFT JOIN public.cadastral_locations l ON l.id = m.location_id
@@ -4389,9 +5186,12 @@ class _SisterPostgresSource(_ExternalPostgresSource):
                 matched = []
                 response_ids = []
                 for row in rows:
-                    location_match = self._match_location(row, sheets_set, parcels_set, province_values, municipality_values)
+                    location_match = self._match_location(
+                        row, sheets_set, parcels_set, province_values, municipality_values, section
+                    )
                     content_match = _SisterDocumentSource._content_matches(
-                        row.get("content"), code, sheets_set, parcels_set, province_values, municipality_values
+                        row.get("content"), code, sheets_set, parcels_set,
+                        province_values, municipality_values, section,
                     )
                     if not location_match and not content_match:
                         continue
@@ -4414,9 +5214,16 @@ class _SisterPostgresSource(_ExternalPostgresSource):
                         WHERE vp.response_id = ANY(%s)
                           AND ltrim(trim(l.sheet), '0') = ANY(%s)
                           AND ltrim(trim(l.parcel), '0') = ANY(%s)
+                          AND (%s IS NULL OR upper(trim(coalesce(to_jsonb(l)->>'section', ''))) = %s)
                         ORDER BY vp.id
                         """,
-                        (list(dict.fromkeys(response_ids)), list({value.lstrip('0') or '0' for value in sheets}), list({value.lstrip('0') or '0' for value in parcels})),
+                        (
+                            list(dict.fromkeys(response_ids)),
+                            list({value.lstrip('0') or '0' for value in sheets}),
+                            list({value.lstrip('0') or '0' for value in parcels}),
+                            section,
+                            section,
+                        ),
                     )
                     for row in _rows_as_dicts(cursor):
                         properties_by_response.setdefault(str(row.get("response_id")), []).append(row)
@@ -4502,7 +5309,7 @@ def get_opendata_for_parcel(national_reference: str, municipality: Optional[Dict
         # local ISTAT cache. This also supplies the province/name needed for
         # the exact SISTER document match below.
         inferred_municipality = get_municipality_by_cadastral_code(
-            str(national_reference).split("_", 1)[0], use_postgres=False
+            _parcel_reference_parts(national_reference)[0], use_postgres=False
         )
         municipality = {**(inferred_municipality or {}), **(municipality or {})}
 
@@ -4527,7 +5334,7 @@ def get_opendata_for_parcel(national_reference: str, municipality: Optional[Dict
     sister_result = (
         sister_source.documents_for_parcel(
             national_reference,
-            str(national_reference).split("_", 1)[0],
+            _parcel_reference_parts(national_reference)[0],
             municipality,
         )
         if sister_source is not None and sister_source.available()
@@ -4570,7 +5377,7 @@ def get_pvp_for_parcel(national_reference: str, municipality: Optional[Dict[str,
         return _external_unavailable("PVP modelview PostgreSQL")
     if municipality is None or not municipality.get("pvp_municipality_code"):
         inferred_municipality = get_municipality_by_cadastral_code(
-            str(national_reference).split("_", 1)[0], use_postgres=False
+            _parcel_reference_parts(national_reference)[0], use_postgres=False
         )
         municipality = {**(inferred_municipality or {}), **(municipality or {})}
     if municipality.get("istat_code") and not municipality.get("pvp_municipality_code"):
@@ -4764,6 +5571,37 @@ def _hazards_sqlite_path() -> Path:
     return Path(candidates[-1])
 
 
+def _optional_store_status(store_probe: Any, *adapters: Any) -> Dict[str, Any]:
+    """Report optional-store readiness without invoking data-query adapters."""
+    if not callable(store_probe) or any(not callable(adapter) for adapter in adapters):
+        return {"available": False, "reason": "not_supported"}
+    try:
+        if not bool(store_probe()):
+            return {"available": False, "reason": "not_built"}
+    except Exception:
+        logger.debug("Optional enrichment store readiness probe failed", exc_info=True)
+        return {"available": False, "reason": "probe_failed"}
+    return {"available": True, "reason": None}
+
+
+async def _aparcel_enrichment_read_model_status() -> Dict[str, Any]:
+    """Check cache readiness through the same asyncpg path used by requests."""
+    source = await _get_async_postgres_source()
+    if source is None:
+        return {"available": False, "reason": "not_configured"}
+    try:
+        status_probe = getattr(source, "_read_model_status", None)
+        if callable(status_probe):
+            status = await asyncio.wait_for(status_probe(), timeout=6)
+            if isinstance(status, dict):
+                return status
+        available = await asyncio.wait_for(source._read_model_available(), timeout=6)
+    except Exception:
+        logger.debug("Parcel enrichment read-model readiness probe failed", exc_info=True)
+        return {"available": False, "reason": "probe_failed"}
+    return {"available": available, "reason": None if available else "not_built"}
+
+
 def enrichment_status() -> Dict[str, Any]:
     """Availability report for every aecs4u-stats dataset we consume."""
     status = {
@@ -4840,13 +5678,38 @@ def enrichment_status() -> Dict[str, Any]:
         "hazards_seismic": {
             "available": seismic_db_available(_hazards_sqlite_path()),
         },
+        "hazards_mps04": {
+            **_optional_store_status(_mps04_db_available, _mps04_pga_at_point),
+            "source": "INGV MPS04 seismic hazard model",
+            "source_version": "MPS04",
+            "note": "Local native-grid store used for nearest-grid parcel-centroid PGA estimates",
+        },
+        "hazards_ispra_mosaics": {
+            **_optional_store_status(
+                _ispra_mosaics_db_available,
+                _landslide_hazard_in_bbox,
+                _flood_hazard_in_bbox,
+            ),
+            "source": "ISPRA PAI/PGRA polygon mosaics",
+            "source_version": "ISPRA_PAI_2020_2021_PGRA_2020",
+            "note": "Local polygon stores used for parcel-polygon intersections",
+        },
+        "egms_subsidence": {
+            **_optional_store_status(_egms_db_available, _subsidence_in_bbox),
+            "source": getattr(_EGMS_CONTRACT, "source", None)
+            or "Zornade Rischio Subsidenza Italia (Copernicus EGMS L3 Ortho)",
+            "source_version": getattr(_EGMS_CONTRACT, "dataset_version", None),
+            "note": "Local 100 m EGMS cells used for parcel intersection summaries",
+        },
         "hazards_idrogeo": {
             "available": True,  # runtime API, no local store
             "note": "ISPRA IdroGEO — live API, requires network access",
         },
         "hazards_firms": {
             "available": True,
-            "note": "NASA FIRMS — live API, requires FIRMS_MAP_KEY",
+            "source": "NASA FIRMS VIIRS NOAA-21 NRT",
+            "source_version": "VIIRS_NOAA21_NRT",
+            "note": "Live FIRMS feed; requires FIRMS_MAP_KEY",
         },
         "hazards_bulletin": {
             "available": get_criticality_bulletin() is not None,
@@ -4864,6 +5727,29 @@ def enrichment_status() -> Dict[str, Any]:
         dataset_status.setdefault("source_version", None)
         dataset_status.setdefault("freshness", {})
 
+    return status
+
+
+async def aenrichment_status() -> Dict[str, Any]:
+    """Combine worker-thread store probes with async PostgreSQL cache readiness."""
+    probe = _STATUS_PROBE_EXECUTOR.submit(enrichment_status)
+    try:
+        # Poll on the loop's timer instead of awaiting a worker callback. This
+        # keeps slow filesystem probes off-loop and the default pool isolated.
+        while not probe.done():
+            await asyncio.sleep(_STATUS_PROBE_POLL_SECONDS)
+        status = probe.result()
+    except asyncio.CancelledError:
+        probe.cancel()
+        raise
+    status["parcel_enrichment_read_model"] = {
+        **await _aparcel_enrichment_read_model_status(),
+        "source": "aecs4u-stats PostgreSQL serving schema",
+        "note": "Indexed parcel payload cache; provision with scripts/sql/parcel-enrichment-read-model.sql",
+        "dataset": "parcel_enrichment_read_model",
+        "source_version": None,
+        "freshness": {},
+    }
     return status
 
 
@@ -5074,7 +5960,28 @@ def get_buildings_for_parcel(
             "source": "SISTER SQLite",
         }
     reference = str(national_reference or "").strip()
-    code = (cadastral_code or reference.split("_", 1)[0]).strip().upper()
+    reference_code, sheets, parcels = _parcel_reference_parts(reference)
+    if not reference_code or not sheets or not parcels:
+        return {
+            "buildings": [],
+            "count": 0,
+            "addresses": [],
+            "address_count": 0,
+            "addresses_truncated": False,
+            "available": False,
+            "source": "SISTER SQLite",
+        }
+    code = (cadastral_code or reference_code).strip().upper()
+    if code != reference_code:
+        return {
+            "buildings": [],
+            "count": 0,
+            "addresses": [],
+            "address_count": 0,
+            "addresses_truncated": False,
+            "available": False,
+            "source": "SISTER SQLite",
+        }
     if municipality is None:
         municipality = get_municipality_by_cadastral_code(code)
     try:
@@ -5090,6 +5997,81 @@ def get_buildings_for_parcel(
             "available": False,
             "source": "SISTER SQLite",
         }
+
+
+async def aget_buildings_for_parcel(
+    national_reference: str,
+    cadastral_code: Optional[str] = None,
+    municipality: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Use the aecs4u-stats SISTER views for map requests when configured."""
+    reference = str(national_reference or "").strip()
+    reference_code, sheets, parcels = _parcel_reference_parts(reference)
+    code = str(cadastral_code or reference_code).strip().upper()
+    if not reference_code or not sheets or not parcels or code != reference_code:
+        return {
+            "buildings": [],
+            "count": 0,
+            "addresses": [],
+            "address_count": 0,
+            "addresses_truncated": False,
+            "available": False,
+            "source": "SISTER PostgreSQL",
+        }
+
+    postgres_source = await _get_async_postgres_source()
+    if postgres_source is None:
+        # Keep installations without the PostgreSQL connection on the
+        # existing local cache. When PostgreSQL is configured, it is the
+        # authoritative source, including for successful zero-row results.
+        return await asyncio.to_thread(
+            get_buildings_for_parcel,
+            reference,
+            cadastral_code=code,
+            municipality=municipality,
+        )
+
+    source_name = "aecs4u-stats PostgreSQL sister.v_sister_property_by_cadastral_parcel"
+    if time.monotonic() < postgres_source._retry_at:
+        return {
+            "buildings": [],
+            "count": 0,
+            "addresses": [],
+            "address_count": 0,
+            "addresses_truncated": False,
+            "address_source": f"{source_name}.address",
+            "available": False,
+            "source": source_name,
+        }
+    try:
+        result = await asyncio.wait_for(
+            postgres_source.sister_buildings_for_parcel(reference, code, municipality),
+            timeout=8,
+        )
+        if result is not None:
+            return result
+    except Exception:
+        postgres_source._retry_at = time.monotonic() + 60
+        logger.warning("PostgreSQL SISTER building lookup failed for %s", reference, exc_info=True)
+        return {
+            "buildings": [],
+            "count": 0,
+            "addresses": [],
+            "address_count": 0,
+            "addresses_truncated": False,
+            "address_source": f"{source_name}.address",
+            "available": False,
+            "source": source_name,
+        }
+
+    # An older stats database may not expose the SISTER foreign view yet.
+    # Preserve compatibility with its local SQLite cache in that case only.
+    return await asyncio.to_thread(
+        get_buildings_for_parcel,
+        reference,
+        cadastral_code=code,
+        municipality=municipality,
+    )
 
 
 def get_pois_near(
@@ -6047,12 +7029,14 @@ def get_active_fires(radius_km: float = 50.0, lat: Optional[float] = None, lng: 
     else:
         bbox = ITALY_BBOX
 
-    detections = _active_fires(bbox=bbox)
+    source_product = "VIIRS_NOAA21_NRT"
+    detections = _active_fires(bbox=bbox, source=source_product)
     return {
         "bbox": bbox,
         "count": len(detections),
         "detections": detections,
-        "source": "NASA FIRMS via aecs4u-stats",
+        "source": "NASA FIRMS VIIRS NOAA-21 NRT via aecs4u-stats",
+        "source_product": source_product,
     }
 
 
@@ -6122,8 +7106,8 @@ def _local_parcel_by_reference(national_reference: str) -> Optional[Dict[str, An
     resulting feature, so subsequent panel requests do not reopen the source.
     """
     reference = str(national_reference).strip()
-    code = reference.split("_", 1)[0].upper() if "_" in reference else ""
-    if not code:
+    code, sheets, parcels = _parcel_reference_parts(reference)
+    if not code or not sheets or not parcels:
         return None
 
     def _fgb_candidates() -> list[Path]:
@@ -6576,7 +7560,7 @@ def _parcel_enrichment_fingerprint() -> str:
         hashlib.sha256(value.encode("utf-8")).hexdigest() if value else "-"
         for value in external_dsns
     ]
-    material = "parcel-read-model-v7|" + "|".join(parts) + "|postgres:" + postgres_marker + "|sister:" + sister_marker + "|external:" + "|".join(external_markers)
+    material = "parcel-read-model-v8|" + "|".join(parts) + "|postgres:" + postgres_marker + "|sister:" + sister_marker + "|external:" + "|".join(external_markers)
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
@@ -6668,13 +7652,20 @@ _MISSING = object()
 def _build_parcel_enrichment(
     national_reference: str,
     *,
+    parcel_override: Any = _MISSING,
     municipality_override: Any = _MISSING,
     omi_override: Any = _MISSING,
     income_override: Any = _MISSING,
+    opendata_override: Any = _MISSING,
+    pvp_override: Any = _MISSING,
     postgres_context_override: Any = None,
 ) -> Optional[Dict[str, Any]]:
     """Build the stable portion of one parcel's read-optimized profile."""
-    parcel = get_parcel_by_reference(national_reference)
+    parcel = (
+        get_parcel_by_reference(national_reference)
+        if parcel_override is _MISSING
+        else parcel_override
+    )
     if parcel is None:
         return None
 
@@ -6682,7 +7673,7 @@ def _build_parcel_enrichment(
     cadastral_code = str(
         props.get("municipality_code")
         or props.get("ADMINISTRATIVEUNIT")
-        or national_reference.split("_", 1)[0]
+        or _parcel_reference_parts(national_reference)[0]
     ).strip().upper()
     municipality = (
         get_municipality_by_cadastral_code(cadastral_code)
@@ -6722,8 +7713,16 @@ def _build_parcel_enrichment(
     # These are independent source systems. Keep their raw, source-labelled
     # records in the read model so a later panel load does not need to repeat
     # two remote database queries.
-    opendata = get_opendata_for_parcel(national_reference, municipality)
-    pvp = get_pvp_for_parcel(national_reference, municipality)
+    opendata = (
+        get_opendata_for_parcel(national_reference, municipality)
+        if opendata_override is _MISSING
+        else opendata_override
+    )
+    pvp = (
+        get_pvp_for_parcel(national_reference, municipality)
+        if pvp_override is _MISSING
+        else pvp_override
+    )
 
     omi_zone = None
     if point and municipality and municipality.get("province"):
@@ -6809,6 +7808,7 @@ def _build_parcel_enrichment(
         available=bool(buildings.get("addresses")),
     )
     if address_block["available"]:
+        address_block["coverage"] = "partial"
         address_block["coverage_status"] = "partial"
     blocks = {
         name: _detail_block()
@@ -6885,6 +7885,7 @@ def _build_parcel_enrichment(
             source=buildings.get("source"),
             match_method="cadastral_reference",
             available=buildings.get("available") is True,
+            coverage="partial",
         ),
         "address": address_block,
         "opendata": _detail_block(
@@ -6892,12 +7893,14 @@ def _build_parcel_enrichment(
             source=opendata.get("source"),
             match_method=opendata.get("match_method"),
             available=opendata.get("available") is True,
+            coverage="partial",
         ),
         "pvp": _detail_block(
             pvp.get("records"),
             source=pvp.get("source"),
             match_method=pvp.get("match_method"),
             available=pvp.get("available") is True,
+            coverage="partial",
         ),
         "valuation": _detail_block(
             {
@@ -6970,6 +7973,54 @@ _LOCAL_PANEL_CACHE_SUFFIX = "::panel"
 _LOCAL_PANEL_CACHE_MAX_ROWS = 500
 
 
+class CanonicalParcelLookupError(RuntimeError):
+    """The selected feature could not be resolved against the canonical map source."""
+
+
+def _parcel_enrichment_cache_key(reference: str, feature_id: Optional[int]) -> str:
+    """Keep duplicate cadastral references in separate shared-cache rows."""
+    if feature_id is None:
+        return reference
+    return f"{reference}::feature:{int(feature_id)}"
+
+
+def _cached_parcel_matches_feature(
+    payload: Any, feature_id: Optional[int]
+) -> bool:
+    """Reject a reference-keyed or stale cache payload for another map feature."""
+    if feature_id is None:
+        return True
+    if not isinstance(payload, dict):
+        return False
+    metadata = payload.get("read_model")
+    identities = []
+    if isinstance(metadata, dict) and metadata.get("feature_id") is not None:
+        identities.append(metadata["feature_id"])
+    parcel = payload.get("parcel")
+    if isinstance(parcel, dict):
+        parcel_id = parcel.get("id")
+        properties = parcel.get("properties")
+        if parcel_id is None and isinstance(properties, dict):
+            parcel_id = properties.get("id")
+        if parcel_id is not None:
+            identities.append(parcel_id)
+    return bool(identities) and all(str(value) == str(feature_id) for value in identities)
+
+
+def _set_read_model_identity(
+    payload: Dict[str, Any], reference: str, feature_id: Optional[int]
+) -> None:
+    metadata = payload.setdefault("read_model", {})
+    if not isinstance(metadata, dict):
+        metadata = {}
+        payload["read_model"] = metadata
+    metadata["key"] = reference
+    if feature_id is None:
+        metadata.pop("feature_id", None)
+    else:
+        metadata["feature_id"] = int(feature_id)
+
+
 def _read_local_panel_read_model(cache_key: str) -> Optional[Dict[str, Any]]:
     """Read the compact panel fallback from the application's SQLite store."""
     from land_registry.sqlite_db import get_sqlite_db
@@ -6994,51 +8045,26 @@ def get_parcel_enrichment(
     national_reference: str,
     refresh: bool = False,
 ) -> Optional[Dict[str, Any]]:
-    """Read or refresh one parcel-keyed materialized enrichment profile.
+    """Build a parcel profile for synchronous compatibility callers.
 
-    The read model is stored in the aecs4u-stats PostgreSQL ``serving`` schema.
-    A cold key is built once; subsequent panel loads only perform one indexed
-    row lookup. The application SQLite database is not used by this path.
+    This helper uses the synchronous source adapters and does not read or write
+    the shared PostgreSQL read model or the compact SQLite panel cache. Its
+    ``refresh`` argument is retained for compatibility and has no cache to
+    bypass. The parcel-details HTTP route uses ``aget_parcel_enrichment``.
     """
     reference = str(national_reference).strip()
     if not reference:
         return None
 
-    # Synchronous compatibility callers use the local fallback. FastAPI uses
-    # ``aget_parcel_enrichment`` for the asyncpg-backed path below.
-    postgres_source = None
     fingerprint = _parcel_enrichment_fingerprint()
-    if postgres_source is not None and postgres_source.available() and not refresh:
-        try:
-            cached = postgres_source.get_read_model(reference)
-            cached_meta = (cached or {}).get("read_model") or {}
-            if cached is not None and cached_meta.get("source_fingerprint") == fingerprint:
-                return cached
-        except Exception:
-            # A broken optional cache must not prevent the parcel itself and
-            # local ISTAT/OMI stores from populating the details panel.
-            postgres_source._retry_at = time.monotonic() + 60
-            logger.warning("PostgreSQL parcel read-model unavailable; using local enrichment fallback", exc_info=True)
-
     payload = _build_parcel_enrichment(reference)
     if payload is None:
         return None
-    cached_ok = False
-    if postgres_source is not None and postgres_source.available():
-        try:
-            cached_ok = postgres_source.upsert_read_model(
-                reference,
-                payload,
-                source_fingerprint=fingerprint,
-            )
-        except Exception:
-            postgres_source._retry_at = time.monotonic() + 60
-            logger.warning("Could not persist parcel enrichment read model", exc_info=True)
     payload["read_model"] = {
         "key": reference,
         "source_fingerprint": fingerprint,
-        "cached": bool(cached_ok),
-        "database": "aecs4u-stats PostgreSQL",
+        "cached": False,
+        "database": None,
     }
     return payload
 
@@ -7047,11 +8073,16 @@ async def aget_parcel_enrichment(
     national_reference: str,
     refresh: bool = False,
     view: str = "full",
+    feature_id: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Async PostgreSQL-backed parcel enrichment path.
+    """Build parcel enrichment for the async HTTP path.
 
-    Local cadastral/geospatial work remains off the event loop, while every
-    optional PostgreSQL operation uses the shared asyncpg pool directly.
+    Unless refreshing, this tries the PostgreSQL read model first. A ``panel``
+    request then checks the bounded SQLite cache after a PostgreSQL miss; a
+    ``full`` request has no SQLite cache fallback. Cold requests rebuild from
+    source stores, attempt to persist to PostgreSQL, and persist the compact
+    panel payload to SQLite if PostgreSQL persistence fails. Local cadastral
+    and geospatial work runs off the event loop.
     """
     reference = str(national_reference).strip()
     if not reference:
@@ -7061,39 +8092,76 @@ async def aget_parcel_enrichment(
 
     source = await _get_async_postgres_source()
     fingerprint = _parcel_enrichment_fingerprint()
+    cache_key = _parcel_enrichment_cache_key(reference, feature_id)
     if source is not None and time.monotonic() >= source._retry_at and not refresh:
         try:
-            cached = await source.get_read_model(reference)
+            cached = await source.get_read_model(cache_key)
             metadata = (cached or {}).get("read_model") or {}
-            if cached is not None and metadata.get("source_fingerprint") == fingerprint:
+            if (
+                cached is not None
+                and metadata.get("source_fingerprint") == fingerprint
+                and _cached_parcel_matches_feature(cached, feature_id)
+            ):
+                _set_read_model_identity(cached, reference, feature_id)
                 return parcel_panel_read_model(cached) if view == "panel" else cached
         except Exception:
             source._retry_at = time.monotonic() + 60
             logger.warning("Async PostgreSQL parcel read-model unavailable; rebuilding locally", exc_info=True)
 
-    panel_cache_key = f"{reference}{_LOCAL_PANEL_CACHE_SUFFIX}"
+    panel_cache_key = f"{cache_key}{_LOCAL_PANEL_CACHE_SUFFIX}"
     if view == "panel" and not refresh:
         try:
             local_cached = await asyncio.to_thread(_read_local_panel_read_model, panel_cache_key)
             metadata = (local_cached or {}).get("read_model") or {}
-            if local_cached is not None and metadata.get("source_fingerprint") == fingerprint:
+            if (
+                local_cached is not None
+                and metadata.get("source_fingerprint") == fingerprint
+                and _cached_parcel_matches_feature(local_cached, feature_id)
+            ):
                 metadata.update({
-                    "key": reference,
                     "cached": True,
                     "database": "land-registry application SQLite panel cache",
                 })
+                _set_read_model_identity(local_cached, reference, feature_id)
                 return local_cached
         except Exception:
             logger.warning("Local SQLite parcel panel cache unavailable; rebuilding", exc_info=True)
 
-    parcel = await asyncio.to_thread(get_parcel_by_reference, reference)
+    parcel = None
+    if feature_id is not None:
+        try:
+            from land_registry.map_layers import get_map_layer_source
+
+            map_source = get_map_layer_source()
+            if not map_source.available:
+                raise CanonicalParcelLookupError(
+                    "Canonical map source is unavailable for feature-specific lookup"
+                )
+            parcel = await map_source.read_feature_by_reference(
+                "cadastral-parcels", reference, feature_id=feature_id
+            )
+        except CanonicalParcelLookupError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "Canonical parcel lookup failed while building enrichment for %s",
+                reference,
+                exc_info=True,
+            )
+            raise CanonicalParcelLookupError(
+                "Canonical map source failed during feature-specific lookup"
+            ) from exc
+        if parcel is None:
+            return None
+    else:
+        parcel = await asyncio.to_thread(get_parcel_by_reference, reference)
     if parcel is None:
         return None
     props = parcel.get("properties") or {}
     cadastral_code = str(
         props.get("municipality_code")
         or props.get("ADMINISTRATIVEUNIT")
-        or reference.split("_", 1)[0]
+        or _parcel_reference_parts(reference)[0]
     ).strip().upper()
     point = await asyncio.to_thread(_parcel_centroid, parcel)
     municipality_task = asyncio.create_task(aget_municipality_by_cadastral_code(cadastral_code))
@@ -7127,33 +8195,59 @@ async def aget_parcel_enrichment(
             source._retry_at = time.monotonic() + 60
             logger.warning("Async PostgreSQL parcel context failed; using local fallback", exc_info=True)
 
+    # OpenData/SISTER and PVP are independent, blocking PostgreSQL adapters.
+    # Run them together after municipality context has been resolved, and keep
+    # both off the event loop. Their synchronous defaults remain available to
+    # callers of _build_parcel_enrichment outside this async request path.
+    opendata_task = asyncio.create_task(
+        asyncio.to_thread(
+            get_opendata_for_parcel, reference, dict(municipality or {})
+        )
+    )
+    pvp_task = asyncio.create_task(
+        asyncio.to_thread(
+            get_pvp_for_parcel, reference, dict(municipality or {})
+        )
+    )
+    opendata, pvp = await asyncio.gather(opendata_task, pvp_task)
+
     # Local cadastral/geospatial work is isolated from the event loop. Passing
     # the context override also prevents the legacy synchronous adapter from
     # being touched while the payload is assembled.
     payload = await asyncio.to_thread(
         _build_parcel_enrichment,
         reference,
+        parcel_override=parcel,
         municipality_override=municipality,
         omi_override=omi,
         income_override=income_profile,
+        opendata_override=opendata,
+        pvp_override=pvp,
         postgres_context_override=postgres_context,
     )
     if payload is None:
         return None
 
+    payload["read_model"] = {
+        "key": reference,
+        "feature_id": int(feature_id) if feature_id is not None else None,
+        "source_fingerprint": fingerprint,
+        "cached": False,
+        "database": None,
+    }
     cached_ok = False
     if source is not None and time.monotonic() >= source._retry_at:
         try:
-            cached_ok = await source.upsert_read_model(reference, payload, fingerprint)
+            cached_ok = await source.upsert_read_model(cache_key, payload, fingerprint)
         except Exception:
             source._retry_at = time.monotonic() + 60
             logger.warning("Could not persist async PostgreSQL parcel read model", exc_info=True)
-    payload["read_model"] = {
-        "key": reference,
-        "source_fingerprint": fingerprint,
-        "cached": bool(cached_ok),
-        "database": "aecs4u-stats PostgreSQL via asyncpg",
-    }
+    payload["read_model"].update({
+        # `cached` describes how this response was served. A successful upsert
+        # makes the next request warm, but this response was still rebuilt.
+        "cached": False,
+        "database": "aecs4u-stats PostgreSQL via asyncpg" if cached_ok else None,
+    })
     if view != "panel":
         return payload
 
@@ -7168,6 +8262,7 @@ async def aget_parcel_enrichment(
             )
             panel_payload["read_model"] = {
                 "key": reference,
+                "feature_id": int(feature_id) if feature_id is not None else None,
                 "source_fingerprint": fingerprint,
                 "cached": False,
                 "database": "land-registry application SQLite panel cache",
@@ -7176,6 +8271,7 @@ async def aget_parcel_enrichment(
             logger.warning("Could not persist local SQLite parcel panel cache", exc_info=True)
             panel_payload["read_model"] = {
                 "key": reference,
+                "feature_id": int(feature_id) if feature_id is not None else None,
                 "source_fingerprint": fingerprint,
                 "cached": False,
                 "database": None,
@@ -7353,26 +8449,52 @@ def _istat_query_engine():
     return ISTATQueryEngine()
 
 
+def _installed_istat_availability(engine, checker_name: str) -> Optional[bool]:
+    """Run an installed ISTAT availability probe without noisy missing-store traces."""
+    checker = getattr(engine, checker_name, None)
+    if not callable(checker):
+        return None
+    db_path = getattr(engine, "db_path", None)
+    sqlite_source_path = getattr(engine, "sqlite_source_path", None)
+    if db_path is not None and sqlite_source_path is not None:
+        try:
+            if not Path(db_path).exists() and not Path(sqlite_source_path).exists():
+                # The installed package bootstraps DuckDB from SQLite. If both
+                # are absent, avoid invoking the checker just to catch the
+                # expected FileNotFoundError. Keep returning None so callers
+                # can still try the legacy SQLite or raw BES fallbacks.
+                logger.debug(
+                    "Installed ISTAT %s checker skipped: store is not built",
+                    checker_name,
+                )
+                return None
+        except OSError:
+            # Let the checker or fallback path report unusual filesystem errors.
+            pass
+    try:
+        return bool(checker())
+    except FileNotFoundError:
+        # The package lazily builds DuckDB from its SQLite source. On a host
+        # where neither file is provisioned, this is an ordinary unavailable
+        # state, not an application error; the status response reports it.
+        logger.debug("Installed ISTAT %s checker skipped: store is not built", checker_name)
+    except Exception:
+        logger.debug("Installed ISTAT %s checker failed", checker_name, exc_info=True)
+    return None
+
+
 def safety_db_available() -> bool:
     engine = _istat_query_engine()
-    checker = getattr(engine, "safety_available", None)
-    if callable(checker):
-        try:
-            if checker():
-                return True
-        except Exception:
-            logger.debug("Installed ISTAT safety checker failed", exc_info=True)
+    if _installed_istat_availability(engine, "safety_available"):
+        return True
     return _istat_sqlite_table_available("istat_safety_indicators")
 
 
 def bes_db_available() -> bool:
     engine = _istat_query_engine()
-    checker = getattr(engine, "bes_available", None)
-    if callable(checker):
-        try:
-            return bool(checker())
-        except Exception:
-            logger.debug("Installed ISTAT BES checker failed", exc_info=True)
+    available = _installed_istat_availability(engine, "bes_available")
+    if available is not None:
+        return available
     return (
         _istat_sqlite_table_available("istat_bes_quality_of_life")
         or _istat_sqlite_table_available("istat_bes_indicators")
@@ -7382,13 +8504,8 @@ def bes_db_available() -> bool:
 
 def demographic_db_available() -> bool:
     engine = _istat_query_engine()
-    checker = getattr(engine, "demographic_available", None)
-    if callable(checker):
-        try:
-            if checker():
-                return True
-        except Exception:
-            logger.debug("Installed ISTAT demographic checker failed", exc_info=True)
+    if _installed_istat_availability(engine, "demographic_available"):
+        return True
     return _istat_sqlite_table_available("istat_demographic_indicators")
 
 
@@ -7464,7 +8581,11 @@ def _istat_bes_rows() -> tuple[Dict[str, Any], ...]:
         finally:
             connection.close()
     except (OSError, sqlite3.Error):
-        logger.debug("SQLite BES snapshot could not be read", exc_info=True)
+        # A missing optional SQLite snapshot is represented by the readiness
+        # result, not a traceback on every status request. Keep diagnostics for
+        # failures against a file that is actually present.
+        if _istat_sqlite_path().is_file():
+            logger.debug("SQLite BES snapshot could not be read", exc_info=True)
 
     configured_dir = os.getenv("ISTAT_DATA_DIR")
     directories = []

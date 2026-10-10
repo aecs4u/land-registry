@@ -1,6 +1,32 @@
 import sqlite3
 
-from land_registry.stats_service import _SisterBuildingSource, _SisterDocumentSource, _SisterPostgresSource
+from land_registry.stats_service import (
+    _SisterBuildingSource,
+    _SisterDocumentSource,
+    _SisterPostgresSource,
+    _parcel_reference_parts,
+    _parcel_reference_section,
+)
+
+
+def test_parcel_reference_parts_supports_both_ade_spellings():
+    assert _parcel_reference_parts("H501A048600.D") == (
+        "H501",
+        ["048600", "48600", "486"],
+        ["D"],
+    )
+    assert _parcel_reference_parts("H501_048600.D") == (
+        "H501",
+        ["048600", "48600", "486"],
+        ["D"],
+    )
+    assert _parcel_reference_parts("F205_039000.STRADA288") == (
+        "F205",
+        ["039000", "39000", "390"],
+        ["STRADA288"],
+    )
+    assert _parcel_reference_section("H501A048600.D") == "A"
+    assert _parcel_reference_section("H501_048600.D") is None
 
 
 def test_sister_postgres_match_accepts_section_prefixed_sheet():
@@ -16,6 +42,20 @@ def test_sister_postgres_match_accepts_section_prefixed_sheet():
         {"ra", "ravenna"},
         {"ravenna"},
     ) is True
+    assert _SisterPostgresSource._match_location(
+        {
+            "location_province": "Roma",
+            "location_municipality": "Roma",
+            "location_sheet": "486",
+            "location_parcel": "D",
+            "location_section": "B",
+        },
+        {"486"},
+        {"D"},
+        {"roma"},
+        {"roma"},
+        "A",
+    ) is False
 
 
 def test_sister_query_returns_building_category_for_legacy_schema(tmp_path):
@@ -142,6 +182,104 @@ def test_sister_query_returns_bounded_unique_addresses_for_exact_parcel(tmp_path
     assert result["address_source"] == "SISTER SQLite visura_properties.address"
 
 
+def test_sister_query_parses_section_prefixed_reference_and_filters_section(tmp_path):
+    database = tmp_path / "sister.sqlite"
+    connection = sqlite3.connect(database)
+    connection.executescript(
+        """
+        CREATE TABLE cadastral_locations (
+            id INTEGER PRIMARY KEY,
+            province TEXT,
+            municipality TEXT,
+            sheet TEXT,
+            parcel TEXT,
+            subunit TEXT,
+            section TEXT
+        );
+        CREATE TABLE visura_properties (
+            id INTEGER PRIMARY KEY,
+            location_id INTEGER,
+            property_type TEXT,
+            category TEXT,
+            cadastral_class TEXT,
+            consistency NUMERIC,
+            income NUMERIC,
+            census_zone TEXT,
+            address TEXT
+        );
+        INSERT INTO cadastral_locations
+            (id, province, municipality, sheet, parcel, subunit, section)
+        VALUES
+            (1, 'Roma', 'Roma', '486', 'D', '1', 'A'),
+            (2, 'Roma', 'Roma', '486', 'D', '1', 'B');
+        INSERT INTO visura_properties
+            (id, location_id, property_type, category, cadastral_class, address)
+        VALUES
+            (1, 1, 'building', 'A/2', '3', 'Via Roma 1'),
+            (2, 2, 'building', 'A/3', '4', 'Via Roma 2');
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    result = _SisterBuildingSource(database).buildings_for_parcel(
+        "H501A048600.D",
+        "H501",
+        {"province": "Roma", "name": "Roma"},
+    )
+
+    assert result["available"] is True
+    assert result["count"] == 1
+    assert result["buildings"][0]["building_type"] == "A/2"
+    assert result["addresses"] == ["Via Roma 1"]
+
+
+def test_sister_query_does_not_guess_section_when_store_has_no_section_column(tmp_path):
+    database = tmp_path / "sister.sqlite"
+    connection = sqlite3.connect(database)
+    connection.executescript(
+        """
+        CREATE TABLE cadastral_locations (
+            id INTEGER PRIMARY KEY,
+            province TEXT,
+            municipality TEXT,
+            sheet TEXT,
+            parcel TEXT,
+            subunit TEXT
+        );
+        CREATE TABLE visura_properties (
+            id INTEGER PRIMARY KEY,
+            location_id INTEGER,
+            property_type TEXT,
+            category TEXT,
+            cadastral_class TEXT,
+            consistency NUMERIC,
+            income NUMERIC,
+            census_zone TEXT,
+            address TEXT
+        );
+        INSERT INTO cadastral_locations
+            (id, province, municipality, sheet, parcel, subunit)
+        VALUES (1, 'Roma', 'Roma', '486', 'D', '1');
+        INSERT INTO visura_properties
+            (location_id, property_type, category, cadastral_class, address)
+        VALUES (1, 'building', 'A/2', '3', 'Via Roma 1');
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    result = _SisterBuildingSource(database).buildings_for_parcel(
+        "H501A048600.D",
+        "H501",
+        {"province": "Roma", "name": "Roma"},
+    )
+
+    assert result["available"] is False
+    assert result["buildings"] == []
+    assert result["addresses"] == []
+
+
 def _create_document_schema(connection):
     connection.executescript(
         """
@@ -245,3 +383,39 @@ def test_sister_query_matches_unlinked_xml_and_extracts_owner(tmp_path):
     record = result["records"][0]
     assert record["result"]["match_method"] == "document_xml"
     assert record["result"]["data"]["intestatari"][0]["codice_fiscale"] == "RSSMRA00A00A000A"
+
+
+def test_sister_documents_filter_encoded_urban_section(tmp_path):
+    database = tmp_path / "sister.sqlite"
+    connection = sqlite3.connect(database)
+    _create_document_schema(connection)
+    for row_id, section in ((1, "A"), (2, "B")):
+        connection.execute(
+            "INSERT INTO cadastral_locations VALUES (?, 'F', 'Roma', 'Roma', '486', 'D', '1', ?)",
+            (row_id, section),
+        )
+        connection.execute(
+            "INSERT INTO visura_documents VALUES (?, NULL, 'visura_fabbricati', "
+            "'pdf', ?, '', 12, '2026-01-01', NULL, NULL)",
+            (row_id, f"section-{section}.pdf"),
+        )
+        content = (
+            f'<Visura><DatiRichiesta Provincia="RM" CodiceComune="H501" Comune="ROMA"/>'
+            f'<IdentificativoDefinitivo Provincia="RM" CodiceComune="H501" Comune="ROMA" '
+            f'Foglio="486" ParticellaNum="D" SezUrbana="{section}"/></Visura>'
+        )
+        connection.execute(
+            "INSERT INTO document_metadata VALUES (?, ?, 'H501', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?)",
+            (row_id, row_id, content),
+        )
+    connection.commit()
+    connection.close()
+
+    result = _SisterDocumentSource(database).documents_for_parcel(
+        "H501A048600.D",
+        "H501",
+        {"province": "Roma", "province_sigla": "RM", "name": "Roma"},
+    )
+
+    assert result["count"] == 1
+    assert result["records"][0]["result"]["filename"] == "section-A.pdf"

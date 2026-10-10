@@ -116,12 +116,31 @@ def browser():
         instance.close()
 
 
-def _open_parcel(browser, server, viewport, route_overrides=None, wait_for_panel=True):
+def _open_parcel(browser, server, viewport, route_overrides=None, wait_for_panel=True, fragment=None):
     page = browser.new_page(viewport=viewport, locale="en-US")
     requested = []
 
     def handle(route):
         url = route.request.url
+        if url.startswith(server) and "/api/v1/sales/nearby-points" in url:
+            requested.append(url)
+            for fragment, status, body in route_overrides or []:
+                if fragment in url:
+                    response = body(url) if callable(body) else body
+                    response_status, response_body = response if isinstance(response, tuple) else (status, response)
+                    return route.fulfill(status=response_status, content_type="application/json", body=json.dumps(response_body))
+            return route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({
+                    "source": {"relation": "modelview.v_map_sale_points", "database": "pvp_enriched", "loaded_at": "2026-10-10T00:00:00+02:00", "geocoded_sales": 0},
+                    "center": {"lat": 41.8986, "lng": 12.4769},
+                    "radius_km": 10,
+                    "count": 0,
+                    "fields": ["id", "lng", "lat", "price", "date", "category", "approximate", "distance_km"],
+                    "points": [],
+                }),
+            )
         if url.startswith(server) and "/api/v1/enrichment/" in url:
             requested.append(url)
             for fragment, status, body in [*(route_overrides or []), *ROUTES]:
@@ -133,7 +152,10 @@ def _open_parcel(browser, server, viewport, route_overrides=None, wait_for_panel
         return route.continue_()
 
     page.route("**/*", handle)
-    page.goto(f"{server}/map?lat=41.8986&lng=12.4769&zoom=17&parcel={REFERENCE}", wait_until="domcontentloaded")
+    url = f"{server}/map?lat=41.8986&lng=12.4769&zoom=17&parcel={REFERENCE}"
+    if fragment:
+        url += f"#{fragment}"
+    page.goto(url, wait_until="domcontentloaded")
     if wait_for_panel:
         page.wait_for_selector('#parcel-section-omi[data-state="ready"]', timeout=45000)
     return page, requested
@@ -180,8 +202,11 @@ def test_panel_fills_sections_independently_and_survives_a_failing_source(server
         # The bulletin source returned 503: that card explains and offers a retry; the rest is intact.
         page.wait_for_selector('#parcel-section-bulletin[data-state="error"]', timeout=15000)
         assert page.locator("#parcel-section-bulletin .parcel-retry").count() == 1
+        assert "temporarily unavailable" in page.inner_text("#parcel-section-bulletin")
         assert _state(page, "income") == "ready"
         assert _state(page, "census") == "empty"
+        assert "No matching data was found" in page.inner_text("#parcel-section-census")
+        assert page.locator("#parcel-section-census .parcel-retry").count() == 0
         assert _state(page, "identity") == "ready"
         assert page.evaluate("document.querySelectorAll('.parcel-section').length") >= 15
     finally:
@@ -203,6 +228,70 @@ def test_uncovered_cadastral_reference_explains_current_province_coverage(server
         )
         assert any("/parcel/by-reference/" in url for url in requested)
         assert "not currently covered" in page.inner_text("#mapStatus")
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize("fragment", ["sezione-income", "parcel-section-income"])
+def test_section_deep_links_restore_and_track_the_selected_card(server, browser, fragment):
+    page, requested = _open_parcel(
+        browser,
+        server,
+        {"width": 1440, "height": 900},
+        fragment=fragment,
+    )
+    try:
+        page.wait_for_selector('#parcel-section-income[data-state="ready"]', timeout=15000)
+        page.wait_for_function("location.hash === '#sezione-income'", timeout=10000)
+        assert page.get_attribute('#parcelSectionNav button[data-tab="context"]', "aria-current") == "true"
+        assert any("/income/H501" in url for url in requested)
+
+        page.evaluate("""() => {
+          const content = document.querySelector('#directParcelContent');
+          content.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: 1 }));
+          document.querySelector('#parcel-section-census').scrollIntoView({ block: 'start', behavior: 'auto' });
+        }""")
+        page.wait_for_function("location.hash === '#sezione-census'", timeout=10000)
+        assert page.get_attribute('#parcelSectionNav button[data-tab="context"]', "aria-current") == "true"
+    finally:
+        page.close()
+
+
+def test_pvp_cold_snapshot_shows_retry_and_recovers(server, browser):
+    calls = 0
+
+    def nearby_response(_url):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return 503, {"detail": "Sales data is loading"}
+        return 200, {
+            "source": {"relation": "modelview.v_map_sale_points", "database": "pvp_enriched", "loaded_at": "2026-10-10T00:00:00+02:00", "geocoded_sales": 0},
+            "center": {"lat": 41.8986, "lng": 12.4769},
+            "radius_km": 10,
+            "count": 0,
+            "fields": ["id", "lng", "lat", "price", "date", "category", "approximate", "distance_km"],
+            "points": [],
+        }
+
+    page, requested = _open_parcel(
+        browser,
+        server,
+        {"width": 1440, "height": 900},
+        route_overrides=[("/api/v1/sales/nearby-points", 503, nearby_response)],
+        fragment="sezione-pvp",
+    )
+    try:
+        page.wait_for_selector('#parcel-section-pvp[data-state="ready"]', timeout=15000)
+        page.locator("#parcelPvpNearbySummary").click()
+        page.wait_for_selector("#parcelPvpNearbyList .parcel-retry", timeout=10000)
+        assert calls == 1
+        with page.expect_response(lambda response: "/api/v1/sales/nearby-points" in response.url) as response_info:
+            page.locator("#parcelPvpNearbyList .parcel-retry").click()
+        assert response_info.value.status == 200, f"attempts={calls}, requests={requested}"
+        page.wait_for_function("document.querySelector('#parcelPvpNearbyList .parcel-retry') === null", timeout=10000)
+        assert calls == 2
+        assert len([url for url in requested if "/api/v1/sales/nearby-points" in url]) == 2
     finally:
         page.close()
 

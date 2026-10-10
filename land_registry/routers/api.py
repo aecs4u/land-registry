@@ -15,6 +15,7 @@ import geopandas as gpd
 from io import BytesIO
 import json
 import logging
+import math
 import os
 import pandas as pd
 from pathlib import Path
@@ -69,6 +70,10 @@ from land_registry.map_layers import (
     map_layer_catalog,
 )
 from land_registry.map_observability import map_metrics
+from land_registry.parcel_flag_refresh import (
+    get_parcel_flag_refresh,
+    start_parcel_flag_refresh,
+)
 from land_registry import stats_service
 # Import proper JWT verification from aecs4u-auth
 from land_registry.routers.auth import (
@@ -368,6 +373,38 @@ class ZoneOverlayLookupRequest(BaseModel):
         return value
 
 
+class SisterBatchSelectionRequest(BaseModel):
+    """Selected canonical parcels or a drawn Polygon for SISTER batch export."""
+
+    parcel_ids: Optional[List[int]] = Field(default=None, max_length=5000)
+    geometry: Optional[Dict[str, Any]] = None
+
+    @field_validator("geometry")
+    @classmethod
+    def validate_sister_batch_geometry(cls, value):
+        if value is None:
+            return value
+        if value.get("type") != "Polygon":
+            raise ValueError("geometry must be a GeoJSON Polygon")
+        coordinates = value.get("coordinates")
+        if not isinstance(coordinates, list) or len(coordinates) != 1:
+            raise ValueError("geometry must have one exterior ring and no holes")
+        ring = coordinates[0]
+        if not isinstance(ring, list) or not 4 <= len(ring) <= 257 or ring[0] != ring[-1]:
+            raise ValueError("polygon ring must be closed and have 3 to 256 vertices")
+        for point in ring:
+            if (
+                not isinstance(point, (list, tuple))
+                or len(point) != 2
+                or any(isinstance(value, bool) or not isinstance(value, (int, float)) for value in point)
+            ):
+                raise ValueError("polygon coordinates must be longitude/latitude pairs")
+            longitude, latitude = point
+            if not 6.4 <= longitude <= 18.7 or not 36.2 <= latitude <= 47.3:
+                raise ValueError("polygon must be inside the cadastral map coverage bounds")
+        return value
+
+
 # ============================================================================
 # API Router Setup
 # ============================================================================
@@ -378,14 +415,37 @@ api_router = APIRouter()
 security = HTTPBearer()
 
 
+SALES_BBOX_DEFAULT_LIMIT = 20000
+
+
+def _parse_sales_bbox(value: Optional[str]) -> Optional[tuple[float, float, float, float]]:
+    """Parse ``west,south,east,north``; reject malformed or inverted boxes."""
+    if value is None or not value.strip():
+        return None
+    try:
+        west, south, east, north = (float(part) for part in value.split(","))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="bbox must be west,south,east,north") from exc
+    if not all(math.isfinite(v) for v in (west, south, east, north)):
+        raise HTTPException(status_code=400, detail="bbox must be finite numbers")
+    if not (-180 <= west <= east <= 180 and -90 <= south <= north <= 90):
+        raise HTTPException(status_code=400, detail="bbox is out of range or inverted")
+    return west, south, east, north
+
+
 async def get_sales_map_points(
     period: str = "upcoming",
     category: Optional[str] = None,
     min_price: Optional[float] = None,
     max_price: Optional[float] = None,
     refresh: bool = False,
+    bbox: Optional[tuple[float, float, float, float]] = None,
+    limit: Optional[int] = None,
 ):
     """Geocoded public-auction sales (PVP) from the enriched map-view cache.
+
+    ``bbox`` (west, south, east, north) restricts the response to the points in
+    the viewport, capped at ``limit``; without it the national feed is returned.
 
     ``category`` is a comma-separated list of category keys. The first request
     waits for the shared startup snapshot load, so the map progress indicator
@@ -402,7 +462,7 @@ async def get_sales_map_points(
     try:
         payload = await get_pvp_sales_store().map_points(
             period=period, categories=categories, min_price=min_price, max_price=max_price,
-            wait=True, refresh=refresh,
+            wait=True, refresh=refresh, bbox=bbox, limit=limit,
         )
     except Exception as exc:
         logger.warning("PVP sales map points failed: %s", exc)
@@ -426,14 +486,51 @@ async def sales_map_points(
     min_price: Optional[float] = Query(None, ge=0),
     max_price: Optional[float] = Query(None, ge=0),
     refresh: bool = Query(False),
+    bbox: Optional[str] = Query(None, description="west,south,east,north (WGS84): only points inside the viewport"),
+    limit: Optional[int] = Query(None, ge=1, le=60000, description="maximum points returned with bbox (default 20000)"),
 ):
     """Serve sales from the PVP view when the stats database is configured.
 
-    Without it the request goes to the external sales service, as before.
+    Pass ``bbox`` so the response holds only what the map can show; without it
+    the whole national feed is returned for existing consumers. Without the
+    stats database the request goes to the external sales service, as before.
     """
     if get_pvp_sales_store().available:
-        return await get_sales_map_points(period, category, min_price, max_price, refresh)
+        parsed_bbox = _parse_sales_bbox(bbox)
+        if parsed_bbox is not None and limit is None:
+            limit = SALES_BBOX_DEFAULT_LIMIT
+        return await get_sales_map_points(period, category, min_price, max_price, refresh, parsed_bbox, limit)
     return await proxy_sales_map_points(request)
+
+
+@api_router.get("/sales/nearby-points")
+async def sales_nearby_points(
+    lat: float = Query(..., ge=-90, le=90),
+    lng: float = Query(..., ge=-180, le=180),
+    radius_km: float = Query(10, gt=0, le=50),
+    limit: int = Query(8, ge=1, le=50),
+):
+    """Return a compact nearby PVP result instead of sending the national map feed."""
+    store = get_pvp_sales_store()
+    if not store.available:
+        raise HTTPException(status_code=503, detail="Nearby sales data unavailable")
+    try:
+        # The first request starts the shared snapshot refresh but does not
+        # make a parcel-panel section wait for a national-scale cold load.
+        # Once ready, subsequent nearby requests use the cached snapshot.
+        payload = await store.nearby_points(lat=lat, lng=lng, radius_km=radius_km, limit=limit, wait=False)
+    except Exception as exc:
+        logger.warning("Nearby PVP sales lookup failed: %s", exc)
+        raise HTTPException(
+            status_code=503, detail="Nearby sales data unavailable",
+            headers={"Retry-After": "30", "Cache-Control": "no-store"},
+        ) from exc
+    if payload is None:
+        raise HTTPException(
+            status_code=503, detail="Sales data is loading",
+            headers={"Retry-After": "10", "Cache-Control": "no-store"},
+        )
+    return payload
 
 
 @api_router.get("/sales/pvp/{sale_id}")
@@ -4484,6 +4581,27 @@ async def get_map_layers():
     }
 
 
+@api_router.post("/map/parcel-flags/{flag}/refresh", status_code=202)
+async def start_map_parcel_flag_refresh(
+    flag: Literal["has_visura", "is_auction_sale"],
+    current_user: ClerkUser = Depends(get_current_superuser),
+):
+    """Start a superuser-only refresh of a persisted cadastral parcel flag."""
+    return await start_parcel_flag_refresh(flag)
+
+
+@api_router.get("/map/parcel-flags/refresh/{job_id}")
+async def get_map_parcel_flag_refresh(
+    job_id: UUID,
+    current_user: ClerkUser = Depends(get_current_superuser),
+):
+    """Read the status of a parcel flag refresh started by a superuser."""
+    job = get_parcel_flag_refresh(str(job_id))
+    if job is None:
+        raise HTTPException(status_code=404, detail="Parcel flag refresh job not found")
+    return job
+
+
 @api_router.get("/map/metrics")
 async def get_map_metrics():
     """Return privacy-preserving diagnostics in local/debug deployments."""
@@ -4507,6 +4625,67 @@ async def get_map_layers_health():
     except Exception as exc:
         logger.warning("Canonical map layer health check failed: %s", exc)
         raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable") from exc
+
+
+@api_router.post("/map/sister-batch-selection")
+async def select_sister_batch_parcels(request: SisterBatchSelectionRequest):
+    """Resolve selected map parcels to geometries and SISTER query fields."""
+    parcel_ids = list(dict.fromkeys(request.parcel_ids or []))
+    if bool(parcel_ids) == (request.geometry is not None):
+        raise HTTPException(status_code=422, detail="Provide parcel_ids or one selection geometry")
+    if any(parcel_id <= 0 for parcel_id in parcel_ids):
+        raise HTTPException(status_code=422, detail="Parcel IDs must be positive")
+    if request.geometry is not None:
+        from shapely.geometry import shape as shapely_shape
+
+        selection_shape = shapely_shape(request.geometry)
+        if selection_shape.is_empty or not selection_shape.is_valid:
+            raise HTTPException(status_code=422, detail="Draw a valid, non-empty polygon")
+        west, south, east, north = selection_shape.bounds
+        if (east - west) * (north - south) > get_map_layer("cadastral-parcels").geojson_max_area:
+            raise HTTPException(status_code=422, detail="Selection is too large; zoom in and draw a smaller area")
+
+    source = get_map_layer_source()
+    if not source.available:
+        raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable")
+    try:
+        return await asyncio.wait_for(
+            source.read_sister_batch_selection(parcel_ids=parcel_ids or None, geometry=request.geometry),
+            timeout=20,
+        )
+    except asyncio.TimeoutError as exc:
+        logger.warning("SISTER batch parcel selection timed out")
+        raise HTTPException(status_code=503, detail="Parcel selection timed out; try a smaller area") from exc
+    except Exception as exc:
+        logger.warning("SISTER batch parcel selection failed: %s", exc)
+        raise HTTPException(status_code=503, detail="Parcel selection is temporarily unavailable") from exc
+
+
+@api_router.get("/map/sister-parcels")
+async def get_sister_parcel_features(
+    west: float = Query(..., ge=-180, le=180),
+    south: float = Query(..., ge=-90, le=90),
+    east: float = Query(..., ge=-180, le=180),
+    north: float = Query(..., ge=-90, le=90),
+    limit: int = Query(3000, ge=1, le=5000),
+):
+    """Return viewport parcel polygons that have records in the SISTER view."""
+    if west >= east or south >= north:
+        raise HTTPException(status_code=400, detail="Invalid map bounding box")
+    source = get_map_layer_source()
+    if not source.available:
+        raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable")
+    try:
+        return await asyncio.wait_for(
+            source.read_sister_parcels((west, south, east, north), limit=limit),
+            timeout=12,
+        )
+    except asyncio.TimeoutError as exc:
+        logger.warning("SISTER parcel map query timed out")
+        raise HTTPException(status_code=503, detail="SISTER parcel map query timed out") from exc
+    except Exception as exc:
+        logger.warning("SISTER parcel map query failed: %s", exc)
+        raise HTTPException(status_code=503, detail="SISTER parcel layer unavailable") from exc
 
 
 @api_router.get("/map/layers/{layer_id}/features")
@@ -4541,6 +4720,29 @@ async def get_map_layer_features(
     payload["features"] = features[:page_size]
     payload["offset"] = offset
     payload["layer"] = layer.id
+    if layer.id == "cadastral-parcels" and payload["features"]:
+        # Attribute-table column: does SISTER hold a visura per immobile for the
+        # parcel? Left null (unknown) when SISTER cannot be consulted, so the
+        # table never claims "no visura" for a parcel it could not check.
+        try:
+            async def visura_flags():
+                names = {}
+                for code in source.visura_candidate_codes(payload["features"]):
+                    municipality = await stats_service.aget_municipality_by_cadastral_code(code)
+                    if municipality:
+                        names[code] = (
+                            str(municipality.get("name") or municipality.get("official_name") or ""),
+                            (str(municipality.get("province") or ""), str(municipality.get("province_sigla") or "")),
+                        )
+                return await source.read_visura_flags(payload["features"], names)
+
+            flags = await asyncio.wait_for(visura_flags(), timeout=8)
+        except Exception as exc:  # the table must still load without SISTER
+            logger.warning("SISTER visura flags unavailable: %s", exc)
+            flags = None
+        for feature in payload["features"]:
+            properties = feature.setdefault("properties", {})
+            properties["has_visura"] = None if flags is None else flags.get(feature.get("id", properties.get("id")))
     return payload
 
 

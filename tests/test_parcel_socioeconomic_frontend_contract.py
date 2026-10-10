@@ -49,15 +49,65 @@ async def test_census_at_point_dispatches_to_spatial_lookup(monkeypatch) -> None
         "properties": {"sez21_id": 123, "p1": 42, "ratios": {}},
         "geometry": None,
     }
-    monkeypatch.setattr(enrichment_module.stats_service, "census_db_available", lambda: True)
+
+    async def census_available():
+        return True
+
+    async def census_lookup(lat, lng, cadastral_code=None):
+        assert (lat, lng, cadastral_code) == (41.9, 12.5, None)
+        return feature
+
+    monkeypatch.setattr(enrichment_module.stats_service, "acensus_db_available", census_available)
     monkeypatch.setattr(
         enrichment_module.stats_service,
-        "get_census_section_at_point",
-        lambda lat, lng: feature,
+        "aget_census_section_at_point",
+        census_lookup,
     )
-    response = await enrichment_module.get_census_section_at_point(lat=41.9, lng=12.5)
+    response = await enrichment_module.get_census_section_at_point(lat=41.9, lng=12.5, comune=None)
 
     assert response["properties"]["sez21_id"] == 123
+
+
+@pytest.mark.asyncio
+async def test_buildings_route_normalizes_section_prefixed_reference(monkeypatch) -> None:
+    captured = {}
+
+    async def municipality_lookup(code):
+        captured["lookup_code"] = code
+        return {"name": "Roma", "province": "Roma"}
+
+    async def inline_to_thread(function, *args, **kwargs):
+        return function(*args, **kwargs)
+
+    def buildings_lookup(reference, *, cadastral_code, municipality):
+        captured.update(
+            reference=reference,
+            cadastral_code=cadastral_code,
+            municipality=municipality,
+        )
+        return {"buildings": [], "addresses": [], "available": False}
+
+    monkeypatch.setattr(
+        enrichment_module.stats_service,
+        "aget_municipality_by_cadastral_code",
+        municipality_lookup,
+    )
+    monkeypatch.setattr(
+        enrichment_module.stats_service,
+        "get_buildings_for_parcel",
+        buildings_lookup,
+    )
+    monkeypatch.setattr(enrichment_module.asyncio, "to_thread", inline_to_thread)
+
+    result = await enrichment_module.get_parcel_buildings("H501A048600.D")
+
+    assert result["available"] is False
+    assert captured == {
+        "lookup_code": "H501",
+        "reference": "H501A048600.D",
+        "cadastral_code": "H501",
+        "municipality": {"name": "Roma", "province": "Roma"},
+    }
 
 
 def test_parcel_panel_requests_all_socioeconomic_sources() -> None:

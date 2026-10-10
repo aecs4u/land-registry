@@ -291,6 +291,72 @@ async def test_map_points_route_validates_filters_and_reports_loading(monkeypatc
     assert error.value.status_code == 503 and "Retry-After" in error.value.headers
 
 
+def _grid_store():
+    # 0.5 degree grid of sales: lat 40..44, lng 8..12 (81 points).
+    rows = [
+        _row(1000 + i * 9 + j, 40.0 + i * 0.5, 8.0 + j * 0.5, when=datetime(2999, 1, 1))
+        for i in range(9) for j in range(9)
+    ]
+    return _store_with(rows)
+
+
+def test_map_points_with_bbox_returns_only_points_in_view():
+    store = _grid_store()
+    everything = asyncio.run(store.map_points(period="all"))
+    assert everything["count"] == 81 and "bbox" not in everything  # legacy contract unchanged
+
+    view = asyncio.run(store.map_points(period="all", bbox=(8.9, 40.9, 10.1, 42.1)))
+    assert view["bbox"] == [8.9, 40.9, 10.1, 42.1]
+    assert view["truncated"] is False
+    assert view["count"] == view["matched"] == 9  # lng 9.0/9.5/10.0 x lat 41.0/41.5/42.0
+    assert all(8.9 <= p[1] <= 10.1 and 40.9 <= p[2] <= 42.1 for p in view["points"])
+    # A box with nothing in it is an empty list, not an error or the national feed.
+    empty = asyncio.run(store.map_points(period="all", bbox=(20.0, 50.0, 21.0, 51.0)))
+    assert empty["count"] == 0 and empty["points"] == []
+
+
+def test_map_points_bbox_limit_keeps_the_points_nearest_the_centre_and_flags_truncation():
+    store = _grid_store()
+    payload = asyncio.run(store.map_points(period="all", bbox=(7.9, 39.9, 12.1, 44.1), limit=5))
+    assert payload["matched"] == 81 and payload["count"] == 5 and payload["truncated"] is True
+    # The centre of the box is (10.0, 42.0); the nearest point is exactly there.
+    assert (payload["points"][0][1], payload["points"][0][2]) == (10.0, 42.0)
+    lngs = {p[1] for p in payload["points"]}
+    assert lngs <= {9.5, 10.0, 10.5}
+
+
+def test_map_points_bbox_category_counts_describe_the_viewport():
+    rows = [
+        _row(1, 41.0, 9.0, when=datetime(2999, 1, 1)),
+        _row(2, 41.1, 9.1, when=datetime(2999, 1, 1), kind="Terreno"),
+        _row(3, 44.0, 12.0, when=datetime(2999, 1, 1), kind="Terreno"),
+    ]
+    store = _store_with(rows)
+    payload = asyncio.run(store.map_points(period="all", bbox=(8.5, 40.5, 9.5, 41.5)))
+    counts = {c["key"]: c["count"] for c in payload["categories"]}
+    assert counts["land"] == 1 and counts["residential"] == 1
+    assert payload["count"] == 2
+
+
+def test_sales_map_points_endpoint_accepts_bbox_and_rejects_malformed_boxes(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import land_registry.pvp_sales as pvp_sales
+    from land_registry.main import app
+
+    store = _grid_store()
+    store._loaded_at = __import__("time").monotonic()
+    monkeypatch.setattr(pvp_sales, "_store", store)
+    client = TestClient(app)
+
+    ok = client.get("/api/v1/sales/map-points?period=all&bbox=8.9,40.9,10.1,42.1")
+    assert ok.status_code == 200 and ok.json()["count"] == 9 and ok.json()["truncated"] is False
+    capped = client.get("/api/v1/sales/map-points?period=all&bbox=7.9,39.9,12.1,44.1&limit=4").json()
+    assert capped["count"] == 4 and capped["matched"] == 81 and capped["truncated"] is True
+    for bad in ("1,2,3", "a,b,c,d", "10,40,8,42", "8,45,9,40", "8,40,9,95", "nan,40,9,42"):
+        assert client.get(f"/api/v1/sales/map-points?period=all&bbox={bad}").status_code == 400, bad
+
+
 def test_sales_map_points_endpoint_serves_pvp_when_configured_and_rejects_bad_filters(monkeypatch):
     from fastapi.testclient import TestClient
 
@@ -324,3 +390,26 @@ def test_sales_map_points_falls_back_to_proxy_without_stats_database(monkeypatch
     response = TestClient(app).get("/api/v1/sales/map-points")
     assert response.status_code == 503
     assert response.json()["error"] == "sales map feed unavailable"
+
+
+@pytest.mark.asyncio
+async def test_nearby_sales_endpoint_does_not_wait_for_cold_snapshot(monkeypatch):
+    from land_registry.routers import api as api_module
+    import land_registry.pvp_sales as pvp_sales
+
+    store = PvpSalesStore(connection_source=object())
+    calls = []
+
+    async def loading(**kwargs):
+        calls.append(kwargs)
+        return None
+
+    store.nearby_points = loading
+    monkeypatch.setattr(pvp_sales, "_store", store)
+
+    with pytest.raises(api_module.HTTPException) as error:
+        await api_module.sales_nearby_points(lat=41.9, lng=12.5, radius_km=10, limit=8)
+
+    assert error.value.status_code == 503
+    assert error.value.headers["Retry-After"] == "10"
+    assert calls == [{"lat": 41.9, "lng": 12.5, "radius_km": 10, "limit": 8, "wait": False}]

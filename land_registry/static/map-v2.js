@@ -1,8 +1,9 @@
 /* Direct cadastral map experience.
  *
  * This page deliberately owns one MapLibre instance.  It consumes the
- * allow-listed map catalog and parcel/enrichment APIs; uploaded-file drawing
- * workflows remain on /map-legacy until their migration is complete.
+ * allow-listed map catalog and parcel/enrichment APIs. Its workbench keeps
+ * selection and drawing edits in the current viewport until the user exports
+ * GeoJSON or saves drawings through the existing authenticated API.
  */
 (function () {
   'use strict';
@@ -25,6 +26,7 @@
     catalog: [],
     selectedReference: null,
     selectedFeature: null,
+    selectedAuctionSaleMarker: null,
     savedReference: null,
     searchTimer: null,
     searchRequest: 0,
@@ -51,6 +53,19 @@
     sourceTileDown: false,
     layerOpacity: new Map(),
     postalLabelsEnabled: false,
+    cadastralSheetLabelsEnabled: false,
+    parcelPvpMarkers: { points: [], visible: false },
+    parcelPvpMarkerLayer: null,
+    sisterBatch: { features: new Map(), mode: null, vertices: [], circleCenter: null, busy: false, requestId: 0, notice: '' },
+    sisterBatchFallbackLayer: null,
+    sisterBatchDrawingFallbackLayer: null,
+    workbench: {
+      selection: new Map(), mode: null, vertices: [], circleCenter: null,
+      drawings: [], selectedDrawing: null, editingDrawing: false, editVertex: null,
+      drawingLayer: null, drawingVertexLayer: null, fallbackDrawingLayer: null,
+      fallbackSelectionLayer: null, fallbackLayers: new Map(), minimap: null, minimapViewport: null,
+      adjacencyRequest: 0,
+    },
   };
 
   const $ = (id) => document.getElementById(id);
@@ -333,59 +348,97 @@
   }
 
   function currentBasemap() {
-    return document.querySelector('input[name="basemap"]:checked')?.value || (state.dark ? 'dark' : 'light');
+    return $('basemapEngineSelect')?.value || (state.dark ? 'dark' : 'light');
   }
 
-  // CARTO now watermarks keyless tiles ("API key required"), so light and
-  // dark use Esri's keyless canvas basemaps from the host that already serves
-  // satellite imagery. Canvas tiles stop at z16 — background is the flat
-  // color shown past maxzoom instead of MapLibre upscaling (blurring) the
-  // last real tile; see styleForBasemap().
-  const ESRI_TILES = 'https://server.arcgisonline.com/ArcGIS/rest/services';
-  const BASEMAP_TILES = {
-    light: {
-      base: `${ESRI_TILES}/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}`,
-      labels: `${ESRI_TILES}/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}`,
-      maxzoom: 16,
-      displayMaxzoom: 19,
-      background: '#f2f2ef',
-      attribution: '© Esri, HERE, Garmin, © OpenStreetMap contributors',
-    },
-    dark: {
-      base: `${ESRI_TILES}/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}`,
-      labels: `${ESRI_TILES}/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}`,
-      maxzoom: 16,
-      displayMaxzoom: 19,
-      background: '#1a1a1a',
-      attribution: '© Esri, HERE, Garmin, © OpenStreetMap contributors',
-    },
-    satellite: {
-      base: `${ESRI_TILES}/World_Imagery/MapServer/tile/{z}/{y}/{x}`,
-      labels: null,
-      maxzoom: 19,
-      background: '#3d3d3d',
-      attribution: '© Esri, Maxar, Earthstar Geographics',
-    },
-  };
+  // Keep V2 usable if the shared workbench bundle fails to load. This catalog
+  // mirrors map-workbench.js so the selector still works during that failure.
+  function fallbackBasemapEngines() {
+    const esri = 'https://server.arcgisonline.com/ArcGIS/rest/services';
+    const engines = [
+      {
+        id: 'light', base: `${esri}/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}`,
+        labels: `${esri}/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}`,
+        maxzoom: 16, displayMaxzoom: 19, background: '#f2f2ef',
+        attribution: '© Esri, HERE, Garmin, © OpenStreetMap contributors',
+      },
+      {
+        id: 'dark', base: `${esri}/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}`,
+        labels: `${esri}/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}`,
+        maxzoom: 16, displayMaxzoom: 19, background: '#1a1a1a',
+        attribution: '© Esri, HERE, Garmin, © OpenStreetMap contributors',
+      },
+      {
+        id: 'satellite', base: `${esri}/World_Imagery/MapServer/tile/{z}/{y}/{x}`,
+        maxzoom: 19, background: '#3d3d3d', attribution: '© Esri, Maxar, Earthstar Geographics',
+      },
+      {
+        id: 'osm', base: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+        maxzoom: 19, displayMaxzoom: 22, background: '#e9e4d6', attribution: '© OpenStreetMap contributors',
+      },
+      {
+        id: 'google-road', base: 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+        maxzoom: 20, displayMaxzoom: 22, background: '#e9e4d6', attribution: '© Google',
+      },
+      {
+        id: 'google-satellite', base: 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+        maxzoom: 20, displayMaxzoom: 22, background: '#3d3d3d', attribution: '© Google',
+      },
+      {
+        id: 'google-terrain', base: 'https://mt1.google.com/vt/lyrs=p&x={x}&y={y}&z={z}',
+        maxzoom: 20, displayMaxzoom: 22, background: '#e9e4d6', attribution: '© Google',
+      },
+      {
+        id: 'google-hybrid', base: 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+        maxzoom: 20, displayMaxzoom: 22, background: '#3d3d3d', attribution: '© Google',
+      },
+      {
+        id: 'google-transit', base: 'https://mt1.google.com/vt/lyrs=m,transit&x={x}&y={y}&z={z}',
+        maxzoom: 20, displayMaxzoom: 22, background: '#e9e4d6', attribution: '© Google',
+      },
+      {
+        id: 'google-traffic', base: 'https://mt1.google.com/vt/lyrs=m,traffic&x={x}&y={y}&z={z}',
+        maxzoom: 20, displayMaxzoom: 22, background: '#e9e4d6', attribution: '© Google',
+      },
+      {
+        id: 'esri-terrain', base: 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Terrain_Base/MapServer/tile/{z}/{y}/{x}',
+        maxzoom: 13, displayMaxzoom: 22, background: '#e9e4d6', attribution: '© ESRI',
+      },
+    ];
+    if (window.cartoEnabled && window.cartoApiKey) {
+      const key = encodeURIComponent(window.cartoApiKey);
+      engines.push(
+        {
+          id: 'carto-light', base: `https://cartodb-basemaps-{s}.global.ssl.fastly.net/light_all/{z}/{x}/{y}.png?api_key=${key}`,
+          maxzoom: 20, displayMaxzoom: 22, background: '#f2f2ef', attribution: '© OpenStreetMap contributors © CARTO',
+        },
+        {
+          id: 'carto-dark', base: `https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png?api_key=${key}`,
+          maxzoom: 20, displayMaxzoom: 22, background: '#1a1a1a', attribution: '© OpenStreetMap contributors © CARTO',
+        },
+      );
+    }
+    return engines;
+  }
 
-  // Same gate as the legacy map (map.js): CARTO only when an API key is
-  // configured; window.cartoEnabled/cartoApiKey come from the template.
-  function cartoTiles(kind) {
-    if (kind === 'satellite' || !(window.cartoEnabled && window.cartoApiKey)) return null;
-    const style = kind === 'dark' ? 'dark_all' : 'light_all';
-    return {
-      base: `https://cartodb-basemaps-a.global.ssl.fastly.net/${style}/{z}/{x}/{y}.png?api_key=${encodeURIComponent(window.cartoApiKey)}`,
-      labels: null,
-      maxzoom: 20,
-      background: kind === 'dark' ? '#1a1a1a' : '#f2f2ef',
-      attribution: '© OpenStreetMap contributors © CARTO',
-    };
+  function basemapEngine(kind) {
+    let engines;
+    try {
+      engines = window.MapWorkbench?.basemapEngines(window.cartoEnabled, window.cartoApiKey);
+    } catch (error) {
+      console.warn('Shared basemap catalog failed; using the V2 fallback catalog', error);
+    }
+    if (!Array.isArray(engines) || !engines.length) engines = fallbackBasemapEngines();
+    return engines.find((engine) => engine.id === kind) || engines.find((engine) => engine.id === 'light');
   }
 
   function styleForBasemap(kind) {
-    const tiles = cartoTiles(kind) || BASEMAP_TILES[kind] || BASEMAP_TILES.light;
+    const tiles = basemapEngine(kind);
+    if (!tiles) throw new Error('Basemap catalog is unavailable');
+    // Leaflet expands {s}; MapLibre raster sources use concrete tile URLs.
+    const base = tiles.base.replace('{s}', 'a');
     const sources = {
-      basemap: { type: 'raster', tiles: [tiles.base], tileSize: 256, maxzoom: tiles.maxzoom, attribution: tiles.attribution },
+      basemap: { type: 'raster', tiles: [base], tileSize: 256, maxzoom: tiles.maxzoom, attribution: tiles.attribution },
     };
     // A layer's own maxzoom (unlike the source's, which only governs tile
     // fetching) hides the layer entirely at/above that zoom, instead of
@@ -399,7 +452,7 @@
       { id: 'basemap', type: 'raster', source: 'basemap', maxzoom: rasterCutoff },
     ];
     if (tiles.labels) {
-      sources['basemap-labels'] = { type: 'raster', tiles: [tiles.labels], tileSize: 256, maxzoom: tiles.maxzoom };
+      sources['basemap-labels'] = { type: 'raster', tiles: [tiles.labels.replace('{s}', 'a')], tileSize: 256, maxzoom: tiles.maxzoom };
       layers.push({ id: 'basemap-labels', type: 'raster', source: 'basemap-labels', maxzoom: rasterCutoff });
     }
     // Symbol layers (parcel numbers) need glyphs; they are self-hosted under
@@ -496,7 +549,9 @@
         type: 'vector',
         tiles: [absoluteTileUrl(layer.tile_url)],
         minzoom: Number(layer.min_zoom || 0),
-        maxzoom: 22,
+        // Above this zoom MapLibre overzooms the tiles it has instead of
+        // requesting finer ones (catalog tile_max_zoom, default 16).
+        maxzoom: Math.min(22, Number(layer.tile_max_zoom || 22)),
       });
       const color = layerColor(layer.id);
       const polygonColor = layer.polygon_color || layerFillColor(layer, color);
@@ -527,6 +582,7 @@
           paint: { 'text-color': polygonColor, 'text-halo-color': '#fff', 'text-halo-width': 1.5 },
         });
       }
+      if (layer.id === 'cadastral-sheets') addCadastralSheetLabels();
       if (layer.id === 'cadastral-parcels') {
         addParcelLabels();
         state.map.on('mouseenter', 'fill-cadastral-parcels', () => { state.map.getCanvas().style.cursor = 'pointer'; });
@@ -602,6 +658,27 @@
       minzoom: 17, filter: ['all', ['!=', ['slice', ['to-string', ['coalesce', ['get', 'parcel'], '']], 0, 6], 'STRADA'], ['!=', ['slice', ['to-string', ['coalesce', ['get', 'parcel'], '']], 0, 5], 'ACQUA']], layout: { 'text-field': ['coalesce', ['get', 'parcel'], ['get', 'canonical_reference'], ''], 'text-font': ['noto-sans-regular'], 'text-size': 11, 'text-allow-overlap': false, 'text-padding': 2 },
       paint: { 'text-color': '#263b4d', 'text-halo-color': '#fff', 'text-halo-width': 1.5 },
     });
+  }
+
+  function addCadastralSheetLabels() {
+    if (!state.map || state.map.getLayer('label-cadastral-sheets')) return;
+    const label = ['coalesce', ['get', 'level_name'], ['get', 'sheet_reference'], ''];
+    state.map.addLayer({
+      id: 'label-cadastral-sheets', type: 'symbol', source: layerSourceId({ id: 'cadastral-sheets' }), 'source-layer': 'cadastral-sheets',
+      minzoom: 12,
+      filter: ['!=', ['to-string', label], ''],
+      layout: {
+        'text-field': label,
+        'text-font': ['noto-sans-regular'],
+        'text-size': ['interpolate', ['linear'], ['zoom'], 12, 10, 16, 13],
+        'text-anchor': 'center',
+        'text-allow-overlap': false,
+        'text-padding': 4,
+      },
+      paint: { 'text-color': '#124f70', 'text-halo-color': '#fff', 'text-halo-width': 1.5 },
+    });
+    const visible = state.activeLayers?.has('cadastral-sheets') && state.cadastralSheetLabelsEnabled;
+    state.map.setLayoutProperty('label-cadastral-sheets', 'visibility', visible ? 'visible' : 'none');
   }
 
   function addPostalZoneLabels() {
@@ -742,19 +819,28 @@
     const caption = document.createElement('span');
     caption.textContent = setting.label;
     opacity.append(caption, slider);
-    const labelControls = layer.id === 'postal-zones' ? document.createElement('label') : null;
+    const labelControls = ['postal-zones', 'cadastral-sheets'].includes(layer.id) ? document.createElement('label') : null;
     if (labelControls) {
       labelControls.className = 'map-layer-label-controls';
       labelControls.hidden = !input.checked;
       const labelInput = document.createElement('input');
       labelInput.type = 'checkbox';
+      labelInput.checked = layer.id === 'postal-zones'
+        ? state.postalLabelsEnabled
+        : state.cadastralSheetLabelsEnabled;
       const labelText = document.createElement('span');
-      labelText.textContent = tr('Show CAP labels');
+      labelText.textContent = tr(layer.id === 'postal-zones' ? 'Show CAP labels' : 'Show sheet labels');
       labelInput.addEventListener('change', () => {
-        state.postalLabelsEnabled = labelInput.checked;
-        if (labelInput.checked) addPostalZoneLabels();
-        const labelLayer = state.map?.getLayer('label-postal-zones');
-        if (labelLayer) state.map.setLayoutProperty('label-postal-zones', 'visibility', labelInput.checked ? 'visible' : 'none');
+        const labelLayerId = `label-${layer.id}`;
+        if (layer.id === 'postal-zones') {
+          state.postalLabelsEnabled = labelInput.checked;
+          if (labelInput.checked) addPostalZoneLabels();
+        } else {
+          state.cadastralSheetLabelsEnabled = labelInput.checked;
+          if (labelInput.checked) addCadastralSheetLabels();
+        }
+        const labelLayer = state.map?.getLayer(labelLayerId);
+        if (labelLayer) state.map.setLayoutProperty(labelLayerId, 'visibility', labelInput.checked ? 'visible' : 'none');
       });
       labelControls.append(labelInput, labelText);
     }
@@ -804,6 +890,7 @@
   function renderLayerCatalog() {
     const list = $('mapLayerList');
     if (!list) return;
+    const sisterLayerOptions = $('sisterLayerOptions');
     list.replaceChildren();
     const initializingLayers = state.activeLayers === null;
     const visible = state.catalog.filter((layer) => layer.id !== 'raster-coverage');
@@ -820,6 +907,7 @@
       members.forEach((layer) => {
         const { item, input } = buildLayerItem(layer, initializingLayers);
         section.appendChild(item);
+        if (layer.id === 'cadastral-parcels' && sisterLayerOptions) item.appendChild(sisterLayerOptions);
         if (input.checked) {
           if (state.activeLayers === null) state.activeLayers = new Set();
           state.activeLayers.add(layer.id);
@@ -1070,9 +1158,17 @@
       ...idsFor('line', isPolygonLayer),
       ...idsFor('point', isPointLayer),
       'point-enrichment-fires', 'auction-clusters', 'auction-cluster-count', 'point-auction-properties', 'point-sales-properties',
-      'label-cadastral-parcels', ...idsFor('label', layer => layer.id === 'postal-zones' || layer.kind === 'mixed'),
-      'fill-adjacent-parcels', 'line-adjacent-parcels',
-      'selected-parcel-fill', 'selected-parcel-line',
+      'label-cadastral-parcels', ...idsFor('label', layer => layer.id === 'postal-zones' || layer.id === 'cadastral-sheets' || layer.kind === 'mixed'),
+      'fill-adjacent-parcels', 'line-adjacent-parcels', 'fill-sister-listed-parcels', 'line-sister-listed-parcels',
+      'fill-auction-listed-parcels', 'line-auction-listed-parcels',
+      'selected-parcel-fill', 'selected-parcel-line', 'parcel-pvp-nearby-markers', 'parcel-pvp-nearby-labels',
+      'sister-batch-selection-fill', 'sister-batch-selection-line',
+      'sister-batch-drawing-fill', 'sister-batch-drawing-line',
+      'urban-contour-fill', 'urban-contour-line', 'urban-contour-rural',
+      'user-drawings-fill', 'user-drawings-line', 'user-drawings-point',
+      'workbench-preview-fill', 'workbench-preview-line',
+      'analysis-selection-fill', 'analysis-selection-line', 'analysis-selection-point',
+      'drawing-vertices-points',
     ];
     const present = bottomToTop.filter((id) => state.map.getLayer(id));
     // Each moveLayer dirties the style and forces a re-render. When the managed
@@ -1099,7 +1195,9 @@
       const id = `${prefix}-${layerId}`;
       const layerVisibility = prefix === 'label' && layerId === 'postal-zones'
         ? (visible && state.postalLabelsEnabled ? 'visible' : 'none')
-        : value;
+        : prefix === 'label' && layerId === 'cadastral-sheets'
+          ? (visible && state.cadastralSheetLabelsEnabled ? 'visible' : 'none')
+          : value;
       // Skip no-op writes: any layout write marks the style dirty and forces
       // another render.
       if (state.map.getLayer(id) && (state.map.getLayoutProperty(id, 'visibility') ?? 'visible') !== layerVisibility) {
@@ -1116,6 +1214,88 @@
       state.map.addSource('selected-parcel', { type: 'geojson', data: selected });
       state.map.addLayer({ id: 'selected-parcel-fill', type: 'fill', source: 'selected-parcel', paint: { 'fill-color': '#f08a24', 'fill-opacity': .24 } });
       state.map.addLayer({ id: 'selected-parcel-line', type: 'line', source: 'selected-parcel', paint: { 'line-color': '#f08a24', 'line-width': 3, 'line-opacity': 1 } });
+    }
+  }
+
+  function selectedFeaturePosition(feature) {
+    const bbox = feature?.bbox;
+    if (Array.isArray(bbox) && bbox.length >= 4) {
+      const [west, south, east, north] = bbox.slice(0, 4).map(Number);
+      if ([west, south, east, north].every(Number.isFinite)) return [(west + east) / 2, (south + north) / 2];
+    }
+    const coordinates = feature?.geometry?.coordinates;
+    if (!coordinates) return null;
+    const bounds = [Infinity, Infinity, -Infinity, -Infinity];
+    const visit = (value) => {
+      if (!Array.isArray(value)) return;
+      if (value.length >= 2 && !Array.isArray(value[0]) && !Array.isArray(value[1])) {
+        const lng = Number(value[0]);
+        const lat = Number(value[1]);
+        if (Number.isFinite(lng) && Number.isFinite(lat)) {
+          bounds[0] = Math.min(bounds[0], lng);
+          bounds[1] = Math.min(bounds[1], lat);
+          bounds[2] = Math.max(bounds[2], lng);
+          bounds[3] = Math.max(bounds[3], lat);
+        }
+        return;
+      }
+      value.forEach(visit);
+    };
+    visit(coordinates);
+    return bounds.every(Number.isFinite) ? [(bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2] : null;
+  }
+
+  function clearSelectedAuctionSaleMarker() {
+    state.selectedAuctionSaleMarker?.remove();
+    state.selectedAuctionSaleMarker = null;
+  }
+
+  function selectedAuctionSalePopupHtml(feature) {
+    const props = feature?.properties || {};
+    const parcel = props.parcel_number ?? props.parcel ?? props.particella ?? null;
+    const municipality = props.municipality_name || props.municipality || props.ADMINISTRATIVEUNIT || props.municipality_id || null;
+    const context = [
+      parcel !== null && parcel !== '' ? tr('Parcel {parcel}', { parcel }) : null,
+      referenceFrom(props),
+      municipality,
+    ].filter(Boolean).join(' · ');
+    return `<div class="auction-sale-tooltip"><strong>${escapeHtml(tr('Auction sale'))}</strong><br><span>${escapeHtml(tr('This cadastral parcel is marked for auction sale.'))}</span>${context ? `<small>${escapeHtml(context)}</small>` : ''}</div>`;
+  }
+
+  function renderSelectedAuctionSaleMarker(feature) {
+    clearSelectedAuctionSaleMarker();
+    const flag = feature?.properties?.is_auction_sale;
+    if (!(flag === true || flag === 1 || flag === '1' || flag === 'true')) return;
+    const position = selectedFeaturePosition(feature);
+    if (!position) return;
+    const popupHtml = selectedAuctionSalePopupHtml(feature);
+    if (state.map && window.maplibregl) {
+      const element = document.createElement('button');
+      element.type = 'button';
+      element.className = 'selected-auction-sale-marker';
+      element.textContent = '€';
+      element.title = tr('Auction sale');
+      element.setAttribute('aria-label', tr('Auction sale'));
+      const popup = new maplibregl.Popup({ closeButton: true, closeOnClick: false, maxWidth: '280px', offset: 18 })
+        .setHTML(popupHtml);
+      state.selectedAuctionSaleMarker = new maplibregl.Marker({ element, anchor: 'center' })
+        .setLngLat(position)
+        .setPopup(popup)
+        .addTo(state.map);
+      state.selectedAuctionSaleMarker.togglePopup();
+    } else if (state.fallbackMap && window.L) {
+      const icon = L.divIcon({
+        className: 'selected-auction-sale-marker-wrap',
+        html: '<span class="selected-auction-sale-marker" aria-hidden="true">€</span>',
+        iconSize: [30, 30],
+        iconAnchor: [15, 15],
+      });
+      state.selectedAuctionSaleMarker = L.marker([position[1], position[0]], {
+        icon,
+        title: tr('Auction sale'),
+        keyboard: true,
+      }).addTo(state.fallbackMap).bindPopup(popupHtml, { maxWidth: 280 });
+      state.selectedAuctionSaleMarker.openPopup();
     }
   }
 
@@ -1150,6 +1330,9 @@
       window.ParcelPanel?.setReadModel(enrichment);
       return;
     }
+    // ParcelPanel.show restores section fragments and scrolls to their target.
+    // Reveal the sheet first so the browser can calculate the scroll position.
+    $('directParcelPanel').hidden = false;
     const municipality = props.municipality_name || props.municipality || props.ADMINISTRATIVEUNIT || props.municipality_id || '';
     const parcel = props.parcel_number ?? props.parcel ?? props.particella ?? props.LABEL;
     $('directParcelTitle').textContent = parcel !== undefined && parcel !== null && parcel !== '' ? tr('Parcel {parcel}', { parcel }) : tr('Parcel details');
@@ -1517,6 +1700,7 @@
       state.selectedFeature = feature;
       state.tileErrors.clear();
       renderSelectedGeometry(feature);
+      renderSelectedAuctionSaleMarker(feature);
       state.map?.getSource('adjacent-parcels')?.setData({ type: 'FeatureCollection', features: [] });
       const adjacentResults = $('parcelAdjacentResults');
       if (adjacentResults) adjacentResults.innerHTML = '';
@@ -1546,9 +1730,11 @@
   async function loadParcelEnrichment(reference, feature) {
     const task = beginMapProgress('parcel-enrichment', 'Loading parcel details…');
     try {
-      const response = await fetch(`/api/v1/enrichment/parcel/details/${encodeURIComponent(reference)}?view=panel`);
-      // Replace the loading placeholder either way; a 404 simply means no
-      // read-model row exists for this parcel yet.
+      const params = new URLSearchParams({ view: 'panel' });
+      if (Number.isInteger(feature?.id) && feature.id > 0) params.set('id', String(feature.id));
+      const response = await fetch(`/api/v1/enrichment/parcel/details/${encodeURIComponent(reference)}?${params}`);
+      // Replace the loading placeholder either way; a 404 means no enrichment
+      // profile could be built, so the selected parcel identity remains useful.
       if (!response.ok) {
         if (state.selectedReference === reference) renderParcelPanel(feature, { unavailable: response.status !== 404 });
         return;
@@ -1573,6 +1759,8 @@
       const foundReference = referenceFrom(feature.properties);
       if (foundReference) return loadParcelByReference(foundReference, false, Number(feature.id) || null);
       state.selectedFeature = feature;
+      renderSelectedGeometry(feature);
+      renderSelectedAuctionSaleMarker(feature);
       renderParcelPanel(feature);
     } catch (error) { mapStatus(error.message, true); }
     finally { task.finish(); }
@@ -1765,6 +1953,7 @@
   function clearParcelSelection() {
     state.selectedReference = null;
     state.selectedFeature = null;
+    clearSelectedAuctionSaleMarker();
     if (state.map?.getSource('selected-parcel')) state.map.getSource('selected-parcel').setData({ type: 'FeatureCollection', features: [] });
     state.map?.getSource('adjacent-parcels')?.setData({ type: 'FeatureCollection', features: [] });
     sisterBuildingsOverlay.fetchToken += 1;
@@ -1780,6 +1969,352 @@
     updateParcelZoomAffordance();
     writeUrl();
     mapStatus('Selection cleared');
+  }
+
+  function sisterBatchKey(feature) {
+    const id = feature?.properties?.id ?? feature?.id;
+    if (id !== null && id !== undefined && String(id)) return `id:${id}`;
+    const reference = referenceFrom(feature?.properties || {});
+    return reference ? `ref:${reference}` : null;
+  }
+
+  function renderSisterBatchSelection() {
+    const features = [...state.sisterBatch.features.values()];
+    const collection = { type: 'FeatureCollection', features };
+    if (state.map) {
+      if (state.map.getSource('sister-batch-selection')) state.map.getSource('sister-batch-selection').setData(collection);
+      else {
+        state.map.addSource('sister-batch-selection', { type: 'geojson', data: collection });
+        state.map.addLayer({ id: 'sister-batch-selection-fill', type: 'fill', source: 'sister-batch-selection', paint: { 'fill-color': '#0e7490', 'fill-opacity': .2 } });
+        state.map.addLayer({ id: 'sister-batch-selection-line', type: 'line', source: 'sister-batch-selection', paint: { 'line-color': '#0e7490', 'line-width': 3 } });
+      }
+      reorderMapLayers();
+    } else if (state.fallbackMap && window.L) {
+      if (state.sisterBatchFallbackLayer) state.fallbackMap.removeLayer(state.sisterBatchFallbackLayer);
+      state.sisterBatchFallbackLayer = window.L.geoJSON(collection, {
+        style: { color: '#0e7490', weight: 3, opacity: 1, fillColor: '#0e7490', fillOpacity: .2 },
+      }).addTo(state.fallbackMap);
+    }
+    renderSisterBatchControls();
+  }
+
+  function setSisterBatchDrawing(geometry = null) {
+    const feature = geometry ? { type: 'Feature', properties: {}, geometry } : null;
+    const collection = { type: 'FeatureCollection', features: feature ? [feature] : [] };
+    if (state.map) {
+      if (state.map.getSource('sister-batch-drawing')) state.map.getSource('sister-batch-drawing').setData(collection);
+      else {
+        state.map.addSource('sister-batch-drawing', { type: 'geojson', data: collection });
+        state.map.addLayer({ id: 'sister-batch-drawing-fill', type: 'fill', source: 'sister-batch-drawing', paint: { 'fill-color': '#8b5cf6', 'fill-opacity': .1 } });
+        state.map.addLayer({ id: 'sister-batch-drawing-line', type: 'line', source: 'sister-batch-drawing', paint: { 'line-color': '#7c3aed', 'line-width': 2, 'line-dasharray': [2, 2] } });
+      }
+      reorderMapLayers();
+    } else if (state.fallbackMap && window.L) {
+      if (state.sisterBatchDrawingFallbackLayer) state.fallbackMap.removeLayer(state.sisterBatchDrawingFallbackLayer);
+      state.sisterBatchDrawingFallbackLayer = feature
+        ? window.L.geoJSON(feature, { style: { color: '#7c3aed', weight: 2, dashArray: '6 5', fillColor: '#8b5cf6', fillOpacity: .1 } }).addTo(state.fallbackMap)
+        : null;
+    }
+  }
+
+  function sisterBatchInstruction() {
+    if (state.sisterBatch.mode === 'click') return tr('Click parcels to add or remove them from the batch.');
+    if (state.sisterBatch.mode === 'polygon') return tr('Click to add polygon corners, then double-click to select parcels that intersect it.');
+    if (state.sisterBatch.mode === 'circle') return tr('Click the circle center, move to set its radius, then click again.');
+    return '';
+  }
+
+  function renderSisterBatchControls(message) {
+    if (message !== undefined) state.sisterBatch.notice = message;
+    const selected = [...state.sisterBatch.features.entries()];
+    const count = selected.length;
+    const output = $('sisterBatchList');
+    const references = selected.map(([, feature]) => referenceFrom(feature.properties || {})).filter(Boolean);
+    const ready = selected.filter(([, feature]) => sisterBatchCsvFields(feature).length > 0).length;
+    const tools = [
+      ['sisterBatchClickButton', 'click'],
+      ['sisterBatchPolygonButton', 'polygon'],
+      ['sisterBatchCircleButton', 'circle'],
+    ];
+    tools.forEach(([id, mode]) => $(id)?.setAttribute('aria-pressed', String(state.sisterBatch.mode === mode)));
+    if (output) {
+      output.innerHTML = selected.map(([key, feature]) => {
+        const reference = referenceFrom(feature.properties || {}) || tr('Parcel');
+        return `<li class="sister-batch-item"><span class="sister-batch-item-label">${escapeHtml(reference)}</span><button type="button" class="sister-batch-remove" data-sister-batch-remove="${escapeHtml(key)}" aria-label="${escapeHtml(tr('Remove {reference}', { reference }))}">×</button></li>`;
+      }).join('');
+    }
+    const status = $('sisterBatchStatus');
+    if (status) {
+      status.textContent = state.sisterBatch.notice || sisterBatchInstruction() || (count
+        ? (ready === count
+          ? tr('{n} parcels selected', { n: count.toLocaleString() })
+          : tr('{n} selected; {missing} need cadastral details before export', { n: count.toLocaleString(), missing: (count - ready).toLocaleString() }))
+        : tr('No parcels selected'));
+    }
+    if ($('sisterBatchClearButton')) $('sisterBatchClearButton').disabled = !count && !state.sisterBatch.mode && !state.sisterBatch.busy;
+    if ($('sisterBatchExportButton')) $('sisterBatchExportButton').disabled = !count || ready !== count || state.sisterBatch.busy;
+    tools.forEach(([id]) => { if ($(id)) $(id).disabled = state.sisterBatch.busy; });
+  }
+
+  function setSisterBatchMode(mode) {
+    const next = state.sisterBatch.mode === mode ? null : mode;
+    workbench.mode = null;
+    workbench.vertices = [];
+    workbench.circleCenter = null;
+    workbench.editingDrawing = false;
+    workbench.editVertex = null;
+    $('mapEditDrawingButton')?.setAttribute('aria-pressed', 'false');
+    updateWorkbenchModeUi();
+    renderWorkbenchPreview();
+    state.sisterBatch.mode = next;
+    state.sisterBatch.notice = '';
+    state.sisterBatch.vertices = [];
+    state.sisterBatch.circleCenter = null;
+    setSisterBatchDrawing(null);
+    if (state.map) {
+      state.map.getCanvas().style.cursor = next ? 'crosshair' : '';
+      if (next === 'polygon') state.map.doubleClickZoom.disable();
+      else state.map.doubleClickZoom.enable();
+    } else if (state.fallbackMap) {
+      state.fallbackMap.getContainer().style.cursor = next ? 'crosshair' : '';
+      if (next === 'polygon') state.fallbackMap.doubleClickZoom.disable();
+      else state.fallbackMap.doubleClickZoom.enable();
+    }
+    renderSisterBatchControls();
+  }
+
+  function clearSisterBatchSelection() {
+    state.sisterBatch.requestId += 1;
+    state.sisterBatch.busy = false;
+    state.sisterBatch.notice = '';
+    state.sisterBatch.features.clear();
+    setSisterBatchMode(null);
+    renderSisterBatchSelection();
+  }
+
+  function addSisterBatchFeatures(features) {
+    const additions = features.filter((feature) => {
+      const key = sisterBatchKey(feature);
+      return key && !state.sisterBatch.features.has(key);
+    });
+    if (state.sisterBatch.features.size + additions.length > 5000) {
+      throw new Error(tr('Selection is limited to 5,000 parcels. Clear some parcels or draw a smaller area.'));
+    }
+    additions.forEach((feature) => state.sisterBatch.features.set(sisterBatchKey(feature), feature));
+    renderSisterBatchSelection();
+    return additions.length;
+  }
+
+  async function resolveSisterBatchIds(parcelIds) {
+    const requestId = ++state.sisterBatch.requestId;
+    state.sisterBatch.busy = true;
+    renderSisterBatchControls(tr('Resolving parcel details…'));
+    try {
+      const response = await fetch('/api/v1/map/sister-batch-selection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ parcel_ids: parcelIds }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.detail || tr('Parcel selection is temporarily unavailable.'));
+      if (requestId !== state.sisterBatch.requestId) return;
+      addSisterBatchFeatures(payload.features || []);
+      state.sisterBatch.notice = '';
+    } catch (error) {
+      if (requestId === state.sisterBatch.requestId) renderSisterBatchControls(error.message || tr('Parcel selection is temporarily unavailable.'));
+    } finally {
+      if (requestId === state.sisterBatch.requestId) {
+        state.sisterBatch.busy = false;
+        renderSisterBatchControls();
+      }
+    }
+  }
+
+  async function resolveSisterBatchGeometry(geometry) {
+    const requestId = ++state.sisterBatch.requestId;
+    setSisterBatchMode(null);
+    state.sisterBatch.busy = true;
+    renderSisterBatchControls(tr('Selecting parcels in the drawn area…'));
+    try {
+      const response = await fetch('/api/v1/map/sister-batch-selection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ geometry }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.detail || tr('Parcel selection is temporarily unavailable.'));
+      if (requestId !== state.sisterBatch.requestId) return;
+      if (payload.truncated) throw new Error(tr('More than 5,000 parcels match. Draw a smaller area to keep the batch complete.'));
+      const added = addSisterBatchFeatures(payload.features || []);
+      renderSisterBatchControls(tr('Added {added} parcels; {total} selected.', { added: added.toLocaleString(), total: state.sisterBatch.features.size.toLocaleString() }));
+    } catch (error) {
+      if (requestId === state.sisterBatch.requestId) renderSisterBatchControls(error.message || tr('Parcel selection is temporarily unavailable.'));
+    } finally {
+      if (requestId === state.sisterBatch.requestId) {
+        state.sisterBatch.busy = false;
+        renderSisterBatchControls();
+      }
+    }
+  }
+
+  async function selectSisterBatchParcel(lngLat, renderedFeature = null) {
+    const requestId = state.sisterBatch.requestId;
+    let feature = renderedFeature;
+    if (!feature || !(feature.properties?.id ?? feature.id)) {
+      try {
+        const params = new URLSearchParams({ lat: String(lngLat.lat), lng: String(lngLat.lng) });
+        const response = await fetch(`/api/v1/enrichment/parcel/at-point?${params}`);
+        if (!response.ok) throw new Error(tr('No parcel at this point.'));
+        feature = await response.json();
+      } catch (error) {
+        if (requestId === state.sisterBatch.requestId) renderSisterBatchControls(error.message || tr('No parcel at this point.'));
+        return;
+      }
+    }
+    if (requestId !== state.sisterBatch.requestId) return;
+    const key = sisterBatchKey(feature);
+    if (!key) { renderSisterBatchControls(tr('This parcel has no cadastral reference.')); return; }
+    if (state.sisterBatch.features.has(key)) {
+      state.sisterBatch.features.delete(key);
+      state.sisterBatch.notice = '';
+      renderSisterBatchSelection();
+      return;
+    }
+    const id = Number(feature.properties?.id ?? feature.id);
+    if (!Number.isSafeInteger(id) || id <= 0) { renderSisterBatchControls(tr('This parcel has no usable map ID.')); return; }
+    if (state.sisterBatch.features.size >= 5000) { renderSisterBatchControls(tr('Selection is limited to 5,000 parcels. Clear some parcels or draw a smaller area.')); return; }
+    await resolveSisterBatchIds([id]);
+  }
+
+  function coordinateDistanceMeters(first, second) {
+    const radians = value => value * Math.PI / 180;
+    const lat1 = radians(first[1]); const lat2 = radians(second[1]);
+    const dLat = lat2 - lat1; const dLng = radians(second[0] - first[0]);
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+    return 6371008.8 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  function circleSelectionPolygon(center, edge) {
+    const radius = coordinateDistanceMeters(center, edge);
+    if (radius < 2) return null;
+    const angular = radius / 6371008.8;
+    const lat1 = center[1] * Math.PI / 180;
+    const lon1 = center[0] * Math.PI / 180;
+    const coordinates = [];
+    for (let index = 0; index < 64; index += 1) {
+      const bearing = 2 * Math.PI * index / 64;
+      const lat2 = Math.asin(Math.sin(lat1) * Math.cos(angular) + Math.cos(lat1) * Math.sin(angular) * Math.cos(bearing));
+      const lon2 = lon1 + Math.atan2(Math.sin(bearing) * Math.sin(angular) * Math.cos(lat1), Math.cos(angular) - Math.sin(lat1) * Math.sin(lat2));
+      coordinates.push([lon2 * 180 / Math.PI, lat2 * 180 / Math.PI]);
+    }
+    coordinates.push(coordinates[0]);
+    return { type: 'Polygon', coordinates: [coordinates] };
+  }
+
+  function previewSisterBatchDrawing(cursor) {
+    let geometry = null;
+    if (state.sisterBatch.mode === 'polygon' && state.sisterBatch.vertices.length >= 2) {
+      const ring = [...state.sisterBatch.vertices, cursor];
+      if (ring.length >= 3) ring.push(ring[0]);
+      geometry = ring.length >= 4 ? { type: 'Polygon', coordinates: [ring] } : { type: 'LineString', coordinates: ring };
+    } else if (state.sisterBatch.mode === 'circle' && state.sisterBatch.circleCenter) {
+      geometry = circleSelectionPolygon(state.sisterBatch.circleCenter, cursor);
+    }
+    setSisterBatchDrawing(geometry);
+  }
+
+  function addSisterBatchPolygonVertex(lngLat) {
+    const point = [lngLat.lng, lngLat.lat];
+    const vertices = state.sisterBatch.vertices;
+    if (!vertices.length || coordinateDistanceMeters(vertices[vertices.length - 1], point) >= 2) vertices.push(point);
+    renderSisterBatchControls(sisterBatchInstruction());
+    previewSisterBatchDrawing(point);
+  }
+
+  function finishSisterBatchPolygon() {
+    const vertices = state.sisterBatch.vertices;
+    const ring = [...vertices];
+    if (ring.length > 2 && coordinateDistanceMeters(ring[0], ring[ring.length - 1]) < 3) ring.pop();
+    if (ring.length < 3) { setSisterBatchMode(null); renderSisterBatchControls(tr('Add at least three polygon corners.')); return; }
+    ring.push(ring[0]);
+    setSisterBatchDrawing(null);
+    void resolveSisterBatchGeometry({ type: 'Polygon', coordinates: [ring] });
+  }
+
+  function finishSisterBatchCircle(edge) {
+    const geometry = circleSelectionPolygon(state.sisterBatch.circleCenter, [edge.lng, edge.lat]);
+    if (!geometry) { renderSisterBatchControls(tr('Move farther from the center to set a circle radius.')); return; }
+    setSisterBatchDrawing(null);
+    void resolveSisterBatchGeometry(geometry);
+  }
+
+  function handleSisterBatchMapClick(lngLat, renderedFeature = null) {
+    const mode = state.sisterBatch.mode;
+    if (mode === 'click') { void selectSisterBatchParcel(lngLat, renderedFeature); return true; }
+    if (mode === 'polygon') { addSisterBatchPolygonVertex(lngLat); return true; }
+    if (mode === 'circle') {
+      const point = [lngLat.lng, lngLat.lat];
+      if (!state.sisterBatch.circleCenter) {
+        state.sisterBatch.circleCenter = point;
+        renderSisterBatchControls(sisterBatchInstruction());
+      } else finishSisterBatchCircle(lngLat);
+      return true;
+    }
+    return false;
+  }
+
+  function sisterBatchCsvFields(feature) {
+    const properties = feature?.properties || {};
+    const reference = String(referenceFrom(properties) || '').trim().toUpperCase();
+    const normalized = reference;
+    const parts = normalized.includes('_')
+      ? (() => { const [head, rest] = normalized.split('_', 2); const match = head.match(/^([A-Z]\d{3})([A-Z]?)$/); const [sheet, parcel] = rest.split('.', 2); return match ? { section: match[2] || '', sheet, parcel } : null; })()
+      : (() => { const match = normalized.match(/^([A-Z]\d{3})([A-Z]?)(\d+)\.(.+)$/); return match ? { section: match[2] || '', sheet: match[3], parcel: match[4] } : null; })();
+    if (!parts || String(parts.parcel || '').includes('/')) return [];
+    const rawSheet = String(properties.sheet || parts.sheet || '').trim();
+    let sheet = rawSheet.replace(/^0+/, '') || '0';
+    if (/^\d+$/.test(sheet) && Number(sheet) >= 100 && Number(sheet) % 100 === 0) sheet = String(Number(sheet) / 100);
+    const parcel = String(properties.parcel || parts.parcel || '').trim();
+    const municipality = String(properties.municipality_name || '').trim().toUpperCase();
+    const province = String(properties.province || '').trim();
+    if (!sheet || !parcel || !municipality || !province) return [];
+    return [
+      'visura-storica', province, municipality, sheet, parcel, '', 'T', '', 'analitica', parts.section, '',
+      `Land Registry map selection; parcel ${reference}; Storica Analitica visura per immobile - Catasto Terreni.`,
+      'visura-storica', province, municipality, sheet, parcel, '', 'F', '', 'analitica', parts.section, '',
+      `Land Registry map selection; parcel ${reference}; Storica Analitica visura per immobile - Catasto Fabbricati.`,
+    ];
+  }
+
+  function sisterBatchCsvRows(feature) {
+    const fields = sisterBatchCsvFields(feature);
+    if (!fields.length) return [];
+    const groups = [fields.slice(0, 12), fields.slice(12, 24)];
+    return groups;
+  }
+
+  function csvCell(value) {
+    const text = String(value ?? '');
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+
+  function exportSisterBatch() {
+    const headers = ['command', 'provincia', 'comune', 'foglio', 'particella', 'subalterno', 'tipo_catasto', 'codice_fiscale', 'vista', 'sezione', 'source_files', 'scope_note'];
+    const rows = [...state.sisterBatch.features.values()].flatMap(sisterBatchCsvRows);
+    if (!rows.length) { renderSisterBatchControls(tr('No complete cadastral references are ready to export.')); return; }
+    const csv = [headers, ...rows].map(row => row.map(csvCell).join(',')).join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `land_registry_sister_batch_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    renderSisterBatchControls(tr('Downloaded {rows} SISTER requests for {parcels} parcels.', { rows: rows.length.toLocaleString(), parcels: state.sisterBatch.features.size.toLocaleString() }));
   }
 
   function fallbackCopy(value) {
@@ -1859,6 +2394,8 @@
     bulletin: { active: false, fetchToken: 0 },
   };
   const sisterBuildingsOverlay = { active: false, fetchToken: 0, records: [] };
+  const sisterParcelsOverlay = { active: false, fetchToken: 0, debounceTimer: null, controller: null, leafletLayer: null };
+  const auctionParcelsOverlay = { active: false, fetchToken: 0, debounceTimer: null, controller: null, leafletLayer: null };
 
   // ---- Sales map integration --------------------------------------------
   // PVP map points come from the enriched v_map_sales database view through
@@ -1868,6 +2405,12 @@
     points: [],
     fetchToken: 0,
     geo: null,
+    // Viewport-bounded loading (see viewportBbox): last loaded box, in-flight
+    // request, and the moveend refetch timer.
+    loaded: null,
+    abort: null,
+    moveBound: false,
+    moveTimer: null,
   };
 
   function numberValue(...values) {
@@ -1939,9 +2482,12 @@
     const appraisal = numberValue(properties.appraisal_value, properties.market_value);
     const score = salesScore(properties);
     const saleId = properties.sale_id ?? properties.id;
-    const detail = properties.pvp_record
-      ? (saleId ? `http://localhost:8016/sales/${encodeURIComponent(saleId)}` : '')
-      : (properties.no_detail ? '' : (properties.detail_url || properties.source_link || (properties.id ? `/sales/${encodeURIComponent(properties.id)}` : '')));
+    const detail = properties.nearby_pvp_record
+      ? (saleId ? `http://localhost:8016/sales/${encodeURIComponent(saleId)}`
+        : (properties.detail_url || properties.source_url || properties.url || properties.source_link || ''))
+      : properties.pvp_record
+        ? (saleId ? `http://localhost:8016/sales/${encodeURIComponent(saleId)}` : '')
+        : (properties.no_detail ? '' : (properties.detail_url || properties.source_link || (properties.id ? `/sales/${encodeURIComponent(properties.id)}` : '')));
     const lat = numberValue(properties.lat, properties.latitude);
     const lng = numberValue(properties.lng, properties.longitude);
     const maps = lat !== null && lng !== null ? `https://www.google.com/maps/search/?api=1&query=${lat},${lng}` : '';
@@ -1960,11 +2506,99 @@
       + (properties.address ? row('Address', properties.address) : '')
       + (properties.description ? row('Description', properties.description) : '')
       + (properties.detail_error ? row('Details', 'Could not load this sale record') : '')
-      + `<div class="sales-popup-actions">${detail ? `<a href="${escapeHtml(detail)}" target="_blank" rel="noopener noreferrer">${properties.pvp_record ? 'Auction listing' : 'Details'}</a>` : ''}`
+      + `<div class="sales-popup-actions">${detail ? `<a href="${escapeHtml(detail)}" target="_blank" rel="noopener noreferrer">${properties.pvp_record || properties.nearby_pvp_record ? 'Auction listing' : 'Details'}</a>` : ''}`
       + (properties.url ? `<a href="${escapeHtml(properties.url)}" target="_blank" rel="noopener noreferrer">Source notice</a>` : '')
       + (maps ? `<a href="${maps}" target="_blank" rel="noopener noreferrer">Google Maps</a>` : '')
       + (street ? `<a href="${street}" target="_blank" rel="noopener noreferrer">Street View</a>` : '')
       + '</div></div>';
+  }
+
+  function nearbyPvpMarkerFeatures(points) {
+    if (!Array.isArray(points)) return [];
+    return points.map((point, index) => {
+      const lng = numberValue(point.lng, point.longitude);
+      const lat = numberValue(point.lat, point.latitude);
+      const id = point.id ?? point.sale_id;
+      if (id == null || lng === null || lat === null) return null;
+      const category = String(point.category || 'other');
+      const title = point.property_type || category.replace(/_/g, ' ');
+      const sourceUrl = point.source_url || point.url || point.source_link || '';
+      const rawPrice = point.price ?? point.minimum_offer ?? point.base_auction_price;
+      return {
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [lng, lat] },
+        properties: {
+          id: String(id), sale_id: String(id), nearby_pvp_record: 1,
+          rank: Number(point.rank) || index + 1,
+          category, price: rawPrice == null ? null : numberValue(rawPrice),
+          date: point.date || point.sale_date || '', display_date: point.date || point.sale_date || '',
+          display_title: title, approximate: Number(point.approximate || point.coordinate_is_approximate) || 0,
+          source_url: sourceUrl, url: sourceUrl,
+          description: point.description || '', lat, lng,
+        },
+      };
+    }).filter(Boolean);
+  }
+
+  function renderParcelPvpNearbyMarkers() {
+    const points = state.parcelPvpMarkers.points;
+    const features = nearbyPvpMarkerFeatures(points);
+    if (state.map) {
+      if (!state.map.isStyleLoaded()) {
+        state.map.once('style.load', renderParcelPvpNearbyMarkers);
+        return;
+      }
+      if (!state.map.getSource('parcel-pvp-nearby-sales') && !state.parcelPvpMarkers.visible) return;
+      if (!state.map.getSource('parcel-pvp-nearby-sales')) {
+        state.map.addSource('parcel-pvp-nearby-sales', { type: 'geojson', data: emptyFeatureCollection() });
+        state.map.addLayer({ id: 'parcel-pvp-nearby-markers', type: 'circle', source: 'parcel-pvp-nearby-sales',
+          paint: { 'circle-radius': 10, 'circle-color': '#f97316', 'circle-opacity': .96, 'circle-stroke-color': '#fff', 'circle-stroke-width': 2.5 } });
+        state.map.addLayer({ id: 'parcel-pvp-nearby-labels', type: 'symbol', source: 'parcel-pvp-nearby-sales',
+          layout: { 'text-field': ['get', 'rank'], 'text-font': ['noto-sans-regular'], 'text-size': 10, 'text-allow-overlap': true },
+          paint: { 'text-color': '#fff', 'text-halo-color': '#c2410c', 'text-halo-width': .5 } });
+        state.map.on('click', 'parcel-pvp-nearby-markers', async (event) => {
+          const feature = event.features?.[0];
+          if (!feature) return;
+          const properties = feature.properties || {};
+          const popup = new maplibregl.Popup({ maxWidth: '360px' }).setLngLat(event.lngLat).setHTML(salesPopupHtml(properties)).addTo(state.map);
+          if (!properties.nearby_pvp_record || !properties.id) return;
+          try {
+            const response = await fetch(`/api/v1/sales/pvp/${encodeURIComponent(properties.id)}`, { credentials: 'same-origin' });
+            if (!response.ok) throw new Error('Sale details unavailable');
+            const detail = await response.json();
+            if (popup.isOpen()) popup.setHTML(salesPopupHtml({ ...properties, ...detail, nearby_pvp_record: 1, display_title: detail.property_type || properties.display_title }));
+          } catch (_) {
+            if (popup.isOpen()) popup.setHTML(salesPopupHtml({ ...properties, detail_error: true }));
+          }
+        });
+        state.map.on('mouseenter', 'parcel-pvp-nearby-markers', () => { state.map.getCanvas().style.cursor = 'pointer'; });
+        state.map.on('mouseleave', 'parcel-pvp-nearby-markers', () => { state.map.getCanvas().style.cursor = ''; });
+      }
+      state.map.getSource('parcel-pvp-nearby-sales')?.setData({ type: 'FeatureCollection', features });
+      ['parcel-pvp-nearby-markers', 'parcel-pvp-nearby-labels'].forEach((id) => {
+        if (state.map.getLayer(id)) state.map.setLayoutProperty(id, 'visibility', state.parcelPvpMarkers.visible ? 'visible' : 'none');
+      });
+      reorderMapLayers();
+      return;
+    }
+    if (!state.fallbackMap || !window.L) return;
+    if (!state.parcelPvpMarkerLayer) state.parcelPvpMarkerLayer = window.L.layerGroup().addTo(state.fallbackMap);
+    state.parcelPvpMarkerLayer.clearLayers();
+    if (!state.parcelPvpMarkers.visible) return;
+    features.forEach((feature) => {
+      const properties = feature.properties;
+      window.L.circleMarker([properties.lat, properties.lng], {
+        radius: 8, color: '#fff', weight: 2, fillColor: '#f97316', fillOpacity: .96,
+      }).bindPopup(salesPopupHtml(properties)).addTo(state.parcelPvpMarkerLayer);
+    });
+  }
+
+  function setParcelPvpNearbyMarkers(detail = {}) {
+    state.parcelPvpMarkers = {
+      points: Array.isArray(detail.points) ? detail.points : [],
+      visible: Boolean(detail.visible),
+    };
+    renderParcelPvpNearbyMarkers();
   }
 
   function addSalesOverlayLayers() {
@@ -2005,6 +2639,66 @@
     });
   }
 
+  // ---- Viewport-bounded loading for point overlays -------------------------
+  // The sales/auction feed has ~700k points nationwide. Ask only for what the
+  // map can show (the view plus a margin), capped, and refetch on moveend when
+  // the view leaves the loaded box or a truncated result can show more detail.
+  const VIEWPORT_POINT_LIMIT = 20000;
+  const VIEWPORT_MARGIN = 0.15;
+  const VIEWPORT_RELOAD_DEBOUNCE_MS = 350;
+
+  function roundOut(value, step, up) { return (up ? Math.ceil(value / step) : Math.floor(value / step)) * step; }
+
+  function currentViewBounds() {
+    if (!state.map) return null;
+    const bounds = state.map.getBounds();
+    return [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()];
+  }
+
+  // west,south,east,north with a margin, snapped outward to 0.01 degrees so
+  // small pans give identical (cacheable) requests.
+  function viewportBbox() {
+    const view = currentViewBounds();
+    if (!view) return null;
+    const [west, south, east, north] = view;
+    const dx = (east - west) * VIEWPORT_MARGIN;
+    const dy = (north - south) * VIEWPORT_MARGIN;
+    const snap = (value, up, min, max) => Math.min(max, Math.max(min, Number(roundOut(value, 0.01, up).toFixed(2))));
+    return [snap(west - dx, false, -180, 180), snap(south - dy, false, -90, 90), snap(east + dx, true, -180, 180), snap(north + dy, true, -90, 90)];
+  }
+
+  function bboxContains(outer, inner) {
+    return !!outer && !!inner && inner[0] >= outer[0] && inner[1] >= outer[1] && inner[2] <= outer[2] && inner[3] <= outer[3];
+  }
+
+  // True when the points already on the map cover the current view fully and
+  // a capped result has nothing more to show at this zoom.
+  function viewportLoaded(overlay) {
+    const loaded = overlay.loaded;
+    if (!loaded) return false;
+    if (!bboxContains(loaded.bbox, currentViewBounds())) return false;
+    return !(loaded.truncated && state.map.getZoom() > loaded.zoom + 0.5);
+  }
+
+  function bindViewportReload(overlay, load) {
+    if (overlay.moveBound || !state.map) return;
+    overlay.moveBound = true;
+    state.map.on('moveend', () => {
+      if (!overlay.active) return;
+      clearTimeout(overlay.moveTimer);
+      overlay.moveTimer = setTimeout(() => {
+        if (overlay.active && !viewportLoaded(overlay)) void load(false, 0, null, true);
+      }, VIEWPORT_RELOAD_DEBOUNCE_MS);
+    });
+  }
+
+  // Cancel whatever is in flight for an overlay and return a signal for the next request.
+  function nextViewportSignal(overlay) {
+    overlay.abort?.abort();
+    overlay.abort = new AbortController();
+    return overlay.abort.signal;
+  }
+
   function salesRequestUrl(forceRefresh = false) {
     const url = new URL(window.salesMapPointsUrl || '/api/v1/sales/map-points', window.location.origin);
     const current = new URLSearchParams(window.location.search);
@@ -2013,14 +2707,16 @@
     const category = $('salesCategory')?.value || '';
     if (category) url.searchParams.set('category', category);
     else url.searchParams.delete('category');
-    url.searchParams.set('limit', '60000');
+    url.searchParams.set('limit', String(VIEWPORT_POINT_LIMIT));
     url.searchParams.set('order_by', $('salesSort')?.value || 'saleability_desc');
+    const bbox = viewportBbox();
+    if (bbox) url.searchParams.set('bbox', bbox.join(','));
     if (forceRefresh) url.searchParams.set('refresh', '1');
     else url.searchParams.delete('refresh');
     return url.toString();
   }
 
-  async function loadSalesOverlay(forceRefresh = false, retryAttempt = 0, pendingTask = null) {
+  async function loadSalesOverlay(forceRefresh = false, retryAttempt = 0, pendingTask = null, viewportRefresh = false) {
     if (!salesOverlay.active || !state.map) return;
     const task = pendingTask || beginMapProgress('sales', forceRefresh ? 'Refreshing sales…' : 'Loading sales…');
     let retryScheduled = false;
@@ -2029,7 +2725,10 @@
     if (status) status.textContent = 'Loading sales…';
     try {
       addSalesOverlayLayers();
-      const response = await fetch(salesRequestUrl(forceRefresh), { credentials: 'same-origin' });
+      bindViewportReload(salesOverlay, loadSalesOverlay);
+      const requestedBbox = viewportBbox();
+      const requestedZoom = state.map.getZoom();
+      const response = await fetch(salesRequestUrl(forceRefresh), { credentials: 'same-origin', signal: nextViewportSignal(salesOverlay) });
       if (response.status === 503 && retryAttempt < 6) {
         const retrySeconds = Number(response.headers.get('Retry-After')) || 5;
         task.update('Preparing sales data…', null, tr('Retrying in {n}s', { n: retrySeconds }));
@@ -2059,20 +2758,23 @@
       const collection = salesGeoJson();
       await drawSaleMarkers('sales-properties', task, () => state.map.getSource('sales-properties').setData(collection));
       if (token !== salesOverlay.fetchToken || !salesOverlay.active) return;
+      salesOverlay.loaded = { bbox: Array.isArray(payload.bbox) ? payload.bbox : requestedBbox, truncated: !!payload.truncated, zoom: requestedZoom };
       const count = collection.features.length;
-      if ($('salesCount')) $('salesCount').textContent = `(${count})`;
-      if (status) status.textContent = `${count.toLocaleString()} mapped record(s) · ${payload.source?.relation || 'PVP view'}`;
+      const more = payload.truncated ? ` ${tr('of {n} in view; zoom in for more', { n: Number(payload.matched || count).toLocaleString() })}` : '';
+      if ($('salesCount')) $('salesCount').textContent = `(${count}${payload.truncated ? '+' : ''})`;
+      if (status) status.textContent = `${count.toLocaleString()} ${tr('mapped record(s)')}${more} · ${payload.source?.relation || 'PVP view'}`;
       // Avoid zooming a user out from a parcel or fitting a national set of
       // tens of thousands of points. Small result sets can still be brought
       // into view from the map's initial country-level extent.
-      if (count && count <= 5000 && state.map.getZoom() < 7) {
+      if (!viewportRefresh && count && count <= 5000 && state.map.getZoom() < 7) {
         const bounds = new maplibregl.LngLatBounds();
         collection.features.forEach((feature) => bounds.extend(feature.geometry.coordinates));
         if (!bounds.isEmpty()) state.map.fitBounds(bounds, { padding: 70, maxZoom: 15, duration: 500 });
       }
     } catch (error) {
-      if (token !== salesOverlay.fetchToken || !salesOverlay.active) return;
+      if (error?.name === 'AbortError' || token !== salesOverlay.fetchToken || !salesOverlay.active) return;
       salesOverlay.points = [];
+      salesOverlay.loaded = null;
       state.map.getSource('sales-properties')?.setData(emptyFeatureCollection());
       if ($('salesCount')) $('salesCount').textContent = '';
       if (status) status.textContent = error.message || 'Sales feed unavailable';
@@ -2087,6 +2789,8 @@
     if (salesOverlay.active) { void loadSalesGeoLayers(); loadSalesOverlay(); }
     else {
       salesOverlay.fetchToken += 1;
+      salesOverlay.abort?.abort();
+      salesOverlay.loaded = null;
       mapTasks.get('sales')?.finish();
       salesOverlay.points = [];
       state.map?.getSource('sales-properties')?.setData(emptyFeatureCollection());
@@ -2221,6 +2925,339 @@
       const feature = event.features?.[0];
       if (feature) new maplibregl.Popup({ maxWidth: '360px' }).setLngLat(event.lngLat).setHTML(sisterBuildingPopupHtml(feature.properties || {})).addTo(state.map);
     });
+  }
+
+  function ensureSisterParcelsOverlayLayer() {
+    if (!state.map) return;
+    ensureOverlaySource('sister-listed-parcels');
+    if (!state.map.getLayer('fill-sister-listed-parcels')) {
+      state.map.addLayer({ id: 'fill-sister-listed-parcels', type: 'fill', source: 'sister-listed-parcels',
+        paint: { 'fill-color': '#0f9d91', 'fill-opacity': .34 } });
+      state.map.addLayer({ id: 'line-sister-listed-parcels', type: 'line', source: 'sister-listed-parcels',
+        paint: { 'line-color': '#087f79', 'line-width': 2, 'line-opacity': 1 } });
+      reorderMapLayers();
+    }
+    ['fill-sister-listed-parcels', 'line-sister-listed-parcels'].forEach((id) => {
+      if (state.map.getLayoutProperty(id, 'visibility') !== 'visible') {
+        state.map.setLayoutProperty(id, 'visibility', 'visible');
+      }
+    });
+  }
+
+  function sisterParcelsMoveEnd() {
+    clearTimeout(sisterParcelsOverlay.debounceTimer);
+    sisterParcelsOverlay.debounceTimer = setTimeout(refreshSisterParcelsOverlay, 350);
+  }
+
+  async function refreshSisterParcelsOverlay() {
+    const map = state.map || state.fallbackMap;
+    if (!sisterParcelsOverlay.active || !map) return;
+    const token = ++sisterParcelsOverlay.fetchToken;
+    sisterParcelsOverlay.controller?.abort();
+    const status = $('sisterParcelsStatus');
+    const count = $('sisterParcelsCount');
+    const zoom = map.getZoom();
+    if (zoom < 14) {
+      if (state.map?.getSource('sister-listed-parcels')) state.map.getSource('sister-listed-parcels').setData(emptyFeatureCollection());
+      sisterParcelsOverlay.leafletLayer?.remove();
+      sisterParcelsOverlay.leafletLayer = null;
+      if (count) count.textContent = '';
+      if (status) status.textContent = tr('Zoom in to at least level {n} to see parcels with Visura.', { n: 14 });
+      return;
+    }
+    const bounds = map.getBounds();
+    const pageSize = 5000;
+    const maxCandidates = 25000;
+    const params = new URLSearchParams({
+      west: String(Math.max(-180, bounds.getWest())),
+      south: String(Math.max(-90, bounds.getSouth())),
+      east: String(Math.min(180, bounds.getEast())),
+      north: String(Math.min(90, bounds.getNorth())),
+      limit: String(pageSize),
+    });
+    const controller = new AbortController();
+    sisterParcelsOverlay.controller = controller;
+    const timeout = setTimeout(() => controller.abort(), 45000);
+    if (status) status.textContent = tr('Loading parcels with Visura…');
+    const task = beginMapProgress('sister-parcels', 'Loading parcels with Visura…');
+    try {
+      let offset = 0;
+      let candidateCount = 0;
+      let unknownCount = 0;
+      let truncated = false;
+      let zoomRequired = null;
+      const features = [];
+      do {
+        params.set('offset', String(offset));
+        const response = await fetch(`/api/v1/map/layers/cadastral-parcels/features?${params}`, { signal: controller.signal });
+        if (!response.ok) throw new Error(tr('SISTER parcel layer is temporarily unavailable.'));
+        const payload = await response.json();
+        if (token !== sisterParcelsOverlay.fetchToken || !sisterParcelsOverlay.active) return;
+        const candidates = Array.isArray(payload.features) ? payload.features : [];
+        if (payload.zoom_required) zoomRequired = payload.zoom_required;
+        candidateCount += candidates.length;
+        features.push(...candidates.filter((feature) => feature.properties?.has_visura === true));
+        unknownCount += candidates.filter((feature) => feature.properties?.has_visura == null).length;
+        truncated = Boolean(payload.truncated);
+        if (!truncated || !candidates.length || payload.zoom_required) break;
+        offset += candidates.length;
+      } while (truncated && offset < maxCandidates);
+      // Keep the overlay bounded for dense city views. The status below asks
+      // the user to zoom in if more candidates remain beyond this safety cap.
+      const collection = { type: 'FeatureCollection', features };
+      if (state.map) {
+        ensureSisterParcelsOverlayLayer();
+        state.map.getSource('sister-listed-parcels')?.setData(collection);
+      } else if (state.fallbackMap) {
+        sisterParcelsOverlay.leafletLayer?.remove();
+        sisterParcelsOverlay.leafletLayer = features.length ? L.geoJSON(collection, {
+          style: { color: '#087f79', weight: 2, fillColor: '#0f9d91', fillOpacity: .34 },
+          onEachFeature: (feature, layer) => layer.on('click', (event) => {
+            void identifyAtPoint(event.latlng, feature);
+          }),
+        }).addTo(state.fallbackMap) : null;
+      }
+      if (count) count.textContent = candidateCount && !features.length && unknownCount === candidateCount ? '' : `(${features.length})`;
+      if (status) status.textContent = zoomRequired
+        ? tr('Zoom in to at least level {n} to see parcels with Visura.', { n: zoomRequired })
+        : candidateCount && !features.length && unknownCount === candidateCount
+          ? tr('Visura data is not available.')
+          : `${features.length} ${tr('parcels with Visura in this view')}${unknownCount ? ` · ${tr('Some parcel statuses are unavailable.')}` : ''}${truncated ? ` · ${tr('Zoom in to see more')}` : ''}`;
+    } catch (error) {
+      if (error.name === 'AbortError' || token !== sisterParcelsOverlay.fetchToken) return;
+      state.map?.getSource('sister-listed-parcels')?.setData(emptyFeatureCollection());
+      sisterParcelsOverlay.leafletLayer?.remove();
+      sisterParcelsOverlay.leafletLayer = null;
+      if (count) count.textContent = '';
+      if (status) status.textContent = error.message || tr('SISTER parcel layer is temporarily unavailable.');
+    } finally {
+      clearTimeout(timeout);
+      task.finish();
+      if (sisterParcelsOverlay.controller === controller) sisterParcelsOverlay.controller = null;
+    }
+  }
+
+  function toggleSisterParcelsOverlay() {
+    const checkbox = $('toggleSisterParcels');
+    sisterParcelsOverlay.active = Boolean(checkbox?.checked);
+    const map = state.map || state.fallbackMap;
+    if (sisterParcelsOverlay.active) {
+      if (state.map) ensureSisterParcelsOverlayLayer();
+      map?.on('moveend', sisterParcelsMoveEnd);
+      if (state.fallbackMap) map.on('zoomend', sisterParcelsMoveEnd);
+      void refreshSisterParcelsOverlay();
+      return;
+    }
+    map?.off('moveend', sisterParcelsMoveEnd);
+    if (state.fallbackMap) map.off('zoomend', sisterParcelsMoveEnd);
+    clearTimeout(sisterParcelsOverlay.debounceTimer);
+    sisterParcelsOverlay.fetchToken += 1;
+    sisterParcelsOverlay.controller?.abort();
+    mapTasks.get('sister-parcels')?.finish();
+    state.map?.getSource('sister-listed-parcels')?.setData(emptyFeatureCollection());
+    ['fill-sister-listed-parcels', 'line-sister-listed-parcels'].forEach((id) => {
+      if (state.map?.getLayer(id) && state.map.getLayoutProperty(id, 'visibility') !== 'none') {
+        state.map.setLayoutProperty(id, 'visibility', 'none');
+      }
+    });
+    sisterParcelsOverlay.leafletLayer?.remove();
+    sisterParcelsOverlay.leafletLayer = null;
+    if ($('sisterParcelsCount')) $('sisterParcelsCount').textContent = '';
+    if ($('sisterParcelsStatus')) $('sisterParcelsStatus').textContent = '';
+  }
+
+  function ensureAuctionParcelsOverlayLayer() {
+    if (!state.map) return;
+    ensureOverlaySource('auction-listed-parcels');
+    if (!state.map.getLayer('fill-auction-listed-parcels')) {
+      state.map.addLayer({ id: 'fill-auction-listed-parcels', type: 'fill', source: 'auction-listed-parcels',
+        paint: { 'fill-color': '#f97316', 'fill-opacity': .28 } });
+      state.map.addLayer({ id: 'line-auction-listed-parcels', type: 'line', source: 'auction-listed-parcels',
+        paint: { 'line-color': '#c2410c', 'line-width': 1.6, 'line-dasharray': [2, 1], 'line-opacity': 1 } });
+      state.map.on('mouseenter', 'fill-auction-listed-parcels', () => { state.map.getCanvas().style.cursor = 'pointer'; });
+      state.map.on('mouseleave', 'fill-auction-listed-parcels', () => { state.map.getCanvas().style.cursor = ''; });
+    }
+    ['fill-auction-listed-parcels', 'line-auction-listed-parcels'].forEach((id) => {
+      if (state.map.getLayoutProperty(id, 'visibility') !== 'visible') {
+        state.map.setLayoutProperty(id, 'visibility', 'visible');
+      }
+    });
+    reorderMapLayers();
+  }
+
+  function auctionParcelsMoveEnd() {
+    clearTimeout(auctionParcelsOverlay.debounceTimer);
+    auctionParcelsOverlay.debounceTimer = setTimeout(refreshAuctionParcelsOverlay, 350);
+  }
+
+  async function refreshAuctionParcelsOverlay() {
+    const map = state.map || state.fallbackMap;
+    if (!auctionParcelsOverlay.active || !map) return;
+    const token = ++auctionParcelsOverlay.fetchToken;
+    auctionParcelsOverlay.controller?.abort();
+    const status = $('auctionParcelsStatus');
+    const count = $('auctionParcelsCount');
+    if (map.getZoom() < 14) {
+      state.map?.getSource('auction-listed-parcels')?.setData(emptyFeatureCollection());
+      auctionParcelsOverlay.leafletLayer?.remove();
+      auctionParcelsOverlay.leafletLayer = null;
+      if (count) count.textContent = '';
+      if (status) status.textContent = tr('Zoom in to at least level {n} to see auction sale parcels.', { n: 14 });
+      return;
+    }
+    const bounds = map.getBounds();
+    const pageSize = 5000;
+    const maxCandidates = 25000;
+    const params = new URLSearchParams({
+      west: String(Math.max(-180, bounds.getWest())),
+      south: String(Math.max(-90, bounds.getSouth())),
+      east: String(Math.min(180, bounds.getEast())),
+      north: String(Math.min(90, bounds.getNorth())),
+      limit: String(pageSize),
+    });
+    const controller = new AbortController();
+    auctionParcelsOverlay.controller = controller;
+    const timeout = setTimeout(() => controller.abort(), 45000);
+    if (status) status.textContent = tr('Loading auction sale parcels…');
+    const task = beginMapProgress('auction-parcels', 'Loading auction sale parcels…');
+    try {
+      let offset = 0;
+      let truncated = false;
+      let zoomRequired = null;
+      const features = [];
+      do {
+        params.set('offset', String(offset));
+        const response = await fetch(`/api/v1/map/layers/cadastral-parcels/features?${params}`, { signal: controller.signal });
+        if (!response.ok) throw new Error(tr('Auction parcel layer is temporarily unavailable.'));
+        const payload = await response.json();
+        if (token !== auctionParcelsOverlay.fetchToken || !auctionParcelsOverlay.active) return;
+        const candidates = Array.isArray(payload.features) ? payload.features : [];
+        if (payload.zoom_required) zoomRequired = payload.zoom_required;
+        features.push(...candidates.filter((feature) => feature.properties?.is_auction_sale === true));
+        truncated = Boolean(payload.truncated);
+        if (!truncated || !candidates.length || payload.zoom_required) break;
+        offset += candidates.length;
+      } while (truncated && offset < maxCandidates);
+      const collection = { type: 'FeatureCollection', features };
+      if (state.map) {
+        ensureAuctionParcelsOverlayLayer();
+        state.map.getSource('auction-listed-parcels')?.setData(collection);
+      } else if (state.fallbackMap) {
+        auctionParcelsOverlay.leafletLayer?.remove();
+        auctionParcelsOverlay.leafletLayer = features.length ? L.geoJSON(collection, {
+          style: { color: '#c2410c', weight: 2, dashArray: '5 3', fillColor: '#f97316', fillOpacity: .28 },
+          onEachFeature: (feature, layer) => layer.on('click', (event) => {
+            void identifyAtPoint(event.latlng, feature);
+          }),
+        }).addTo(state.fallbackMap) : null;
+      }
+      if (count) count.textContent = `(${features.length})`;
+      if (status) status.textContent = zoomRequired
+        ? tr('Zoom in to at least level {n} to see auction sale parcels.', { n: zoomRequired })
+        : `${features.length} ${tr('auction sale parcels in this view')}${truncated ? ` · ${tr('Zoom in to see more')}` : ''}`;
+    } catch (error) {
+      if (error.name === 'AbortError' || token !== auctionParcelsOverlay.fetchToken) return;
+      state.map?.getSource('auction-listed-parcels')?.setData(emptyFeatureCollection());
+      auctionParcelsOverlay.leafletLayer?.remove();
+      auctionParcelsOverlay.leafletLayer = null;
+      if (count) count.textContent = '';
+      if (status) status.textContent = error.message || tr('Auction parcel layer is temporarily unavailable.');
+    } finally {
+      clearTimeout(timeout);
+      task.finish();
+      if (auctionParcelsOverlay.controller === controller) auctionParcelsOverlay.controller = null;
+    }
+  }
+
+  function toggleAuctionParcelsOverlay() {
+    const checkbox = $('toggleAuctionHighlight');
+    auctionParcelsOverlay.active = Boolean(checkbox?.checked);
+    const map = state.map || state.fallbackMap;
+    if (auctionParcelsOverlay.active) {
+      if (state.map) ensureAuctionParcelsOverlayLayer();
+      map?.on('moveend', auctionParcelsMoveEnd);
+      if (state.fallbackMap) map.on('zoomend', auctionParcelsMoveEnd);
+      void refreshAuctionParcelsOverlay();
+      return;
+    }
+    map?.off('moveend', auctionParcelsMoveEnd);
+    if (state.fallbackMap) map?.off('zoomend', auctionParcelsMoveEnd);
+    clearTimeout(auctionParcelsOverlay.debounceTimer);
+    auctionParcelsOverlay.fetchToken += 1;
+    auctionParcelsOverlay.controller?.abort();
+    mapTasks.get('auction-parcels')?.finish();
+    state.map?.getSource('auction-listed-parcels')?.setData(emptyFeatureCollection());
+    ['fill-auction-listed-parcels', 'line-auction-listed-parcels'].forEach((id) => {
+      if (state.map?.getLayer(id) && state.map.getLayoutProperty(id, 'visibility') !== 'none') {
+        state.map.setLayoutProperty(id, 'visibility', 'none');
+      }
+    });
+    auctionParcelsOverlay.leafletLayer?.remove();
+    auctionParcelsOverlay.leafletLayer = null;
+    if ($('auctionParcelsCount')) $('auctionParcelsCount').textContent = '';
+    if ($('auctionParcelsStatus')) $('auctionParcelsStatus').textContent = '';
+  }
+
+  const parcelFlagRefreshDelay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+  async function refreshParcelFlag(flag) {
+    const isVisura = flag === 'has_visura';
+    const button = $(isVisura ? 'refreshVisuraFlagsButton' : 'refreshAuctionFlagsButton');
+    const status = $(isVisura ? 'sisterParcelsStatus' : 'auctionParcelsStatus');
+    const refreshOverlay = isVisura ? refreshSisterParcelsOverlay : refreshAuctionParcelsOverlay;
+    if (!button || button.disabled) return;
+
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    if (status) status.textContent = tr('Starting parcel flag refresh…');
+    try {
+      const auth = window.authManager;
+      if (!auth?.authenticatedFetch) throw new Error(tr('Sign in to refresh parcel flags.'));
+      const startResponse = await auth.authenticatedFetch(`/api/v1/map/parcel-flags/${flag}/refresh`, { method: 'POST' });
+      if (!startResponse.ok) {
+        const errorPayload = await startResponse.json().catch(() => ({}));
+        throw new Error(errorPayload.detail || tr('Parcel flag refresh request failed.'));
+      }
+      let job = await startResponse.json();
+      if (status) status.textContent = tr('Parcel flag refresh is running…');
+
+      while (job.status === 'queued' || job.status === 'running') {
+        await parcelFlagRefreshDelay(2000);
+        const response = await auth.authenticatedFetch(
+          `/api/v1/map/parcel-flags/refresh/${encodeURIComponent(job.job_id)}`
+        );
+        if (!response.ok) {
+          const errorPayload = await response.json().catch(() => ({}));
+          throw new Error(errorPayload.detail || tr('Could not read parcel flag refresh status.'));
+        }
+        job = await response.json();
+      }
+
+      if (job.status !== 'completed') {
+        throw new Error(job.error || tr('Parcel flag refresh failed.'));
+      }
+      const result = job.result || {};
+      if (status) {
+        status.textContent = isVisura
+          ? tr('Refresh completed: {updated} rows updated ({scanned} scanned).', {
+              updated: result.updated ?? 0,
+              scanned: result.scanned ?? 0,
+            })
+          : tr('Refresh completed: {updated} rows marked and {cleared} stale rows cleared.', {
+              updated: result.set_true ?? 0,
+              cleared: result.cleared ?? 0,
+            });
+      }
+      void refreshOverlay();
+    } catch (error) {
+      console.error('Cadastral parcel flag refresh failed:', error);
+      if (status) status.textContent = tr('Parcel flag refresh failed: {message}', {
+        message: error?.message || tr('Unknown error'),
+      });
+    } finally {
+      button.disabled = false;
+      button.removeAttribute('aria-busy');
+    }
   }
 
   async function loadSisterBuildingsOverlay() {
@@ -2641,7 +3678,7 @@
 
   // ---- Auction/market filters (legacy Actions panel: toggleAuctionLayer,
   // filterAuctionsByType, filterAuctionsByPrice, filterActiveAuctions) ----
-  const auctionOverlay = { active: false, points: [], fetchToken: 0 };
+  const auctionOverlay = { active: false, points: [], fetchToken: 0, loaded: null, abort: null, moveBound: false, moveTimer: null };
 
   function addAuctionOverlayLayer() {
     if (!state.map.getSource('auction-properties')) {
@@ -2686,15 +3723,21 @@
     reorderMapLayers();
   }
 
-  async function loadAuctionOverlay(forceRefresh = false, retryAttempt = 0, pendingTask = null) {
+  async function loadAuctionOverlay(forceRefresh = false, retryAttempt = 0, pendingTask = null, viewportRefresh = false) {
     if (!auctionOverlay.active || !state.map) return;
     const task = pendingTask || beginMapProgress('auctions', forceRefresh ? 'Refreshing auction listings…' : 'Loading auction listings…');
     let retryScheduled = false;
     const countElement = $('auctionCount');
     const token = ++auctionOverlay.fetchToken;
-    if (countElement) countElement.textContent = '(…)';
+    if (countElement && !viewportRefresh) countElement.textContent = '(…)';
     try {
-      const response = await fetch(`/api/v1/sales/map-points?period=all${forceRefresh ? '&refresh=1' : ''}`, { credentials: 'same-origin' });
+      bindViewportReload(auctionOverlay, loadAuctionOverlay);
+      const bbox = viewportBbox();
+      const zoom = state.map.getZoom();
+      const query = new URLSearchParams({ period: 'all', limit: String(VIEWPORT_POINT_LIMIT) });
+      if (bbox) query.set('bbox', bbox.join(','));
+      if (forceRefresh) query.set('refresh', '1');
+      const response = await fetch(`/api/v1/sales/map-points?${query}`, { credentials: 'same-origin', signal: nextViewportSignal(auctionOverlay) });
       if (response.status === 503 && retryAttempt < 6) {
         const retrySeconds = Number(response.headers.get('Retry-After')) || 5;
         task.update('Preparing auction data…', null, tr('Retrying in {n}s', { n: retrySeconds }));
@@ -2723,10 +3766,17 @@
       }
       await drawSaleMarkers('auction-properties', task, applyAuctionFilter);
       if (token !== auctionOverlay.fetchToken || !auctionOverlay.active) return;
-      mapStatus(`${auctionOverlay.points.length.toLocaleString()} auction records from ${payload.source?.relation || 'PVP view'}`);
+      auctionOverlay.loaded = { bbox: Array.isArray(payload.bbox) ? payload.bbox : bbox, truncated: !!payload.truncated, zoom };
+      const inView = auctionOverlay.points.length.toLocaleString();
+      if (!viewportRefresh || payload.truncated) {
+        mapStatus(payload.truncated
+          ? tr('{n} auction records shown of {total} in view; zoom in for more', { n: inView, total: Number(payload.matched || 0).toLocaleString() })
+          : `${inView} auction records in view from ${payload.source?.relation || 'PVP view'}`);
+      }
     } catch (error) {
-      if (token !== auctionOverlay.fetchToken || !auctionOverlay.active) return;
+      if (error?.name === 'AbortError' || token !== auctionOverlay.fetchToken || !auctionOverlay.active) return;
       auctionOverlay.points = [];
+      auctionOverlay.loaded = null;
       state.map.getSource('auction-properties')?.setData(emptyFeatureCollection());
       if (countElement) countElement.textContent = '';
       mapStatus(error.message || 'Auction records unavailable', true);
@@ -2760,6 +3810,9 @@
     if (auctionOverlay.active) { addAuctionOverlayLayer(); loadAuctionOverlay(); }
     else {
       auctionOverlay.fetchToken += 1;
+      auctionOverlay.abort?.abort();
+      clearTimeout(auctionOverlay.moveTimer);
+      auctionOverlay.loaded = null;
       mapTasks.get('auctions')?.finish();
       mapTasks.get('auction-filter')?.finish();
       auctionOverlay.points = [];
@@ -2778,9 +3831,544 @@
       .finally(() => task.finish());
   }
 
+  // ---- Shared workbench selection, drawings, and map utilities ----
+  const workbench = state.workbench;
+
+  function analysisFeatureKey(feature) {
+    const key = window.MapWorkbench?.featureKey(feature) || sisterBatchKey(feature);
+    if (!key) return null;
+    const source = feature?.layer?.source || '';
+    const sourceLayer = feature?.layer?.['source-layer'] || '';
+    const layerId = source.startsWith('source-') ? source.slice(7) : sourceLayer || tableView.layerId || 'map';
+    return `${layerId}:${key}`;
+  }
+
+  function setGeoJSONOverlay(sourceId, collection, layers) {
+    if (state.map) {
+      if (!state.map.isStyleLoaded()) {
+        state.map.once('style.load', () => setGeoJSONOverlay(sourceId, collection, layers));
+        return;
+      }
+      if (!state.map.getSource(sourceId)) {
+        state.map.addSource(sourceId, { type: 'geojson', data: collection });
+        layers.forEach((layer) => state.map.addLayer({ ...layer, source: sourceId }));
+      } else state.map.getSource(sourceId).setData(collection);
+      reorderMapLayers();
+      return;
+    }
+    if (!state.fallbackMap || !window.L) return;
+    const oldLayer = workbench.fallbackLayers.get(sourceId);
+    if (oldLayer) state.fallbackMap.removeLayer(oldLayer);
+    const nextLayer = collection.features.length
+      ? window.L.geoJSON(collection, {
+        style: { color: sourceId === 'analysis-selection' ? '#d97706' : '#2563eb', weight: 3, fillColor: sourceId === 'analysis-selection' ? '#f59e0b' : '#3b82f6', fillOpacity: .2 },
+        pointToLayer: (_, latlng) => window.L.circleMarker(latlng, { radius: 6, color: '#2563eb', weight: 2, fillOpacity: .7 }),
+      }).addTo(state.fallbackMap) : null;
+    workbench.fallbackLayers.set(sourceId, nextLayer);
+  }
+
+  function renderAnalysisSelection() {
+    const features = [...workbench.selection.values()];
+    workbench.adjacencyRequest += 1;
+    setGeoJSONOverlay('analysis-selection', { type: 'FeatureCollection', features }, [
+      { id: 'analysis-selection-fill', type: 'fill', paint: { 'fill-color': '#f59e0b', 'fill-opacity': .24 } },
+      { id: 'analysis-selection-line', type: 'line', paint: { 'line-color': '#b45309', 'line-width': 3 } },
+      { id: 'analysis-selection-point', type: 'circle', paint: { 'circle-color': '#f59e0b', 'circle-radius': 7, 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 } },
+    ]);
+    const count = $('mapAnalysisSelectionCount');
+    if (count) count.textContent = tr('{n} selected', { n: features.length.toLocaleString() });
+    const clear = $('mapClearAnalysisSelectionButton');
+    if (clear) clear.disabled = features.length === 0;
+    renderAdjacencyRows(features, []);
+    const adjacencyStatus = $('mapAdjacencyStatus');
+    if (adjacencyStatus) adjacencyStatus.textContent = features.length
+      ? tr('Selection changed. Run adjacency analysis to refresh the results.')
+      : tr('Select parcels in the table to analyze them.');
+    renderTable();
+  }
+
+  function toggleAnalysisFeature(feature) {
+    const key = analysisFeatureKey(feature);
+    if (!key) return;
+    if (workbench.selection.has(key)) workbench.selection.delete(key);
+    else addAnalysisFeature(feature);
+    renderAnalysisSelection();
+  }
+
+  function addAnalysisFeature(feature) {
+    const key = analysisFeatureKey(feature);
+    if (!key || workbench.selection.has(key)) return true;
+    if (workbench.selection.size >= 5000) return false;
+    workbench.selection.set(key, feature);
+    return true;
+  }
+
+  function pointInRing(point, ring) {
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, yi] = ring[i]; const [xj, yj] = ring[j];
+      const crosses = ((yi > point[1]) !== (yj > point[1]))
+        && point[0] < ((xj - xi) * (point[1] - yi)) / ((yj - yi) || Number.EPSILON) + xi;
+      if (crosses) inside = !inside;
+    }
+    return inside;
+  }
+
+  function pointInPolygon(point, polygon) {
+    if (!polygon?.length || !pointInRing(point, polygon[0])) return false;
+    return !polygon.slice(1).some((ring) => pointInRing(point, ring));
+  }
+
+  function orientation(a, b, c) {
+    const value = (b[1] - a[1]) * (c[0] - b[0]) - (b[0] - a[0]) * (c[1] - b[1]);
+    return Math.abs(value) < 1e-12 ? 0 : (value > 0 ? 1 : 2);
+  }
+
+  function segmentsIntersect(a, b, c, d) {
+    const o1 = orientation(a, b, c); const o2 = orientation(a, b, d);
+    const o3 = orientation(c, d, a); const o4 = orientation(c, d, b);
+    if (o1 !== o2 && o3 !== o4) return true;
+    const onSegment = (p, q, r) => q[0] <= Math.max(p[0], r[0]) && q[0] >= Math.min(p[0], r[0])
+      && q[1] <= Math.max(p[1], r[1]) && q[1] >= Math.min(p[1], r[1]);
+    return (o1 === 0 && onSegment(a, c, b)) || (o2 === 0 && onSegment(a, d, b))
+      || (o3 === 0 && onSegment(c, a, d)) || (o4 === 0 && onSegment(c, b, d));
+  }
+
+  function ringsIntersect(left, right) {
+    for (let i = 1; i < left.length; i += 1) {
+      for (let j = 1; j < right.length; j += 1) {
+        if (segmentsIntersect(left[i - 1], left[i], right[j - 1], right[j])) return true;
+      }
+    }
+    return false;
+  }
+
+  function polygonIntersects(left, right) {
+    if (!left?.length || !right?.length) return false;
+    if (ringsIntersect(left[0], right[0])) return true;
+    return pointInPolygon(left[0][0], right) || pointInPolygon(right[0][0], left);
+  }
+
+  function geometryIntersectsPolygon(geometry, polygon) {
+    if (!geometry) return false;
+    if (geometry.type === 'Point') return pointInPolygon(geometry.coordinates, polygon);
+    if (geometry.type === 'MultiPoint') return geometry.coordinates.some((point) => pointInPolygon(point, polygon));
+    if (geometry.type === 'LineString') return ringsIntersect(geometry.coordinates, polygon[0])
+      || geometry.coordinates.some((point) => pointInPolygon(point, polygon));
+    if (geometry.type === 'MultiLineString') return geometry.coordinates.some((line) => geometryIntersectsPolygon({ type: 'LineString', coordinates: line }, polygon));
+    if (geometry.type === 'Polygon') return polygonIntersects(geometry.coordinates, polygon);
+    if (geometry.type === 'MultiPolygon') return geometry.coordinates.some((part) => polygonIntersects(part, polygon));
+    if (geometry.type === 'GeometryCollection') return geometry.geometries.some((part) => geometryIntersectsPolygon(part, polygon));
+    return false;
+  }
+
+  function geometryCoordinates(geometry, output = []) {
+    if (!geometry) return output;
+    if (geometry.type === 'GeometryCollection') geometry.geometries.forEach((part) => geometryCoordinates(part, output));
+    else if (geometry.type === 'Point') output.push(geometry.coordinates);
+    else geometry.coordinates?.forEach((part) => {
+      if (typeof part?.[0] === 'number') output.push(part);
+      else part.forEach((point) => output.push(point));
+    });
+    return output;
+  }
+
+  function pointInFeature(point, feature) {
+    const geometry = feature?.geometry;
+    if (geometry?.type === 'Polygon') return pointInPolygon(point, geometry.coordinates);
+    if (geometry?.type === 'MultiPolygon') return geometry.coordinates.some((polygon) => pointInPolygon(point, polygon));
+    return false;
+  }
+
+  function mapFeaturesInPolygon(polygon) {
+    const features = new Map();
+    if (state.map) {
+      const positions = polygon[0].map((coordinate) => state.map.project(coordinate));
+      const box = positions.reduce((bounds, point) => ({
+        minX: Math.min(bounds.minX, point.x), maxX: Math.max(bounds.maxX, point.x),
+        minY: Math.min(bounds.minY, point.y), maxY: Math.max(bounds.maxY, point.y),
+      }), { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity });
+      const candidates = state.map.queryRenderedFeatures([[box.minX, box.minY], [box.maxX, box.maxY]], {
+        layers: state.map.getLayer('fill-cadastral-parcels') ? ['fill-cadastral-parcels'] : [],
+      });
+      candidates.forEach((feature) => {
+        const key = analysisFeatureKey(feature);
+        if (key && geometryIntersectsPolygon(feature.geometry, polygon)) features.set(key, feature);
+      });
+    }
+    tableView.rawFeatures.forEach((feature) => {
+      const key = analysisFeatureKey(feature);
+      if (key && geometryIntersectsPolygon(feature.geometry, polygon)) features.set(key, feature);
+    });
+    return [...features.values()];
+  }
+
+  function toggleWorkbenchMode(mode) {
+    if (state.sisterBatch.mode) setSisterBatchMode(null);
+    workbench.editingDrawing = false;
+    workbench.editVertex = null;
+    $('mapEditDrawingButton')?.setAttribute('aria-pressed', 'false');
+    workbench.mode = workbench.mode === mode ? null : mode;
+    workbench.vertices = [];
+    workbench.circleCenter = null;
+    workbench.editVertex = null;
+    updateWorkbenchModeUi();
+    renderWorkbenchPreview();
+  }
+
+  function updateWorkbenchModeUi() {
+    document.querySelectorAll('[data-map-draw]').forEach((button) => {
+      button.setAttribute('aria-pressed', String(workbench.mode === `draw-${button.dataset.mapDraw}`));
+    });
+    const selectMap = $('mapSelectOnMapButton');
+    if (selectMap) selectMap.setAttribute('aria-pressed', String(workbench.mode === 'select-click'));
+    const polygon = $('mapSelectPolygonButton');
+    if (polygon) polygon.setAttribute('aria-pressed', String(workbench.mode === 'select-polygon'));
+    const circle = $('mapSelectCircleButton');
+    if (circle) circle.setAttribute('aria-pressed', String(workbench.mode === 'select-circle'));
+    const canvas = state.map?.getCanvas();
+    if (canvas) canvas.style.cursor = workbench.mode || workbench.editingDrawing ? 'crosshair' : '';
+    if (state.fallbackMap) state.fallbackMap.getContainer().style.cursor = workbench.mode || workbench.editingDrawing ? 'crosshair' : '';
+    const drawDoubleClick = ['select-polygon', 'draw-polygon', 'draw-line'].includes(workbench.mode);
+    if (state.map?.doubleClickZoom) drawDoubleClick ? state.map.doubleClickZoom.disable() : state.map.doubleClickZoom.enable();
+    if (state.fallbackMap?.doubleClickZoom) drawDoubleClick ? state.fallbackMap.doubleClickZoom.disable() : state.fallbackMap.doubleClickZoom.enable();
+    const status = $('mapDrawingStatus');
+    if (status && workbench.mode?.startsWith('draw-')) status.textContent = tr('Click to add vertices; double-click to finish the drawing.');
+  }
+
+  function workbenchCircleSelectionRing(center, edge) {
+    const radius = Math.hypot(edge[0] - center[0], edge[1] - center[1]);
+    const latitudeScale = Math.max(.2, Math.cos(center[1] * Math.PI / 180));
+    const coordinates = [];
+    for (let step = 0; step <= 64; step += 1) {
+      const angle = step / 64 * Math.PI * 2;
+      coordinates.push([center[0] + Math.cos(angle) * radius / latitudeScale, center[1] + Math.sin(angle) * radius]);
+    }
+    return [coordinates];
+  }
+
+  function interactionClick(lngLat, feature = null) {
+    if (workbench.editingDrawing) {
+      editDrawingAt(lngLat);
+      return true;
+    }
+    if (!workbench.mode) return false;
+    const point = [lngLat.lng, lngLat.lat];
+    if (workbench.mode === 'select-click') {
+      if (feature) toggleAnalysisFeature(feature);
+      else {
+        const candidates = state.map ? state.map.queryRenderedFeatures(state.map.project(point), { layers: state.map.getLayer('fill-cadastral-parcels') ? ['fill-cadastral-parcels'] : [] }) : tableView.rawFeatures;
+        const found = candidates.find((candidate) => pointInFeature(point, candidate));
+        if (found) toggleAnalysisFeature(found);
+      }
+      return true;
+    }
+    if (workbench.mode === 'select-polygon' || workbench.mode === 'draw-polygon' || workbench.mode === 'draw-line') {
+      workbench.vertices.push(point);
+      renderWorkbenchPreview();
+      return true;
+    }
+    if (workbench.mode === 'select-circle') {
+      if (!workbench.circleCenter) workbench.circleCenter = point;
+      else {
+      const polygon = workbenchCircleSelectionRing(workbench.circleCenter, point);
+        const selected = mapFeaturesInPolygon(polygon);
+        selected.forEach((parcel) => addAnalysisFeature(parcel));
+        workbench.circleCenter = null;
+        toggleWorkbenchMode('select-circle');
+        renderAnalysisSelection();
+        if (selected.length && workbench.selection.size >= 5000) mapStatus(tr('Selection is limited to 5,000 features.'), true);
+      }
+      return true;
+    }
+    if (workbench.mode === 'draw-point') {
+      const feature = { type: 'Feature', id: `drawing-${Date.now()}`, properties: { name: tr('Marker') }, geometry: { type: 'Point', coordinates: point } };
+      workbench.drawings.push(feature);
+      workbench.selectedDrawing = feature.id;
+      workbench.mode = null;
+      renderWorkbenchDrawings();
+      updateWorkbenchModeUi();
+      return true;
+    }
+    return false;
+  }
+
+  function finishWorkbenchPolygon() {
+    const mode = workbench.mode;
+    const vertices = workbench.vertices;
+    if (!vertices.length) return;
+    workbench.vertices = [];
+    if (mode === 'select-polygon') {
+      if (vertices.length < 3) { mapStatus(tr('Add at least three corners to select parcels.'), true); return; }
+      const polygon = [...vertices, vertices[0]];
+      const selected = mapFeaturesInPolygon([polygon]);
+      selected.forEach((feature) => addAnalysisFeature(feature));
+      workbench.mode = null;
+      renderAnalysisSelection();
+      if (selected.length && workbench.selection.size >= 5000) mapStatus(tr('Selection is limited to 5,000 features.'), true);
+    } else if (mode === 'draw-polygon' && vertices.length >= 3) {
+      const coordinates = [...vertices, vertices[0]];
+      const feature = { type: 'Feature', id: `drawing-${Date.now()}`, properties: { name: tr('Polygon') }, geometry: { type: 'Polygon', coordinates: [coordinates] } };
+      workbench.drawings.push(feature);
+      workbench.selectedDrawing = feature.id;
+      workbench.mode = null;
+      renderWorkbenchDrawings();
+    } else if (mode === 'draw-line' && vertices.length >= 2) {
+      const feature = { type: 'Feature', id: `drawing-${Date.now()}`, properties: { name: tr('Polyline') }, geometry: { type: 'LineString', coordinates: vertices } };
+      workbench.drawings.push(feature);
+      workbench.selectedDrawing = feature.id;
+      workbench.mode = null;
+      renderWorkbenchDrawings();
+    }
+    updateWorkbenchModeUi();
+    renderWorkbenchPreview();
+  }
+
+  function renderWorkbenchPreview(cursor = null) {
+    const vertices = [...workbench.vertices];
+    if (cursor) vertices.push([cursor.lng, cursor.lat]);
+    let feature = null;
+    if (workbench.circleCenter && cursor) feature = { type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: workbenchCircleSelectionRing(workbench.circleCenter, [cursor.lng, cursor.lat]) } };
+    else if (vertices.length >= 2) feature = { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: vertices } };
+    const collection = feature ? { type: 'FeatureCollection', features: [feature] } : emptyFeatureCollection();
+    setGeoJSONOverlay('workbench-preview', collection, [
+      { id: 'workbench-preview-fill', type: 'fill', paint: { 'fill-color': '#7c3aed', 'fill-opacity': .12 } },
+      { id: 'workbench-preview-line', type: 'line', paint: { 'line-color': '#7c3aed', 'line-width': 2, 'line-dasharray': [2, 2] } },
+    ]);
+  }
+
+  function drawingVertices(feature) { return geometryCoordinates(feature.geometry); }
+
+  function renderWorkbenchDrawings() {
+    const collection = { type: 'FeatureCollection', features: workbench.drawings };
+    setGeoJSONOverlay('user-drawings', collection, [
+      { id: 'user-drawings-fill', type: 'fill', paint: { 'fill-color': '#2563eb', 'fill-opacity': .16 } },
+      { id: 'user-drawings-line', type: 'line', paint: { 'line-color': '#1d4ed8', 'line-width': 3 } },
+      { id: 'user-drawings-point', type: 'circle', paint: { 'circle-color': '#2563eb', 'circle-radius': 7, 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 } },
+    ]);
+    const list = $('mapDrawingList');
+    if (list) list.innerHTML = workbench.drawings.map((feature) => {
+      const label = feature.properties?.name || feature.geometry.type;
+      return `<li><button type="button" class="map-drawing-select${feature.id === workbench.selectedDrawing ? ' is-selected' : ''}" data-drawing-id="${escapeHtml(feature.id)}">${escapeHtml(label)}</button></li>`;
+    }).join('');
+    const hasDrawings = workbench.drawings.length > 0;
+    ['mapEditDrawingButton', 'mapDeleteDrawingButton'].forEach((id) => { if ($(id)) $(id).disabled = !workbench.selectedDrawing; });
+    ['mapExportDrawingsButton', 'mapSaveDrawingsButton', 'mapClearDrawingsButton'].forEach((id) => { if ($(id)) $(id).disabled = !hasDrawings; });
+    const status = $('mapDrawingStatus');
+    if (status && !workbench.mode) status.textContent = hasDrawings ? tr('{n} drawing(s)', { n: workbench.drawings.length }) : tr('No drawings yet.');
+    renderDrawingVertices();
+  }
+
+  function renderDrawingVertices() {
+    const feature = workbench.drawings.find((candidate) => candidate.id === workbench.selectedDrawing);
+    const points = workbench.editingDrawing && feature ? drawingVertices(feature).map((coordinates, index) => ({
+      type: 'Feature', properties: { index }, geometry: { type: 'Point', coordinates },
+    })) : [];
+    const collection = { type: 'FeatureCollection', features: points };
+    setGeoJSONOverlay('drawing-vertices', collection, [
+      { id: 'drawing-vertices-points', type: 'circle', paint: { 'circle-color': '#fff', 'circle-radius': 6, 'circle-stroke-color': '#1d4ed8', 'circle-stroke-width': 2 } },
+    ]);
+  }
+
+  function editDrawingAt(lngLat) {
+    const feature = workbench.drawings.find((candidate) => candidate.id === workbench.selectedDrawing);
+    if (!feature) return;
+    if (workbench.editVertex === null) {
+      const coordinates = drawingVertices(feature);
+      let nearest = -1; let distance = Infinity;
+      coordinates.forEach((point, index) => {
+        const pixel = state.map ? state.map.project(point) : state.fallbackMap.latLngToContainerPoint([point[1], point[0]]);
+        const cursor = state.map ? state.map.project([lngLat.lng, lngLat.lat]) : state.fallbackMap.latLngToContainerPoint(lngLat);
+        const candidateDistance = Math.hypot(pixel.x - cursor.x, pixel.y - cursor.y);
+        if (candidateDistance < distance) { distance = candidateDistance; nearest = index; }
+      });
+      if (nearest >= 0 && distance < 24) {
+        workbench.editVertex = nearest;
+        $('mapDrawingStatus').textContent = tr('Click the map to move the highlighted vertex.');
+      } else $('mapDrawingStatus').textContent = tr('Click near a vertex to select it.');
+      return;
+    }
+    const replacement = [lngLat.lng, lngLat.lat];
+    if (feature.geometry.type === 'Point') feature.geometry.coordinates = replacement;
+    else {
+      const coordinates = geometryCoordinates(feature.geometry);
+      const old = coordinates[workbench.editVertex];
+      replaceCoordinate(feature.geometry, old, replacement);
+    }
+    workbench.editVertex = null;
+    renderWorkbenchDrawings();
+    $('mapDrawingStatus').textContent = tr('Vertex moved. Click another vertex to continue.');
+  }
+
+  function replaceCoordinate(geometry, oldPoint, newPoint) {
+    const walk = (value) => {
+      if (Array.isArray(value) && value.length >= 2 && typeof value[0] === 'number') {
+        if (value[0] === oldPoint[0] && value[1] === oldPoint[1]) { value[0] = newPoint[0]; value[1] = newPoint[1]; }
+      } else if (Array.isArray(value)) value.forEach(walk);
+    };
+    walk(geometry.coordinates);
+  }
+
+  function drawingCollection() {
+    return { type: 'FeatureCollection', features: workbench.drawings.map((feature) => ({
+      type: 'Feature', id: feature.id, properties: { ...(feature.properties || {}) }, geometry: feature.geometry,
+    })) };
+  }
+
+  async function saveWorkbenchDrawings() {
+    const auth = window.authManager;
+    if (!window.landRegistrySignedIn || !auth?.authenticatedFetch) {
+      mapStatus(tr('Sign in to save your drawings.'), true);
+      return;
+    }
+    try {
+      const response = await auth.authenticatedFetch('/api/v1/save-drawn-polygons', {
+        method: 'POST', body: JSON.stringify({ geojson: drawingCollection(), timestamp: new Date().toISOString() }),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.success) throw new Error(payload.detail || payload.error || tr('Drawings could not be saved.'));
+      $('mapDrawingStatus').textContent = tr('Saved {n} drawing(s).', { n: workbench.drawings.length });
+    } catch (error) { $('mapDrawingStatus').textContent = error.message || tr('Drawings could not be saved.'); }
+  }
+
+  async function loadWorkbenchDrawings() {
+    const auth = window.authManager;
+    if (!window.landRegistrySignedIn || !auth?.authenticatedFetch) {
+      mapStatus(tr('Sign in to load saved drawings.'), true);
+      return;
+    }
+    try {
+      const response = await auth.authenticatedFetch('/api/v1/load-drawn-polygons');
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || tr('Drawings could not be loaded.'));
+      if (!payload.success || !payload.geojson) { $('mapDrawingStatus').textContent = tr('No saved drawings found.'); return; }
+      const collection = window.MapWorkbench.toFeatureCollection(payload.geojson);
+      workbench.drawings = collection.features.map((feature, index) => ({
+        ...feature, id: String(feature.id || `drawing-loaded-${index + 1}`), properties: { ...(feature.properties || {}) },
+      }));
+      workbench.selectedDrawing = workbench.drawings[0]?.id || null;
+      renderWorkbenchDrawings();
+      $('mapDrawingStatus').textContent = tr('Loaded {n} drawing(s).', { n: workbench.drawings.length });
+    } catch (error) { $('mapDrawingStatus').textContent = error.message || tr('Drawings could not be loaded.'); }
+  }
+
+  async function importWorkbenchDrawings(file) {
+    if (!file) return;
+    if (file.size > 25 * 1024 * 1024) {
+      $('mapDrawingStatus').textContent = tr('GeoJSON files must be smaller than 25 MB.');
+      return;
+    }
+    try {
+      const collection = await window.MapWorkbench.readGeoJSONFile(file);
+      const imported = collection.features.map((feature, index) => ({
+        ...feature,
+        id: `drawing-import-${Date.now()}-${index}`,
+        properties: { ...(feature.properties || {}) },
+      }));
+      workbench.drawings.push(...imported);
+      workbench.selectedDrawing = imported[0]?.id || workbench.selectedDrawing;
+      renderWorkbenchDrawings();
+      $('mapDrawingStatus').textContent = tr('Imported {n} feature(s).', { n: imported.length });
+    } catch (error) { $('mapDrawingStatus').textContent = error.message || tr('GeoJSON could not be imported.'); }
+  }
+
+  function renderUrbanContour() {
+    if (!state.map) return;
+    const sourceId = 'urban-contour-analysis';
+    const enabled = $('urbanContourEnabled')?.checked !== false;
+    const mode = $('urbanContourMode')?.value || 'broad';
+    const features = enabled && tableView.layerId === 'cadastral-parcels'
+      ? tableView.rawFeatures.map((feature) => {
+        const classification = window.MapWorkbench?.classifyUrbanStatus(feature, mode);
+        return classification && classification.status !== 'unknown' ? {
+          ...feature, properties: { ...feature.properties, __map_urban_status: classification.status },
+        } : null;
+      }).filter(Boolean) : [];
+    setGeoJSONOverlay(sourceId, { type: 'FeatureCollection', features }, [
+      { id: 'urban-contour-fill', type: 'fill', filter: ['==', ['get', '__map_urban_status'], 'urban'], paint: { 'fill-color': '#dc2626', 'fill-opacity': .2 } },
+      { id: 'urban-contour-line', type: 'line', filter: ['==', ['get', '__map_urban_status'], 'urban'], paint: { 'line-color': '#b91c1c', 'line-width': 2.5 } },
+      { id: 'urban-contour-rural', type: 'line', filter: ['==', ['get', '__map_urban_status'], 'not_urban'], paint: { 'line-color': '#059669', 'line-width': 1.5, 'line-dasharray': [2, 2] } },
+    ]);
+    const status = $('urbanContourStatus');
+    if (status) status.textContent = !enabled ? tr('Urban contour overlay disabled.')
+      : tableView.layerId !== 'cadastral-parcels' ? tr('Choose cadastral parcels in the table to inspect urban classes.')
+        : tr('{n} features classified on the current page.', { n: features.length });
+  }
+
+  function setupMapUtilities() {
+    const output = $('mapCoordinates');
+    $('mapCoordinatesToggle')?.addEventListener('click', (event) => {
+      const show = output.hidden;
+      output.hidden = !show;
+      event.currentTarget.setAttribute('aria-pressed', String(show));
+    });
+    $('mapMiniMapToggle')?.addEventListener('click', (event) => {
+      const container = $('mapMiniMap');
+      container.hidden = !container.hidden;
+      event.currentTarget.setAttribute('aria-pressed', String(!container.hidden));
+      if (!container.hidden) { createWorkbenchMinimap(); syncWorkbenchMinimap(); }
+      else if (workbench.minimap) { workbench.minimap.remove(); workbench.minimap = null; }
+    });
+    const bindMap = (map, isFallback = false) => {
+      if (!map) return;
+      map.on('mousemove', (event) => {
+        const point = isFallback ? { lng: event.latlng.lng, lat: event.latlng.lat } : event.lngLat;
+        if (!point) return;
+        if (output && !output.hidden) output.textContent = `${point.lng.toFixed(5)}, ${point.lat.toFixed(5)}`;
+      });
+      map.on('move', syncWorkbenchMinimap);
+      map.on('resize', syncWorkbenchMinimap);
+    };
+    if (state.map) bindMap(state.map);
+    else if (state.fallbackMap) bindMap(state.fallbackMap, true);
+  }
+
+  function createWorkbenchMinimap() {
+    const container = $('mapMiniMap');
+    if (workbench.minimap || !container || container.hidden) return;
+    try {
+      if (state.map && window.maplibregl) {
+        workbench.minimap = new maplibregl.Map({
+          container, style: styleForBasemap(currentBasemap()),
+          center: state.map.getCenter().toArray(), zoom: Math.max(3, state.map.getZoom() - 4),
+          interactive: false, attributionControl: false, renderWorldCopies: false,
+        });
+        workbench.minimap.on('load', () => {
+          workbench.minimap.addSource('overview-viewport', { type: 'geojson', data: emptyFeatureCollection() });
+          workbench.minimap.addLayer({ id: 'overview-viewport-fill', type: 'fill', source: 'overview-viewport', paint: { 'fill-color': '#2563eb', 'fill-opacity': .14 } });
+          workbench.minimap.addLayer({ id: 'overview-viewport-line', type: 'line', source: 'overview-viewport', paint: { 'line-color': '#1d4ed8', 'line-width': 2 } });
+          syncWorkbenchMinimap();
+        });
+      } else if (state.fallbackMap && window.L) {
+        workbench.minimap = window.L.map(container, { zoomControl: false, attributionControl: false, dragging: false, scrollWheelZoom: false, doubleClickZoom: false, boxZoom: false, keyboard: false, tap: false });
+        const tiles = basemapEngine(currentBasemap());
+        window.L.tileLayer(tiles.base, { maxZoom: 18, attribution: tiles.attribution }).addTo(workbench.minimap);
+        workbench.minimap.setView(state.fallbackMap.getCenter(), Math.max(3, state.fallbackMap.getZoom() - 4));
+        workbench.minimapViewport = window.L.rectangle(state.fallbackMap.getBounds(), { color: '#1d4ed8', weight: 2, fillOpacity: .12 }).addTo(workbench.minimap);
+      }
+    } catch (error) { console.warn('Overview map could not be initialized', error); }
+  }
+
+  function syncWorkbenchMinimap() {
+    if (!workbench.minimap || $('mapMiniMap')?.hidden) return;
+    const map = state.map || state.fallbackMap;
+    if (!map) return;
+    const bounds = map.getBounds();
+    const west = bounds.getWest(); const east = bounds.getEast(); const south = bounds.getSouth(); const north = bounds.getNorth();
+    if (state.map && workbench.minimap.getSource('overview-viewport')) {
+      workbench.minimap.getSource('overview-viewport').setData({
+        type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [[[west, south], [east, south], [east, north], [west, north], [west, south]]] } }],
+      });
+      workbench.minimap.jumpTo({ center: map.getCenter(), zoom: Math.max(3, map.getZoom() - 4) });
+    } else if (state.fallbackMap) {
+      workbench.minimap.setView(state.fallbackMap.getCenter(), Math.max(3, state.fallbackMap.getZoom() - 4), { animate: false });
+      workbench.minimapViewport?.setBounds(state.fallbackMap.getBounds());
+    }
+  }
+
   // ---- Attribute table (single-layer, viewport-scoped analogue of the
   // legacy Table View / table-manager.js) ----
-  const tableView = { active: false, layerId: null, rawFeatures: [], page: 1, pageSize: 100, hasMore: false, controller: null, error: '' };
+  const tableView = { active: false, layerId: null, rawFeatures: [], page: 1, pageSize: 100, hasMore: false, controller: null, error: '', sortField: '', sortDirection: 'asc', attributeFilter: null };
 
   function populateTableLayerSelect() {
     const select = $('mapTableLayerSelect');
@@ -2799,9 +4387,18 @@
 
   function filteredTableFeatures() {
     const query = ($('mapTableFilter')?.value || '').trim().toLowerCase();
-    if (!query) return tableView.rawFeatures;
-    return tableView.rawFeatures.filter((feature) => Object.values(feature.properties || {})
-      .some((value) => String(value ?? '').toLowerCase().includes(query)));
+    // Booleans match both their raw form and the Yes/No shown in the cell.
+    const searchable = (value) => (typeof value === 'boolean'
+      ? `${value} ${tr(value ? 'Yes' : 'No')}`
+      : String(value ?? ''));
+    const filtered = tableView.rawFeatures.filter((feature) => {
+      if (query && !Object.values(feature.properties || {}).some((value) => searchable(value).toLowerCase().includes(query))) return false;
+      const filter = tableView.attributeFilter;
+      return !filter || window.MapWorkbench?.matchesValue(feature.properties?.[filter.field], filter.value, filter.operation);
+    });
+    return tableView.sortField && window.MapWorkbench
+      ? window.MapWorkbench.sortRows(filtered, tableView.sortField, tableView.sortDirection)
+      : filtered;
   }
 
   function renderTable() {
@@ -2809,21 +4406,47 @@
     const body = $('mapTableBody');
     if (!head || !body) return;
     const layer = state.catalog.find((candidate) => candidate.id === tableView.layerId);
-    const columns = layer?.properties || [];
     const features = filteredTableFeatures();
-    head.innerHTML = `<tr>${columns.map((column) => `<th>${escapeHtml(column)}</th>`).join('')}</tr>`;
+    // Catalog properties first, then any column the endpoint adds per feature
+    // (e.g. has_visura on cadastral parcels) so a new column needs no catalog edit.
+    const columns = [...(layer?.properties || [])];
+    tableView.rawFeatures.forEach((feature) => Object.keys(feature.properties || {}).forEach((key) => {
+      if (!columns.includes(key)) columns.push(key);
+    }));
+    // Booleans read as words; null (unknown, e.g. SISTER unreachable) stays blank.
+    const cellText = (value) => (value === true ? tr('Yes') : value === false ? tr('No') : value);
+    const attributeField = $('mapAttributeField');
+    if (attributeField) {
+      const previous = attributeField.value;
+      attributeField.innerHTML = `<option value="">${escapeHtml(tr('Attribute'))}</option>${columns.map((column) => `<option value="${escapeHtml(column)}">${escapeHtml(column)}</option>`).join('')}`;
+      if (columns.includes(previous)) attributeField.value = previous;
+    }
+    head.innerHTML = `<tr><th>${escapeHtml(tr('Select'))}</th>${columns.map((column) => {
+      const marker = tableView.sortField === column ? (tableView.sortDirection === 'asc' ? ' ↑' : ' ↓') : '';
+      return `<th><button type="button" class="map-table-sort" data-sort-field="${escapeHtml(column)}" aria-label="${escapeHtml(tr('Sort by {field}', { field: column }))}">${escapeHtml(column)}${marker}</button></th>`;
+    }).join('')}</tr>`;
     const pageItems = features;
     body.innerHTML = pageItems.length
-      ? pageItems.map((feature) => `<tr data-feature-id="${escapeHtml(feature.id ?? '')}" tabindex="0">${columns.map((column) => `<td>${escapeHtml(feature.properties?.[column])}</td>`).join('')}</tr>`).join('')
-      : `<tr><td colspan="${columns.length || 1}">${escapeHtml(tableView.error || tr('No features in the current view.'))}</td></tr>`;
+      ? pageItems.map((feature) => {
+        const key = analysisFeatureKey(feature);
+        const checked = key && workbench.selection.has(key);
+        return `<tr data-feature-key="${escapeHtml(key || '')}" tabindex="0" class="${checked ? 'is-analysis-selected' : ''}"><td><input type="checkbox" aria-label="${escapeHtml(tr('Select feature'))}" data-select-feature="${escapeHtml(key || '')}" ${checked ? 'checked' : ''}></td>${columns.map((column) => `<td>${escapeHtml(cellText(feature.properties?.[column]))}</td>`).join('')}</tr>`;
+      }).join('')
+      : `<tr><td colspan="${columns.length + 1}">${escapeHtml(tableView.error || tr('No features in the current view.'))}</td></tr>`;
     const pageInfo = $('mapTablePageInfo');
     if (pageInfo) pageInfo.textContent = `Page ${tableView.page}${tableView.hasMore ? '+' : ''}`;
     $('mapTablePrevButton').disabled = tableView.page <= 1;
     $('mapTableNextButton').disabled = !tableView.hasMore;
-    body.querySelectorAll('tr[data-feature-id]').forEach((row) => {
+    head.querySelectorAll('[data-sort-field]').forEach((button) => button.addEventListener('click', () => {
+      const field = button.dataset.sortField;
+      tableView.sortDirection = tableView.sortField === field && tableView.sortDirection === 'asc' ? 'desc' : 'asc';
+      tableView.sortField = field;
+      renderTable();
+    }));
+    body.querySelectorAll('tr[data-feature-key]').forEach((row) => {
       const activate = () => {
-        const id = row.getAttribute('data-feature-id');
-        const feature = pageItems.find((candidate) => String(candidate.id ?? '') === id);
+        const key = row.getAttribute('data-feature-key');
+        const feature = pageItems.find((candidate) => analysisFeatureKey(candidate) === key);
         if (feature) focusTableFeature(feature);
       };
       row.addEventListener('click', activate);
@@ -2831,6 +4454,15 @@
         if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); activate(); }
       });
     });
+    body.querySelectorAll('[data-select-feature]').forEach((checkbox) => checkbox.addEventListener('click', (event) => event.stopPropagation()));
+    body.querySelectorAll('[data-select-feature]').forEach((checkbox) => checkbox.addEventListener('change', () => {
+      const key = checkbox.dataset.selectFeature;
+      const feature = pageItems.find((candidate) => analysisFeatureKey(candidate) === key);
+      if (!feature || !key) return;
+      if (checkbox.checked) workbench.selection.set(key, feature);
+      else workbench.selection.delete(key);
+      renderAnalysisSelection();
+    }));
   }
 
   function focusTableFeature(feature) {
@@ -2838,6 +4470,132 @@
     const bounds = featureBounds(feature);
     if (bounds) state.map.fitBounds(bounds, { padding: 60, maxZoom: 19 });
     if (layer) showOverlayFeature(layer, feature, bounds ? bounds.getCenter() : state.map.getCenter());
+  }
+
+  function selectCurrentTablePage(mode = 'all') {
+    let limitReached = false;
+    for (const feature of filteredTableFeatures()) {
+      const key = analysisFeatureKey(feature);
+      if (!key) continue;
+      if (mode === 'invert') {
+        if (workbench.selection.has(key)) workbench.selection.delete(key);
+        else if (!addAnalysisFeature(feature)) { limitReached = true; break; }
+      } else if (!addAnalysisFeature(feature)) { limitReached = true; break; }
+    }
+    renderAnalysisSelection();
+    if (limitReached) mapStatus(tr('Selection is limited to 5,000 features.'), true);
+  }
+
+  function selectTableMatches() {
+    const field = $('mapAttributeField')?.value;
+    const value = $('mapAttributeValue')?.value;
+    const operation = $('mapAttributeOperation')?.value || 'contains';
+    if (!field || (!['empty', 'not_empty'].includes(operation) && String(value ?? '') === '')) {
+      $('mapAdjacencyStatus').textContent = tr('Choose an attribute and value first.');
+      return;
+    }
+    const matched = tableView.rawFeatures.filter((feature) => window.MapWorkbench?.matchesValue(
+      feature.properties?.[field], value, operation,
+    ));
+    let added = 0;
+    for (const feature of matched) {
+      const key = analysisFeatureKey(feature);
+      if (key && addAnalysisFeature(feature)) added += 1;
+      else if (workbench.selection.size >= 5000) break;
+    }
+    renderAnalysisSelection();
+    $('mapAdjacencyStatus').textContent = tr('Selected {n} matching feature(s) from this page.', { n: added });
+  }
+
+  function applyAttributeFilter() {
+    const field = $('mapAttributeField')?.value;
+    const value = $('mapAttributeValue')?.value;
+    const operation = $('mapAttributeOperation')?.value || 'contains';
+    if (!field || (!['empty', 'not_empty'].includes(operation) && String(value ?? '') === '')) {
+      tableView.attributeFilter = null;
+      $('mapTableStatus').textContent = tr('Choose an attribute and value to filter rows.');
+      renderTable();
+      return;
+    }
+    tableView.attributeFilter = { field, value, operation };
+    renderTable();
+  }
+
+  function setWorkbenchTab(name) {
+    const tabs = {
+      table: ['mapWorkbenchTableTab', 'mapTableViewPanel'],
+      adjacency: ['mapWorkbenchAdjacencyTab', 'mapAdjacencyViewPanel'],
+      drawings: ['mapWorkbenchDrawingsTab', 'mapDrawingsViewPanel'],
+    };
+    Object.entries(tabs).forEach(([key, [tabId, panelId]]) => {
+      const active = key === name;
+      $(tabId)?.setAttribute('aria-selected', String(active));
+      const panel = $(panelId);
+      if (panel) panel.hidden = !active;
+    });
+    if (name === 'drawings') renderWorkbenchDrawings();
+  }
+
+  function renderAdjacencyRows(selected, adjacent) {
+    const selectedContainer = $('mapAdjacencySelectedRows');
+    const adjacentContainer = $('mapAdjacencyRows');
+    const labelFor = (feature) => referenceFrom(feature.properties || {})
+      || feature.properties?.name || feature.geometry?.type || tr('Feature');
+    if (selectedContainer) selectedContainer.innerHTML = selected.length
+      ? `<ul class="map-analysis-result-list">${selected.map((feature) => `<li>${escapeHtml(labelFor(feature))}</li>`).join('')}</ul>`
+      : `<p class="map-muted">${escapeHtml(tr('No selected features.'))}</p>`;
+    if (adjacentContainer) adjacentContainer.innerHTML = adjacent.length
+      ? `<ul class="map-analysis-result-list">${adjacent.map((feature) => `<li><button type="button" class="map-adjacency-feature" data-adjacent-ref="${escapeHtml(referenceFrom(feature.properties || ''))}" data-adjacent-id="${escapeHtml(feature.id ?? feature.properties?.id ?? '')}">${escapeHtml(labelFor(feature))}</button></li>`).join('')}</ul>`
+      : `<p class="map-muted">${escapeHtml(tr('No adjacent features found.'))}</p>`;
+    adjacentContainer?.querySelectorAll('[data-adjacent-ref]').forEach((button) => button.addEventListener('click', () => {
+      const reference = button.dataset.adjacentRef;
+      const feature = adjacent.find((candidate) => referenceFrom(candidate.properties || {}) === reference);
+      if (feature) focusTableFeature(feature);
+      else if (reference) loadParcelByReference(reference, true, Number(button.dataset.adjacentId) || null);
+    }));
+  }
+
+  async function analyzeSelectedAdjacency() {
+    const status = $('mapAdjacencyStatus');
+    const selected = [...workbench.selection.values()];
+    if (!selected.length) { status.textContent = tr('Select parcels in the table to analyze them.'); return; }
+    if (tableView.layerId !== 'cadastral-parcels') { status.textContent = tr('Adjacency analysis is available for cadastral parcels.'); return; }
+    const targets = selected.filter((feature) => referenceFrom(feature.properties || {}));
+    if (!targets.length) { status.textContent = tr('Selected features have no cadastral reference.'); return; }
+    const requestId = ++workbench.adjacencyRequest;
+    const method = $('mapAdjacencyMethod')?.value || 'intersects';
+    const adjacent = new Map();
+    renderAdjacencyRows(targets, []);
+    status.textContent = tr('Analyzing {n} selected parcel(s)…', { n: targets.length });
+    const task = beginMapProgress('workbench-adjacency', 'Analyzing selected parcels…');
+    let complete = 0;
+    try {
+      for (let offset = 0; offset < targets.length; offset += 4) {
+        const batch = targets.slice(offset, offset + 4);
+        const results = await Promise.all(batch.map(async (feature) => {
+          const reference = referenceFrom(feature.properties || {});
+          const id = feature.id ?? feature.properties?.id ?? feature.properties?.feature_id;
+          const params = new URLSearchParams({ method, limit: '50' });
+          if (id !== undefined && Number.isFinite(Number(id))) params.set('id', String(id));
+          const response = await fetch(`/api/v1/enrichment/parcel/adjacent/${encodeURIComponent(reference)}?${params}`);
+          if (!response.ok) throw new Error(tr('Adjacency lookup failed for {reference}.', { reference }));
+          const payload = await response.json();
+          return payload.features || [];
+        }));
+        if (requestId !== workbench.adjacencyRequest) return;
+        results.flat().forEach((feature) => {
+          const key = analysisFeatureKey(feature);
+          if (key && !workbench.selection.has(key)) adjacent.set(key, feature);
+        });
+        complete += batch.length;
+        task.update('Analyzing selected parcels…', complete / targets.length * 100, tr('{n} of {total} parcels', { n: complete, total: targets.length }));
+        renderAdjacencyRows(targets, [...adjacent.values()]);
+      }
+      status.textContent = tr('{n} adjacent parcel(s) found using {method}.', { n: adjacent.size, method });
+      if (state.map && adjacent.size) state.map.getSource('adjacent-parcels')?.setData({ type: 'FeatureCollection', features: [...adjacent.values()] });
+    } catch (error) {
+      if (requestId === workbench.adjacencyRequest) status.textContent = error.message || tr('Adjacency analysis failed.');
+    } finally { task.finish(); }
   }
 
   async function loadTableData() {
@@ -2876,6 +4634,7 @@
       tableView.hasMore = Boolean(data.truncated);
       tableView.error = '';
       renderTable();
+      renderUrbanContour();
       if (status) status.textContent = data.zoom_required
         ? `Zoom in to at least level ${data.zoom_required}`
         : `${tableView.rawFeatures.length} feature(s) on page${data.truncated ? ' · more available with Next' : ''}`;
@@ -2956,6 +4715,23 @@
     $('toggleEnrichmentBulletin').addEventListener('click', toggleBulletinOverlay);
     $('refreshBulletinButton').addEventListener('click', refreshBulletinOverlay);
     $('toggleSisterBuildings')?.addEventListener('click', toggleSisterBuildingsOverlay);
+    $('toggleSisterParcels')?.addEventListener('change', toggleSisterParcelsOverlay);
+    $('toggleAuctionHighlight')?.addEventListener('change', toggleAuctionParcelsOverlay);
+    $('sisterBatchClickButton')?.addEventListener('click', () => setSisterBatchMode('click'));
+    $('sisterBatchPolygonButton')?.addEventListener('click', () => setSisterBatchMode('polygon'));
+    $('sisterBatchCircleButton')?.addEventListener('click', () => setSisterBatchMode('circle'));
+    $('sisterBatchClearButton')?.addEventListener('click', clearSisterBatchSelection);
+    $('sisterBatchExportButton')?.addEventListener('click', exportSisterBatch);
+    $('sisterBatchList')?.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-sister-batch-remove]');
+      if (!button) return;
+      state.sisterBatch.features.delete(button.getAttribute('data-sister-batch-remove'));
+      state.sisterBatch.notice = '';
+      renderSisterBatchSelection();
+    });
+    renderSisterBatchControls();
+    $('refreshVisuraFlagsButton')?.addEventListener('click', () => refreshParcelFlag('has_visura'));
+    $('refreshAuctionFlagsButton')?.addEventListener('click', () => refreshParcelFlag('is_auction_sale'));
     $('toggleAuctionLayer').addEventListener('click', toggleAuctionOverlay);
     $('refreshAuctionButton')?.addEventListener('click', () => loadAuctionOverlay(true));
     $('toggleSalesLayer')?.addEventListener('click', toggleSalesOverlay);
@@ -2981,8 +4757,72 @@
     $('mapTableLayerSelect').addEventListener('change', (event) => { tableView.layerId = event.target.value; tableView.page = 1; void loadTableData(); });
     $('mapTableFilter').addEventListener('input', () => { tableView.page = 1; renderTable(); });
     $('mapTableRefreshButton').addEventListener('click', () => { tableView.page = 1; void loadTableData(); });
+    $('mapTablePageSize').addEventListener('change', (event) => { tableView.pageSize = Math.max(1, Math.min(500, Number(event.target.value) || 100)); tableView.page = 1; void loadTableData(); });
     $('mapTablePrevButton').addEventListener('click', () => { if (tableView.page > 1) { tableView.page -= 1; void loadTableData(); } });
     $('mapTableNextButton').addEventListener('click', () => { if (tableView.hasMore) { tableView.page += 1; void loadTableData(); } });
+    $('mapSelectAllButton').addEventListener('click', () => selectCurrentTablePage('all'));
+    $('mapInvertSelectionButton').addEventListener('click', () => selectCurrentTablePage('invert'));
+    $('mapClearAnalysisSelectionButton').addEventListener('click', () => { workbench.selection.clear(); renderAnalysisSelection(); });
+    $('mapSelectByAttributeButton').addEventListener('click', selectTableMatches);
+    $('mapApplyAttributeFilter').addEventListener('click', applyAttributeFilter);
+    $('mapClearAttributeFilter').addEventListener('click', () => { tableView.attributeFilter = null; renderTable(); });
+    $('mapSelectOnMapButton').addEventListener('click', () => toggleWorkbenchMode('select-click'));
+    $('mapSelectPolygonButton').addEventListener('click', () => toggleWorkbenchMode('select-polygon'));
+    $('mapSelectCircleButton').addEventListener('click', () => toggleWorkbenchMode('select-circle'));
+    $('mapRunAdjacencyButton').addEventListener('click', () => { setWorkbenchTab('adjacency'); void analyzeSelectedAdjacency(); });
+    $('mapWorkbenchTableTab').addEventListener('click', () => setWorkbenchTab('table'));
+    $('mapWorkbenchAdjacencyTab').addEventListener('click', () => setWorkbenchTab('adjacency'));
+    $('mapWorkbenchDrawingsTab').addEventListener('click', () => setWorkbenchTab('drawings'));
+    document.querySelectorAll('[data-map-draw]').forEach((button) => button.addEventListener('click', () => {
+      toggleWorkbenchMode(`draw-${button.dataset.mapDraw}`);
+    }));
+    $('mapEditDrawingButton').addEventListener('click', () => {
+      if (!workbench.selectedDrawing) return;
+      workbench.editingDrawing = !workbench.editingDrawing;
+      workbench.mode = null;
+      workbench.editVertex = null;
+      $('mapEditDrawingButton').setAttribute('aria-pressed', String(workbench.editingDrawing));
+      $('mapDrawingStatus').textContent = workbench.editingDrawing
+        ? tr('Click near a vertex, then click where it should move.')
+        : tr('Drawing edit mode ended.');
+      updateWorkbenchModeUi();
+      renderDrawingVertices();
+    });
+    $('mapDeleteDrawingButton').addEventListener('click', () => {
+      workbench.drawings = workbench.drawings.filter((feature) => feature.id !== workbench.selectedDrawing);
+      workbench.selectedDrawing = workbench.drawings[0]?.id || null;
+      workbench.editingDrawing = false;
+      renderWorkbenchDrawings();
+    });
+    $('mapExportDrawingsButton').addEventListener('click', () => {
+      try { window.MapWorkbench.downloadGeoJSON(drawingCollection(), 'map-drawings.geojson'); }
+      catch (error) { $('mapDrawingStatus').textContent = error.message; }
+    });
+    $('mapImportDrawingsButton').addEventListener('click', () => $('mapDrawingsFile').click());
+    $('mapDrawingsFile').addEventListener('change', (event) => {
+      void importWorkbenchDrawings(event.target.files?.[0]);
+      event.target.value = '';
+    });
+    $('mapSaveDrawingsButton').addEventListener('click', () => void saveWorkbenchDrawings());
+    $('mapLoadDrawingsButton').addEventListener('click', () => void loadWorkbenchDrawings());
+    $('mapClearDrawingsButton').addEventListener('click', () => {
+      workbench.drawings = [];
+      workbench.selectedDrawing = null;
+      workbench.editingDrawing = false;
+      renderWorkbenchDrawings();
+    });
+    $('mapDrawingList').addEventListener('click', (event) => {
+      const button = event.target.closest('[data-drawing-id]');
+      if (!button) return;
+      workbench.selectedDrawing = button.dataset.drawingId;
+      workbench.editingDrawing = false;
+      $('mapEditDrawingButton').setAttribute('aria-pressed', 'false');
+      renderWorkbenchDrawings();
+    });
+    $('urbanContourEnabled').addEventListener('change', renderUrbanContour);
+    $('urbanContourMode').addEventListener('change', renderUrbanContour);
+    renderAnalysisSelection();
+    renderWorkbenchDrawings();
     $('shortlistRefreshButton').addEventListener('click', () => loadShortlist());
     ['shortlistStatusFilter', 'shortlistPriorityFilter', 'shortlistSort'].forEach((id) => {
       $(id).addEventListener('change', renderShortlist);
@@ -3033,11 +4873,11 @@
       $('layersToggle').setAttribute('aria-expanded', String(!card.hidden));
       if (!card.hidden) setBasemapPickerOpen(false);
     });
-    document.querySelectorAll('input[name="basemap"]').forEach((input) => input.addEventListener('change', () => {
-      switchBasemap(input.value);
+    $('basemapEngineSelect').addEventListener('change', (event) => {
+      switchBasemap(event.target.value);
       setBasemapPickerOpen(false);
       basemapToggle.focus();
-    }));
+    });
     // The shared aecs4u-theme owns the navbar theme toggle. Keep the map
     // basemap in sync when the selected basemap is light/dark, while leaving
     // satellite imagery unchanged.
@@ -3060,10 +4900,10 @@
         document.body.classList.toggle('direct-map-dark', state.dark);
         $('themeToggle')?.setAttribute('aria-pressed', String(state.dark));
         const basemap = currentBasemap();
-        if (basemap !== 'satellite' && basemap !== (state.dark ? 'dark' : 'light')) {
-          const radio = document.querySelector(`input[name="basemap"][value="${state.dark ? 'dark' : 'light'}"]`);
-          if (radio) radio.checked = true;
-          if (state.map) switchBasemap(state.dark ? 'dark' : 'light');
+        if (['light', 'dark'].includes(basemap) && basemap !== (state.dark ? 'dark' : 'light')) {
+          const selector = $('basemapEngineSelect');
+          if (selector) selector.value = state.dark ? 'dark' : 'light';
+          if (state.map || state.fallbackMap) switchBasemap(state.dark ? 'dark' : 'light');
         }
       }, 0);
     });
@@ -3072,7 +4912,7 @@
   function switchBasemap(kind) {
     if (!state.map && state.fallbackMap) {
       if (state.fallbackBasemap) state.fallbackMap.removeLayer(state.fallbackBasemap);
-      const tiles = cartoTiles(kind) || BASEMAP_TILES[kind] || BASEMAP_TILES.light;
+      const tiles = basemapEngine(kind);
       state.fallbackBasemap = L.tileLayer(tiles.base, {
         maxZoom: 22,
         maxNativeZoom: tiles.maxzoom,
@@ -3189,8 +5029,8 @@
     try { window.localStorage.removeItem('cadastre_dark_mode'); } catch (_) { /* storage may be disabled */ }
     document.body.classList.toggle('direct-map-dark', state.dark);
     $('themeToggle')?.setAttribute('aria-pressed', String(state.dark));
-    const radio = document.querySelector(`input[name="basemap"][value="${kind}"]`);
-    if (radio) radio.checked = true;
+    const selector = $('basemapEngineSelect');
+    if (selector) selector.value = kind;
   }
 
   function loadScriptOnce(src, integrity) {
@@ -3238,6 +5078,19 @@
     state.fallbackMap.on('moveend', rememberView);
     state.fallbackMap.on('moveend', () => { if (tableView.active) void loadTableData(); });
     state.fallbackMap.on('zoomend', updateParcelZoomAffordance);
+    state.fallbackMap.on('click', (event) => {
+      if (state.sisterBatch.mode) { handleSisterBatchMapClick(event.latlng); return; }
+      if (interactionClick(event.latlng)) return;
+      handleSisterBatchMapClick(event.latlng);
+    });
+    state.fallbackMap.on('mousemove', (event) => {
+      if (state.sisterBatch.mode === 'polygon' || state.sisterBatch.mode === 'circle') previewSisterBatchDrawing(event.latlng);
+      if (workbench.mode === 'select-circle' || workbench.circleCenter || workbench.vertices.length) renderWorkbenchPreview(event.latlng);
+    });
+    state.fallbackMap.on('dblclick', () => {
+      if (state.sisterBatch.mode === 'polygon') finishSisterBatchPolygon();
+      else finishWorkbenchPolygon();
+    });
   }
 
   async function finishMapInit(restored) {
@@ -3247,10 +5100,15 @@
     } else if (!restored.hasView) {
       writeUrl();
     }
+    setupMapUtilities();
+    renderAnalysisSelection();
+    renderWorkbenchDrawings();
+    renderParcelPvpNearbyMarkers();
     if (restored.invalidView) mapStatus('Location outside Italy — showing Rome.', true);
     else if (restored.invalidParcel) mapStatus('Invalid parcel reference — selection was not loaded.', true);
     else mapStatus(state.fallbackMap ? 'Map ready (raster mode)' : 'Map ready');
     await loadCatalog();
+    if ($('toggleSisterParcels')?.checked) toggleSisterParcelsOverlay();
     const requestedView = new URLSearchParams(window.location.search);
     if (requestedView.get('panel') === 'table') setTableViewOpen(true);
     const routeNotices = {
@@ -3372,6 +5230,29 @@
     state.map.on('moveend', () => { if (tableView.active) { tableView.page = 1; void loadTableData(); } });
     state.map.on('moveend', updateParcelZoomAffordance);
     state.map.on('click', (event) => {
+      if (state.sisterBatch.mode) {
+        const parcelFeatures = state.map.getLayer('fill-cadastral-parcels')
+          ? state.map.queryRenderedFeatures(event.point, { layers: ['fill-cadastral-parcels'] }) : [];
+        handleSisterBatchMapClick(event.lngLat, parcelFeatures[0] || null);
+        return;
+      }
+      const workbenchParcels = state.map.getLayer('fill-cadastral-parcels')
+        ? state.map.queryRenderedFeatures(event.point, { layers: ['fill-cadastral-parcels'] }) : [];
+      if (interactionClick(event.lngLat, workbenchParcels[0] || null)) return;
+      if (state.map.getLayer('parcel-pvp-nearby-markers')
+        && state.map.queryRenderedFeatures(event.point, { layers: ['parcel-pvp-nearby-markers'] }).length) return;
+      const auctionParcelFeatures = state.map.getLayer('fill-auction-listed-parcels')
+        ? state.map.queryRenderedFeatures(event.point, { layers: ['fill-auction-listed-parcels'] }) : [];
+      if (auctionParcelFeatures[0]) {
+        identifyAtPoint(event.lngLat, auctionParcelFeatures[0]);
+        return;
+      }
+      const sisterParcelFeatures = state.map.getLayer('fill-sister-listed-parcels')
+        ? state.map.queryRenderedFeatures(event.point, { layers: ['fill-sister-listed-parcels'] }) : [];
+      if (sisterParcelFeatures[0]) {
+        identifyAtPoint(event.lngLat, sisterParcelFeatures[0]);
+        return;
+      }
       const features = state.map.queryRenderedFeatures(event.point, { layers: state.map.getLayer('fill-cadastral-parcels') ? ['fill-cadastral-parcels'] : [] });
       if (features[0]) {
         identifyAtPoint(event.lngLat, features[0]);
@@ -3393,8 +5274,9 @@
         .map((layer) => layer.id)
         .filter((id) => [
           'sales-clusters', 'sales-unclustered', 'auction-clusters',
-          'point-auction-properties', 'fill-sister-building-parcel',
-          'point-enrichment-fires', 'fill-enrichment-bulletin',
+          'point-auction-properties', 'fill-sister-building-parcel', 'fill-sister-listed-parcels',
+          'fill-auction-listed-parcels',
+          'point-enrichment-fires', 'fill-enrichment-bulletin', 'parcel-pvp-nearby-markers',
         ].includes(id) || (id.startsWith('sales-geo-') && id.endsWith('-points')));
       if (handledLayerIds.length && state.map.queryRenderedFeatures(event.point, { layers: handledLayerIds }).length) return;
       if (state.map.getZoom() < parcelMinZoom()) {
@@ -3403,6 +5285,14 @@
       }
       identifyAtPoint(event.lngLat, null);
     });
+    state.map.on('mousemove', (event) => {
+      if (state.sisterBatch.mode === 'polygon' || state.sisterBatch.mode === 'circle') previewSisterBatchDrawing(event.lngLat);
+      if (workbench.mode === 'select-circle' || workbench.circleCenter || workbench.vertices.length) renderWorkbenchPreview(event.lngLat);
+    });
+    state.map.on('dblclick', () => {
+      if (state.sisterBatch.mode === 'polygon') finishSisterBatchPolygon();
+      else finishWorkbenchPolygon();
+    });
   }
 
   window.landRegistryPurchaseMap = {
@@ -3410,5 +5300,6 @@
     maps: () => ({ map: state.map, fallbackMap: state.fallbackMap }),
   };
 
+  window.addEventListener('parcel-pvp-nearby-markers', (event) => setParcelPvpNearbyMarkers(event.detail));
   document.addEventListener('DOMContentLoaded', init);
 })();

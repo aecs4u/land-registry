@@ -19,6 +19,60 @@ msgstr "Land Registry"
 msgid "Land Registry Viewer"
 msgstr "Land Registry Viewer"
 
+msgid "Highlight auction sales"
+msgstr "Highlight auction sales"
+
+msgid "Highlight requests"
+msgstr "Highlight requests"
+
+msgid "Starting parcel flag refresh…"
+msgstr "Starting parcel flag refresh…"
+
+msgid "Parcel flag refresh is running…"
+msgstr "Parcel flag refresh is running…"
+
+msgid "Sign in to refresh parcel flags."
+msgstr "Sign in to refresh parcel flags."
+
+msgid "Parcel flag refresh request failed."
+msgstr "Parcel flag refresh request failed."
+
+msgid "Could not read parcel flag refresh status."
+msgstr "Could not read parcel flag refresh status."
+
+msgid "Parcel flag refresh failed."
+msgstr "Parcel flag refresh failed."
+
+msgid "Refresh completed: {updated} rows updated ({scanned} scanned)."
+msgstr "Refresh completed: {updated} rows updated ({scanned} scanned)."
+
+msgid "Refresh completed: {updated} rows marked and {cleared} stale rows cleared."
+msgstr "Refresh completed: {updated} rows marked and {cleared} stale rows cleared."
+
+msgid "Parcel flag refresh failed: {message}"
+msgstr "Parcel flag refresh failed: {message}"
+
+msgid "Unknown error"
+msgstr "Unknown error"
+
+msgid "Loading auction sale parcels…"
+msgstr "Loading auction sale parcels…"
+
+msgid "Auction sale"
+msgstr "Auction sale"
+
+msgid "This cadastral parcel is marked for auction sale."
+msgstr "This cadastral parcel is marked for auction sale."
+
+msgid "Auction parcel layer is temporarily unavailable."
+msgstr "Auction parcel layer is temporarily unavailable."
+
+msgid "Zoom in to at least level {n} to see auction sale parcels."
+msgstr "Zoom in to at least level {n} to see auction sale parcels."
+
+msgid "auction sale parcels in this view"
+msgstr "auction sale parcels in this view"
+
 msgid "Toggle dark mode"
 msgstr "Toggle dark mode"
 
@@ -899,4 +953,22 @@ msgstr "Adjacency Table"
 
 msgid "Mapping Table"
 msgstr "Mapping Table"
+
+msgid "Coverage"
+msgstr "Coverage"
+
+msgid "Data coverage views"
+msgstr "Data coverage views"
+
+msgid "Database list"
+msgstr "Database list"
+
+msgid "Database"
+msgstr "Database"
+
+msgid "Availability is checked against the connected PostgreSQL databases."
+msgstr "Availability is checked against the connected PostgreSQL databases."
+
+msgid "Loading database list…"
+msgstr "Loading database list…"
 

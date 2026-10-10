@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 
-from land_registry import parcel_report
+from land_registry import i18n, parcel_report, stats_service
 from land_registry.routers import enrichment as enrichment_module
 
 
@@ -147,16 +148,113 @@ def test_source_register_does_not_infer_an_omi_reuse_licence():
     assert "does not state a named reuse licence" in rows["Provider use terms"]
 
 
-def test_source_register_keeps_mixed_nasa_firms_product_licence_unassigned():
+def test_source_register_keeps_nasa_firms_product_licence_unassigned():
     rows = dict(parcel_report._source_register_rows(
-        "NASA FIRMS via aecs4u-stats",
+        "NASA FIRMS VIIRS NOAA-21 NRT via aecs4u-stats",
         {},
         lambda message: message,
     ))
 
     assert rows["Licence"] == "Not reported in source metadata"
-    assert "sensor-specific FIRMS collection" in rows["Provider use terms"]
-    assert rows["Licence review status"] == "Official general data policy reviewed; product licence pending"
+    assert "VIIRS_NOAA21_NRT" in rows["Provider use terms"]
+    assert "No product-specific reuse terms" in rows["Provider use terms"]
+    assert rows["Licence review status"] == "Official policy scope reviewed; product-specific terms pending"
+    assert rows["Provider URL"].endswith("FIRMS_VIIRS_Firehotspots.html")
+    assert "VIIRS NOAA-21 Near Real-Time" in rows["Provider citation"]
+
+
+def test_source_register_reports_ispra_coastal_dataset_terms_and_period():
+    rows = dict(parcel_report._source_register_rows(
+        "ISPRA coastal dynamics 2006-2020",
+        {},
+        lambda message: message,
+    ))
+
+    assert rows["Catalog provider"] == "ISPRA — Linea di Costa 2020 v2.0"
+    assert rows["Licence"] == "Creative Commons Attribution 4.0 International (CC BY 4.0)"
+    assert rows["Licence review status"] == "Official provider terms reviewed"
+    assert "5 m" in rows["Provider use terms"]
+    assert "Google Maps imagery" in rows["Provider use terms"]
+    assert "2006–2020" in rows["Provider citation"]
+    assert rows["Provider attribution"].startswith("ISPRA, Linea di Costa 2020 v2.0")
+
+
+def test_ispra_coastal_source_register_is_translated_for_italian_reports():
+    rows = parcel_report._source_register_rows(
+        "ISPRA coastal dynamics 2006-2020",
+        {},
+        i18n._load_translation("it").gettext,
+    )
+    values = [value for _, value in rows]
+
+    assert any(value.startswith("I metadati RNDT") for value in values)
+    assert any(value.endswith("Metadati fonte: RNDT.") for value in values)
+
+
+def test_active_fires_uses_noaa21_nrt_and_reports_product_provenance(monkeypatch):
+    seen = {}
+
+    def fake_active_fires(**kwargs):
+        seen.update(kwargs)
+        return []
+
+    monkeypatch.setattr(stats_service, "_active_fires", fake_active_fires)
+
+    result = stats_service.get_active_fires()
+
+    assert seen["source"] == "VIIRS_NOAA21_NRT"
+    assert result["source_product"] == "VIIRS_NOAA21_NRT"
+    assert "NOAA-21 NRT" in result["source"]
+
+
+@pytest.mark.asyncio
+async def test_fires_route_uses_the_selected_product_adapter(monkeypatch):
+    seen = {}
+
+    def fake_get_active_fires(radius_km, lat, lng):
+        seen.update(radius_km=radius_km, lat=lat, lng=lng)
+        return {"count": 0, "source_product": "VIIRS_NOAA21_NRT"}
+
+    monkeypatch.setattr(stats_service, "get_active_fires", fake_get_active_fires)
+
+    result = await enrichment_module._get_fires(lat=41.9, lng=12.5, radius_km=25)
+
+    assert seen == {"radius_km": 25, "lat": 41.9, "lng": 12.5}
+    assert result["source_product"] == "VIIRS_NOAA21_NRT"
+
+
+@pytest.mark.asyncio
+async def test_quality_of_life_route_falls_back_with_country_scope(monkeypatch):
+    monkeypatch.setattr(stats_service, "aget_quality_of_life_indicators", AsyncMock(return_value=None))
+    fallback = {
+        "spatial_resolution": "country",
+        "country_name": "Italy",
+        "scope_note": "Country-level relocation indicators for {country}; these values do not describe the province or parcel.",
+    }
+    country_lookup = AsyncMock(return_value=fallback)
+    monkeypatch.setattr(stats_service, "aget_country_quality_of_life_indicators", country_lookup)
+
+    result = await enrichment_module._get_quality_of_life("H501")
+
+    assert result == fallback
+    country_lookup.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_crime_route_uses_country_safety_when_local_result_is_empty(monkeypatch):
+    monkeypatch.setattr(
+        enrichment_module._aecs4u_stats_enrichment,
+        "get_crime",
+        AsyncMock(return_value={"total_crimes": None, "crime_types": None, "year": None}),
+    )
+    fallback = {"safety_index": 71.5, "spatial_resolution": "country", "country": "Italy"}
+    country_lookup = AsyncMock(return_value=fallback)
+    monkeypatch.setattr(stats_service, "aget_country_safety_profile", country_lookup)
+
+    result = await enrichment_module._get_crime("H501")
+
+    assert result == fallback
+    country_lookup.assert_awaited_once_with()
 
 
 @pytest.mark.parametrize(
@@ -380,17 +478,40 @@ async def test_parcel_details_panel_view_is_compact_and_full_view_stays_compatib
 
     requested_views = []
 
-    async def get_profile(_reference, _refresh=False, view="full"):
-        requested_views.append(view)
+    async def get_profile(_reference, _refresh=False, view="full", feature_id=None):
+        requested_views.append((view, feature_id))
         return enrichment_module.stats_service.parcel_panel_read_model(profile) if view == "panel" else profile
 
     monkeypatch.setattr(enrichment_module.stats_service, "aget_parcel_enrichment", get_profile)
 
-    full = await enrichment_module.get_parcel_details("H501_1.2", refresh=False)
-    panel = await enrichment_module.get_parcel_details("H501_1.2", refresh=False, view="panel")
+    full = await enrichment_module.get_parcel_details(
+        "H501_1.2", refresh=False, view="full"
+    )
+    full_feature = await enrichment_module.get_parcel_details(
+        "H501_1.2", refresh=False, view="full", id=44
+    )
+    panel = await enrichment_module.get_parcel_details(
+        "H501_1.2", refresh=False, view="panel", id=55
+    )
 
     assert full is profile
-    assert requested_views == ["full", "panel"]
+    assert full_feature is profile
+    assert requested_views == [("full", None), ("full", 44), ("panel", 55)]
     assert set(panel) == {"national_reference", "blocks", "read_model", "source"}
     assert panel["blocks"]["valuation"]["data"]["quote_count"] == 10
     assert len(panel["blocks"]["valuation"]["data"]["quote_preview"]) == 8
+
+
+@pytest.mark.asyncio
+async def test_parcel_details_returns_503_when_canonical_feature_lookup_fails(monkeypatch):
+    async def lookup(*_args, **_kwargs):
+        raise stats_service.CanonicalParcelLookupError("canonical source unavailable")
+
+    monkeypatch.setattr(enrichment_module.stats_service, "aget_parcel_enrichment", lookup)
+
+    with pytest.raises(HTTPException) as error:
+        await enrichment_module.get_parcel_details(
+            "H501_1.2", refresh=False, view="panel", id=55
+        )
+
+    assert error.value.status_code == 503

@@ -13,6 +13,7 @@ a refresh fails) and filters that copy per request.
 from __future__ import annotations
 
 import asyncio
+import heapq
 import logging
 import math
 import os
@@ -102,6 +103,7 @@ _DETAIL_COLUMNS = (
     "city", "province", "postal_code", "address", "street", "house_number", "url",
     "latitude", "longitude", "address_source", "geocoding_source", "coordinate_is_approximate",
 )
+SPATIAL_CELL_DEGREES = 0.1
 
 
 def sale_category(property_type: Optional[str], description: Optional[str] = None) -> str:
@@ -342,8 +344,12 @@ class PvpSalesStore:
                                 connection, [row["sale_id"] for row in rows if row["sale_id"] is not None]
                             )
                 cadastral_points = await self._resolve_cadastral_points(asset_references)
-                snapshot = self._build_snapshot(rows)
-                self._apply_cadastral_points(snapshot, cadastral_points)
+                # This view can contain hundreds of thousands of rows. Keep
+                # its Python-side normalization and grid construction off the
+                # event loop so one cold PVP refresh cannot stall unrelated
+                # parcel enrichment requests.
+                snapshot = await asyncio.to_thread(self._build_snapshot, rows)
+                await asyncio.to_thread(self._apply_cadastral_points, snapshot, cadastral_points)
                 snapshot["columns"] = sorted(columns)
                 snapshot["relation"] = relation
                 snapshot["database"] = (
@@ -477,6 +483,7 @@ class PvpSalesStore:
     ) -> None:
         if not cadastral_points:
             return
+        updated = False
         for point in snapshot["points"]:
             parcel_point = cadastral_points.get(point[0])
             if parcel_point is None:
@@ -486,6 +493,20 @@ class PvpSalesStore:
             # PointOnSurface is a reliable pin within the parcel footprint,
             # while still being an approximation of the property's entrance.
             point[6] = 1
+            updated = True
+        if updated:
+            snapshot["spatial_index"] = PvpSalesStore._build_spatial_index(snapshot["points"])
+
+    @staticmethod
+    def _build_spatial_index(points: list[list[Any]]) -> dict[tuple[int, int], list[int]]:
+        index: dict[tuple[int, int], list[int]] = {}
+        for point_index, point in enumerate(points):
+            cell = (
+                math.floor(point[2] / SPATIAL_CELL_DEGREES),
+                math.floor(point[1] / SPATIAL_CELL_DEGREES),
+            )
+            index.setdefault(cell, []).append(point_index)
+        return index
 
     @staticmethod
     def _build_snapshot(rows: Iterable[Any]) -> dict[str, Any]:
@@ -513,11 +534,32 @@ class PvpSalesStore:
         for point in points:
             if shared[(point[1], point[2])] >= APPROXIMATE_LOCATION_SHARE:
                 point[6] = 1
+        spatial_index = PvpSalesStore._build_spatial_index(points)
         return {
             "points": points,
             "days": days,
+            "spatial_index": spatial_index,
             "loaded_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         }
+
+    @staticmethod
+    def _bbox_candidates(snapshot: dict[str, Any], bbox: tuple[float, float, float, float]) -> Iterable[int]:
+        """Indexes of the points whose grid cell touches ``bbox`` (west, south, east, north).
+
+        Falls back to every point when the snapshot has no spatial index or the
+        box covers more cells than the index holds, so a national view does not
+        walk millions of empty cells.
+        """
+        points = snapshot["points"]
+        index = snapshot.get("spatial_index")
+        if not index:
+            return range(len(points))
+        west, south, east, north = bbox
+        lng0, lng1 = math.floor(west / SPATIAL_CELL_DEGREES), math.floor(east / SPATIAL_CELL_DEGREES)
+        lat0, lat1 = math.floor(south / SPATIAL_CELL_DEGREES), math.floor(north / SPATIAL_CELL_DEGREES)
+        if (lng1 - lng0 + 1) * (lat1 - lat0 + 1) > len(index):
+            return (i for cell, items in index.items() if lat0 <= cell[0] <= lat1 and lng0 <= cell[1] <= lng1 for i in items)
+        return (i for la in range(lat0, lat1 + 1) for lo in range(lng0, lng1 + 1) for i in index.get((la, lo), ()))
 
     async def map_points(
         self,
@@ -529,14 +571,32 @@ class PvpSalesStore:
         today: Optional[date] = None,
         wait: bool = False,
         refresh: bool = False,
+        bbox: Optional[tuple[float, float, float, float]] = None,
+        limit: Optional[int] = None,
     ) -> Optional[dict[str, Any]]:
+        """Sales points, optionally restricted to a viewport.
+
+        With ``bbox`` (west, south, east, north) only the points inside it are
+        scanned and returned, capped at ``limit`` (nearest to the box centre
+        first) with ``truncated`` set when more matched. Category counts then
+        describe the viewport. Without ``bbox`` the national feed is returned
+        unchanged for existing consumers.
+        """
         snapshot = await (self.refresh() if refresh else self.snapshot(wait=wait))
         if snapshot is None:
             return None
         start, end = _period_start_end(period, today or date.today())
         selected: list[list[Any]] = []
         category_counts: Counter[str] = Counter()
-        for point, day in zip(snapshot["points"], snapshot["days"]):
+        points_all, days_all = snapshot["points"], snapshot["days"]
+        if bbox is not None:
+            west, south, east, north = bbox
+            iterator = ((points_all[i], days_all[i]) for i in self._bbox_candidates(snapshot, bbox))
+        else:
+            iterator = zip(points_all, days_all)
+        for point, day in iterator:
+            if bbox is not None and not (west <= point[1] <= east and south <= point[2] <= north):
+                continue
             if start is not None and (day is None or day < start):
                 continue
             if end is not None and (day is None or day > end):
@@ -551,7 +611,16 @@ class PvpSalesStore:
             if categories and point[5] not in categories:
                 continue
             selected.append(point)
-        return {
+        matched = len(selected)
+        truncated = False
+        if bbox is not None and limit is not None and matched > limit:
+            centre_lng, centre_lat = (bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2
+            selected = heapq.nsmallest(
+                limit, selected,
+                key=lambda point: (point[1] - centre_lng) ** 2 + (point[2] - centre_lat) ** 2,
+            )
+            truncated = True
+        payload = {
             "source": {
                 "relation": snapshot.get("relation", SALES_RELATION),
                 "database": snapshot.get("database", "aecs4u-stats"),
@@ -566,6 +635,91 @@ class PvpSalesStore:
             ],
             "count": len(selected),
             "points": selected,
+        }
+        if bbox is not None:
+            payload.update({"bbox": list(bbox), "matched": matched, "truncated": truncated})
+        return payload
+
+    async def nearby_points(
+        self,
+        *,
+        lat: float,
+        lng: float,
+        radius_km: float,
+        limit: int = 8,
+        wait: bool = True,
+    ) -> Optional[dict[str, Any]]:
+        """Count nearby geocoded sales and return only the nearest ``limit`` points."""
+        snapshot = await self.snapshot(wait=wait)
+        if snapshot is None:
+            return None
+        return await asyncio.to_thread(
+            self._nearby_points_from_snapshot, snapshot, lat, lng, radius_km, limit,
+        )
+
+    @staticmethod
+    def _nearby_points_from_snapshot(
+        snapshot: dict[str, Any], lat: float, lng: float, radius_km: float, limit: int,
+    ) -> dict[str, Any]:
+        lat_delta = radius_km / 110.574
+        longitude_scale = max(abs(math.cos(math.radians(lat))), 0.01)
+        lng_delta = radius_km / (111.320 * longitude_scale)
+        min_lat_cell = math.floor((lat - lat_delta) / SPATIAL_CELL_DEGREES)
+        max_lat_cell = math.floor((lat + lat_delta) / SPATIAL_CELL_DEGREES)
+        min_lng_cell = math.floor((lng - lng_delta) / SPATIAL_CELL_DEGREES)
+        max_lng_cell = math.floor((lng + lng_delta) / SPATIAL_CELL_DEGREES)
+        spatial_index = snapshot.get("spatial_index") or {}
+        points = snapshot["points"]
+        nearest: list[tuple[float, int, int]] = []
+        match_count = 0
+        if spatial_index:
+            candidates = (
+                point_index
+                for lat_cell in range(min_lat_cell, max_lat_cell + 1)
+                for lng_cell in range(min_lng_cell, max_lng_cell + 1)
+                for point_index in spatial_index.get((lat_cell, lng_cell), ())
+            )
+        else:
+            candidates = range(len(points))
+        phi1 = math.radians(lat)
+        cosine_phi1 = math.cos(phi1)
+        for point_index in candidates:
+            point = points[point_index]
+            point_lng, point_lat = point[1], point[2]
+            phi2 = math.radians(point_lat)
+            delta_phi = phi2 - phi1
+            delta_lambda = math.radians(point_lng - lng)
+            haversine = (
+                math.sin(delta_phi / 2) ** 2
+                + cosine_phi1 * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2
+            )
+            haversine = min(1.0, max(0.0, haversine))
+            distance_km = 6371.0088 * 2 * math.atan2(math.sqrt(haversine), math.sqrt(1 - haversine))
+            if distance_km > radius_km:
+                continue
+            match_count += 1
+            heap_item = (-distance_km, -point_index, point_index)
+            if len(nearest) < limit:
+                heapq.heappush(nearest, heap_item)
+            elif distance_km < -nearest[0][0]:
+                heapq.heapreplace(nearest, heap_item)
+
+        selected = sorted(
+            ((-negative_distance, point_index) for negative_distance, _negative_index, point_index in nearest),
+            key=lambda item: item[0],
+        )
+        return {
+            "source": {
+                "relation": snapshot.get("relation", SALES_RELATION),
+                "database": snapshot.get("database", "aecs4u-stats"),
+                "loaded_at": snapshot["loaded_at"],
+                "geocoded_sales": len(points),
+            },
+            "center": {"lat": lat, "lng": lng},
+            "radius_km": radius_km,
+            "count": match_count,
+            "fields": [*POINT_FIELDS, "distance_km"],
+            "points": [points[point_index] + [round(distance_km, 1)] for distance_km, point_index in selected],
         }
 
     async def sale_detail(self, sale_id: int) -> Optional[dict[str, Any]]:

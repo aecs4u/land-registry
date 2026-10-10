@@ -42,6 +42,8 @@ from PIL import Image
 from shapely import wkb
 from shapely.geometry import Point
 
+from land_registry.pg_ssl import plain_loopback_dsn
+
 log = logging.getLogger(__name__)
 
 
@@ -131,7 +133,7 @@ class PostgresCadastralBoundarySource:
                     import psycopg2.pool
 
                     self._pool = _call_with_hard_timeout(
-                        psycopg2.pool.ThreadedConnectionPool, 5, 1, self.max_connections, self.dsn
+                        psycopg2.pool.ThreadedConnectionPool, 5, 1, self.max_connections, plain_loopback_dsn(self.dsn)
                     )
         return self._pool
 

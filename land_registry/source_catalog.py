@@ -115,6 +115,37 @@ SOURCE_CATALOG = (
         ),
     ),
     SourceCatalogEntry(
+        key="ispra_coastal_dynamics",
+        display_name="ISPRA — Linea di Costa 2020 v2.0",
+        aliases=(
+            "ISPRA coastal dynamics 2006-2020",
+            "ISPRA Dinamica Litoranea 2006-2020",
+            "ISPRA Linea di Costa 2020 v2.0",
+        ),
+        provider_url=(
+            "https://sinacloud.isprambiente.it/arcgisadv/rest/services/coste/"
+            "Assetto_costiero_anno_2020/FeatureServer/1"
+        ),
+        license_name="Creative Commons Attribution 4.0 International (CC BY 4.0)",
+        license_basis="official_terms_reviewed",
+        terms_url=(
+            "https://geodati.gov.it/geoportale/visualizzazione-metadati/"
+            "scheda-metadati?metadataid=ispra_rm%3A01Lineacosta2020_v2.0_DT"
+        ),
+        citation="ISPRA, Linea di Costa 2020 v2.0; Dinamica Litoranea 2006–2020",
+        reuse_terms=(
+            "The National Territorial Data Catalog (RNDT) metadata for ISPRA's Linea di Costa 2020 v2.0 "
+            "states CC BY 4.0. The related 2006–2020 shoreline-dynamics layer classifies erosion as inland "
+            "movement greater than 5 m, advance as seaward movement greater than 5 m, and smaller changes "
+            "as stable. The 2020 shoreline characterization was derived mostly from Google Maps imagery "
+            "from 2017–2020; this entry covers the ISPRA vector dataset, not the underlying imagery."
+        ),
+        attribution_text=(
+            "ISPRA, Linea di Costa 2020 v2.0 — Dinamica Litoranea 2006–2020. "
+            "CC BY 4.0. Source metadata: RNDT."
+        ),
+    ),
+    SourceCatalogEntry(
         key="istat",
         display_name="ISTAT",
         aliases=("ISTAT",),
@@ -212,20 +243,24 @@ SOURCE_CATALOG = (
     ),
     SourceCatalogEntry(
         key="nasa_firms",
-        display_name="NASA FIRMS",
-        aliases=("NASA FIRMS", "FIRMS"),
-        provider_url="https://firms.modaps.eosdis.nasa.gov/",
+        display_name="NASA FIRMS — NOAA-21 VIIRS NRT",
+        aliases=("NASA FIRMS", "FIRMS", "VIIRS_NOAA21_NRT", "VIIRS NOAA-21 NRT"),
+        provider_url="https://firms.modaps.eosdis.nasa.gov/content/descriptions/FIRMS_VIIRS_Firehotspots.html",
         license_name=None,
-        license_basis="official_general_policy_reviewed",
+        license_basis="official_policy_scope_reviewed",
         terms_url="https://www.earthdata.nasa.gov/engage/open-data-services-software/data-use-policy",
+        citation="NASA FIRMS VIIRS NOAA-21 Near Real-Time active fire detections",
         reuse_terms=(
-            "NASA Earthdata says NASA-led mission data are CC0 unless marked with a restriction or licence; "
-            "non-NASA data retain their provider terms. The adapter does not report a sensor-specific FIRMS "
-            "collection, so no single product licence is asserted."
+            "The adapter requests VIIRS_NOAA21_NRT (NOAA-21/JPSS-2 VIIRS near-real-time), rather than a mixed "
+            "sensor collection. NOAA NCEI labels its upstream NOAA JPSS VIIRS sensor-data record CC0, but that "
+            "does not establish terms for NASA FIRMS's derived active-fire detections. NASA's policy says non-NASA "
+            "data retain their sponsoring organization's terms. No product-specific reuse terms were found for this "
+            "FIRMS feed, so no named licence is asserted. NOAA input-data metadata: "
+            "https://www.ncei.noaa.gov/access/metadata/landing-page/bin/iso?id=gov.noaa.ncdc%3AC00864"
         ),
         attribution_text=(
-            "NASA FIRMS active fire data. NASA should be acknowledged as the source where applicable; "
-            "do not imply NASA endorsement. Check product metadata for non-NASA sensor terms."
+            "NASA FIRMS VIIRS NOAA-21 Near Real-Time active fire detections. Acknowledge the source and do not "
+            "imply NASA or NOAA endorsement."
         ),
     ),
 )

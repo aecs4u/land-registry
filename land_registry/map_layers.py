@@ -68,6 +68,11 @@ class MapLayerSpec:
     require_gist_index: bool = True
     # Change when tile geometry/selection changes so browsers fetch fresh tiles.
     tile_revision: str = ""
+    # Highest zoom at which the browser requests tiles. Above it MapLibre
+    # overzooms the tile it already has, so a z18 view reuses z16 tiles instead
+    # of requesting 4-16x more of them. At z16 one tile unit is ~0.15 m, finer
+    # than any source geometry here.
+    tile_max_zoom: int = 16
     # Relations can move between schemas during canonical-database migrations.
     # Keep alternatives explicit and allow-listed just like the primary table.
     fallback_tables: tuple[str, ...] = ()
@@ -109,7 +114,7 @@ MAP_LAYERS: tuple[MapLayerSpec, ...] = (
     # region or a row count here; health() reports the current estimated extent
     # from PostGIS statistics when ANALYZE data is available.
     MapLayerSpec("cadastral-sheets", "Cadastral sheets", "spatial.cadastral_sheet", "geom", min_zoom=10, geojson_max_area=4.0, coverage="unknown", properties=("id", "sheet_reference", "municipality_id", "level", "level_name", "area_sqm", "source_release"), group="cadastral", color="#1976a8", z_order=70, tile_revision="regional-1"),
-    MapLayerSpec("cadastral-parcels", "Cadastral parcels", "spatial.cadastral_parcel", "geom", min_zoom=14, max_features=5000, geojson_max_area=0.04, coverage="unknown", properties=("id", "canonical_reference", "national_cadastral_reference", "parcel", "sheet", "municipality_id", "area_sqm", "source_release"), group="cadastral", color="#d97925", z_order=90, fill_opacity=0.04, line_width=0.8, tile_revision="regional-1"),
+    MapLayerSpec("cadastral-parcels", "Cadastral parcels", "spatial.cadastral_parcel", "geom", min_zoom=14, max_features=5000, geojson_max_area=0.04, coverage="unknown", properties=("id", "canonical_reference", "national_cadastral_reference", "parcel", "sheet", "municipality_id", "area_sqm", "source_release", "has_visura", "is_auction_sale"), group="cadastral", color="#d97925", z_order=90, fill_opacity=0.04, line_width=0.8, tile_revision="regional-4"),
     MapLayerSpec("urban-sections", "Cadastral urban sections", "sezioni_urbane.sezioni_urbane", "geom", id_column="OGC_FID", min_zoom=11, coverage="unknown", properties=("OGC_FID", "nationalcadastralzoningreference", "administrativeunit", "sezione_urbana"), group="cadastral", color="#2f9aa8", z_order=80, require_gist_index=False),
     MapLayerSpec("market-zones", "OMI market zones", "zornade.zornade_zone_omi", "geom", id_column="OGC_FID", min_zoom=10, properties=("OGC_FID", "codcom", "codzona", "zona_descr", "comune_descrizione", "descr_tip_prev", "compr_min", "compr_max"), group="market", color="#7b61a8", z_order=30, require_gist_index=False, tile_revision="2"),
     MapLayerSpec("postal-zones", "Postal zones", "cap_subcomunali.cap_subcomunali", "geom", id_column="OGC_FID", min_zoom=10, properties=("OGC_FID", "cap", "comune_cap", "comune", "provincia", "regione", "fonte"), group="administrative", color="#8a7a3d", z_order=40, require_gist_index=False, tile_revision="3"),
@@ -239,6 +244,42 @@ def _json_row(row: Any) -> dict[str, Any]:
     return {name: _json_value(value) for name, value in row.items()}
 
 
+def _sister_cadastral_values(value: Any, *, sheet: bool = False) -> set[str]:
+    """Normalize the fixed-width sheet and parcel values used by AdE and SISTER."""
+    text = str(value or "").strip()
+    if not text:
+        return set()
+    values = {text}
+    try:
+        compact = str(int(text))
+    except ValueError:
+        compact = text.lstrip("0") or "0"
+    values.add(compact)
+    # Some AdE regional extracts encode a sheet as a six-character number
+    # whose last two zeroes are a precision marker (e.g. 001800 -> SISTER 18).
+    if sheet and compact.isdigit() and int(compact) >= 100 and int(compact) % 100 == 0:
+        values.add(str(int(compact) // 100))
+    return values
+
+
+def _sister_reference_parts(reference: Any) -> tuple[str, str, str, str]:
+    """Extract municipality, section, sheet and parcel from a cadastral reference."""
+    value = str(reference or "").strip().upper()
+    if "_" in value:
+        head, suffix = value.split("_", 1)
+        match = re.fullmatch(r"([A-Z]\d{3})([A-Z]?)", head)
+        sheet, _, parcel = suffix.partition(".")
+    else:
+        match = re.match(r"^([A-Z]\d{3})([A-Z]?)(\d+)\.(.+)$", value)
+        sheet, parcel = (match.group(3), match.group(4)) if match else ("", "")
+    if not match:
+        return "", "", "", ""
+    return match.group(1), match.group(2), sheet, parcel.split("/", 1)[0]
+
+
+# SISTER document types that are a visura per immobile (the `has_visura` flag).
+_VISURA_DOCUMENT_TYPES = ("visura_fabbricati", "visura_terreni", "visura")
+
 _PLACEHOLDER = re.compile(r"%(s|%)")
 
 
@@ -270,8 +311,21 @@ class _AsyncpgConnectionSource:
 
     RETRY_AFTER_SECONDS = 10.0
 
-    def __init__(self, dsn: str, max_connections: int = 8, connect_timeout: float = 3.0):
+    # Every pooled connection that reads a foreign table keeps one backend open
+    # on each remote server it touched, so the pool size multiplies across the
+    # ~10 foreign servers behind the map. Four keeps a tile burst from using
+    # up Postgres' connection slots; override with MAP_DB_POOL_MAX.
+    DEFAULT_POOL_SIZE = 4
+    ACQUIRE_TIMEOUT_SECONDS = 15.0
+
+    def __init__(self, dsn: str, max_connections: Optional[int] = None, connect_timeout: float = 3.0):
         self.dsn = dsn.replace("postgresql+asyncpg://", "postgresql://", 1)
+        if max_connections is None:
+            try:
+                max_connections = int(os.getenv("MAP_DB_POOL_MAX", ""))
+            except ValueError:
+                max_connections = self.DEFAULT_POOL_SIZE
+            max_connections = max(1, min(max_connections, 32))
         self.max_connections = max_connections
         self.connect_timeout = connect_timeout
         self._pool = None
@@ -396,7 +450,7 @@ class _AsyncpgConnectionSource:
     @asynccontextmanager
     async def connection(self) -> AsyncIterator[Any]:
         pool = await self._get_pool()
-        async with pool.acquire(timeout=5) as connection:
+        async with pool.acquire(timeout=self.ACQUIRE_TIMEOUT_SECONDS) as connection:
             yield connection
 
     async def close(self) -> None:
@@ -505,11 +559,23 @@ class PostgresMapLayerSource:
                         if canonical_exists
                         else False
                     )
+                    canonical_has_parcel_flags = (
+                        await connection.fetchval("""
+                            SELECT count(*) = 2
+                            FROM pg_attribute
+                            WHERE attrelid = to_regclass($1)
+                              AND attname::text IN ('has_visura', 'is_auction_sale')
+                              AND attnum > 0 AND NOT attisdropped
+                        """, layer.table)
+                        if canonical_exists and layer.id == "cadastral-parcels"
+                        else True
+                    )
             except Exception as exc:
                 log.debug("Canonical cadastral source unavailable: %s", exc)
                 canonical_exists = False
                 canonical_has_features = False
-            if canonical_exists and canonical_has_features:
+                canonical_has_parcel_flags = False
+            if canonical_exists and canonical_has_features and canonical_has_parcel_flags:
                 self._cadastral_routes[layer.id] = (selected, time.monotonic() + 300)
                 return selected
         try:
@@ -566,7 +632,12 @@ class PostgresMapLayerSource:
     async def health(self) -> list[dict[str, Any]]:
         """Return relation/index readiness and estimated extents for map layers."""
         if not self.available:
-            return [{"id": layer.id, "available": False} for layer in MAP_LAYERS]
+            return [{
+                "id": layer.id, "available": False,
+                "schema": layer.table.split(".", 1)[0],
+                "schema_exists": None, "database_name": None,
+                "source_database": "aecs4u-stats",
+            } for layer in MAP_LAYERS]
         checks = []
         sql = _asyncpg_sql("""
             WITH relation AS (
@@ -600,7 +671,9 @@ class PostgresMapLayerSource:
                          AND gc.f_table_name = r.table_name
                          AND gc.f_geometry_column = r.geometry_column
                        LIMIT 1
-                   ), 0)::integer AS geometry_srid
+                   ), 0)::integer AS geometry_srid,
+                   to_regnamespace(r.schema_name) IS NOT NULL AS schema_exists,
+                   current_database() AS database_name
             FROM relation r
             LEFT JOIN pg_class c ON c.oid = r.relation_oid
         """)
@@ -619,21 +692,48 @@ class PostgresMapLayerSource:
             FROM wgs84
         """
         for layer in MAP_LAYERS:
+            schema = layer.table.split(".", 1)[0]
+            source_database = "aecs4u-stats"
             try:
                 layer_source = await self._layer_source_for(layer)
                 if layer_source is None:
-                    checks.append({"id": layer.id, "available": False})
+                    checks.append({
+                        "id": layer.id, "available": False, "schema": schema,
+                        "schema_exists": None, "database_name": None,
+                        "source_database": source_database,
+                    })
                     continue
+                if layer_source is self.cadastral_connection_source:
+                    source_database = "cadastral"
+                elif layer_source is self.census_connection_source:
+                    source_database = "census"
+                elif layer_source is self.hazards_connection_source:
+                    source_database = "hazards"
+                elif layer_source is self.egms_connection_source:
+                    source_database = "egms"
                 relation = await self._resolve_relation_for(layer, layer_source)
                 schema, table = relation.split(".", 1)
                 async with layer_source.connection() as connection:
                     if layer.id in CADASTRAL_LAYER_IDS and layer_source is self.cadastral_connection_source:
-                        checks.append(await regional_health(connection, layer.id, relation))
+                        check = await regional_health(connection, layer.id, relation)
+                        check.update({
+                            "schema": schema,
+                            "schema_exists": bool(await connection.fetchval(
+                                "SELECT to_regnamespace($1::text) IS NOT NULL", schema
+                            )),
+                            "database_name": await connection.fetchval("SELECT current_database()"),
+                            "source_database": source_database,
+                        })
+                        checks.append(check)
                         continue
                     row = await connection.fetchrow(
                         sql, layer.id, relation, schema, table, layer.geometry_column, layer.source_srid
                     )
                     values = tuple(row) if row else (layer.id, False, 0, False, False, 0)
+                    schema_exists = (
+                        None if len(values) <= 6 or values[6] is None else bool(values[6])
+                    )
+                    database_name = str(values[7]) if len(values) > 7 and values[7] else None
                     geometry_srid = int(values[5] or 0)
                     if layer.id == "solar-potential" and values[1]:
                         # The consolidated solar relation contains attributes
@@ -665,6 +765,10 @@ class PostgresMapLayerSource:
                             and geometry_srid == layer.source_srid
                         ),
                         "relation_exists": bool(values[1]),
+                        "schema": schema,
+                        "schema_exists": schema_exists,
+                        "database_name": database_name,
+                        "source_database": source_database,
                         "geometry_column_exists": bool(values[3]),
                         "gist_index_exists": has_spatial_index,
                         "requires_gist_index": layer.require_gist_index,
@@ -694,7 +798,11 @@ class PostgresMapLayerSource:
                 # Keep one database outage from marking every independent
                 # catalog layer unhealthy.
                 log.warning("Map layer health check failed for %s: %s", layer.id, exc)
-                checks.append({"id": layer.id, "available": False})
+                checks.append({
+                    "id": layer.id, "available": False, "schema": schema,
+                    "schema_exists": None, "database_name": None,
+                    "source_database": source_database,
+                })
                 continue
             checks.append(check)
         return checks
@@ -895,6 +1003,455 @@ class PostgresMapLayerSource:
             })
         return {"type": "FeatureCollection", "features": features}
 
+    async def read_sister_parcels(
+        self, bbox: tuple[float, float, float, float], limit: int = 3000
+    ) -> dict[str, Any]:
+        """Return visible parcel polygons whose cadastral keys occur in SISTER.
+
+        SISTER and the canonical parcel geometry can live in separate databases.
+        Keep the map query spatially bounded, then match only the visible parcel
+        keys against the read-only SISTER view in aecs4u-stats.
+        """
+        layer = get_map_layer("cadastral-parcels")
+        stats_source = self.connection_source
+        if stats_source is None:
+            return {"available": False, "type": "FeatureCollection", "features": []}
+        parcel_source = await self._layer_source_for(layer)
+        if parcel_source is None:
+            return {"available": False, "type": "FeatureCollection", "features": []}
+
+        west, south, east, north = (float(value) for value in bbox)
+        if (east - west) * (north - south) > layer.geojson_max_area:
+            return {
+                "available": True,
+                "type": "FeatureCollection",
+                "features": [],
+                "zoom_required": layer.min_zoom,
+            }
+
+        relation = self._query_relation(layer, await self._resolve_relation_for(layer, parcel_source))
+        web_bbox = f"ST_MakeEnvelope({west!r}, {south!r}, {east!r}, {north!r}, 4326)"
+        source_bbox = f"ST_Transform({web_bbox}, {layer.source_srid})"
+        if parcel_source is self.cadastral_connection_source:
+            # The dedicated cadastral database publishes one normalized union
+            # view with SISTER's municipality/province names already attached.
+            context_columns = (
+                "t.province AS province, t.municipality_name AS municipality_name, "
+                "t.municipality_code AS municipality_code"
+            )
+            context_joins = ""
+        else:
+            # The aecs4u-stats canonical table stores only the municipality ID;
+            # resolve names through its administrative spine below.
+            context_columns = (
+                "u.canonical_name AS municipality_name, province.canonical_name AS province, "
+                "NULL::text AS municipality_code"
+            )
+            context_joins = """
+                LEFT JOIN geo.geo_unit AS u ON u.id = t.municipality_id
+                LEFT JOIN geo.geo_relation AS province_relation
+                  ON province_relation.child_id = u.id
+                 AND province_relation.relation_type = 'contains'
+                LEFT JOIN geo.geo_unit AS province
+                  ON province.id = province_relation.parent_id
+                 AND province.unit_type = 'province'
+            """
+
+        candidate_sql = f"""
+            WITH bounds AS (
+                SELECT ST_MakeEnvelope(%s, %s, %s, %s, 4326) AS web
+            )
+            SELECT t.id, t.canonical_reference, t.national_cadastral_reference,
+                   t.parcel, t.sheet, t.source_release,
+                   {context_columns},
+                   ST_AsGeoJSON(ST_Intersection(ST_Transform(t.{layer.geometry_column}, 4326), bounds.web)) AS geometry
+            FROM {relation} AS t {context_joins} CROSS JOIN bounds
+            WHERE t.{layer.geometry_column} && {source_bbox}
+              AND ST_Intersects(t.{layer.geometry_column}, {source_bbox})
+            ORDER BY t.{layer.id_column}
+            LIMIT %s
+        """
+        async with parcel_source.connection() as connection:
+            candidate_rows = await connection.fetch(
+                _asyncpg_sql(candidate_sql),
+                west, south, east, north,
+                layer.max_features + 1,
+            )
+        candidates_truncated = len(candidate_rows) > layer.max_features
+        candidate_rows = candidate_rows[:layer.max_features]
+
+        candidate_context = []
+        missing_codes = set()
+        for row in candidate_rows:
+            values = dict(row)
+            reference = values.get("national_cadastral_reference") or values.get("canonical_reference")
+            code, section, ref_sheet, ref_parcel = _sister_reference_parts(reference)
+            sheet = values.get("sheet") or ref_sheet
+            parcel = values.get("parcel") or ref_parcel
+            municipality_name = str(values.get("municipality_name") or "").strip()
+            province = str(values.get("province") or "").strip()
+            if code and (not municipality_name or not province):
+                missing_codes.add(code)
+            candidate_context.append({
+                "row": values,
+                "code": code,
+                "section": section,
+                "sheet": _sister_cadastral_values(sheet, sheet=True),
+                "parcel": _sister_cadastral_values(str(parcel).split("/", 1)[0]),
+                "municipality": municipality_name.casefold(),
+                "province": province.casefold(),
+            })
+
+        async with stats_source.connection() as connection:
+            sister_relation = await connection.fetchval(
+                "SELECT to_regclass('sister.v_sister_property_by_cadastral_parcel') IS NOT NULL"
+            )
+            if not sister_relation:
+                return {
+                    "available": False,
+                    "type": "FeatureCollection",
+                    "features": [],
+                    "count": 0,
+                    "source": "aecs4u-stats sister.v_sister_property_by_cadastral_parcel",
+                }
+
+            municipality_by_code = {}
+            if missing_codes:
+                try:
+                    municipality_rows = await connection.fetch(_asyncpg_sql("""
+                        SELECT gi_cad.code AS cadastral_code,
+                               u.canonical_name AS municipality_name,
+                               province.canonical_name AS province
+                        FROM geo.geo_identifier AS gi_cad
+                        JOIN geo.geo_unit AS u ON u.id = gi_cad.geo_unit_id
+                        LEFT JOIN geo.geo_relation AS province_relation
+                          ON province_relation.child_id = u.id
+                         AND province_relation.relation_type = 'contains'
+                        LEFT JOIN geo.geo_unit AS province
+                          ON province.id = province_relation.parent_id
+                         AND province.unit_type = 'province'
+                        WHERE gi_cad.scheme = 'CATASTALE_COMUNE'
+                          AND upper(gi_cad.code) = ANY(%s)
+                    """), sorted(missing_codes))
+                    municipality_by_code = {
+                        str(row["cadastral_code"]).upper(): (
+                            str(row["municipality_name"] or "").strip().casefold(),
+                            str(row["province"] or "").strip().casefold(),
+                        )
+                        for row in municipality_rows
+                    }
+                except Exception as exc:
+                    # Dedicated regional rows already carry this context. If
+                    # the canonical geo spine is temporarily absent, those
+                    # rows can still be matched while other candidates skip.
+                    log.debug("SISTER map municipality context unavailable: %s", exc)
+
+            for candidate in candidate_context:
+                if not candidate["municipality"] or not candidate["province"]:
+                    names = municipality_by_code.get(candidate["code"], ("", ""))
+                    candidate["municipality"] = candidate["municipality"] or names[0]
+                    candidate["province"] = candidate["province"] or names[1]
+
+            provinces = sorted({item["province"] for item in candidate_context if item["province"]})
+            municipalities = sorted({item["municipality"] for item in candidate_context if item["municipality"]})
+            sheets = sorted({value for item in candidate_context for value in item["sheet"]})
+            parcels = sorted({value for item in candidate_context for value in item["parcel"]})
+            sections = sorted({item["section"].upper() for item in candidate_context})
+            sister_rows = []
+            if provinces and municipalities and sheets and parcels:
+                section_exists = await connection.fetchval("""
+                    SELECT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_schema = 'sister'
+                          AND table_name = 'v_sister_property_by_cadastral_parcel'
+                          AND column_name = 'section'
+                    )
+                """)
+                section_select = "upper(trim(coalesce(section, '')))" if section_exists else "''::text"
+                section_filter = (
+                    "AND upper(trim(coalesce(section, ''))) = ANY(%s)"
+                    if section_exists else ""
+                )
+                query = f"""
+                    SELECT DISTINCT lower(trim(coalesce(province, ''))) AS province,
+                           lower(trim(coalesce(municipality, ''))) AS municipality,
+                           trim(coalesce(sheet, '')) AS sheet,
+                           trim(split_part(coalesce(parcel, ''), '/', 1)) AS parcel,
+                           {section_select} AS section
+                    FROM sister.v_sister_property_by_cadastral_parcel
+                    WHERE lower(trim(coalesce(province, ''))) = ANY(%s)
+                      AND lower(trim(coalesce(municipality, ''))) = ANY(%s)
+                      AND (trim(coalesce(sheet, '')) = ANY(%s)
+                           OR ltrim(trim(coalesce(sheet, '')), '0') = ANY(%s))
+                      AND (trim(split_part(coalesce(parcel, ''), '/', 1)) = ANY(%s)
+                           OR ltrim(trim(split_part(coalesce(parcel, ''), '/', 1)), '0') = ANY(%s))
+                      {section_filter}
+                    LIMIT 50001
+                """
+                params: tuple[Any, ...] = (
+                    provinces, municipalities, sheets, sheets, parcels, parcels,
+                )
+                if section_exists:
+                    params += (sections,)
+                sister_rows = await connection.fetch(_asyncpg_sql(query), *params)
+                sister_rows_truncated = len(sister_rows) > 50000
+                sister_rows = sister_rows[:50000]
+            else:
+                sister_rows_truncated = False
+
+        sister_keys = set()
+        for row in sister_rows:
+            values = dict(row)
+            for sheet_value in _sister_cadastral_values(values.get("sheet"), sheet=True):
+                for parcel_value in _sister_cadastral_values(
+                    str(values.get("parcel") or "").split("/", 1)[0]
+                ):
+                    sister_keys.add((
+                        str(values.get("province") or "").casefold(),
+                        str(values.get("municipality") or "").casefold(),
+                        str(values.get("section") or "").upper(),
+                        sheet_value,
+                        parcel_value,
+                    ))
+
+        matches = []
+        for candidate in candidate_context:
+            key_prefix = (
+                candidate["province"], candidate["municipality"], candidate["section"].upper()
+            )
+            if not candidate["province"] or not candidate["municipality"]:
+                continue
+            if any(
+                (*key_prefix, sheet_value, parcel_value) in sister_keys
+                for sheet_value in candidate["sheet"]
+                for parcel_value in candidate["parcel"]
+            ):
+                row = candidate["row"]
+                geometry = row.get("geometry")
+                properties = {
+                    "id": row.get("id"),
+                    "canonical_reference": row.get("canonical_reference"),
+                    "national_cadastral_reference": row.get("national_cadastral_reference"),
+                    "parcel": row.get("parcel"),
+                    "sheet": row.get("sheet"),
+                    "municipality_name": row.get("municipality_name") or candidate["municipality"],
+                    "province": row.get("province") or candidate["province"],
+                    "source_release": row.get("source_release"),
+                    "sister_listed": True,
+                }
+                matches.append({
+                    "type": "Feature",
+                    "id": row.get("id"),
+                    "properties": {key: _json_value(value) for key, value in properties.items()},
+                    "geometry": json.loads(geometry) if isinstance(geometry, str) else geometry,
+                })
+
+        matches.sort(key=lambda feature: str(feature.get("id", "")))
+        feature_limit = min(max(int(limit), 1), layer.max_features)
+        truncated = candidates_truncated or sister_rows_truncated or len(matches) > feature_limit
+        return {
+            "available": True,
+            "type": "FeatureCollection",
+            "features": matches[:feature_limit],
+            "count": min(len(matches), feature_limit),
+            "truncated": truncated,
+            "source": "aecs4u-stats sister.v_sister_property_by_cadastral_parcel",
+        }
+
+    async def read_sister_batch_selection(
+        self,
+        *,
+        parcel_ids: Optional[list[int]] = None,
+        geometry: Optional[dict[str, Any]] = None,
+        limit: int = 5000,
+    ) -> dict[str, Any]:
+        """Resolve selected parcels into the cadastral fields SISTER needs."""
+        layer = get_map_layer("cadastral-parcels")
+        layer_source = await self._layer_source_for(layer)
+        if layer_source is None:
+            return {"type": "FeatureCollection", "features": [], "truncated": False}
+        ids = list(dict.fromkeys(int(value) for value in (parcel_ids or [])))
+        if not ids and geometry is None:
+            return {"type": "FeatureCollection", "features": [], "truncated": False}
+
+        properties = self._properties_for(layer, layer_source)
+        columns = self._source_columns(layer, properties)
+        relation = self._query_relation(layer, await self._resolve_relation_for(layer, layer_source))
+        geometry_ref = self._column_ref("t", layer.geometry_column)
+        if layer_source is self.cadastral_connection_source:
+            context_columns = (
+                "t.province AS province, t.municipality_name AS municipality_name, "
+                "t.municipality_code AS municipality_code"
+            )
+            context_joins = ""
+        else:
+            context_columns = (
+                "u.canonical_name AS municipality_name, province.canonical_name AS province, "
+                "NULL::text AS municipality_code"
+            )
+            context_joins = """
+                LEFT JOIN geo.geo_unit AS u ON u.id = t.municipality_id
+                LEFT JOIN geo.geo_relation AS province_relation
+                  ON province_relation.child_id = u.id
+                 AND province_relation.relation_type = 'contains'
+                LEFT JOIN geo.geo_unit AS province
+                  ON province.id = province_relation.parent_id
+                 AND province.unit_type = 'province'
+            """
+
+        if geometry is not None:
+            ring = geometry["coordinates"][0]
+            longitudes = [float(point[0]) for point in ring]
+            latitudes = [float(point[1]) for point in ring]
+            west, south, east, north = min(longitudes), min(latitudes), max(longitudes), max(latitudes)
+            source_bbox = (
+                f"ST_Transform(ST_MakeEnvelope({west!r}, {south!r}, {east!r}, {north!r}, 4326), "
+                f"{layer.source_srid})"
+            )
+            selection_geometry = (
+                f"ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326), {layer.source_srid})"
+            )
+            selection_sql = ""
+            predicate = f"{geometry_ref} && {source_bbox} AND ST_Intersects({geometry_ref}, {selection_geometry})"
+            from_sql = f"{relation} AS t {context_joins}"
+            params: tuple[Any, ...] = (json.dumps(geometry, separators=(",", ":")),)
+        else:
+            selection_sql = ""
+            predicate = f"{self._column_ref('t', layer.id_column)} = ANY(%s)"
+            from_sql = f"{relation} AS t {context_joins}"
+            params = (ids,)
+
+        sql = f"""
+            {selection_sql}
+            SELECT {columns}, {context_columns},
+                   ST_AsGeoJSON(ST_Transform({geometry_ref}, 4326)) AS geometry
+            FROM {from_sql}
+            WHERE {predicate}
+            ORDER BY {self._column_ref('t', layer.id_column)}
+            LIMIT %s
+        """
+        feature_limit = min(max(int(limit), 1), 5000)
+        async with layer_source.connection() as connection:
+            rows = await connection.fetch(_asyncpg_sql(sql), *params, feature_limit + 1)
+        truncated = len(rows) > feature_limit
+        rows = rows[:feature_limit]
+        features = []
+        for row in rows:
+            values = dict(row)
+            raw_geometry = values.pop("geometry", None)
+            feature_properties = {key: _json_value(values.get(key)) for key in properties}
+            for key in ("province", "municipality_name", "municipality_code"):
+                if values.get(key) is not None:
+                    feature_properties[key] = _json_value(values[key])
+            features.append({
+                "type": "Feature",
+                "id": values.get(layer.id_column),
+                "properties": feature_properties,
+                "geometry": json.loads(raw_geometry) if raw_geometry else None,
+            })
+        return {"type": "FeatureCollection", "features": features, "truncated": truncated}
+
+    @staticmethod
+    def visura_candidate_codes(features: list[dict[str, Any]]) -> list[str]:
+        """Distinct cadastral municipality codes of parcel features (for name resolution)."""
+        codes = set()
+        for feature in features:
+            properties = feature.get("properties") or {}
+            reference = properties.get("national_cadastral_reference") or properties.get("canonical_reference")
+            code = str(properties.get("municipality_code") or _sister_reference_parts(reference)[0] or "").upper()
+            if code:
+                codes.add(code)
+        return sorted(codes)
+
+    async def read_visura_flags(
+        self,
+        features: list[dict[str, Any]],
+        names_by_code: dict[str, tuple[str, tuple[str, ...]]],
+    ) -> Optional[dict[Any, bool]]:
+        """Map each cadastral parcel feature id to whether SISTER holds a property visura for it.
+
+        Only visure per immobile count (``visura_fabbricati``, ``visura_terreni`` and the
+        untyped ``visura``); subject visure and plans do not describe the parcel itself.
+        ``names_by_code`` maps a cadastral municipality code to ``(municipality, province
+        spellings)``. The regional parcel tables carry the province as a code (``PA``)
+        and the SISTER views are not consistent (documents use the code, properties the
+        name), so parcels are matched on the municipality, any accepted province spelling,
+        section, sheet and parcel. Parcels whose municipality has no names are left out
+        of the result. Returns ``None`` when SISTER cannot be consulted so callers can
+        tell "unknown" from "no visura".
+        """
+        stats_source = self.connection_source
+        if stats_source is None or not features:
+            return None
+
+        resolved = {
+            code.upper(): (
+                municipality.strip().casefold(),
+                frozenset(value.strip().casefold() for value in provinces if value and value.strip()),
+            )
+            for code, (municipality, provinces) in names_by_code.items()
+            if municipality and any(value and value.strip() for value in provinces)
+        }
+        candidates = []
+        for feature in features:
+            properties = feature.get("properties") or {}
+            reference = properties.get("national_cadastral_reference") or properties.get("canonical_reference")
+            code, section, ref_sheet, ref_parcel = _sister_reference_parts(reference)
+            code = str(properties.get("municipality_code") or code or "").upper()
+            if code not in resolved:
+                continue
+            candidates.append({
+                "id": feature.get("id", properties.get("id")),
+                "municipality": resolved[code][0],
+                "provinces": resolved[code][1],
+                "section": section.upper(),
+                "sheet": _sister_cadastral_values(properties.get("sheet") or ref_sheet, sheet=True),
+                "parcel": _sister_cadastral_values(str(properties.get("parcel") or ref_parcel).split("/", 1)[0]),
+            })
+        if not candidates:
+            return None
+
+        provinces = sorted({value for item in candidates for value in item["provinces"]})
+        municipalities = sorted({item["municipality"] for item in candidates})
+        sheets = sorted({value for item in candidates for value in item["sheet"]})
+        parcels = sorted({value for item in candidates for value in item["parcel"]})
+        async with stats_source.connection() as connection:
+            if not await connection.fetchval(
+                "SELECT to_regclass('sister.v_sister_document_by_cadastral_parcel') IS NOT NULL"
+            ):
+                return None
+            document_rows = await connection.fetch(_asyncpg_sql("""
+                SELECT DISTINCT lower(trim(coalesce(province, ''))) AS province,
+                       lower(trim(coalesce(municipality, ''))) AS municipality,
+                       upper(trim(coalesce(section, ''))) AS section,
+                       trim(coalesce(sheet, '')) AS sheet,
+                       trim(split_part(coalesce(parcel, ''), '/', 1)) AS parcel
+                FROM sister.v_sister_document_by_cadastral_parcel
+                WHERE document_type = ANY(%s)
+                  AND lower(trim(coalesce(province, ''))) = ANY(%s)
+                  AND lower(trim(coalesce(municipality, ''))) = ANY(%s)
+                  AND (trim(coalesce(sheet, '')) = ANY(%s)
+                       OR ltrim(trim(coalesce(sheet, '')), '0') = ANY(%s))
+                  AND (trim(split_part(coalesce(parcel, ''), '/', 1)) = ANY(%s)
+                       OR ltrim(trim(split_part(coalesce(parcel, ''), '/', 1)), '0') = ANY(%s))
+            """), list(_VISURA_DOCUMENT_TYPES), provinces, municipalities, sheets, sheets, parcels, parcels)
+
+        keys = set()
+        for row in document_rows:
+            for sheet_value in _sister_cadastral_values(row["sheet"], sheet=True):
+                for parcel_value in _sister_cadastral_values(row["parcel"]):
+                    keys.add((row["province"], row["municipality"], row["section"], sheet_value, parcel_value))
+
+        return {
+            item["id"]: any(
+                (province, item["municipality"], item["section"], sheet_value, parcel_value) in keys
+                for province in item["provinces"]
+                for sheet_value in item["sheet"]
+                for parcel_value in item["parcel"]
+            )
+            for item in candidates
+        }
+
     async def read_feature_at_point(self, layer_id: str, lat: float, lng: float) -> Optional[dict[str, Any]]:
         """Return the polygon containing a WGS84 point as a GeoJSON feature."""
 
@@ -1057,14 +1614,10 @@ class PostgresMapLayerSource:
         return [_json_row(row) for row in rows]
 
     async def read_adjacent_features(
-        self, layer_id: str, reference: str, limit: int = 25, feature_id: Optional[int] = None
+        self, layer_id: str, reference: str, limit: int = 25, feature_id: Optional[int] = None,
+        method: str = "intersects",
     ) -> list[dict[str, Any]]:
-        """Return parcels that touch or overlap the parcel identified by ``reference``.
-
-        Mirrors the legacy "Find Adjacent" analysis (default "intersects"
-        method): ``ST_Intersects`` already covers shared-boundary touches, so
-        one predicate serves both.
-        """
+        """Return parcels adjacent to the parcel identified by ``reference``."""
 
         layer = get_map_layer(layer_id)
         layer_source = await self._layer_source_for(layer)
@@ -1072,6 +1625,14 @@ class PostgresMapLayerSource:
             return []
         if layer.id != "cadastral-parcels":
             raise ValueError("Adjacency lookup is only supported for cadastral parcels")
+        predicates = {
+            "touches": "ST_Touches",
+            "intersects": "ST_Intersects",
+            "overlaps": "ST_Overlaps",
+        }
+        predicate = predicates.get(method)
+        if predicate is None:
+            raise ValueError("Unsupported adjacency method")
         columns = self._source_columns(layer, self._properties_for(layer, layer_source))
         normalized = str(reference).strip()
         # Same primary-key fast path as read_feature_by_reference: the
@@ -1103,7 +1664,7 @@ class PostgresMapLayerSource:
                    ST_AsGeoJSON(ST_Transform(t.{layer.geometry_column}, 4326)) AS geometry
             FROM {layer.table} AS t, target
             WHERE t.{layer.geometry_column} && target.geom
-              AND ST_Intersects(t.{layer.geometry_column}, target.geom)
+              AND {predicate}(t.{layer.geometry_column}, target.geom)
               AND t.{layer.id_column} <> target.target_id
             LIMIT %s
         """

@@ -10,6 +10,7 @@ the aecs4u-stats data stores are absent — check ``GET /enrichment/status``.
 import asyncio
 import io
 import json
+import logging
 import time
 import uuid
 from typing import Annotated, Dict, List, Literal, Optional
@@ -25,6 +26,7 @@ from land_registry.map_layers import get_map_layer_source
 from land_registry.models import EnrichmentDatasetStatus
 
 enrichment_router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class ParcelReportSection(BaseModel):
@@ -88,9 +90,20 @@ async def get_bulletin() -> dict:
     return result
 
 
-# Reuse upstream handlers for endpoints with identical behavior. The bulletin
-# uses the local adapter above because its source is now hazards PostgreSQL.
-enrichment_router.add_api_route("/fires", _aecs4u_stats_enrichment.get_fires, methods=["GET"])
+# Reuse upstream handlers for endpoints with identical behavior. Fires use a
+# local adapter to select the NOAA-21 FIRMS feed; the bulletin uses its local
+# adapter because its source is hazards PostgreSQL.
+
+
+async def _get_fires(
+    lat: Optional[float] = Query(default=None, ge=-90, le=90),
+    lng: Optional[float] = Query(default=None, ge=-180, le=180),
+    radius_km: float = Query(50.0, gt=0, le=500),
+):
+    return await asyncio.to_thread(stats_service.get_active_fires, radius_km, lat, lng)
+
+
+enrichment_router.add_api_route("/fires", _get_fires, methods=["GET"])
 
 
 async def _get_risks_with_postgres_fallback(istat_code: str):
@@ -107,25 +120,67 @@ async def _get_risks_with_postgres_fallback(istat_code: str):
 
 
 async def _get_quality_of_life(cadastral_code: str):
-    if not await stats_service.aquality_of_life_db_available():
-        raise HTTPException(status_code=503, detail="ISTAT BES store not built")
     result = await stats_service.aget_quality_of_life_indicators(cadastral_code)
-    if result is None:
-        raise HTTPException(status_code=404, detail="No BES data found")
-    return result
+    if result is not None:
+        return result
+    # The relocation views are national in scope. The service labels their
+    # scope explicitly so the parcel panel cannot imply provincial coverage.
+    country_result = await stats_service.aget_country_quality_of_life_indicators()
+    if country_result is not None:
+        return country_result
+    if not await stats_service.aquality_of_life_db_available():
+        raise HTTPException(status_code=503, detail="ISTAT BES and country quality-of-life stores unavailable")
+    raise HTTPException(status_code=404, detail="No quality-of-life data found")
 
 
 async def _get_quality_of_life_series(
     cadastral_code: str, data_type: str, year: Optional[int] = None
 ):
-    if not await stats_service.aquality_of_life_db_available():
-        raise HTTPException(status_code=503, detail="ISTAT BES store not built")
     result = await stats_service.aget_quality_of_life_indicator(
         cadastral_code, data_type, year=year
     )
-    if result is None:
-        raise HTTPException(status_code=404, detail="No BES data found")
-    return result
+    if result is not None:
+        return result
+    country_result = await stats_service.aget_country_quality_of_life_indicator(data_type, year=year)
+    if country_result is not None:
+        return country_result
+    if not await stats_service.aquality_of_life_db_available():
+        raise HTTPException(status_code=503, detail="ISTAT BES and country quality-of-life stores unavailable")
+    raise HTTPException(status_code=404, detail="No quality-of-life data found")
+
+
+async def _get_crime(cadastral_code: str):
+    """Prefer the province crime series; fall back to a clearly scoped national index."""
+    result = None
+    try:
+        result = await _aecs4u_stats_enrichment.get_crime(cadastral_code)
+    except HTTPException as exc:
+        if exc.status_code not in {404, 503}:
+            raise
+    if isinstance(result, dict) and any(
+        result.get(key) is not None for key in ("total_crimes", "crime_types", "year")
+    ):
+        return result
+    country_result = await stats_service.aget_country_safety_profile()
+    if country_result is not None:
+        return country_result
+    if isinstance(result, dict) and result:
+        return result
+    raise HTTPException(status_code=503, detail="Crime and national safety data unavailable")
+
+
+async def _get_demographics(cadastral_code: str):
+    result = await stats_service.aget_demographic_indicators(cadastral_code)
+    if result is not None:
+        return result
+    return await _aecs4u_stats_enrichment.get_demographics(cadastral_code)
+
+
+async def _get_demographics_series(cadastral_code: str, data_type: str):
+    result = await stats_service.aget_demographic_indicator(cadastral_code, data_type)
+    if result is not None:
+        return result
+    return await _aecs4u_stats_enrichment.get_demographics_series(cadastral_code, data_type)
 
 
 enrichment_router.add_api_route(
@@ -141,7 +196,7 @@ enrichment_router.add_api_route(
     "/fogli/{comune_code}", _aecs4u_stats_enrichment.get_fogli, methods=["GET"]
 )
 enrichment_router.add_api_route(
-    "/crime/{cadastral_code}", _aecs4u_stats_enrichment.get_crime, methods=["GET"]
+    "/crime/{cadastral_code}", _get_crime, methods=["GET"]
 )
 enrichment_router.add_api_route(
     "/quality-of-life/{cadastral_code}",
@@ -154,11 +209,11 @@ enrichment_router.add_api_route(
     methods=["GET"],
 )
 enrichment_router.add_api_route(
-    "/demographics/{cadastral_code}", _aecs4u_stats_enrichment.get_demographics, methods=["GET"]
+    "/demographics/{cadastral_code}", _get_demographics, methods=["GET"]
 )
 enrichment_router.add_api_route(
     "/demographics/{cadastral_code}/{data_type}",
-    _aecs4u_stats_enrichment.get_demographics_series,
+    _get_demographics_series,
     methods=["GET"],
 )
 
@@ -185,11 +240,12 @@ _status_lock = asyncio.Lock()
 async def get_enrichment_status():
     """Report which aecs4u-stats datasets are available on this host.
 
-    The report is computed in a worker thread and cached for
-    ``_STATUS_CACHE_SECONDS``, so a slow probe never blocks other requests.
+    Store probes run in a worker thread, while parcel-cache readiness uses the
+    same asyncpg path as parcel requests. The report is cached for
+    ``_STATUS_CACHE_SECONDS`` so slow probes do not block other requests.
     """
     global _status_cache
-    producer = stats_service.enrichment_status
+    producer = stats_service.aenrichment_status
     cached = _status_cache
     now = time.monotonic()
     if cached and cached[0] is producer and now - cached[1] < _STATUS_CACHE_SECONDS:
@@ -199,7 +255,7 @@ async def get_enrichment_status():
         now = time.monotonic()
         if cached and cached[0] is producer and now - cached[1] < _STATUS_CACHE_SECONDS:
             return cached[2]
-        payload = await asyncio.to_thread(producer)
+        payload = await producer()
         _status_cache = (producer, time.monotonic(), payload)
         return payload
 
@@ -629,6 +685,7 @@ async def _build_parcel_report(
 async def get_adjacent_parcels(
     national_reference: str,
     limit: int = Query(25, ge=1, le=50),
+    method: Literal["touches", "intersects", "overlaps"] = Query("intersects"),
     id: Annotated[Optional[int], Query(ge=1, description="Canonical feature id of the target parcel")] = None,
 ):
     """Parcels that touch or overlap the parcel identified by its national reference.
@@ -641,7 +698,7 @@ async def get_adjacent_parcels(
         raise HTTPException(status_code=503, detail=_CADASTRAL_BUILD_HINT)
     try:
         features = await source.read_adjacent_features(
-            "cadastral-parcels", national_reference, limit=limit, feature_id=id
+            "cadastral-parcels", national_reference, limit=limit, feature_id=id, method=method
         )
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable") from exc
@@ -653,17 +710,27 @@ async def get_parcel_details(
     national_reference: str,
     refresh: bool = Query(False, description="Rebuild the parcel read-model row from source stores"),
     view: Literal["full", "panel"] = Query("full", description="Return the complete legacy payload or the compact primary-map panel model"),
+    id: Annotated[Optional[int], Query(ge=1, description="Canonical map feature id from the selected parcel")] = None,
 ):
-    """Read the parcel-keyed, materialized enrichment profile.
+    """Read the parcel enrichment profile in full or compact panel form.
 
-    The first request builds the row from the cadastral, ISTAT census, and OMI
-    stores. Later requests use one indexed SQLite lookup, keeping the parcel
-    details panel independent of the latency of the source databases.
+    The optional feature ID identifies the selected canonical polygon when a
+    cadastral reference is shared by multiple map features.
+
+    Unless refreshing, both views try the PostgreSQL read model first. On a
+    miss, the profile is rebuilt from source stores and written back when
+    PostgreSQL persistence succeeds. The compact panel view also checks the
+    bounded SQLite cache after a PostgreSQL miss and writes there if PostgreSQL
+    persistence fails; the full view has no SQLite cache fallback.
     """
-    if view == "panel":
-        result = await stats_service.aget_parcel_enrichment(national_reference, refresh, view="panel")
-    else:
-        result = await stats_service.aget_parcel_enrichment(national_reference, refresh)
+    try:
+        result = await stats_service.aget_parcel_enrichment(
+            national_reference, refresh, view=view, feature_id=id
+        )
+    except stats_service.CanonicalParcelLookupError as exc:
+        raise HTTPException(
+            status_code=503, detail="Canonical PostGIS map source unavailable"
+        ) from exc
     if result is None:
         raise HTTPException(status_code=404, detail=f"No enrichment data found for '{national_reference}'")
     return result
@@ -671,8 +738,16 @@ async def get_parcel_details(
 
 @enrichment_router.get("/parcel/buildings/{national_reference}")
 async def get_parcel_buildings(national_reference: str):
-    """Return parcel-linked SISTER building categories and cached addresses."""
-    return stats_service.get_buildings_for_parcel(national_reference)
+    """Return parcel-linked SISTER building, land, and address records."""
+    cadastral_code, sheets, parcels = stats_service._parcel_reference_parts(national_reference)
+    if not cadastral_code or not sheets or not parcels:
+        raise HTTPException(status_code=422, detail="Invalid cadastral parcel reference")
+    municipality = await stats_service.aget_municipality_by_cadastral_code(cadastral_code)
+    return await stats_service.aget_buildings_for_parcel(
+        national_reference,
+        cadastral_code=cadastral_code,
+        municipality=municipality,
+    )
 
 
 @enrichment_router.get("/parcel/agenziademanio/{parcel_id}")
@@ -757,14 +832,24 @@ async def get_parcel_at_point(
 ):
     """The cadastral parcel containing a WGS84 point (click → parcel lookup)."""
     local_available = stats_service.cadastral_store_available()
-    result = await asyncio.to_thread(stats_service.get_parcel_at_point, lat, lng) if local_available else None
     source = get_map_layer_source()
+    result = None
+    canonical_error = None
+    if source.available:
+        try:
+            # Prefer the same canonical row used by vector tiles and detail
+            # lookups so the returned feature ID can scope duplicate-reference
+            # enrichment-cache entries.
+            result = await source.read_feature_at_point("cadastral-parcels", lat, lng)
+        except Exception as exc:
+            canonical_error = exc
+            if local_available:
+                logger.warning("Canonical parcel point lookup failed; trying the local cadastral store: %s", exc)
+    if result is None and local_available:
+        result = await asyncio.to_thread(stats_service.get_parcel_at_point, lat, lng)
     if result is None:
-        if source.available:
-            try:
-                result = await source.read_feature_at_point("cadastral-parcels", lat, lng)
-            except Exception as exc:
-                raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable") from exc
+        if canonical_error is not None:
+            raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable") from canonical_error
     if result is None and not local_available and not source.available:
         raise HTTPException(status_code=503, detail=_CADASTRAL_BUILD_HINT)
     if result is None:
@@ -810,14 +895,7 @@ async def get_census_sections(cadastral_code: str, limit: int = Query(5000, gt=0
     return result
 
 
-### /crime, /quality-of-life (x2), and /demographics (x2) delegate to
-### aecs4u_stats.web.enrichment's matching functions (see the add_api_route
-### block above) — verified equivalent: both this module's now-removed
-### handlers and aecs4u_stats's own call the identical
-### aecs4u_stats.istat.queries.ISTATQueryEngine methods
-### (get_safety_overview_kpis/list_crime_types, list_bes_indicators/
-### get_bes_indicator, list_demographic_indicators/get_demographic_indicator),
-### which already exist upstream today — the try/except AttributeError
-### fallback to _local_* helpers this module used to have was dead code, never
-### actually exercised. No test in this repo references these routes or their
-### local stats_service functions directly.
+### Crime, BES quality-of-life, and municipality demographic routes prefer
+### the populated PostgreSQL views and retain the package handlers as their
+### compatibility path. Country relocation views are only used when the
+### local province-level source has no matching records.

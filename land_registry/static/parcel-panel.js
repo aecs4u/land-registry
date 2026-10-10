@@ -35,6 +35,8 @@
   ]);
   const LAZY_ROOT_MARGIN = '320px 0px';
   const PVP_RECORD_LIMIT = 8;
+  const PVP_NEARBY_DEFAULT_RADIUS_KM = 10;
+  const PVP_NEARBY_MAX_RADIUS_KM = 50;
   const FIRE_RECORD_LIMIT = 5;
   const FIRE_RADIUS_KM = 25;
   const POI_RADIUS_KM = 1;
@@ -64,8 +66,176 @@
     ['coastal_erosion', 'Coastal erosion'], ['cultural_heritage', 'Cultural heritage'], ['solar', 'Solar potential'],
     ['poi', 'Points of interest'], ['nightlights', 'Night lights'], ['opendata', 'Cadastral OpenData'], ['pvp', 'PVP auctions'],
   ];
+  const SCHEMA_HEALTH_URL = '/api/v1/map/layers/health';
 
   const esc = Core.escapeHtml;
+
+  const OPENDATA_FIELD_KEYS = {
+    municipality: ['comune', 'municipality', 'comune_catastale', 'denominazione_comune'],
+    province: ['provincia', 'province'],
+    sheet: ['foglio', 'sheet', 'sheet_number'],
+    parcel: ['particella', 'mappale', 'parcel', 'parcel_number', 'numero_particella'],
+    urban_section: ['sezione', 'sezione_urbana', 'sez_urbana', 'urban_section'],
+    postcode: ['cap', 'postcode', 'postal_code'],
+    subunit: ['subalterno', 'subaltern', 'subunit', 'unit_number'],
+    building_type: ['categoria', 'categoria_catastale', 'category', 'building_type', 'destinazione', 'tipologia', 'tipologia_immobile', 'tipo_immobile'],
+    cadastral_class: ['classe', 'classe_catastale', 'class', 'cadastral_class'],
+    consistency: ['consistenza', 'consistency'],
+    cadastral_income: ['rendita', 'rendita_catastale', 'cadastral_income'],
+    surface: ['superficie', 'superficie_catastale', 'surface', 'surface_area', 'area_m2'],
+    address: ['indirizzo', 'indirizzi', 'address', 'addresses', 'ubicazione', 'toponimo', 'street', 'house_number', 'numero_civico'],
+  };
+  const OPENDATA_UNIT_COLLECTIONS = new Set(['immobile', 'immobili', 'fabbricato', 'fabbricati', 'terreno', 'terreni', 'unitaimmobiliare', 'unitaimmobiliari']);
+
+  function normalizedOpenDataKey(value) {
+    return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase().replace(/[^a-z0-9]/g, '');
+  }
+
+  function openDataScalars(value, values = []) {
+    if (Array.isArray(value)) value.forEach((item) => openDataScalars(item, values));
+    else if (value && typeof value === 'object') Object.values(value).forEach((item) => openDataScalars(item, values));
+    else if (Core.isPresent(value) && typeof value !== 'boolean') values.push(String(value).trim());
+    return values;
+  }
+
+  function collectOpenDataValues(value, aliases, values = [], skipUnitCollections = false) {
+    if (Array.isArray(value)) {
+      value.forEach((item) => collectOpenDataValues(item, aliases, values, skipUnitCollections));
+    } else if (value && typeof value === 'object') {
+      Object.entries(value).forEach(([key, item]) => {
+        const normalizedKey = normalizedOpenDataKey(key);
+        if (skipUnitCollections && OPENDATA_UNIT_COLLECTIONS.has(normalizedKey)) return;
+        if (aliases.has(normalizedKey)) openDataScalars(item, values);
+        else collectOpenDataValues(item, aliases, values, skipUnitCollections);
+      });
+    }
+    return values;
+  }
+
+  function openDataUnits(block) {
+    const data = block && block.data;
+    const records = Array.isArray(data) ? data : (Array.isArray(data && data.records) ? data.records : []);
+    const resultObjects = records.map((record) => record && record.result !== undefined ? record.result : record).filter(Boolean);
+    const candidates = [];
+    const findCollections = (value) => {
+      if (Array.isArray(value)) {
+        value.forEach(findCollections);
+      } else if (value && typeof value === 'object') {
+        Object.entries(value).forEach(([key, item]) => {
+          if (OPENDATA_UNIT_COLLECTIONS.has(normalizedOpenDataKey(key))) {
+            (Array.isArray(item) ? item : [item]).forEach((candidate) => candidates.push(candidate));
+          } else {
+            findCollections(item);
+          }
+        });
+      }
+    };
+    resultObjects.forEach(findCollections);
+    const sources = candidates.length ? candidates : resultObjects;
+    const fields = Object.fromEntries(Object.entries(OPENDATA_FIELD_KEYS).map(([field, keys]) => [
+      field,
+      new Set(keys.map(normalizedOpenDataKey)),
+    ]));
+    const makeUnit = (source, skipUnitCollections = false) => {
+      const unit = {};
+      Object.entries(fields).forEach(([field, aliases]) => {
+        unit[field] = [...new Set(collectOpenDataValues(source, aliases, [], skipUnitCollections).map((value) => value.trim()).filter(Boolean))];
+      });
+      return unit;
+    };
+    const units = sources.map((source) => makeUnit(source));
+    if (candidates.length) {
+      resultObjects.forEach((result) => units.push(makeUnit(result, true)));
+    }
+    const seen = new Set();
+    return units.filter((unit) => {
+      const key = JSON.stringify(unit);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return Object.values(unit).some((values) => values.length);
+    });
+  }
+
+  function openDataValues(units, field, subunit = null) {
+    let sources = units || [];
+    if (Core.isPresent(subunit)) {
+      const wanted = normalizedOpenDataKey(subunit);
+      const matching = sources.filter((unit) => unit.subunit.some((value) => normalizedOpenDataKey(value) === wanted));
+      sources = matching.length ? matching : (sources.length === 1 && !sources[0].subunit.length ? sources : []);
+    }
+    return [...new Set(sources.flatMap((unit) => unit[field] || []).filter(Boolean))];
+  }
+
+  function withOpenDataValue(baseHtml, baseValue, values, ctx) {
+    const base = Core.isPresent(baseValue) && baseValue !== '—' ? String(baseValue).trim() : '';
+    const baseKey = normalizedOpenDataKey(base);
+    const additions = [...new Set((values || []).map((value) => String(value).trim()).filter((value) => {
+      if (!value) return false;
+      const valueKey = normalizedOpenDataKey(value);
+      if (!valueKey || valueKey === baseKey || (baseKey && baseKey.includes(valueKey))) return false;
+      const numericBase = Number(base.replace(/[^\d,.-]/g, '').replace(',', '.'));
+      const numericValue = Number(value.replace(/[^\d,.-]/g, '').replace(',', '.'));
+      return !(base && Number.isFinite(numericBase) && Number.isFinite(numericValue) && numericBase === numericValue);
+    }))];
+    if (!additions.length) return baseHtml;
+    const label = esc(ctx.tr('Cadastral OpenData'));
+    const suffix = ` <small>(${label}: ${additions.map(esc).join(', ')})</small>`;
+    return base ? `${baseHtml}${suffix}` : `${additions.map(esc).join(', ')} <small>(${label})</small>`;
+  }
+
+  function buildingOpenDataUnits(units, building, buildingCount) {
+    const buildingUnits = units.filter(hasBuildingOpenData);
+    if (Core.isPresent(building && building.subunit)) {
+      const wanted = normalizedOpenDataKey(building.subunit);
+      return buildingUnits.filter((unit) => unit.subunit.some((value) => normalizedOpenDataKey(value) === wanted));
+    }
+    return buildingCount === 1 && buildingUnits.length === 1 && !buildingUnits[0].subunit.length ? buildingUnits : [];
+  }
+
+  function hasBuildingOpenData(unit) {
+    return ['subunit', 'building_type', 'cadastral_class', 'consistency', 'cadastral_income', 'surface']
+      .some((field) => unit[field] && unit[field].length);
+  }
+
+  function openDataUnitHtml(unit, ctx) {
+    if (!hasBuildingOpenData(unit)) return '';
+    const { tr } = ctx;
+    const value = (field) => withOpenDataValue(null, null, unit[field], ctx);
+    const content = rows([
+      [tr('Subunit'), value('subunit')],
+      [tr('Building type'), value('building_type')],
+      [tr('Cadastral class'), value('cadastral_class')],
+      [tr('Consistency'), value('consistency')],
+      [tr('Cadastral income'), value('cadastral_income')],
+      [tr('Surface'), value('surface')],
+      [tr('Address'), value('address')],
+    ]);
+    return content ? `<article class="parcel-record"><h4>${esc(tr('Cadastral OpenData'))}</h4>${content}</article>` : '';
+  }
+
+  function openDataRecordHtml(unit, index, ctx) {
+    const fields = [
+      ['Municipality', 'municipality'], ['Province', 'province'],
+      ['Sheet', 'sheet'], ['Parcel', 'parcel'], ['Urban section', 'urban_section'],
+      ['Postcode', 'postcode'], ['Subunit', 'subunit'],
+      ['Building type', 'building_type'], ['Cadastral class', 'cadastral_class'],
+      ['Consistency', 'consistency'], ['Cadastral income', 'cadastral_income'],
+      ['Surface', 'surface'], ['Address', 'address'],
+    ];
+    const content = rows(fields.map(([label, field]) => [
+      ctx.tr(label), text((unit[field] || []).join(', ')),
+    ]));
+    if (!content) return '';
+    return `<article class="parcel-record"><h4>${esc(ctx.tr('OpenData record {n}', { n: index + 1 }))}</h4>${content}</article>`;
+  }
+
+  function publishNearbyPvpMarkers(points, visible) {
+    if (typeof root.dispatchEvent !== 'function' || typeof root.CustomEvent !== 'function') return;
+    root.dispatchEvent(new root.CustomEvent('parcel-pvp-nearby-markers', {
+      detail: { points: Array.isArray(points) ? points : [], visible: Boolean(visible) },
+    }));
+  }
 
   // ---- Small view helpers (pure) ---------------------------------------------
 
@@ -80,6 +250,220 @@
   const text = (value) => esc(value);
   const note = (message) => `<p class="parcel-note">${esc(message)}</p>`;
   const empty = (message) => ({ body: note(message), empty: true });
+
+  function pvpMapPoints(payload) {
+    const source = Array.isArray(payload) ? payload : (payload && (payload.points || payload.data || payload.features)) || [];
+    if (!Array.isArray(source)) return [];
+    const fields = Array.isArray(payload && payload.fields) ? payload.fields : [];
+    return source.map((row) => {
+      let point = row;
+      if (Array.isArray(row) && fields.length) {
+        point = Object.fromEntries(fields.map((field, index) => [field, row[index]]));
+      } else if (row && row.type === 'Feature') {
+        point = {
+          ...(row.properties || {}),
+          lng: row.geometry && row.geometry.coordinates && row.geometry.coordinates[0],
+          lat: row.geometry && row.geometry.coordinates && row.geometry.coordinates[1],
+        };
+      }
+      if (!point || typeof point !== 'object') return null;
+      const lat = Number(point.lat ?? point.latitude);
+      const lng = Number(point.lng ?? point.lon ?? point.longitude);
+      const id = point.id ?? point.sale_id;
+      if (!Number.isFinite(lat) || !Number.isFinite(lng) || id == null) return null;
+      const rawDistance = point.distance_km ?? point.distanceKm;
+      const distanceKm = rawDistance == null ? null : Number(rawDistance);
+      return { ...point, id, lat, lng, distanceKm: Number.isFinite(distanceKm) ? distanceKm : null };
+    }).filter(Boolean);
+  }
+
+  function pvpDistanceKm(origin, point) {
+    const radians = (degrees) => degrees * Math.PI / 180;
+    const lat1 = radians(origin.lat);
+    const lat2 = radians(point.lat);
+    const deltaLat = lat2 - lat1;
+    const deltaLng = radians(point.lng - origin.lng);
+    const rawA = Math.sin(deltaLat / 2) ** 2
+      + Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLng / 2) ** 2;
+    const a = Math.min(1, Math.max(0, rawA));
+    return 6371.0088 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  function nearbyPvpSales(data, radiusKm) {
+    if (!data || !data.centroid || !Array.isArray(data.nearbyPoints)) return [];
+    return data.nearbyPoints.map((point) => ({
+      ...point,
+      distanceKm: point.distanceKm == null ? pvpDistanceKm(data.centroid, point) : point.distanceKm,
+    })).filter((point) => point.distanceKm <= radiusKm)
+      .sort((a, b) => a.distanceKm - b.distanceKm);
+  }
+
+  function nearbyPvpSaleHtml(point, detail, ctx) {
+    const { tr } = ctx;
+    const categoryLabels = {
+      movable: 'Vehicles, goods & business assets',
+      commercial: 'Shops, offices & hospitality',
+      parking_storage: 'Garages, storage & annexes',
+      residential: 'Homes',
+      industrial: 'Industrial & agricultural buildings',
+      land: 'Land & building plots',
+      building: 'Whole or partial buildings',
+      other: 'Other',
+      unspecified: 'Type not stated',
+    };
+    const title = detail && detail.property_type || point.property_type
+      || tr(categoryLabels[point.category] || 'Auction listing');
+    const price = (detail && (detail.minimum_offer ?? detail.base_auction_price ?? detail.price))
+      ?? point.minimum_offer ?? point.base_auction_price ?? point.price;
+    const saleDate = detail && (detail.sale_datetime || detail.sale_date) || point.date;
+    const description = detail && detail.description || point.description;
+    const street = `${(detail && (detail.street || detail.address)) || point.street || point.address || ''} ${(detail && detail.house_number) || point.house_number || ''}`.trim();
+    const link = Core.safeHttpUrl((detail && (detail.url || detail.source_url)) || point.url || point.source_url || point.source_link);
+    const approximate = Number(point.approximate || point.coordinate_is_approximate) === 1;
+    return `<article class="parcel-record parcel-pvp-nearby-record">
+      <h4><span><b class="parcel-pvp-nearby-rank">${esc(point.rank || '')}</b> ${esc(title)}</span><small>${esc(tr('{km} km away', { km: Core.formatNumber(point.distanceKm, 1) }))}</small></h4>
+      ${rows([
+        [tr('Sale ID'), text(point.id)],
+        [tr('Description'), description ? text(description) : null],
+        [tr('Address'), street ? text(street) : null],
+        [tr('Sale date'), saleDate ? text(Core.formatDateTime(saleDate)) : null],
+        [tr('Minimum offer'), price != null ? Core.formatCurrency(price) : null],
+        [tr('Listing'), link ? `<a href="${esc(link)}" target="_blank" rel="noopener noreferrer">${esc(tr('Open listing'))}</a>` : null],
+      ])}
+      ${approximate ? `<small class="parcel-pvp-approximate">${esc(tr('Approximate location'))}</small>` : ''}
+    </article>`;
+  }
+
+  async function loadNearbyPvpPoints(ctx, centroid, radiusKm) {
+    const query = new URLSearchParams({
+      lat: String(centroid.lat), lng: String(centroid.lng),
+      radius_km: String(radiusKm), limit: String(PVP_RECORD_LIMIT),
+    });
+    const result = await ctx.fetchJson(`/api/v1/sales/nearby-points?${query}`);
+    if (!result.ok) return { points: [], source: null, error: true };
+    return {
+      points: pvpMapPoints(result.data),
+      source: result.data && result.data.source,
+      count: Number(result.data && result.data.count) || 0,
+      error: false,
+    };
+  }
+
+  function bindNearbyPvpSales(el, data, ctx) {
+    const radiusInput = el.querySelector('#parcelPvpRadius');
+    const radiusValue = el.querySelector('#parcelPvpRadiusValue');
+    const summary = el.querySelector('#parcelPvpNearbySummary');
+    const list = el.querySelector('#parcelPvpNearbyList');
+    const mapToggle = el.querySelector('#parcelPvpShowOnMap');
+    const count = el.querySelector('.parcel-section-badge');
+    if (!radiusInput || !summary || !list) return;
+
+    let renderToken = 0;
+    let requestTimer = null;
+    let displayedData = data;
+    const detailCache = new Map();
+    const loadDetail = (point) => {
+      const key = String(point.id);
+      if (!detailCache.has(key)) {
+        detailCache.set(key, ctx.fetchJson(`/api/v1/sales/pvp/${encodeURIComponent(key)}`)
+          .then((result) => result.ok ? result.data : null));
+      }
+      return detailCache.get(key);
+    };
+
+    const update = async (radiusKm, resultData, token, withDetails = false) => {
+      if (radiusValue) radiusValue.textContent = `${radiusKm} km`;
+      const sales = nearbyPvpSales(resultData, radiusKm).map((point, index) => ({ ...point, rank: index + 1 }));
+      const total = Number(resultData.nearbyCount ?? resultData.nearbyPoints.length);
+      if (resultData.nearbyError) {
+        if (mapToggle) {
+          mapToggle.checked = false;
+          mapToggle.disabled = true;
+        }
+        publishNearbyPvpMarkers([], false);
+        if (count) count.hidden = true;
+        summary.textContent = ctx.tr('Nearby auction sales are unavailable.');
+        list.innerHTML = `${note(ctx.tr('Nearby auction sales are unavailable.'))}<button class="parcel-retry" type="button">${esc(ctx.tr('Retry'))}</button>`;
+        list.querySelector('.parcel-retry')?.addEventListener('click', () => search(radiusKm), { once: true });
+        return;
+      }
+      if (mapToggle) {
+        mapToggle.disabled = !sales.length;
+        if (!sales.length) mapToggle.checked = false;
+      }
+      publishNearbyPvpMarkers(sales, Boolean(mapToggle && mapToggle.checked));
+      if (count) {
+        count.textContent = String(total);
+        count.hidden = false;
+      }
+      summary.textContent = ctx.tr('{n} sales found within {km} km', {
+        n: Core.formatNumber(total), km: Core.formatNumber(radiusKm),
+      });
+
+      if (!total) {
+        list.innerHTML = note(ctx.tr('No PVP sales found within {km} km.', { km: Core.formatNumber(radiusKm) }));
+        return;
+      }
+      if (!sales.length) {
+        list.innerHTML = note(ctx.tr('Nearby sales could not be displayed because their locations are missing.'));
+        return;
+      }
+
+      const shown = sales.slice(0, PVP_RECORD_LIMIT);
+      const renderList = (details = []) => {
+        list.innerHTML = shown.map((point, index) => nearbyPvpSaleHtml(point, details[index] || null, ctx)).join('')
+          + (total > PVP_RECORD_LIMIT
+            ? note(ctx.tr('Showing the {shown} nearest of {total} sales.', { shown: PVP_RECORD_LIMIT, total: Core.formatNumber(total) }))
+            : '');
+      };
+      renderList();
+      if (!withDetails) return;
+
+      if (!resultData.nearbySource || !resultData.nearbySource.relation) return;
+      const details = await Promise.all(shown.map(loadDetail));
+      if (token !== renderToken || !ctx.isCurrent()) return;
+      renderList(details);
+    };
+
+    const search = async (radiusKm) => {
+      const token = ++renderToken;
+      publishNearbyPvpMarkers([], false);
+      summary.textContent = ctx.tr('Loading nearby sales…');
+      list.innerHTML = '';
+      const result = await loadNearbyPvpPoints(ctx, data.centroid, radiusKm);
+      if (token !== renderToken || !ctx.isCurrent()) return;
+      displayedData = {
+        ...data,
+        nearbyPoints: result.points,
+        nearbyCount: result.count,
+        nearbySource: result.source,
+        nearbyError: result.error,
+      };
+      await update(radiusKm, displayedData, token, true);
+    };
+    const scheduleSearch = () => {
+      const radiusKm = Number(radiusInput.value) || PVP_NEARBY_DEFAULT_RADIUS_KM;
+      if (radiusValue) radiusValue.textContent = `${radiusKm} km`;
+      renderToken += 1;
+      summary.textContent = ctx.tr('Loading nearby sales…');
+      if (requestTimer !== null) root.clearTimeout(requestTimer);
+      requestTimer = root.setTimeout(() => {
+        requestTimer = null;
+        void search(radiusKm);
+      }, 300);
+    };
+    radiusInput.addEventListener('input', scheduleSearch);
+    radiusInput.addEventListener('change', () => {
+      if (requestTimer !== null) root.clearTimeout(requestTimer);
+      requestTimer = null;
+      void search(Number(radiusInput.value) || PVP_NEARBY_DEFAULT_RADIUS_KM);
+    });
+    mapToggle?.addEventListener('change', () => {
+      const radiusKm = Number(radiusInput.value) || PVP_NEARBY_DEFAULT_RADIUS_KM;
+      publishNearbyPvpMarkers(nearbyPvpSales(displayedData, radiusKm).map((point, index) => ({ ...point, rank: index + 1 })), mapToggle.checked);
+    });
+    void update(PVP_NEARBY_DEFAULT_RADIUS_KM, displayedData, ++renderToken, true);
+  }
 
   function badge(level, label) {
     return `<span class="parcel-badge" data-level="${esc(level)}">${esc(label)}</span>`;
@@ -102,8 +486,21 @@
 
   /** Describe a failed request in words a user can act on. */
   function failureMessage(status, tr) {
-    if (status === 404 || status === 503) return tr('This data source is not available on this server.');
-    return tr('This data is temporarily unavailable.');
+    if (status === 404) return tr('No matching data was found for this parcel.');
+    if (status === 0 || status === 503 || status >= 500) return tr('This data is temporarily unavailable.');
+    return tr('This data source could not process the request.');
+  }
+
+  async function readModelOrUnavailable(ctx) {
+    let timeoutId;
+    const timeout = new Promise((resolve) => {
+      timeoutId = root.setTimeout(() => resolve({ unavailable: true }), READ_MODEL_WAIT_MS);
+    });
+    try {
+      return await Promise.race([ctx.readModelPromise(), timeout]);
+    } finally {
+      root.clearTimeout(timeoutId);
+    }
   }
 
   // ---- Section registry ---------------------------------------------------------
@@ -121,21 +518,27 @@
         const props = (feature && feature.properties) || {};
         const cadastral = ctx.block('cadastral');
         const cadastralData = (cadastral && cadastral.data) || {};
+        const opendataUnits = openDataUnits(ctx.block('opendata'));
         const area = Core.parcelAreaSqm(props);
         const municipality = props.municipality_name || props.municipality || props.ADMINISTRATIVEUNIT || null;
+        const parcel = props.parcel_number ?? props.parcel ?? props.particella ?? props.LABEL;
+        const sheet = props.sheet_number ?? props.sheet ?? props.foglio;
+        const urbanSection = cadastralData.sezione_urbana ?? props.urban_section;
+        const province = props.province;
+        const postcode = cadastralData.postal_code;
         const attributes = Object.entries(props)
           .filter(([, value]) => value !== null && value !== undefined && typeof value !== 'object')
           .map(([key, value]) => `<tr><th>${esc(key.replaceAll('_', ' '))}</th><td>${esc(value)}</td></tr>`)
           .join('');
         const body = rows([
           [tr('Reference'), text(ctx.reference)],
-          [tr('Parcel'), text(props.parcel_number ?? props.parcel ?? props.particella ?? props.LABEL)],
-          [tr('Sheet'), text(props.sheet_number ?? props.sheet ?? props.foglio)],
-          [tr('Urban section'), text(cadastralData.sezione_urbana ?? props.urban_section)],
-          [tr('Municipality'), municipality ? `${text(municipality)}${ctx.cadastralCode ? ` <small>(${text(ctx.cadastralCode)})</small>` : ''}` : null],
-          [tr('Province'), text(props.province)],
+          [tr('Parcel'), withOpenDataValue(text(parcel), parcel, openDataValues(opendataUnits, 'parcel'), ctx)],
+          [tr('Sheet'), withOpenDataValue(text(sheet), sheet, openDataValues(opendataUnits, 'sheet'), ctx)],
+          [tr('Urban section'), withOpenDataValue(text(urbanSection), urbanSection, openDataValues(opendataUnits, 'urban_section'), ctx)],
+          [tr('Municipality'), municipality ? withOpenDataValue(`${text(municipality)}${ctx.cadastralCode ? ` <small>(${text(ctx.cadastralCode)})</small>` : ''}`, municipality, openDataValues(opendataUnits, 'municipality'), ctx) : withOpenDataValue(null, null, openDataValues(opendataUnits, 'municipality'), ctx)],
+          [tr('Province'), withOpenDataValue(text(province), province, openDataValues(opendataUnits, 'province'), ctx)],
           [tr('Region'), text(props.region)],
-          [tr('Postcode'), text(cadastralData.postal_code)],
+          [tr('Postcode'), withOpenDataValue(text(postcode), postcode, openDataValues(opendataUnits, 'postcode'), ctx)],
           [tr('Area'), area ? `${Core.formatArea(area.value)}${area.computed ? ` <small>${esc(tr('computed from the geometry'))}</small>` : ''}` : null],
           [tr('Geometry'), feature && feature.geometry ? esc(tr('Available · WGS84')) : esc(tr('Unavailable for this record'))],
         ])
@@ -152,109 +555,6 @@
     },
 
     {
-      id: 'omi', tab: 'value', icon: 'euro-sign', title: 'OMI valuation', eager: true,
-      load: async (ctx) => {
-        if (!ctx.cadastralCode) return null;
-        const [quotes, zone] = await Promise.all([
-          ctx.fetchJson(`${API}/omi/quotes?${new URLSearchParams({ comune: ctx.cadastralCode })}`),
-          ctx.zoneMatch(),
-        ]);
-        if (!quotes.ok) throw Object.assign(new Error('OMI quotes unavailable'), { status: quotes.status });
-        return { ...quotes.data, zone };
-      },
-      render: (data, ctx) => {
-        const { tr } = ctx;
-        if (!data) return empty(tr('The municipality code is not available for this parcel.'));
-        const quoteList = Array.isArray(data.quotes) ? data.quotes : [];
-        const quotes = Core.validOmiQuotes(data, data.zone);
-        if (!quoteList.length) return empty(tr('No OMI quotes are available for this municipality.'));
-        const meta = { source: data.source, dataset_version: data.dataset_version };
-        const allQuotes = omiQuoteTable(quoteList, tr);
-        if (!quotes.length) return {
-          ...empty(tr('No valid sale quote is available for an estimate.')),
-          badge: quoteList.length,
-          meta,
-          body: `${note(tr('No valid sale quote is available for an estimate.'))}${allQuotes}`,
-        };
-        const area = Core.parcelAreaSqm(ctx.props);
-        const initial = Core.defaultEstimateArea(area && area.value);
-        const detected = data.zone && data.zone.matched && String(data.zone.zone || '').toUpperCase();
-        const detectedHasQuotes = detected && quotes.some((quote) => String(quote.zona || '').toUpperCase() === detected);
-        const zoneNotice = detectedHasQuotes
-          ? `<p class="parcel-callout" data-tone="ok">${esc(tr('OMI zone detected automatically'))}: <strong>${esc(detected)}</strong></p>`
-          : detected
-            ? `<p class="parcel-callout" data-tone="warn">${esc(tr('Zone {zone} was detected but has no quotes available: select and check an alternative.', { zone: detected }))}</p>`
-            : `<p class="parcel-callout" data-tone="muted">${esc(tr('The OMI zone was not detected automatically: check the selection.'))}</p>`;
-        const options = quotes.slice(0, 80).map((quote, index) => {
-          const period = quote.anno && quote.semestre ? ` · ${quote.anno} S${quote.semestre}` : '';
-          const state = quote.stato_conservazione ? ` · ${quote.stato_conservazione}` : '';
-          return `<option value="${index}">${esc(`${tr('Zone')} ${quote.zona || '—'} · ${quote.tipologia || quote.cod_tipologia || tr('Type')}${state}${period}`)}</option>`;
-        }).join('');
-        const quoteOverflowNote = quotes.length > 80
-          ? note(tr('The estimator selector shows the first {limit} sale quotes; the table lists all current quotes.', { limit: 80 }))
-          : '';
-        return {
-          badge: quoteList.length,
-          meta,
-          body: `${zoneNotice}${quoteOverflowNote}
-            <div class="parcel-form">
-              <label for="parcelOmiQuote">${esc(tr('OMI zone and property type'))}</label>
-              <select id="parcelOmiQuote" class="parcel-input">${options}</select>
-              <label for="parcelOmiArea">${esc(tr('Surface used for the estimate (m²)'))}</label>
-              <input id="parcelOmiArea" class="parcel-input" type="number" inputmode="decimal" min="1" step="1" value="${esc(initial.value)}" placeholder="${esc(tr('e.g. 100'))}">
-            </div>
-            ${initial.tooLarge ? note(tr('The parcel measures {area}: enter the commercial surface of the building to estimate.', { area: Core.formatArea(area.value) })) : ''}
-            <div id="parcelOmiQuoteRows" class="parcel-quote-rows"></div>
-            <div id="parcelOmiEstimate" class="parcel-estimate" aria-live="polite"></div>
-            <p class="parcel-note parcel-disclaimer">${esc(tr('Indicative estimate: surface × the selected OMI interval. It is not an appraisal and does not account for the building\'s commercial consistency, actual condition or whether the OMI zone is the right one.'))}</p>
-            ${allQuotes}
-            <div id="parcelOmiHistory" class="parcel-history"></div>`,
-        };
-      },
-      bind: (el, data, ctx) => bindOmi(el, data, ctx),
-    },
-
-    {
-      id: 'pvp', tab: 'value', icon: 'gavel', title: 'PVP auctions', lazy: true,
-      load: async (ctx) => {
-        const municipality = await ctx.municipality();
-        const parts = Core.referenceParts(ctx.props, ctx.reference);
-        if (!ctx.reference || !municipality || !municipality.istat_code || !parts.sheet || !parts.parcel) return { unresolved: true };
-        const query = new URLSearchParams({ municipality_code: municipality.istat_code, sheet: parts.sheet, parcel: parts.parcel });
-        const result = await ctx.fetchJson(`${API}/parcel/pvp?${query}`);
-        if (!result.ok) throw Object.assign(new Error('PVP unavailable'), { status: result.status });
-        return result.data;
-      },
-      render: (data, ctx) => {
-        const { tr } = ctx;
-        if (data && data.unresolved) return empty(tr('The municipality is not identified, so auctions cannot be matched.'));
-        const records = Array.isArray(data && data.records) ? data.records : [];
-        const meta = { source: data && data.source, match_method: (data && data.match_method) || 'municipality_code+sheet+parcel' };
-        if (!records.length) return { ...empty(tr('No PVP auction found for this parcel.')), meta };
-        const items = records.slice(0, PVP_RECORD_LIMIT).map((record, index) => {
-          const link = Core.safeHttpUrl(record.source_url);
-          const street = `${record.street || ''} ${record.house_number || ''}`.trim();
-          return `<article class="parcel-record"><h4>${esc(tr('Listing'))} ${index + 1} <small>${esc(record.source || 'PVP')}</small></h4>${rows([
-            [tr('Sale ID'), record.sale_id != null ? text(record.sale_id) : null],
-            [tr('Description'), record.description || record.sale_description ? text(record.description || record.sale_description) : null],
-            [tr('Address'), street ? text(street) : null],
-            [tr('Status'), record.announcement_status ? text(record.announcement_status) : null],
-            [tr('Sale date'), record.sale_date ? text(record.sale_date) : null],
-            [tr('Minimum offer'), record.minimum_offer != null ? Core.formatCurrency(record.minimum_offer) : null],
-            [tr('Auction base price'), record.base_auction_price != null ? Core.formatCurrency(record.base_auction_price) : null],
-            [tr('Listing surface'), record.surface_area != null ? `${Core.formatNumber(record.surface_area, 2)} m²` : null],
-            [tr('Listing'), link ? `<a href="${esc(link)}" target="_blank" rel="noopener noreferrer">${esc(tr('Open listing'))}</a>` : null],
-          ])}</article>`;
-        }).join('');
-        return {
-          badge: records.length,
-          meta,
-          body: `${items}${records.length > PVP_RECORD_LIMIT ? note(tr('Showing {shown} of {total} listings.', { shown: PVP_RECORD_LIMIT, total: records.length })) : ''}${note(tr('PVP records are auction candidates matched by sheet and parcel, not official cadastral identifiers.'))}`,
-        };
-      },
-    },
-
-    {
       id: 'address', tab: 'property', icon: 'location-dot', title: 'Main address', eager: true,
       load: async (ctx) => {
         if (!ctx.reference) return { unresolved: true };
@@ -266,20 +566,30 @@
         const { tr } = ctx;
         if (data && data.unresolved) return empty(tr('The parcel identifier is not available.'));
         const addresses = Array.isArray(data && data.addresses) ? data.addresses : [];
+        const opendataUnits = openDataUnits(ctx.block('opendata'));
+        const opendataAddresses = openDataValues(opendataUnits, 'address');
+        const knownAddresses = new Set(addresses.map((address) => normalizedOpenDataKey(address)));
+        const extraOpendataAddresses = opendataAddresses.filter((address) => !knownAddresses.has(normalizedOpenDataKey(address)));
         const meta = data ? { source: data.address_source || data.source, match_method: 'cadastral_reference' } : null;
-        if (!addresses.length) {
+        if (!addresses.length && !extraOpendataAddresses.length) {
           return { ...empty(tr('No address is recorded in the SISTER cache for this parcel.')), meta };
         }
         const addressRows = addresses.map((address, index) => [
           addresses.length === 1 ? tr('Address') : tr('Address {n}', { n: index + 1 }),
-          text(address),
+          addresses.length === 1 ? withOpenDataValue(text(address), address, extraOpendataAddresses, ctx) : text(address),
         ]);
-        const total = Number(data.address_count ?? addresses.length);
+        if (!addresses.length) addressRows.push([tr('Address'), withOpenDataValue(null, null, extraOpendataAddresses, ctx)]);
+        else if (addresses.length > 1 && extraOpendataAddresses.length) {
+          addressRows.push([tr('Address'), withOpenDataValue(null, null, extraOpendataAddresses, ctx)]);
+        }
+        const total = addresses.length
+          ? Number((data && data.address_count) ?? addresses.length)
+          : extraOpendataAddresses.length;
         return {
           badge: total,
           meta,
-          body: `${rows(addressRows)}${note(tr('Addresses are taken from SISTER cadastral property records matched by municipality, sheet and parcel. Coverage may be incomplete; this is not a geocoded address register.'))}`
-            + (data.addresses_truncated ? note(tr('Showing {shown} of {total} addresses.', { shown: addresses.length, total })) : ''),
+          body: `${rows(addressRows)}${addresses.length ? note(tr('Addresses are taken from SISTER cadastral property records matched by municipality, sheet and parcel. Coverage may be incomplete; this is not a geocoded address register.')) : note(tr('No address is recorded in the SISTER cache for this parcel.'))}`
+            + (data && data.addresses_truncated ? note(tr('Showing {shown} of {total} addresses.', { shown: addresses.length, total })) : ''),
         };
       },
     },
@@ -295,18 +605,38 @@
       render: (data, ctx) => {
         const { tr } = ctx;
         const buildings = Array.isArray(data && data.buildings) ? data.buildings : [];
+        const opendataUnits = openDataUnits(ctx.block('opendata'));
         const meta = { source: data && data.source };
-        if (!buildings.length) return { ...empty(tr('No building is recorded in the SISTER cache for this parcel.')), meta };
+        if (!buildings.length) {
+          const opendataHtml = opendataUnits.filter(hasBuildingOpenData).map((unit) => openDataUnitHtml(unit, ctx)).join('');
+          if (!opendataHtml) return { ...empty(tr('No building is recorded in the SISTER cache for this parcel.')), meta };
+          return {
+            badge: opendataUnits.length,
+            meta,
+            body: `${note(tr('No building is recorded in the SISTER cache for this parcel.'))}${opendataHtml}`,
+          };
+        }
+        const matchedUnits = new Set();
         return {
           badge: buildings.length,
           meta,
-          body: buildings.map((building, index) => `<article class="parcel-record">${buildings.length > 1 ? `<h4>${esc(tr('Building'))} ${index + 1}</h4>` : ''}${rows([
-            [tr('Building type'), text(building.building_type || building.category || '—')],
-            [tr('Cadastral class'), building.cadastral_class ? text(building.cadastral_class) : null],
-            [tr('Consistency'), building.consistency != null ? text(building.consistency) : null],
-            [tr('Cadastral income'), building.cadastral_income != null ? `€ ${Core.formatNumber(building.cadastral_income, 2)}` : null],
-            [tr('Address'), building.address ? text(building.address) : null],
-          ])}</article>`).join(''),
+          body: buildings.map((building, index) => {
+            const units = buildingOpenDataUnits(opendataUnits, building, buildings.length);
+            units.forEach((unit) => matchedUnits.add(unit));
+            const values = (field) => openDataValues(units, field);
+            const type = building.building_type || building.category;
+            const income = building.cadastral_income;
+            const surface = building.area ?? building.surface;
+            return `<article class="parcel-record">${buildings.length > 1 ? `<h4>${esc(tr('Building'))} ${index + 1}</h4>` : ''}${rows([
+              [tr('Subunit'), withOpenDataValue(text(building.subunit), building.subunit, values('subunit'), ctx)],
+              [tr('Building type'), withOpenDataValue(text(type), type, values('building_type'), ctx)],
+              [tr('Cadastral class'), withOpenDataValue(text(building.cadastral_class), building.cadastral_class, values('cadastral_class'), ctx)],
+              [tr('Consistency'), withOpenDataValue(text(building.consistency), building.consistency, values('consistency'), ctx)],
+              [tr('Cadastral income'), withOpenDataValue(income == null ? null : `€ ${Core.formatNumber(income, 2)}`, income, values('cadastral_income'), ctx)],
+              [tr('Surface'), withOpenDataValue(text(surface), surface, values('surface'), ctx)],
+              [tr('Address'), withOpenDataValue(text(building.address), building.address, values('address'), ctx)],
+            ])}</article>`;
+          }).join('') + opendataUnits.filter((unit) => hasBuildingOpenData(unit) && !matchedUnits.has(unit)).map((unit) => openDataUnitHtml(unit, ctx)).join(''),
         };
       },
       bind: (_el, data, ctx) => {
@@ -319,36 +649,181 @@
 
     {
       id: 'opendata', tab: 'property', icon: 'database', title: 'Cadastral OpenData', lazy: true,
-      load: async (ctx) => {
-        const parts = Core.referenceParts(ctx.props, ctx.reference);
-        if (!ctx.reference || !parts.municipality || !parts.sheet || !parts.parcel) return null;
-        const query = new URLSearchParams({ municipality_code: parts.municipality, sheet: parts.sheet, parcel: parts.parcel });
-        const result = await ctx.fetchJson(`${API}/parcel/opendata?${query}`);
-        if (!result.ok) throw Object.assign(new Error('OpenData unavailable'), { status: result.status });
-        return result.data;
-      },
-      render: (data, ctx) => {
-        const { tr } = ctx;
-        const records = Array.isArray(data && data.records) ? data.records : [];
-        const meta = { source: data && data.source, match_method: data && data.match_method };
-        if (!records.length) return { ...empty(tr('No cadastral OpenData found for this parcel.')), meta };
+      load: readModelOrUnavailable,
+      render: (readModel, ctx) => {
+        if (!readModel || readModel.unavailable) {
+          return empty(ctx.tr('The parcel data profile is temporarily unavailable.'));
+        }
+        const block = readModel.blocks && readModel.blocks.opendata;
+        const meta = block ? {
+          source: block.source,
+          dataset_version: block.dataset_version,
+          match_method: block.match_method,
+          spatial_resolution: block.spatial_resolution,
+        } : null;
+        if (!block || block.available !== true) {
+          return { ...empty(ctx.tr('No cadastral OpenData record is available in the parcel profile.')), meta };
+        }
+        const units = openDataUnits(block);
+        const records = units.map((unit, index) => openDataRecordHtml(unit, index, ctx)).filter(Boolean);
+        if (!records.length) {
+          return { ...empty(ctx.tr('No cadastral OpenData record is available in the parcel profile.')), meta };
+        }
         return {
           badge: records.length,
           meta,
-          body: records.map((record, index) => `<article class="parcel-record"><h4>${esc(tr('Result'))} ${index + 1} <small>${esc(record.endpoint || tr('Cadastre'))}</small></h4>${rows([
-            [tr('Query date'), record.timestamp ? text(record.timestamp) : null],
-            ...Core.flattenValues(record.result).map(([label, value]) => [label, text(value)]),
-          ])}</article>`).join(''),
+          body: records.join('') + note(ctx.tr('OpenData values are shown as recorded by the cadastral source; they may be incomplete.')),
         };
       },
     },
 
     {
+      id: 'omi', tab: 'value', icon: 'euro-sign', title: 'OMI valuation', eager: true,
+      load: async (ctx) => {
+        if (!ctx.cadastralCode) return null;
+        const [quotes, zone] = await Promise.all([
+          ctx.fetchJson(`${API}/omi/quotes?${new URLSearchParams({ comune: ctx.cadastralCode })}`),
+          ctx.zoneMatch(),
+        ]);
+        if (!quotes.ok) throw Object.assign(new Error('OMI quotes unavailable'), { status: quotes.status });
+        const sister = await ctx.sisterParcelRecords();
+        return { ...quotes.data, zone, sister: sister.ok ? sister.data : null };
+      },
+      render: (data, ctx) => {
+        const { tr } = ctx;
+        if (!data) return empty(tr('The municipality code is not available for this parcel.'));
+        const quoteList = Array.isArray(data.quotes) ? data.quotes : [];
+        const quotes = Core.validOmiQuotes(data, data.zone);
+        if (!quoteList.length) return empty(tr('No OMI quotes are available for this municipality.'));
+        const meta = { source: data.source, dataset_version: data.dataset_version };
+        const allQuotes = omiQuoteTable(quoteList, tr);
+        const sisterUnits = data.sister && data.sister.available === true
+          ? (Array.isArray(data.sister.valuation_units) ? data.sister.valuation_units : (Array.isArray(data.sister.buildings) ? data.sister.buildings : []))
+          : [];
+        const sisterLand = data.sister && data.sister.available === true && Array.isArray(data.sister.land) ? data.sister.land : [];
+        const hasSisterPropertyUnits = sisterUnits.length > 0 || sisterLand.length > 0;
+        if (!quotes.length) return {
+          ...empty(tr('No valid sale quote is available for an estimate.')),
+          badge: quoteList.length,
+          meta,
+          body: `${note(tr('No valid sale quote is available for an estimate.'))}${allQuotes}`,
+        };
+        const area = Core.parcelAreaSqm(ctx.props);
+        const initial = Core.defaultEstimateArea(hasSisterPropertyUnits ? null : (area && area.value));
+        const detected = data.zone && data.zone.matched && String(data.zone.zone || '').toUpperCase();
+        const detectedHasQuotes = detected && quotes.some((quote) => String(quote.zona || '').toUpperCase() === detected);
+        const zoneNotice = detectedHasQuotes
+          ? `<p class="parcel-callout" data-tone="ok">${esc(tr('OMI zone detected automatically'))}: <strong>${esc(detected)}</strong></p>`
+          : detected
+            ? `<p class="parcel-callout" data-tone="warn">${esc(tr('Zone {zone} was detected but has no quotes available: select and check an alternative.', { zone: detected }))}</p>`
+            : `<p class="parcel-callout" data-tone="muted">${esc(tr('The OMI zone was not detected automatically: check the selection.'))}</p>`;
+        const options = quotes.slice(0, 80).map((quote, index) => {
+          const period = quote.anno && quote.semestre ? ` · ${quote.anno} S${quote.semestre}` : '';
+          const state = quote.stato_conservazione ? ` · ${quote.stato_conservazione}` : '';
+          return `<option value="${index}">${esc(`${tr('Zone')} ${quote.zona || '—'} · ${quote.tipologia || quote.cod_tipologia || tr('Type')}${state}${period}`)}</option>`;
+        }).join('');
+        const quoteOverflowNote = quotes.length > 80
+          ? note(tr('The estimator selector shows the first {limit} sale quotes; the table lists all current quotes.', { limit: 80 }))
+          : '';
+        const unitValuations = omiUnitValuations(data.sister, quotes.slice(0, 80), data.zone, tr);
+        return {
+          badge: quoteList.length,
+          meta,
+          body: `${zoneNotice}${quoteOverflowNote}
+            <div class="parcel-form">
+              <label for="parcelOmiQuote">${esc(tr('OMI zone and property type'))}</label>
+              <select id="parcelOmiQuote" class="parcel-input">${options}</select>
+              <label for="parcelOmiArea">${esc(tr('Surface used for the estimate (m²)'))}</label>
+              <input id="parcelOmiArea" class="parcel-input" type="number" inputmode="decimal" min="1" step="1" value="${esc(initial.value)}" placeholder="${esc(tr('e.g. 100'))}">
+            </div>
+            ${hasSisterPropertyUnits && area ? note(tr('Parcel geometry area is not used for SISTER unit estimates; enter the commercial surface of the selected unit.')) : ''}
+            ${initial.tooLarge ? note(tr('The parcel measures {area}: enter the commercial surface of the building to estimate.', { area: Core.formatArea(area.value) })) : ''}
+            <div id="parcelOmiQuoteRows" class="parcel-quote-rows"></div>
+            <div id="parcelOmiEstimate" class="parcel-estimate" aria-live="polite"></div>
+            <p class="parcel-note parcel-disclaimer">${esc(tr('Indicative estimate: surface × the selected OMI interval. It is not an appraisal and does not account for the building\'s commercial consistency, actual condition or whether the OMI zone is the right one.'))}</p>
+            ${unitValuations}
+            ${allQuotes}
+            <div id="parcelOmiHistory" class="parcel-history"></div>`,
+        };
+      },
+      bind: (el, data, ctx) => bindOmi(el, data, ctx),
+    },
+
+    {
+      id: 'pvp', tab: 'value', icon: 'gavel', title: 'PVP auctions', lazy: true,
+      load: async (ctx) => {
+        const parts = Core.referenceParts(ctx.props, ctx.reference);
+        const nearbyPromise = ctx.centroid
+          ? loadNearbyPvpPoints(ctx, ctx.centroid, PVP_NEARBY_DEFAULT_RADIUS_KM)
+          : Promise.resolve(null);
+        const municipality = ctx.reference ? await ctx.municipality() : null;
+        const hasParcelReference = Boolean(ctx.reference && municipality && municipality.istat_code && parts.sheet && parts.parcel);
+        const matchPromise = hasParcelReference
+          ? ctx.fetchJson(`${API}/parcel/pvp?${new URLSearchParams({ municipality_code: municipality.istat_code, sheet: parts.sheet, parcel: parts.parcel })}`)
+          : Promise.resolve(null);
+        const [matchResult, nearbyResult] = await Promise.all([matchPromise, nearbyPromise]);
+        return {
+          matchData: matchResult && matchResult.ok ? matchResult.data : null,
+          matchAvailable: Boolean(matchResult && matchResult.ok),
+          nearbyPoints: nearbyResult && nearbyResult.points || [],
+          nearbyCount: nearbyResult && nearbyResult.count || 0,
+          nearbySource: nearbyResult && nearbyResult.source,
+          nearbyError: Boolean(ctx.centroid && (!nearbyResult || nearbyResult.error)),
+          centroid: ctx.centroid,
+        };
+      },
+      render: (data, ctx) => {
+        const { tr } = ctx;
+        const matchData = data && data.matchData;
+        const records = Array.isArray(matchData && matchData.records) ? matchData.records : [];
+        const nearby = nearbyPvpSales(data, PVP_NEARBY_DEFAULT_RADIUS_KM);
+        const meta = {
+          source: matchData && matchData.source || data && data.nearbySource && (data.nearbySource.relation || data.nearbySource.database),
+          match_method: matchData && matchData.match_method || (data && data.centroid ? 'distance from parcel centroid' : undefined),
+        };
+        const items = records.slice(0, PVP_RECORD_LIMIT).map((record, index) => {
+          const link = Core.safeHttpUrl(record.source_url);
+          const street = `${record.street || ''} ${record.house_number || ''}`.trim();
+          return `<article class="parcel-record"><h4>${esc(tr('Listing'))} ${index + 1} <small>${esc(record.source || 'PVP')}</small></h4>${rows([
+            [tr('Sale ID'), record.sale_id != null ? text(record.sale_id) : null],
+            [tr('Description'), record.description || record.sale_description ? text(record.description || record.sale_description) : null],
+            [tr('Address'), street ? text(street) : null],
+            [tr('Status'), record.announcement_status ? text(record.announcement_status) : null],
+            [tr('Sale date'), record.sale_date ? text(record.sale_date) : null],
+            [tr('Minimum offer'), record.minimum_offer != null ? Core.formatCurrency(record.minimum_offer) : null],
+            [tr('Auction base price'), record.base_auction_price != null ? Core.formatCurrency(record.base_auction_price) : null],
+            [tr('Listing surface'), record.surface_area != null ? `${Core.formatNumber(record.surface_area, 2)} m²` : null],
+            [tr('Listing'), link ? `<a href="${esc(link)}" target="_blank" rel="noopener noreferrer">${esc(tr('Open listing'))}</a>` : null],
+          ])}</article>`;
+        }).join('');
+        const matchingListings = data && data.matchAvailable
+          ? `<details class="parcel-pvp-matches"><summary>${esc(tr('Listings matched to this parcel ({n})', { n: records.length }))}</summary>${items || note(tr('No PVP auction found for this parcel.'))}${records.length > PVP_RECORD_LIMIT ? note(tr('Showing {shown} of {total} listings.', { shown: PVP_RECORD_LIMIT, total: records.length })) : ''}${note(tr('PVP records are auction candidates matched by sheet and parcel, not official cadastral identifiers.'))}</details>`
+          : '';
+        const radiusSection = data && data.centroid
+          ? `<div class="parcel-pvp-radius-control">
+              <label for="parcelPvpRadius">${esc(tr('Search radius'))}</label>
+              <output id="parcelPvpRadiusValue" for="parcelPvpRadius">${PVP_NEARBY_DEFAULT_RADIUS_KM} km</output>
+              <input id="parcelPvpRadius" type="range" min="1" max="${PVP_NEARBY_MAX_RADIUS_KM}" step="1" value="${PVP_NEARBY_DEFAULT_RADIUS_KM}" aria-label="${esc(tr('Search radius'))}">
+            </div>
+            <label class="parcel-pvp-map-toggle"><input id="parcelPvpShowOnMap" type="checkbox"> <span>${esc(tr('Show listed sales on the map'))}</span></label>
+            <details class="parcel-pvp-nearby-accordion">
+              <summary id="parcelPvpNearbySummary" aria-live="polite"></summary>
+              <div id="parcelPvpNearbyList" class="parcel-pvp-nearby-list" aria-live="polite"></div>
+            </details>
+            ${data.nearbyError ? note(tr('Nearby auction sales are unavailable.')) : note(tr('Distance is measured in a straight line from the parcel centre. Some sale locations are approximate.'))}`
+          : note(tr('The parcel location is not available, so nearby auctions cannot be calculated.'));
+        return {
+          badge: Number((data && data.nearbyCount) ?? nearby.length),
+          meta,
+          body: `${radiusSection}${matchingListings}`,
+        };
+      },
+      bind: (el, data, ctx) => bindNearbyPvpSales(el, data, ctx),
+    },
+
+    {
       id: 'solar', tab: 'energy', icon: 'sun', title: 'Municipal solar potential', lazy: true,
-      load: (ctx) => Promise.race([
-        ctx.readModelPromise(),
-        new Promise((resolve) => setTimeout(() => resolve({ unavailable: true }), READ_MODEL_WAIT_MS)),
-      ]),
+      load: readModelOrUnavailable,
       render: (_readModel, ctx) => {
         const { tr } = ctx;
         const block = ctx.block('solar');
@@ -790,6 +1265,18 @@
       render: (data, ctx) => {
         const { tr } = ctx;
         if (!data) return empty(tr('Safety data is not available.'));
+        if (data.spatial_resolution === 'country' && data.safety_index != null) {
+          return {
+            meta: { source: data.source, spatial_resolution: tr('country') },
+            body: `${rows([
+              [tr('Territorial scope'), text(data.country || tr('Italy'))],
+              [tr('Year'), data.year != null ? text(data.year) : null],
+              [tr('Safety index'), Core.formatNumber(data.safety_index, 2)],
+            ])}${note(tr(data.scope_note || 'Country-level safety indicator.', {
+              country: data.country || tr('Italy'),
+            }))}`,
+          };
+        }
         return {
           meta: { source: data.source, spatial_resolution: tr('province') },
           body: `${rows([
@@ -835,25 +1322,132 @@
 
     {
       id: 'coverage', tab: 'data', icon: 'layer-group', title: 'Data coverage', eager: true,
-      load: (ctx) => Promise.race([
-        ctx.readModelPromise(),
-        new Promise((resolve) => setTimeout(() => resolve({ unavailable: true }), READ_MODEL_WAIT_MS)),
-      ]),
+      load: readModelOrUnavailable,
       render: (readModel, ctx) => {
         const { tr } = ctx;
-        if (!readModel || readModel.unavailable) return empty(tr('The parcel data profile is temporarily unavailable.'));
-        const blocks = readModel.blocks || {};
-        if (!Object.keys(blocks).length) return empty(tr('No data profile has been built for this parcel yet.'));
-        const available = COVERAGE_BLOCKS.filter(([name]) => (blocks[name] || {}).available === true).length;
+        const blocks = (readModel && readModel.blocks) || {};
+        const profileUnavailable = !readModel || readModel.unavailable;
+        const available = profileUnavailable
+          ? null
+          : COVERAGE_BLOCKS.filter(([name]) => (blocks[name] || {}).available === true).length;
+        const profileBody = profileUnavailable
+          ? note(tr('The parcel data profile is temporarily unavailable.'))
+          : !Object.keys(blocks).length
+            ? note(tr('No data profile has been built for this parcel yet.'))
+            : `${rows(COVERAGE_BLOCKS.map(([name, label]) => {
+              const block = blocks[name] || {};
+              const coverage = block.coverage ?? block.coverage_status;
+              const partial = block.available === true && coverage === 'partial';
+              const status = block.available !== true
+                ? badge('unknown', tr('Not available'))
+                : partial
+                  ? badge('medium', tr('Partial coverage'))
+                  : badge('low', tr('Available'));
+              const source = [block.source, block.dataset_version].filter(Boolean).join(' · ');
+              return [tr(label), `${status}${source ? `<small class="parcel-coverage-source">${esc(source)}</small>` : ''}`];
+            }))}${note(tr('This table reports the parcel read model only. Separately loaded sections may contain data even when the corresponding block is not available. Missing data are never shown as zero.'))}`;
         return {
-          badge: `${available}/${COVERAGE_BLOCKS.length}`,
-          body: `${rows(COVERAGE_BLOCKS.map(([name, label]) => {
-            const block = blocks[name] || {};
-            return [tr(label), block.available === true
-              ? badge('low', tr('Available'))
-              : badge('unknown', tr('Not available'))];
-          }))}${note(tr('Blocks not present in the local datasets are listed as not available; they are never shown as zero.'))}`,
+          badge: available === null ? undefined : `${available}/${COVERAGE_BLOCKS.length}`,
+          body: `<div class="parcel-coverage-tabs" role="tablist" aria-label="${esc(tr('Data coverage views'))}">
+            <button type="button" class="parcel-coverage-tab" id="parcelCoverageTabProfile" role="tab" aria-controls="parcelCoveragePanelProfile" aria-selected="true" tabindex="0" data-coverage-tab="profile">${esc(tr('Coverage'))}</button>
+            <button type="button" class="parcel-coverage-tab" id="parcelCoverageTabDatabases" role="tab" aria-controls="parcelCoveragePanelDatabases" aria-selected="false" tabindex="-1" data-coverage-tab="databases">${esc(tr('Database list'))}</button>
+          </div>
+          <div class="parcel-coverage-panel" id="parcelCoveragePanelProfile" role="tabpanel" tabindex="0" aria-labelledby="parcelCoverageTabProfile" data-coverage-panel="profile">${profileBody}</div>
+          <div class="parcel-coverage-panel" id="parcelCoveragePanelDatabases" role="tabpanel" tabindex="0" aria-labelledby="parcelCoverageTabDatabases" data-coverage-panel="databases" hidden>
+            <div class="parcel-database-list-status" aria-live="polite"></div>
+          </div>`,
         };
+      },
+      bind: (el, _readModel, ctx) => {
+        const tabs = [...el.querySelectorAll('[data-coverage-tab]')];
+        const panels = [...el.querySelectorAll('[data-coverage-panel]')];
+        const databaseStatus = el.querySelector('.parcel-database-list-status');
+        let databaseListLoaded = false;
+        let databaseListRequest = null;
+
+        const renderDatabaseList = (payload) => {
+          const schemas = new Map();
+          (Array.isArray(payload && payload.layers) ? payload.layers : []).forEach((layer) => {
+            if (!layer || !layer.schema) return;
+            const source = layer.source_database || ctx.tr('Database');
+            const database = layer.database_name || source;
+            const key = `${source}\u0000${database}\u0000${layer.schema}`;
+            const entry = schemas.get(key) || {
+              source, database, schema: String(layer.schema), available: null,
+            };
+            if (layer.schema_exists === true) entry.available = true;
+            else if (layer.schema_exists === false && entry.available !== true) entry.available = false;
+            schemas.set(key, entry);
+          });
+          if (!schemas.size) return '';
+
+          const items = [...schemas.values()]
+            .sort((a, b) => a.database.localeCompare(b.database) || a.source.localeCompare(b.source) || a.schema.localeCompare(b.schema))
+            .map(({ source, database, schema, available }) => {
+              const status = available === true
+                ? badge('low', ctx.tr('Available'))
+                : available === false
+                  ? badge('unknown', ctx.tr('Not available'))
+                  : badge('unknown', ctx.tr('Temporarily unavailable'));
+              const sourceLabel = source === database ? database : `${database} · ${source}`;
+              return `<li class="parcel-database-item"><span><strong class="parcel-database-name">${esc(schema)}</strong><small class="parcel-database-database">${esc(sourceLabel)}</small></span><span class="parcel-database-meta">${status}</span></li>`;
+            }).join('');
+          return `<ul class="parcel-database-list">${items}</ul>${note(ctx.tr('Availability is checked against the connected PostgreSQL databases.'))}`;
+        };
+
+        const loadDatabaseList = () => {
+          if (databaseListLoaded || databaseListRequest) return databaseListRequest;
+          databaseStatus.innerHTML = `<p class="parcel-note" role="status">${esc(ctx.tr('Loading database list…'))}</p>`;
+          databaseListRequest = (async () => {
+            try {
+              const result = await ctx.fetchJson(SCHEMA_HEALTH_URL);
+              if (!ctx.isCurrent()) return;
+              const rendered = result.ok && result.data ? renderDatabaseList(result.data) : '';
+              if (rendered) {
+                databaseStatus.innerHTML = rendered;
+                const layerHealth = Array.isArray(result.data.layers) ? result.data.layers : [];
+                const unknownSchema = layerHealth.some((layer) => layer && layer.schema && layer.schema_exists == null);
+                databaseListLoaded = result.data.available !== false && !unknownSchema;
+                if (!databaseListLoaded) {
+                  databaseStatus.insertAdjacentHTML('beforeend', `<button type="button" class="secondary-action parcel-database-retry" data-coverage-retry>${esc(ctx.tr('Retry'))}</button>`);
+                }
+              } else {
+                databaseStatus.innerHTML = `<p class="parcel-note" role="status">${esc(ctx.tr('This data is temporarily unavailable.'))}</p><button type="button" class="secondary-action parcel-database-retry" data-coverage-retry>${esc(ctx.tr('Retry'))}</button>`;
+              }
+            } finally {
+              databaseListRequest = null;
+            }
+          })();
+          return databaseListRequest;
+        };
+
+        const activateTab = (activeTab, focus = false) => {
+          const active = activeTab.dataset.coverageTab;
+          tabs.forEach((tab) => {
+            const selected = tab === activeTab;
+            tab.setAttribute('aria-selected', String(selected));
+            tab.tabIndex = selected ? 0 : -1;
+          });
+          panels.forEach((panel) => { panel.hidden = panel.dataset.coveragePanel !== active; });
+          if (focus) activeTab.focus();
+          if (active === 'databases') void loadDatabaseList();
+        };
+
+        tabs.forEach((tab) => {
+          tab.addEventListener('click', () => activateTab(tab));
+          tab.addEventListener('keydown', (event) => {
+            const index = tabs.indexOf(tab);
+            const next = event.key === 'ArrowRight' ? (index + 1) % tabs.length
+              : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length
+                : event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : -1;
+            if (next < 0) return;
+            event.preventDefault();
+            activateTab(tabs[next], true);
+          });
+        });
+        databaseStatus.addEventListener('click', (event) => {
+          if (event.target.closest('[data-coverage-retry]')) void loadDatabaseList();
+        });
       },
     },
   ];
@@ -868,11 +1462,14 @@
     if (!catalog.data || !catalog.data.indicators) return null;
     const codes = catalog.data.indicators.slice(0, 4);
     const series = await Promise.all(codes.map(async (code) => {
-      const result = await ctx.fetchJson(`${base}/${encodeURIComponent(code)}`);
-      const values = result.ok && result.data ? result.data.series || [] : [];
+      let values = catalog.data.series_by_indicator && catalog.data.series_by_indicator[code];
+      if (!Array.isArray(values)) {
+        const result = await ctx.fetchJson(`${base}/${encodeURIComponent(code)}`);
+        values = result.ok && result.data ? result.data.series || [] : [];
+      }
       return { code, latest: values.length ? values[values.length - 1] : null };
     }));
-    return { source: catalog.data.source, nuts3: catalog.data.nuts3, total: catalog.data.indicators.length, series };
+    return { ...catalog.data, total: catalog.data.indicators.length, series };
   }
 
   async function loadQualityOfLifeIndicators(ctx) {
@@ -932,12 +1529,21 @@
     const { tr } = ctx;
     if (!data || !data.series || data.series.every((item) => !item.latest)) return empty(tr(emptyMessage));
     const shown = data.series.filter((item) => item.latest);
+    const resolution = data.spatial_resolution || 'province';
+    const scopeNote = data.scope_note
+      ? tr(data.scope_note, {
+        country: data.country_name || data.country_code || tr('Italy'),
+        municipality: data.municipality || tr('this municipality'),
+      })
+      : (resolution === 'municipality'
+        ? tr('Municipality-level indicators for {municipality}.', { municipality: data.municipality || tr('this municipality') })
+        : tr('Province-level indicators ({nuts3}).', { nuts3: data.nuts3 || 'NUTS3' }));
     return {
       badge: data.total,
-      meta: { source: data.source, spatial_resolution: tr('province') },
-      body: `${rows(shown.map((item) => [Core.indicatorLabel(item.code), `${Core.formatNumber(item.latest.value, 2)} <small>${esc(item.latest.year || '')}</small>`]))}`
+      meta: { source: data.source, spatial_resolution: tr(resolution) },
+      body: `${rows(shown.map((item) => [tr(Core.indicatorLabel(item.code)), `${Core.formatNumber(item.latest.value, item.latest.unit === 'residents' ? 0 : 2)} <small>${esc(item.latest.year || '')}</small>`]))}`
         + `${data.total > data.series.length ? note(tr('Preview of {shown} of {total} available indicators.', { shown: data.series.length, total: data.total })) : ''}`
-        + note(tr('Province-level indicators ({nuts3}).', { nuts3: data.nuts3 || 'NUTS3' })),
+        + note(scopeNote),
     };
   }
 
@@ -959,7 +1565,7 @@
     const body = clusters.map((cluster) => {
       const indicators = cluster.indicators || [];
       const tableRows = indicators.map((indicator) => `<tr>
-        <th scope="row">${esc(indicator.name)}${indicator.unit && !indicator.unit_varies
+        <th scope="row">${esc(tr(indicator.name))}${indicator.unit && !indicator.unit_varies
           ? `<small class="parcel-indicator-unit">${esc(indicator.unit)}</small>` : ''}</th>
         ${years.map((year) => cell(indicator, year)).join('')}
       </tr>`).join('');
@@ -972,8 +1578,13 @@
     }).join('');
     return {
       badge: clusters.reduce((sum, cluster) => sum + (cluster.indicators || []).length, 0),
-      meta: { source: data.source, spatial_resolution: tr('province') },
-      body: `${body}${note(tr('Province-level indicators ({nuts3}).', { nuts3: data.nuts3 || 'NUTS3' }))}`,
+      meta: { source: data.source, spatial_resolution: tr(data.spatial_resolution || 'province') },
+      body: `${body}${note(data.scope_note
+        ? tr(data.scope_note, {
+          country: data.country_name || data.country_code || tr('Italy'),
+          municipality: data.municipality || tr('this municipality'),
+        })
+        : tr('Province-level indicators ({nuts3}).', { nuts3: data.nuts3 || 'NUTS3' }))}`,
     };
   }
 
@@ -1024,6 +1635,85 @@
       + `<tbody>${body}</tbody></table></div></details>`;
   }
 
+  function omiCadastralTypeHint(category) {
+    const normalized = String(category || '').toUpperCase().replaceAll('/', '').replaceAll(' ', '');
+    const hints = {
+      A1: 'signoril', A2: 'civil', A3: 'economich', A4: 'popolar',
+      A5: 'ultrapopol', A6: 'rural', A7: 'villini', A8: 'villini',
+      A10: 'uffici', C1: 'negozi', C2: 'magazzini', C3: 'laboratori',
+    };
+    return hints[normalized] || null;
+  }
+
+  function omiComparableText(value) {
+    return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  }
+
+  function omiUnitValuations(sister, quotes, zoneMatch, tr) {
+    if (!sister || sister.available !== true) return '';
+    const units = Array.isArray(sister.valuation_units)
+      ? sister.valuation_units
+      : (Array.isArray(sister.buildings) ? sister.buildings : []);
+    const land = Array.isArray(sister.land) ? sister.land : [];
+    if (!units.length && !land.length) {
+      return `<section class="parcel-omi-units"><h3>${esc(tr('OMI estimate by SISTER unit'))}</h3>${note(tr('No SISTER building or land units are available for this parcel.'))}</section>`;
+    }
+    const detectedZone = zoneMatch && zoneMatch.matched ? String(zoneMatch.zone || '').toUpperCase() : '';
+    const optionsFor = (selectedIndex) => `<option value="">${esc(tr('Choose an OMI quote'))}</option>` + quotes.map((quote, index) => {
+      const period = quote.anno && quote.semestre ? ` · ${quote.anno} S${quote.semestre}` : '';
+      const state = quote.stato_conservazione ? ` · ${quote.stato_conservazione}` : '';
+      const selected = selectedIndex === index ? ' selected' : '';
+      return `<option value="${index}"${selected}>${esc(`${quote.zona || '—'} · ${quote.tipologia || quote.cod_tipologia || tr('Type')}${state}${period}`)}</option>`;
+    }).join('');
+    const buildingCards = units.map((unit, index) => {
+      const category = unit.category || unit.building_type || '';
+      const hint = omiCadastralTypeHint(category);
+      const categoryText = omiComparableText(category);
+      const hintedQuotes = hint
+        ? quotes.map((quote, quoteIndex) => ({ quote, quoteIndex }))
+          .filter(({ quote }) => omiComparableText(quote.tipologia || quote.cod_tipologia).includes(hint))
+          .filter(({ quote }) => !detectedZone || String(quote.zona || '').toUpperCase() === detectedZone)
+        : [];
+      const suggestedIndex = detectedZone && hintedQuotes.length === 1 ? hintedQuotes[0].quoteIndex : null;
+      const rawArea = Core.toNumber(unit.area);
+      const area = rawArea !== null && rawArea > 0 ? String(rawArea) : '';
+      const number = unit.subunit || index + 1;
+      const matchNote = suggestedIndex !== null
+        ? tr('Suggested from cadastral category {category}; review before use.', { category })
+        : hint && !hintedQuotes.length
+          ? tr('No matching OMI type was found for category {category}; choose a quote manually.', { category })
+          : tr('Select an OMI type manually; no unique category match is available.') + (categoryText ? ` ${tr('Cadastral category')}: ${category}.` : '');
+      return `<article class="parcel-record parcel-omi-unit-card" data-omi-unit-card>
+        <h4>${esc(tr('Building unit {n}', { n: number }))}${category ? ` <small>${esc(category)}</small>` : ''}</h4>
+        ${rows([
+          [tr('Subunit'), text(unit.subunit)],
+          [tr('Cadastral class'), text(unit.cadastral_class)],
+          [tr('Address'), text(unit.address)],
+          [tr('Consistency'), text(unit.consistency)],
+          [tr('Cadastral income'), unit.cadastral_income == null ? null : `€ ${Core.formatNumber(unit.cadastral_income, 2)}`],
+        ])}
+        <div class="parcel-form">
+          <label>${esc(tr('OMI zone and property type'))}<select class="parcel-input" data-omi-unit-quote>${optionsFor(suggestedIndex)}</select></label>
+          <label>${esc(tr('Surface used for the estimate (m²)'))}<input class="parcel-input" data-omi-unit-area type="number" inputmode="decimal" min="1" step="1" value="${esc(area)}" placeholder="${esc(tr('e.g. 100'))}"></label>
+        </div>
+        ${note(matchNote)}
+        ${rawArea !== null && rawArea > 0 ? note(tr('SISTER recorded {area} m²; confirm that this is the commercial surface and uses the OMI measurement basis.', { area: Core.formatNumber(rawArea, 1) })) : note(tr('SISTER does not provide a usable unit surface; enter a measured commercial surface to estimate.'))}
+        <div class="parcel-estimate parcel-omi-unit-result" data-omi-unit-result aria-live="polite"></div>
+      </article>`;
+    }).join('');
+    const landRecords = land.length
+      ? `<div class="parcel-omi-land"><h4>${esc(tr('Separate land records'))}</h4>${land.map((record, index) => `<article class="parcel-record">${land.length > 1 ? `<h4>${esc(tr('Land record {n}', { n: index + 1 }))}</h4>` : ''}${rows([
+        [tr('Cadastral type'), text(record.property_type || tr('Land'))],
+        [tr('Subunit'), text(record.subunit)],
+        [tr('Surface'), record.area == null ? null : `${Core.formatNumber(record.area)} m²`],
+        [tr('Address'), text(record.address)],
+      ])}</article>`).join('')}${note(tr('Land is listed separately. Building OMI quotes do not provide a land valuation for this record.'))}</div>`
+      : '';
+    return `<section class="parcel-omi-units"><h3>${esc(tr('OMI estimate by SISTER unit'))}</h3>`
+      + (units.length ? note(tr('Estimate each building unit separately using its cadastral category and a verified commercial surface. The category suggestion is only a starting point.')) : '')
+      + buildingCards + landRecords + `</section>`;
+  }
+
   // ---- OMI estimator (DOM) -------------------------------------------------------------
 
   function bindOmi(el, data, ctx) {
@@ -1041,6 +1731,20 @@
     let historyToken = 0;
     const current = () => quotes[Number(select.value)] || quotes[0];
     const alive = () => ctx.isCurrent();
+
+    function showUnitEstimates() {
+      el.querySelectorAll('[data-omi-unit-card]').forEach((card) => {
+        const quoteSelect = card.querySelector('[data-omi-unit-quote]');
+        const unitArea = card.querySelector('[data-omi-unit-area]');
+        const result = card.querySelector('[data-omi-unit-result]');
+        if (!quoteSelect || !unitArea || !result) return;
+        const quote = quoteSelect.value === '' ? null : quotes[Number(quoteSelect.value)];
+        const range = quote ? Core.estimateOmiRange(quote, unitArea.value) : null;
+        result.innerHTML = range
+          ? `<span>${esc(tr('Indicative value'))}</span><strong>${esc(Core.formatCurrency(range.min))} – ${esc(Core.formatCurrency(range.max))}</strong><small>${esc(tr('Local preview'))} · ${esc(quote.zona || '')} · ${esc(quote.tipologia || quote.cod_tipologia || '')}</small>`
+          : `<span>${esc(!quote ? tr('Choose an OMI quote to estimate this unit.') : tr('Enter a valid surface to compute the estimate.'))}</span>`;
+      });
+    }
 
     function showQuote() {
       const quote = current();
@@ -1141,9 +1845,14 @@
     let estimateWaiter = null;
     select.addEventListener('change', () => { showQuote(); showEstimate(); showHistory(); });
     areaInput.addEventListener('input', showEstimate);
+    el.querySelectorAll('[data-omi-unit-quote], [data-omi-unit-area]').forEach((input) => {
+      input.addEventListener('change', showUnitEstimates);
+      input.addEventListener('input', showUnitEstimates);
+    });
     showQuote();
     const initialEstimate = showEstimate();
     const initialHistory = showHistory();
+    showUnitEstimates();
     return Promise.all([initialEstimate, initialHistory]);
   }
 
@@ -1152,7 +1861,9 @@
   const view = {
     mounted: false, token: 0, controller: null, observers: [], ctx: null,
     readModel: undefined, readModelWaiters: [], sections: new Map(), data: new Map(),
-    pending: new Map(), metadata: new Map(),
+    pending: new Map(), metadata: new Map(), navigationTab: null, navigationTimer: null,
+    navigationTargetSection: null,
+    navigationListenersBound: false,
   };
 
   function stripCell(key, label) {
@@ -1261,6 +1972,7 @@
     count.textContent = result.badge != null ? String(result.badge) : '';
     count.hidden = result.badge == null;
     setState(el, result.empty ? 'empty' : 'ready');
+    alignNavigationTarget(section.id);
   }
 
   async function loadSection(section, el, ctx) {
@@ -1270,6 +1982,7 @@
     const task = (async () => {
       setState(el, 'loading');
       el.querySelector('.parcel-section-body').innerHTML = `<div class="parcel-skeleton" aria-hidden="true"><span></span><span></span><span></span></div><span class="visually-hidden">${esc(ctx.tr('Loading…'))}</span>`;
+      alignNavigationTarget(section.id);
       try {
         const data = await section.load(ctx);
         if (!ctx.isCurrent()) return;
@@ -1282,12 +1995,14 @@
           // The source is not provisioned on this server: retrying cannot help.
           setState(el, 'empty');
           el.querySelector('.parcel-section-body').innerHTML = note(failureMessage(404, ctx.tr));
+          alignNavigationTarget(section.id);
           return;
         }
         setState(el, 'error');
         const retryLabel = ctx.tr('Retry');
         el.querySelector('.parcel-section-body').innerHTML = `<p class="parcel-note" role="status">${esc(failureMessage(error && error.status, ctx.tr))}</p>`
           + `<button type="button" class="parcel-retry secondary-action">${esc(retryLabel)}</button>`;
+        alignNavigationTarget(section.id);
         el.querySelector('.parcel-retry').addEventListener('click', () => {
           setState(el, 'idle');
           void loadSection(section, el, ctx);
@@ -1400,11 +2115,22 @@
     }, { root: container, rootMargin: LAZY_ROOT_MARGIN });
     // Section tabs follow whichever section sits nearest the top.
     const spy = new IntersectionObserver((items) => {
-      const visible = items.filter((item) => item.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
-      if (visible) {
-        const tabId = visible.target.dataset.tab;
+      // Keep the clicked tab selected while smooth scrolling. Lazy sections
+      // can grow during loading and move the destination below the viewport.
+      if (view.navigationTab) return;
+      if (!items.some((item) => item.isIntersecting)) return;
+      const rootTop = container.getBoundingClientRect().top;
+      const anchor = rootTop + Math.min(36, container.clientHeight * 0.1);
+      const active = entries
+        .map(([, entry]) => entry.el)
+        .find((section) => {
+          const rect = section.getBoundingClientRect();
+          return rect.top <= anchor && rect.bottom > anchor;
+        });
+      if (active) {
+        const tabId = active.dataset.tab;
         setActiveTab(tabId);
-        updateTabHash(tabId);
+        updateSectionHash(active.dataset.section);
       }
     }, { root: container, rootMargin: '0px 0px -70% 0px', threshold: 0 });
     entries.forEach(([id, { section, el }]) => {
@@ -1423,6 +2149,41 @@
     });
   }
 
+  function clearNavigationIntent() {
+    releaseNavigationLock();
+    view.navigationTargetSection = null;
+  }
+
+  function releaseNavigationLock() {
+    if (view.navigationTimer !== null) root.clearTimeout(view.navigationTimer);
+    view.navigationTimer = null;
+    view.navigationTab = null;
+  }
+
+  function setNavigationIntent(tabId, sectionId = null) {
+    clearNavigationIntent();
+    view.navigationTab = tabId;
+    view.navigationTargetSection = sectionId;
+    // scrollend is unavailable in some supported browsers, so retain a timer
+    // fallback. The chosen tab remains selected after the lock is released.
+    view.navigationTimer = root.setTimeout(releaseNavigationLock, 3000);
+  }
+
+  function alignNavigationTarget(changedSectionId = null) {
+    const targetId = view.navigationTargetSection;
+    if (!targetId || !view.content) return;
+    const target = view.sections.get(targetId)?.el;
+    if (!target) return;
+    if (changedSectionId) {
+      const sectionIds = [...view.sections.keys()];
+      if (sectionIds.indexOf(changedSectionId) > sectionIds.indexOf(targetId)) return;
+    }
+    const containerTop = view.content.getBoundingClientRect().top;
+    const targetTop = target.getBoundingClientRect().top;
+    const adjustment = targetTop - containerTop - 4;
+    if (Math.abs(adjustment) > 1) view.content.scrollTop += adjustment;
+  }
+
   function tabFromHash() {
     const raw = root.location && root.location.hash ? root.location.hash.slice(1) : '';
     let key = raw;
@@ -1439,9 +2200,18 @@
     else root.history.replaceState(null, '', url);
   }
 
+  function updateSectionHash(sectionId) {
+    if (!root.location || !root.history || !root.history.replaceState) return;
+    const hash = `#sezione-${sectionId}`;
+    if (root.location.hash === hash) return;
+    root.history.replaceState(null, '', `${root.location.pathname}${root.location.search}${hash}`);
+  }
+
   function navigateToTab(tabId, { updateHash = false, pushHash = false, behavior = 'auto' } = {}) {
     const first = view.content && view.content.querySelector(`.parcel-section[data-tab="${tabId}"]`);
     if (!first) return false;
+    if (behavior === 'smooth') setNavigationIntent(tabId);
+    else clearNavigationIntent();
     if (typeof first.scrollIntoView === 'function') first.scrollIntoView({ block: 'start', behavior });
     else if (view.content) view.content.scrollTop = first.offsetTop || 0;
     setActiveTab(tabId);
@@ -1449,7 +2219,39 @@
     return true;
   }
 
+  function navigateToSection(sectionId) {
+    const entry = view.sections.get(sectionId);
+    if (!entry) return false;
+    setNavigationIntent(entry.section.tab, sectionId);
+    updateSectionHash(sectionId);
+    if (typeof entry.el.scrollIntoView === 'function') {
+      entry.el.scrollIntoView({ block: 'start', behavior: 'auto' });
+    } else if (view.content) {
+      view.content.scrollTop = entry.el.offsetTop || 0;
+    }
+    setActiveTab(entry.section.tab);
+    return true;
+  }
+
+  function sectionFromHash() {
+    const raw = root.location && root.location.hash ? root.location.hash.slice(1) : '';
+    let key = raw;
+    try { key = decodeURIComponent(raw); } catch (_) { /* keep the raw fragment */ }
+    const normalized = String(key).toLowerCase();
+    const sectionId = normalized.startsWith('sezione-')
+      ? normalized.slice('sezione-'.length)
+      : normalized.startsWith('parcel-section-')
+        ? normalized.slice('parcel-section-'.length)
+        : null;
+    return sectionId ? view.sections.get(sectionId) || null : null;
+  }
+
   function restoreTabFromHash() {
+    const section = sectionFromHash();
+    if (section) {
+      navigateToSection(section.section.id);
+      return;
+    }
     const tabId = tabFromHash();
     if (tabId) navigateToTab(tabId);
   }
@@ -1468,6 +2270,18 @@
     view.statStrip = strip;
     view.tr = tr || ((key, values) => Core.translate((k) => k, key, values));
     view.mounted = true;
+    if (!view.navigationListenersBound && typeof content.addEventListener === 'function') {
+      content.addEventListener('scrollend', releaseNavigationLock);
+      content.addEventListener('wheel', clearNavigationIntent, { passive: true });
+      content.addEventListener('touchstart', clearNavigationIntent, { passive: true });
+      content.addEventListener('pointerdown', clearNavigationIntent);
+      content.addEventListener('keydown', (event) => {
+        if (['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End', ' '].includes(event.key)) {
+          clearNavigationIntent();
+        }
+      });
+      view.navigationListenersBound = true;
+    }
     if (!view.hashListenerBound && typeof root.addEventListener === 'function') {
       root.addEventListener('hashchange', restoreTabFromHash);
       root.addEventListener('popstate', restoreTabFromHash);
@@ -1477,6 +2291,8 @@
 
   function show(feature, options = {}) {
     if (!view.mounted) return;
+    clearNavigationIntent();
+    publishNearbyPvpMarkers([], false);
     const tr = view.tr;
     if (view.controller) view.controller.abort();
     disconnectObservers();
@@ -1514,7 +2330,7 @@
     view.readModelWaiters = [];
     waiters.forEach((resolve) => resolve(view.readModel));
     // Sections already painted from block-dependent data pick up provenance.
-    ['identity', 'census', 'solar'].forEach((id) => {
+    ['identity', 'address', 'buildings', 'census', 'solar'].forEach((id) => {
       const entry = view.sections.get(id);
       if (!entry || !['ready', 'empty'].includes(entry.el.dataset.state)) return;
       const data = view.data.get(id);
@@ -1523,6 +2339,8 @@
   }
 
   function clear() {
+    clearNavigationIntent();
+    publishNearbyPvpMarkers([], false);
     if (view.controller) view.controller.abort();
     disconnectObservers();
     view.token += 1;

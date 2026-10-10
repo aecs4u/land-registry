@@ -31,6 +31,7 @@ ENVELOPE_KEYS = {
     "source",
     "dataset_version",
     "model_version",
+    "coverage",
     "coverage_status",
     "confidence",
     "spatial_resolution",
@@ -106,6 +107,8 @@ def test_every_declared_block_has_the_common_envelope(monkeypatch):
     assert set(result["blocks"]) == set(stats_service._PARCEL_DETAIL_BLOCKS)
     for name, block in result["blocks"].items():
         assert ENVELOPE_KEYS <= set(block), name
+        assert block["coverage"] in {"full", "partial", "unavailable"}, name
+        assert block["coverage_status"] == block["coverage"], name
 
 
 def test_populated_block_inventory_is_pinned(monkeypatch):
@@ -123,8 +126,18 @@ def test_address_block_uses_cadastral_match_and_marks_cache_coverage_partial(mon
     assert block["available"] is True
     assert block["source"] == "SISTER SQLite visura_properties.address"
     assert block["match_method"] == "cadastral_reference"
+    assert block["coverage"] == "partial"
     assert block["coverage_status"] == "partial"
     assert block["data"] == {"addresses": ["Via Roma 1"], "count": 1, "truncated": False}
+
+
+def test_cached_or_capped_record_sources_are_not_labelled_complete(monkeypatch):
+    result = _build(monkeypatch)
+
+    for name in ("buildings", "opendata", "pvp"):
+        block = result["blocks"][name]
+        assert block["available"] is True
+        assert block["coverage"] == "partial", name
 
 
 def test_declared_but_empty_blocks_are_explicitly_unavailable(monkeypatch):
@@ -136,7 +149,8 @@ def test_declared_but_empty_blocks_are_explicitly_unavailable(monkeypatch):
         block = result["blocks"][name]
         assert block["available"] is False, name
         assert block["data"] is None, name
-        assert block["coverage_status"] == "not_available", name
+        assert block["coverage"] == "unavailable", name
+        assert block["coverage_status"] == "unavailable", name
 
 
 def test_valuation_is_unavailable_when_nothing_matched(monkeypatch):
@@ -158,7 +172,8 @@ def test_valuation_is_unavailable_when_nothing_matched(monkeypatch):
     block = result["blocks"]["valuation"]
     assert block["available"] is False
     assert block["data"] is None
-    assert block["coverage_status"] == "not_available"
+    assert block["coverage"] == "unavailable"
+    assert block["coverage_status"] == "unavailable"
 
 
 def test_valuation_is_available_with_a_matched_zone_but_no_quotes(monkeypatch):

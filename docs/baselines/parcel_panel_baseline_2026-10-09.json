@@ -14,7 +14,7 @@
     "cold_build_seconds": {
       "n": 40,
       "median": 4.614,
-      "p95": 6.941,
+      "p95": 6.783,
       "max": 7.717
     },
     "cache_hit_seconds": {
@@ -26,7 +26,8 @@
       "basic": "20/20",
       "cadastral": "20/20",
       "valuation": "20/20"
-    }
+    },
+    "percentile_method": "nearest_rank"
   },
   "rows": [
     {

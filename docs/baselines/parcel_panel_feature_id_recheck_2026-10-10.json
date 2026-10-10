@@ -1,0 +1,19 @@
+{
+  "captured_on": "2026-10-10",
+  "method": "Read-only calls to the application get_parcel_at_point route handler using the configured canonical PostGIS source and the same area centers and offset walk as the Phase 0 baseline.",
+  "areas": {
+    "roma-centro": 5,
+    "milano-centro": 5,
+    "tolfa-comune": 5,
+    "monte-romano-campagna": 5
+  },
+  "sampled_parcels": 20,
+  "feature_ids_present": 20,
+  "distinct_feature_ids": 20,
+  "distinct_cadastral_references": 20,
+  "detail_requests_or_cache_writes": 0,
+  "limitations": [
+    "This confirms feature-ID presence across the sample, not duplicate-reference collisions or cache isolation for repeated references.",
+    "The probe used the configured local PostGIS source; it does not verify the Cloud Run identity or the likely Neon production target."
+  ]
+}

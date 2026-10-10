@@ -2200,18 +2200,9 @@ function selectByAttribute() {
             return;
         }
         const raw = props[field];
-        const cellStr = String(raw ?? '').toLowerCase();
-        const valStr  = value.toLowerCase();
-        let hit = false;
-
-        switch (op) {
-            case 'contains':  hit = cellStr.includes(valStr); break;
-            case 'equals':    hit = cellStr === valStr; break;
-            case 'starts':    hit = cellStr.startsWith(valStr); break;
-            case 'gt':        hit = parseFloat(raw) > parseFloat(value); break;
-            case 'lt':        hit = parseFloat(raw) < parseFloat(value); break;
-            default:          hit = cellStr.includes(valStr);
-        }
+        const hit = window.MapWorkbench
+            ? window.MapWorkbench.matchesValue(raw, value, op)
+            : String(raw ?? '').toLowerCase().includes(value.toLowerCase());
 
         _applySelection(layer, hit);
         if (hit) matched++;

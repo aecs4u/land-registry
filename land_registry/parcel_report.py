@@ -214,6 +214,7 @@ def _catalog_license_status(
         "official_terms_reviewed": "Official provider terms reviewed",
         "official_methodology_reviewed": "Official provider methodology reviewed",
         "official_general_policy_reviewed": "Official general data policy reviewed; product licence pending",
+        "official_policy_scope_reviewed": "Official policy scope reviewed; product-specific terms pending",
         "official_reuse_policy_reviewed": "Official reuse policy reviewed; no licence name asserted",
         "official_service_access_reviewed": "Official service access reviewed; data reuse terms pending",
         "official_public_access_reviewed": "Official public-access guide reviewed; reuse licence not stated",

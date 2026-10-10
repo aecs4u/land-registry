@@ -1173,6 +1173,9 @@ msgstr "Riempimento"
 msgid "Show CAP labels"
 msgstr "Mostra etichette CAP"
 
+msgid "Show sheet labels"
+msgstr "Mostra etichette fogli"
+
 msgid "Partial coverage: {layers}"
 msgstr "Copertura parziale: {layers}"
 
@@ -1783,8 +1786,8 @@ msgstr "Disponibile · WGS84"
 msgid "Benchmark"
 msgstr "Riferimento"
 
-msgid "Blocks not present in the local datasets are listed as not available; they are never shown as zero."
-msgstr "I blocchi assenti dai dataset locali sono indicati come non disponibili; non vengono mai mostrati come zero."
+msgid "This table reports the parcel read model only. Separately loaded sections may contain data even when the corresponding block is not available. Missing data are never shown as zero."
+msgstr "Questa tabella mostra solo i dati del profilo della particella. Le sezioni caricate separatamente possono contenere informazioni anche quando il blocco corrispondente non è disponibile. I dati mancanti non vengono mai indicati come zero."
 
 msgid "Building"
 msgstr "Fabbricato"
@@ -1797,6 +1800,12 @@ msgstr "Edifici"
 
 msgid "Cadastral OpenData"
 msgstr "Dati catastali OpenData"
+
+msgid "OpenData record {n}"
+msgstr "Record OpenData {n}"
+
+msgid "OpenData values are shown as recorded by the cadastral source; they may be incomplete."
+msgstr "I valori OpenData sono riportati come registrati dalla fonte catastale e potrebbero essere incompleti."
 
 msgid "Cadastral class"
 msgstr "Classe catastale"
@@ -1828,6 +1837,12 @@ msgstr "Confidenza"
 msgid "Consistency"
 msgstr "Consistenza"
 
+msgid "Subunit"
+msgstr "Subalterno"
+
+msgid "Surface"
+msgstr "Superficie"
+
 msgid "Context"
 msgstr "Contesto"
 
@@ -1842,6 +1857,21 @@ msgstr "Patrimonio culturale"
 
 msgid "Data coverage"
 msgstr "Copertura dati"
+
+msgid "Coverage"
+msgstr "Copertura"
+
+msgid "Data coverage views"
+msgstr "Viste della copertura dei dati"
+
+msgid "Database list"
+msgstr "Elenco dei database"
+
+msgid "Database"
+msgstr "Database"
+
+msgid "Availability is checked against the connected PostgreSQL databases."
+msgstr "La disponibilità viene verificata sui database PostgreSQL collegati."
 
 msgid "Dataset"
 msgstr "Dataset"
@@ -1993,6 +2023,48 @@ msgstr "Nessuna quotazione OMI disponibile per questo comune."
 msgid "No PVP auction found for this parcel."
 msgstr "Nessuna asta PVP trovata per questa particella."
 
+msgid "Approximate location"
+msgstr "Posizione approssimativa"
+
+msgid "Auction listing"
+msgstr "Annuncio d'asta"
+
+msgid "Distance is measured in a straight line from the parcel centre. Some sale locations are approximate."
+msgstr "La distanza è misurata in linea d'aria dal centro della particella. La posizione di alcune vendite è approssimativa."
+
+msgid "Listings matched to this parcel ({n})"
+msgstr "Annunci associati a questa particella ({n})"
+
+msgid "Nearby auction sales are unavailable."
+msgstr "Le vendite giudiziarie nelle vicinanze non sono disponibili."
+
+msgid "Loading nearby sales…"
+msgstr "Caricamento delle vendite nelle vicinanze…"
+
+msgid "Nearby sales could not be displayed because their locations are missing."
+msgstr "Non è possibile mostrare le vendite vicine perché mancano le coordinate."
+
+msgid "No PVP sales found within {km} km."
+msgstr "Nessuna vendita PVP trovata entro {km} km."
+
+msgid "The parcel location is not available, so nearby auctions cannot be calculated."
+msgstr "La posizione della particella non è disponibile, quindi non è possibile calcolare le aste vicine."
+
+msgid "Search radius"
+msgstr "Raggio di ricerca"
+
+msgid "{km} km away"
+msgstr "a {km} km"
+
+msgid "{n} sales found within {km} km"
+msgstr "{n} vendite trovate entro {km} km"
+
+msgid "Showing the {shown} nearest of {total} sales."
+msgstr "Sono visualizzate le {shown} vendite più vicine, su {total} in totale."
+
+msgid "Show listed sales on the map"
+msgstr "Mostra sulla mappa le vendite elencate"
+
 msgid "No active fire detected within {km} km."
 msgstr "Nessun incendio attivo rilevato entro {km} km."
 
@@ -2005,11 +2077,17 @@ msgstr "Nessun fabbricato presente nella cache SISTER per questa particella."
 msgid "No cadastral OpenData found for this parcel."
 msgstr "Nessun dato catastale OpenData trovato per questa particella."
 
+msgid "No cadastral OpenData record is available in the parcel profile."
+msgstr "Nel profilo della particella non è disponibile alcun record catastale OpenData."
+
 msgid "No census section is available for this parcel."
 msgstr "Nessuna sezione di censimento disponibile per questa particella."
 
 msgid "No data profile has been built for this parcel yet."
 msgstr "Il profilo dati di questa particella non è ancora stato costruito."
+
+msgid "Loading database list…"
+msgstr "Caricamento elenco dei database…"
 
 msgid "No municipal data is available."
 msgstr "Nessun dato comunale disponibile."
@@ -2022,6 +2100,57 @@ msgstr "Nessun dato di rischio disponibile per questo comune."
 
 msgid "Not available"
 msgstr "Non disponibile"
+
+msgid "OMI estimate by SISTER unit"
+msgstr "Stima OMI per unità SISTER"
+
+msgid "No SISTER building or land units are available for this parcel."
+msgstr "Per questa particella non sono disponibili unità edilizie o terreni SISTER."
+
+msgid "Building unit {n}"
+msgstr "Unità edilizia {n}"
+
+msgid "Choose an OMI quote"
+msgstr "Scegli una quotazione OMI"
+
+msgid "Suggested from cadastral category {category}; review before use."
+msgstr "Suggerita in base alla categoria catastale {category}; verificare prima dell'uso."
+
+msgid "No matching OMI type was found for category {category}; choose a quote manually."
+msgstr "Nessuna tipologia OMI corrispondente alla categoria {category}; scegliere manualmente una quotazione."
+
+msgid "Select an OMI type manually; no unique category match is available."
+msgstr "Selezionare manualmente una tipologia OMI; non è disponibile una corrispondenza univoca con la categoria."
+
+msgid "Cadastral category"
+msgstr "Categoria catastale"
+
+msgid "SISTER recorded {area} m²; confirm that this is the commercial surface and uses the OMI measurement basis."
+msgstr "SISTER riporta {area} m²; verificare che sia la superficie commerciale e che usi il criterio di misurazione OMI."
+
+msgid "SISTER does not provide a usable unit surface; enter a measured commercial surface to estimate."
+msgstr "SISTER non fornisce una superficie utilizzabile per l'unità; inserire la superficie commerciale misurata per stimare."
+
+msgid "Separate land records"
+msgstr "Terreni distinti"
+
+msgid "Land record {n}"
+msgstr "Terreno {n}"
+
+msgid "Cadastral type"
+msgstr "Tipo catastale"
+
+msgid "Land is listed separately. Building OMI quotes do not provide a land valuation for this record."
+msgstr "Il terreno è elencato separatamente. Le quotazioni OMI per fabbricati non forniscono una valutazione del terreno."
+
+msgid "Estimate each building unit separately using its cadastral category and a verified commercial surface. The category suggestion is only a starting point."
+msgstr "Stimare ogni unità edilizia separatamente usando la categoria catastale e una superficie commerciale verificata. Il suggerimento della categoria è solo un punto di partenza."
+
+msgid "Choose an OMI quote to estimate this unit."
+msgstr "Scegliere una quotazione OMI per stimare questa unità."
+
+msgid "Parcel geometry area is not used for SISTER unit estimates; enter the commercial surface of the selected unit."
+msgstr "La superficie geometrica della particella non viene usata per stimare le unità SISTER; inserire la superficie commerciale dell'unità selezionata."
 
 msgid "OMI history"
 msgstr "Storico OMI"
@@ -2277,6 +2406,12 @@ msgstr "La particella misura {area}: inserisci la superficie commerciale del fab
 
 msgid "This data is temporarily unavailable."
 msgstr "Questo dato è temporaneamente non disponibile."
+
+msgid "No matching data was found for this parcel."
+msgstr "Non sono stati trovati dati corrispondenti per questa particella."
+
+msgid "This data source could not process the request."
+msgstr "La fonte dati non è riuscita a elaborare la richiesta."
 
 msgid "This data source is not available on this server."
 msgstr "Questa fonte di dati non è disponibile su questo server."
@@ -2632,6 +2767,9 @@ msgstr "Metodologia ufficiale del fornitore verificata"
 msgid "Official general data policy reviewed; product licence pending"
 msgstr "Politica generale sui dati verificata; licenza specifica del prodotto in sospeso"
 
+msgid "Official policy scope reviewed; product-specific terms pending"
+msgstr "Ambito di applicazione della politica ufficiale verificato; condizioni d'uso del prodotto da verificare"
+
 msgid "Official reuse policy reviewed; no licence name asserted"
 msgstr "Politica ufficiale di riutilizzo verificata; non viene indicata una licenza formale"
 
@@ -2692,11 +2830,17 @@ msgstr "ISPRA indica la licenza CC BY-SA 4.0 per il dataset 2020 di pericolosit�
 msgid "ISPRA (2020) Pericolosità e indicatori di rischio per frane e alluvioni. idrogeo.isprambiente.it. CC BY-SA 4.0."
 msgstr "ISPRA (2020) Pericolosità e indicatori di rischio per frane e alluvioni. idrogeo.isprambiente.it. CC BY-SA 4.0."
 
-msgid "NASA Earthdata says NASA-led mission data are CC0 unless marked with a restriction or licence; non-NASA data retain their provider terms. The adapter does not report a sensor-specific FIRMS collection, so no single product licence is asserted."
-msgstr "NASA Earthdata indica CC0 per i dati delle missioni guidate dalla NASA, salvo restrizioni o licenze esplicite; i dati di altri fornitori mantengono le relative condizioni. L'adattatore non indica una raccolta FIRMS specifica per sensore, quindi non viene attribuita una singola licenza al prodotto."
+msgid "The National Territorial Data Catalog (RNDT) metadata for ISPRA's Linea di Costa 2020 v2.0 states CC BY 4.0. The related 2006–2020 shoreline-dynamics layer classifies erosion as inland movement greater than 5 m, advance as seaward movement greater than 5 m, and smaller changes as stable. The 2020 shoreline characterization was derived mostly from Google Maps imagery from 2017–2020; this entry covers the ISPRA vector dataset, not the underlying imagery."
+msgstr "I metadati RNDT di ISPRA per Linea di Costa 2020 v2.0 indicano la licenza CC BY 4.0. Il relativo strato della dinamica litoranea 2006–2020 classifica come erosione l'arretramento verso terra superiore a 5 m, come avanzamento lo spostamento verso mare superiore a 5 m e come stabile le variazioni inferiori. La caratterizzazione della linea di costa 2020 è stata ricavata in prevalenza da immagini di Google Maps del periodo 2017–2020; questa voce riguarda il dataset vettoriale ISPRA, non le immagini sottostanti."
 
-msgid "NASA FIRMS active fire data. NASA should be acknowledged as the source where applicable; do not imply NASA endorsement. Check product metadata for non-NASA sensor terms."
-msgstr "Dati sugli incendi attivi di NASA FIRMS. Citare la NASA come fonte ove applicabile, senza suggerirne l'approvazione. Verificare i metadati del prodotto per le condizioni dei sensori non NASA."
+msgid "ISPRA, Linea di Costa 2020 v2.0 — Dinamica Litoranea 2006–2020. CC BY 4.0. Source metadata: RNDT."
+msgstr "ISPRA, Linea di Costa 2020 v2.0 — Dinamica Litoranea 2006–2020. CC BY 4.0. Metadati fonte: RNDT."
+
+msgid "The adapter requests VIIRS_NOAA21_NRT (NOAA-21/JPSS-2 VIIRS near-real-time), rather than a mixed sensor collection. NOAA NCEI labels its upstream NOAA JPSS VIIRS sensor-data record CC0, but that does not establish terms for NASA FIRMS's derived active-fire detections. NASA's policy says non-NASA data retain their sponsoring organization's terms. No product-specific reuse terms were found for this FIRMS feed, so no named licence is asserted. NOAA input-data metadata: https://www.ncei.noaa.gov/access/metadata/landing-page/bin/iso?id=gov.noaa.ncdc%3AC00864"
+msgstr "L'adattatore richiede VIIRS_NOAA21_NRT (VIIRS in tempo quasi reale di NOAA-21/JPSS-2), non una raccolta mista di sensori. NOAA NCEI indica CC0 per i dati a monte del sensore VIIRS JPSS di NOAA, ma ciò non definisce le condizioni per i rilevamenti di incendi derivati pubblicati da NASA FIRMS. Secondo la politica NASA, i dati non NASA restano soggetti alle condizioni dell'organizzazione che li fornisce. Non sono state trovate condizioni di riutilizzo specifiche per questo flusso FIRMS, pertanto non viene indicata una licenza. Metadati dei dati NOAA di origine: https://www.ncei.noaa.gov/access/metadata/landing-page/bin/iso?id=gov.noaa.ncdc%3AC00864"
+
+msgid "NASA FIRMS VIIRS NOAA-21 Near Real-Time active fire detections. Acknowledge the source and do not imply NASA or NOAA endorsement."
+msgstr "Rilevamenti di incendi attivi NASA FIRMS VIIRS NOAA-21 Near Real-Time. Citare la fonte senza suggerire l'approvazione da parte di NASA o NOAA."
 
 msgid "Not reported in source metadata"
 msgstr "Non indicato nei metadati della fonte"
@@ -3184,3 +3328,244 @@ msgstr "La guida ufficiale descrive SISTER come canale di accesso ai dati catast
 
 msgid "The official site guide describes public access to search and view sale notices without credentials. It does not state a general reuse licence for notice text, attachments, or derived records; no licence is asserted."
 msgstr "La guida ufficiale descrive l'accesso pubblico alla ricerca e alla consultazione degli avvisi di vendita senza credenziali. Non specifica una licenza generale di riutilizzo per i testi degli avvisi, gli allegati o i dati derivati; non viene dichiarata alcuna licenza."
+
+# Spatial scope labels and fallback indicators in the parcel panel.
+msgid "country"
+msgstr "nazionale"
+
+msgid "Country-level safety indicator."
+msgstr "Indicatore di sicurezza riferito all'intero Paese."
+
+msgid "Country-level safety index; it is not a count of reported crimes in this province or municipality."
+msgstr "Indice nazionale di sicurezza: non rappresenta un conteggio dei reati denunciati in questa provincia o in questo comune."
+
+msgid "Country-level relocation indicators for {country}; these values do not describe the province or parcel."
+msgstr "Indicatori nazionali per chi si trasferisce in {country}; questi valori non descrivono la provincia né la particella."
+
+msgid "Italy"
+msgstr "Italia"
+
+msgid "Safety index"
+msgstr "Indice di sicurezza"
+
+msgid "Municipality-level indicators for {municipality}."
+msgstr "Indicatori a livello comunale per {municipality}."
+
+msgid "this municipality"
+msgstr "questo comune"
+
+msgid "Environment"
+msgstr "Ambiente"
+
+msgid "Health"
+msgstr "Salute"
+
+msgid "Connectivity"
+msgstr "Connettività"
+
+msgid "Country profile"
+msgstr "Profilo nazionale"
+
+msgid "Resident Population"
+msgstr "Popolazione residente"
+
+msgid "Population Under 12"
+msgstr "Popolazione di età inferiore a 12 anni"
+
+msgid "Population 12 Plus"
+msgstr "Popolazione di 12 anni e oltre"
+
+msgid "Climate Score"
+msgstr "Punteggio climatico"
+
+msgid "Healthcare Quality"
+msgstr "Qualità dell'assistenza sanitaria"
+
+msgid "Life Expectancy"
+msgstr "Speranza di vita"
+
+msgid "Healthy Life Years"
+msgstr "Anni di vita in buona salute"
+
+msgid "Cadastral parcels with records in SISTER"
+msgstr "Particelle catastali con dati in SISTER"
+
+msgid "SISTER-listed cadastral parcels"
+msgstr "Particelle catastali presenti in SISTER"
+
+msgid "Highlight requests"
+msgstr "Evidenzia richieste"
+
+msgid "Highlight auction sales"
+msgstr "Evidenzia le vendite all'asta"
+
+msgid "Starting parcel flag refresh…"
+msgstr "Avvio dell'aggiornamento dei dati catastali…"
+
+msgid "Parcel flag refresh is running…"
+msgstr "Aggiornamento dei dati catastali in corso…"
+
+msgid "Sign in to refresh parcel flags."
+msgstr "Accedi per aggiornare i dati catastali."
+
+msgid "Parcel flag refresh request failed."
+msgstr "La richiesta di aggiornamento dei dati catastali non è riuscita."
+
+msgid "Could not read parcel flag refresh status."
+msgstr "Impossibile leggere lo stato dell'aggiornamento dei dati catastali."
+
+msgid "Parcel flag refresh failed."
+msgstr "Aggiornamento dei dati catastali non riuscito."
+
+msgid "Refresh completed: {updated} rows updated ({scanned} scanned)."
+msgstr "Aggiornamento completato: {updated} righe aggiornate ({scanned} analizzate)."
+
+msgid "Refresh completed: {updated} rows marked and {cleared} stale rows cleared."
+msgstr "Aggiornamento completato: {updated} righe contrassegnate e {cleared} contrassegni obsoleti rimossi."
+
+msgid "Parcel flag refresh failed: {message}"
+msgstr "Aggiornamento dei dati catastali non riuscito: {message}"
+
+msgid "Unknown error"
+msgstr "Errore sconosciuto"
+
+msgid "Loading auction sale parcels…"
+msgstr "Caricamento delle particelle con vendite all'asta…"
+
+msgid "Auction sale"
+msgstr "Vendita all'asta"
+
+msgid "This cadastral parcel is marked for auction sale."
+msgstr "Questa particella catastale è segnalata per la vendita all'asta."
+
+msgid "Auction parcel layer is temporarily unavailable."
+msgstr "Il livello delle particelle all'asta non è temporaneamente disponibile."
+
+msgid "Zoom in to at least level {n} to see auction sale parcels."
+msgstr "Aumenta lo zoom almeno al livello {n} per vedere le particelle con vendite all'asta."
+
+msgid "auction sale parcels in this view"
+msgstr "particelle con vendite all'asta in questa vista"
+
+msgid "Loading parcels with Visura…"
+msgstr "Caricamento delle particelle con visura…"
+
+msgid "Visura data is not available."
+msgstr "I dati delle visure non sono disponibili."
+
+msgid "parcels with Visura in this view"
+msgstr "particelle con visura in questa vista"
+
+msgid "Some parcel statuses are unavailable."
+msgstr "Lo stato di alcune particelle non è disponibile."
+
+msgid "Zoom in to at least level {n} to see parcels with Visura."
+msgstr "Aumenta lo zoom almeno al livello {n} per vedere le particelle con visura."
+
+msgid "Zoom in to at least level {n} to see SISTER-listed parcels."
+msgstr "Aumenta lo zoom almeno al livello {n} per vedere le particelle presenti in SISTER."
+
+msgid "Loading SISTER-listed parcels…"
+msgstr "Caricamento delle particelle presenti in SISTER…"
+
+msgid "SISTER parcel layer is temporarily unavailable."
+msgstr "Il livello delle particelle SISTER non è temporaneamente disponibile."
+
+msgid "SISTER parcel data is not available."
+msgstr "I dati delle particelle SISTER non sono disponibili."
+
+msgid "SISTER-listed parcels in this view"
+msgstr "particelle presenti in SISTER in questa vista"
+
+msgid "SISTER query batch"
+msgstr "Batch di query SISTER"
+
+msgid "Select parcels by clicking them, drawing a polygon, or defining a circle."
+msgstr "Seleziona le particelle con un clic, disegnando un poligono o definendo un cerchio."
+
+msgid "Parcel selection tools"
+msgstr "Strumenti di selezione delle particelle"
+
+msgid "Click parcels"
+msgstr "Clic sulle particelle"
+
+msgid "Polygon"
+msgstr "Poligono"
+
+msgid "Circle"
+msgstr "Cerchio"
+
+msgid "Selected parcels"
+msgstr "Particelle selezionate"
+
+msgid "Create SISTER CSV"
+msgstr "Crea CSV per SISTER"
+
+msgid "Downloads analytical historical visura requests for land and buildings. The CSV is not submitted automatically."
+msgstr "Scarica le richieste di visura storica analitica per terreni e fabbricati. Il CSV non viene inviato automaticamente."
+
+msgid "Click parcels to add or remove them from the batch."
+msgstr "Fai clic sulle particelle per aggiungerle o rimuoverle dal batch."
+
+msgid "Click to add polygon corners, then double-click to select parcels that intersect it."
+msgstr "Fai clic per aggiungere i vertici del poligono, poi fai doppio clic per selezionare le particelle che lo intersecano."
+
+msgid "Click the circle center, move to set its radius, then click again."
+msgstr "Fai clic sul centro del cerchio, spostati per impostarne il raggio e fai di nuovo clic."
+
+msgid "No parcels selected"
+msgstr "Nessuna particella selezionata"
+
+msgid "{n} parcels selected"
+msgstr "{n} particelle selezionate"
+
+msgid "{n} selected; {missing} need cadastral details before export"
+msgstr "{n} selezionate; servono dati catastali per esportarne {missing}"
+
+msgid "Remove {reference}"
+msgstr "Rimuovi {reference}"
+
+msgid "Parcel"
+msgstr "Particella"
+
+msgid "Selection is limited to 5,000 parcels. Clear some parcels or draw a smaller area."
+msgstr "La selezione è limitata a 5.000 particelle. Rimuovine alcune o disegna un'area più piccola."
+
+msgid "Resolving parcel details…"
+msgstr "Recupero dei dati catastali…"
+
+msgid "Parcel selection is temporarily unavailable."
+msgstr "La selezione delle particelle non è temporaneamente disponibile."
+
+msgid "Selecting parcels in the drawn area…"
+msgstr "Selezione delle particelle nell'area disegnata…"
+
+msgid "More than 5,000 parcels match. Draw a smaller area to keep the batch complete."
+msgstr "Corrispondono più di 5.000 particelle. Disegna un'area più piccola per includerle tutte nel batch."
+
+msgid "Added {added} parcels; {total} selected."
+msgstr "Aggiunte {added} particelle; {total} selezionate."
+
+msgid "No parcel at this point."
+msgstr "Nessuna particella in questo punto."
+
+msgid "This parcel has no cadastral reference."
+msgstr "Questa particella non ha un riferimento catastale."
+
+msgid "This parcel has no usable map ID."
+msgstr "Questa particella non ha un identificativo mappa utilizzabile."
+
+msgid "Add at least three polygon corners."
+msgstr "Aggiungi almeno tre vertici al poligono."
+
+msgid "Move farther from the center to set a circle radius."
+msgstr "Allontanati dal centro per impostare il raggio del cerchio."
+
+msgid "No complete cadastral references are ready to export."
+msgstr "Non ci sono riferimenti catastali completi da esportare."
+
+msgid "Downloaded {rows} SISTER requests for {parcels} parcels."
+msgstr "Scaricate {rows} richieste SISTER per {parcels} particelle."
+
+msgid "Zoom in to see more"
+msgstr "Aumenta lo zoom per visualizzarne altre"

@@ -6,30 +6,54 @@ Post-implementation panel-view sample:
 [`baselines/parcel_panel_after_cache_2026-10-09.json`](baselines/parcel_panel_after_cache_2026-10-09.json).
 The full-response comparison sample is
 [`baselines/parcel_panel_after_implementation_2026-10-09.json`](baselines/parcel_panel_after_implementation_2026-10-09.json).
+The post-migration warm PostgreSQL sample is
+[`baselines/parcel_panel_postgres_warm_2026-10-10.json`](baselines/parcel_panel_postgres_warm_2026-10-10.json).
+The controlled refresh-first sample is
+[`baselines/parcel_panel_controlled_2026-10-10.json`](baselines/parcel_panel_controlled_2026-10-10.json).
 Re-run with `python scripts/parcel_panel_baseline.py --output docs/baselines/<name>.json`
 and compare.*
 
 This is the "before" measurement for
 [PARCEL_PANEL_GAP_ANALYSIS_2026-10.md](PARCEL_PANEL_GAP_ANALYSIS_2026-10.md). It
-describes **this host**, which lacks several optional stores and the parcel
-read-model cache, so absolute values are not production numbers. Use it to
-compare phases on the same host.
+describes **this host**. The initial samples predate the cache migration and
+several optional stores remain absent, so they are not production coverage
+numbers. Use the later sample below to distinguish the shared PostgreSQL cache
+from the application-side SQLite fallback.
 
 ## Method
 
+- Percentiles use the nearest-rank definition. On 2026-10-10, the stored p95
+  summary fields were recalculated from the unchanged row-level timings to use
+  this definition; request observations were not modified.
 - 20 unique parcels: five in each of four areas, found by walking a grid of
   about 150 m steps around a centre until five distinct parcels resolve.
   Areas: Roma centro and Milano centro (large cities), Tolfa town centre (small
   comune), Monte Romano countryside (rural: the sampled parcel there is 9.4 ha).
   Bolzano was tried first and returned 404 for every point, because Bolzano and
   Trento cadastre is not in the AdE extract.
+- The current collector treats `(national reference, canonical feature ID)` as
+  parcel identity and reports how many references resolve to multiple feature
+  IDs. Historical samples collected before this change de-duplicated by
+  reference and cannot establish duplicate-reference cache isolation.
+- The duplicate-reference isolation result is `null` when the sample contains
+  no reference collision; it is true only when every colliding feature returns
+  its own ID on both calls and its repeat request is a cache hit.
+- `--refresh-first` forces a source rebuild for the first detail request per
+  parcel, then measures an ordinary repeat request. This separates cold build
+  latency from an existing cache hit without deleting cache rows.
+- Before sampling, the collector polls `/health` for up to 60 seconds by
+  default so a fresh no-reload worker can finish startup. Override the limit
+  with `--startup-timeout` when the host needs more or less time.
 - Per parcel: `GET /api/v1/enrichment/parcel/at-point`, then
   `GET /api/v1/enrichment/parcel/details/{reference}` twice.
 - Each details response is classified by `read_model.cached`. Cold builds and
-  cache hits are summarised separately.
+  cache hits are summarised separately. `cached` means the response was served
+  from a persisted row; `database` can identify a successful write even on a
+  cold rebuild.
 - GET requests only. `--view panel` may populate the application's compact
-  panel cache. `/api/v1/enrichment/status` is deliberately not called because
-  it probes every store.
+  panel cache. `/api/v1/enrichment/status` was not called during these baseline
+  measurements because it probes every store. Separate readiness diagnostics
+  run on 2026-10-10 are recorded in the gap analysis.
 
 ## Results
 
@@ -43,7 +67,7 @@ compare phases on the same host.
 | Measure | Value |
 |---|---|
 | Details calls | 40 ok, 0 failed |
-| Cold builds (`cached: false`) | 40 calls; median 4.61 s, p95 6.94 s, max 7.72 s |
+| Cold builds (`cached: false`) | 40 calls; median 4.61 s, p95 6.783 s, max 7.72 s |
 | Cache hits (`cached: true`) | **0 calls**; no warm-cache latency could be measured |
 | Payload median | 12.7 kB |
 
@@ -110,7 +134,7 @@ unavailable today: `address`, `addresses`, `risk`, `subsidence`, `terrain`,
 | Sections rendered on `/map` | Identity, two KPIs and a generic five-value list per block | Every section the legacy panel renders, as typed sections |
 | After a click | Identity from tile feature, then one 4.6 s call | Identity under 300 ms; sections fill independently; no section failure blanks the panel |
 | Cold details median (this host) | 4.61 s | No worse than baseline plus 20 % |
-| Warm-cache latency | PostgreSQL path not measured; local panel fallback is measured below | Capture PostgreSQL cache on a provisioned host |
+| Warm-cache latency | Forced rebuild/repeat sample: local PostgreSQL median 0.015 s, p95 0.055 s; local app uses superuser credentials | Verify the deployed Cloud Run role and duplicate-reference cache behavior |
 
 ## Post-implementation panel-view sample
 
@@ -141,3 +165,61 @@ blocks rather than three. Those payload comparisons use different response
 shapes and reflect changing source availability, so compare them as context,
 not as a controlled same-data benchmark. The panel-view cold-build median was
 6.461 s; latency remains a provisioned-host acceptance item.
+
+## PostgreSQL sample after cache migration — hit classification unverified
+
+Captured 2026-10-10 against a fresh, no-reload local server on port 8013 using
+`--view panel`. The sample resolves the same 20 parcels, then makes two detail
+requests per parcel. All 40 responses report `read_model.cached: true` and
+`read_model.database: aecs4u-stats PostgreSQL via asyncpg`; the raw observations
+are in the linked JSON file.
+
+| Measure | Shared PostgreSQL responses |
+|---|---:|
+| Details responses | 40 ok, 0 failed |
+| Responses identifying PostgreSQL | 40/40 |
+| Cache-hit classification | Unverified; captured `cached` flag conflated cache hits with successful writes |
+| Response latency | median 0.009 s, p95 0.015 s, max 0.021 s |
+| Details payload median | 19,102 bytes |
+| Available blocks | 7 of 22 on all 20 sampled parcels |
+| Canonical feature IDs returned by local point lookup | 0 of 20 |
+
+This confirms that the local app used the shared PostgreSQL read-model path for
+all 40 responses, but it does not establish which requests were served from
+cache. At capture time, a cold rebuild also returned `cached: true` when its
+PostgreSQL upsert succeeded. The response-latency statistics are valid, while
+the stored hit count and hit-latency classification are marked unverified in
+the raw JSON. The response flag now means a cache hit, and the baseline script
+has `--refresh-first` to measure a forced rebuild followed by its repeat hit.
+The local connection uses the `postgres` superuser; the Cloud Run service
+role's table access is still unverified. The local point lookup also omitted
+canonical IDs, so this sample does not cover feature-specific duplicate-
+reference reads. Seven populated blocks reflect this host's available data
+and are not a production coverage claim.
+
+## Controlled refresh-first sample
+
+Captured 2026-10-10 against a fresh no-reload local server on port 8014 using
+`--view panel --refresh-first`. The first request for each of 20 unique parcels
+forced a rebuild and persisted the read model; the second request used the
+ordinary cache path. All 40 requests returned HTTP 200 through PostgreSQL.
+
+| Measure | Result |
+|---|---:|
+| Canonical feature IDs | 20/20 |
+| Feature-ID matches in successful detail responses | 40/40 |
+| Duplicate-reference groups in this sample | 0 |
+| Forced cold builds | 20; median 5.168 s, p95 10.580 s, max 10.634 s |
+| Repeat cache hits | 20; median 0.015 s, p95 0.055 s, max 0.721 s |
+| Available blocks | 7 of 22 on all 20 sampled parcels |
+| Median detail payload | 19,685 bytes |
+
+This verifies the local feature-specific cache hit path after a forced rebuild.
+Duplicate-reference isolation remains unverified because the sample contained
+no reference collision. This is not a matched comparison to the original Phase
+0 timing: the original measured the full response with three available blocks,
+while this run measured the compact panel response with seven. The sample does
+show a cold p95 above the preliminary 8.140 s target; repeat on the same
+response shape and source coverage before treating that comparison as an
+acceptance result. Local PostgreSQL credentials and data coverage also differ
+from the likely Neon production target.

@@ -219,7 +219,10 @@ def test_direct_map_closes_market_filter_and_attribute_table_gaps():
     # its points, and applies the type, price, and upcoming filters locally.
     for value in (
         "toggleAuctionLayer",
-        "/api/v1/sales/map-points?period=all",
+        "/api/v1/sales/map-points?",
+        "period: 'all'",
+        "viewportBbox()",
+        "bbox.join(',')",
         "auction-properties",
         "auction-clusters",
         "applyAuctionFilter",
@@ -426,3 +429,28 @@ def test_source_outage_is_not_reported_as_configuration_or_coverage():
     # A missing catalog yields a message in the attribute table, not a blank box.
     table = SCRIPT[SCRIPT.index("async function loadTableData"):]
     assert "Layer data is temporarily unavailable." in table[:table.index("const bounds")]
+
+
+def test_point_overlays_load_only_the_current_viewport():
+    """Sales and auction points are bounded by the view, not the national feed."""
+    # Every request for the feed carries the viewport box and a cap, and a
+    # pan/zoom that leaves the loaded box refetches (debounced, abortable).
+    for value in (
+        "VIEWPORT_POINT_LIMIT",
+        "function viewportBbox()",
+        "function viewportLoaded(",
+        "function bindViewportReload(",
+        "function nextViewportSignal(",
+        "url.searchParams.set('bbox'",
+        "query.set('bbox'",
+        "signal: nextViewportSignal(auctionOverlay)",
+        "signal: nextViewportSignal(salesOverlay)",
+        "payload.truncated",
+        # Vector sources stop requesting finer tiles at the catalog's cap.
+        "layer.tile_max_zoom",
+    ):
+        assert value in SCRIPT, value
+    assert "maxzoom: 22,\n      });" not in SCRIPT
+    # The unbounded national request must not come back.
+    assert "map-points?period=all${" not in SCRIPT
+    assert "limit', '60000'" not in SCRIPT

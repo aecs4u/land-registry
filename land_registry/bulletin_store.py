@@ -19,6 +19,8 @@ import httpx
 import psycopg2
 from psycopg2.extras import Json
 
+from land_registry.pg_ssl import plain_loopback_dsn
+
 logger = logging.getLogger(__name__)
 REPO = "pcm-dpc/DPC-Bollettini-Criticita-Idrogeologica-Idraulica"
 SOURCE = "Dipartimento della Protezione Civile, CC BY 4.0"
@@ -56,7 +58,9 @@ def hazards_dsn() -> str:
 
 
 def _connect(dsn: str):
-    return psycopg2.connect(dsn, connect_timeout=5, options="-c statement_timeout=5000")
+    # Loopback only: psycopg2-binary's bundled TLS segfaults the worker when it
+    # negotiates next to a numba compile (see pg_ssl).
+    return psycopg2.connect(plain_loopback_dsn(dsn), connect_timeout=5, options="-c statement_timeout=5000")
 
 
 def _validate_topology(topology: dict) -> None:

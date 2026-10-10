@@ -134,6 +134,10 @@ function classifyUrbanStatusFromClassCode(classCode, mode) {
 }
 
 function classifyFeatureUrbanStatus(feature, mode) {
+    if (window.MapWorkbench?.classifyUrbanStatus) {
+        const shared = window.MapWorkbench.classifyUrbanStatus(feature, mode);
+        if (shared) return shared;
+    }
     const props = feature?.properties;
     if (!props || typeof props !== 'object') return null;
 
@@ -2015,18 +2019,16 @@ function exportDrawingsAsGeoJSON() {
         geojson.features.push(feature);
     });
 
-    // Create download link
-    const dataStr = JSON.stringify(geojson, null, 2);
-    const dataBlob = new Blob([dataStr], {type: 'application/json'});
-    const url = URL.createObjectURL(dataBlob);
-
+    if (window.MapWorkbench) {
+        window.MapWorkbench.downloadGeoJSON(geojson, `drawn_polygons_${new Date().toISOString().slice(0, 10)}.geojson`);
+        return;
+    }
+    const url = URL.createObjectURL(new Blob([JSON.stringify(geojson, null, 2)], {type: 'application/geo+json'}));
     const link = document.createElement('a');
     link.href = url;
     link.download = `drawn_polygons_${new Date().toISOString().slice(0, 10)}.geojson`;
-    document.body.appendChild(link);
     link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 function importDrawingsFromGeoJSON() {
@@ -2034,47 +2036,28 @@ function importDrawingsFromGeoJSON() {
     input.type = 'file';
     input.accept = '.geojson,.json';
 
-    input.onchange = function(e) {
+    input.onchange = async function(e) {
         const file = e.target.files[0];
         if (!file) return;
-
-        const reader = new FileReader();
-        reader.onload = function(e) {
-            try {
-                const geojson = JSON.parse(e.target.result);
-
-                // Validate GeoJSON structure
-                if (!geojson.type || geojson.type !== 'FeatureCollection' || !geojson.features) {
-                    throw new Error('Invalid GeoJSON format');
-                }
-
-                // Load features
-                geojson.features.forEach(feature => {
-                    const layer = L.geoJSON(feature, {
-                        style: function(feature) {
-                            return {
-                                color: '#3388ff',
-                                weight: 4,
-                                opacity: 0.8,
-                                fillOpacity: 0.4
-                            };
-                        }
-                    });
-
-                    layer.eachLayer(function(sublayer) {
-                        sublayer.feature = feature;
-                        drawnItems.addLayer(sublayer);
-                    });
+        try {
+            const geojson = window.MapWorkbench
+                ? await window.MapWorkbench.readGeoJSONFile(file)
+                : JSON.parse(await file.text());
+            geojson.features.forEach(feature => {
+                const layer = L.geoJSON(feature, {
+                    style: () => ({ color: '#3388ff', weight: 4, opacity: 0.8, fillOpacity: 0.4 })
                 });
-
-                updateDrawingControls();
-                alert(`Imported ${geojson.features.length} drawings from ${file.name}`);
-            } catch (error) {
-                console.error('Error importing GeoJSON:', error);
-                alert('Error importing file: ' + error.message);
-            }
-        };
-        reader.readAsText(file);
+                layer.eachLayer(sublayer => {
+                    sublayer.feature = feature;
+                    drawnItems.addLayer(sublayer);
+                });
+            });
+            updateDrawingControls();
+            alert(`Imported ${geojson.features.length} drawings from ${file.name}`);
+        } catch (error) {
+            console.error('Error importing GeoJSON:', error);
+            alert('Error importing file: ' + error.message);
+        }
     };
 
     input.click();
@@ -2822,51 +2805,20 @@ function initializeMap() {
 
     createCorner('bottom', 'center');
 
-    // Define all map providers
-    const mapProviders = {
-        'OpenStreetMap': L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '© OpenStreetMap contributors'
+    // Keep the legacy provider picker on the shared engine catalog so both
+    // map experiences expose the same basemap sources and attribution.
+    const basemapEngines = window.MapWorkbench?.basemapEngines(window.cartoEnabled, window.cartoApiKey) || [];
+    const mapProviders = Object.fromEntries(basemapEngines.map((engine) => [
+        engine.legacyLabel,
+        L.tileLayer(engine.base, {
+            maxZoom: 22,
+            maxNativeZoom: engine.maxzoom,
+            attribution: engine.attribution,
         }),
-        '📍 Google Maps': L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
-            attribution: '© Google'
-        }),
-        '🛰️ Google Satellite': L.tileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
-            attribution: '© Google'
-        }),
-        '⛰️ Google Terrain': L.tileLayer('https://mt1.google.com/vt/lyrs=p&x={x}&y={y}&z={z}', {
-            attribution: '© Google'
-        }),
-        '🌍 Google Hybrid': L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
-            attribution: '© Google'
-        }),
-        '🚌 Google Transit': L.tileLayer('https://mt1.google.com/vt/lyrs=m,transit&x={x}&y={y}&z={z}', {
-            attribution: '© Google'
-        }),
-        '🚗 Google Traffic': L.tileLayer('https://mt1.google.com/vt/lyrs=m,traffic&x={x}&y={y}&z={z}', {
-            attribution: '© Google'
-        }),
-        '🌐 ESRI World Imagery': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-            attribution: '© ESRI'
-        }),
-        '🏔️ ESRI Terrain': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Terrain_Base/MapServer/tile/{z}/{y}/{x}', {
-            attribution: '© ESRI'
-        }),
-    };
+    ]));
 
-    if (window.cartoEnabled && window.cartoApiKey) {
-        const cartoSuffix = `?api_key=${encodeURIComponent(window.cartoApiKey)}`;
-        mapProviders['⚪ CartoDB Light'] = L.tileLayer(
-            `https://cartodb-basemaps-{s}.global.ssl.fastly.net/light_all/{z}/{x}/{y}.png${cartoSuffix}`,
-            { attribution: '© CartoDB' }
-        );
-        mapProviders['⚫ CartoDB Dark'] = L.tileLayer(
-            `https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png${cartoSuffix}`,
-            { attribution: '© CartoDB' }
-        );
-    }
-
-    // Add default layer - Google Maps
-    mapProviders['📍 Google Maps'].addTo(map);
+    // Legacy map default remains Google Maps.
+    mapProviders['Google Maps']?.addTo(map);
 
 
 

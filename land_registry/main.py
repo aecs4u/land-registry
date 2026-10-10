@@ -582,6 +582,9 @@ if _AUTH_AVAILABLE:
                 # MapLibre fetches basemap raster tiles with fetch(), so the
                 # tile hosts must be allowed here, not only under img-src.
                 "https://server.arcgisonline.com",
+                "https://services.arcgisonline.com",
+                "https://a.tile.openstreetmap.org",
+                "https://mt1.google.com",
                 "https://cartodb-basemaps-a.global.ssl.fastly.net",
             ],
             "script-src": [f"http://{_panel_origin}"],

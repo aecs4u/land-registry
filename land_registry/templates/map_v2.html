@@ -47,18 +47,41 @@
     </div>
 
     <div id="directMap" class="direct-map" role="region" aria-label="{{ _('Interactive cadastral map') }}"></div>
+    <output id="mapCoordinates" class="map-coordinate-readout" aria-live="off" hidden></output>
+    <div id="mapMiniMap" class="map-minimap" aria-label="{{ _('Map overview') }}" hidden></div>
 
     <div class="map-utility-stack" aria-label="{{ _('Map actions') }}">
       <div class="map-basemap-control">
         <button type="button" class="map-round-button" id="basemapToggle" title="{{ _('Basemap') }}" aria-label="{{ _('Basemap') }}" aria-controls="mapBasemapPopover" aria-expanded="false">▧</button>
         <div class="map-basemap-popover" id="mapBasemapPopover" role="group" aria-label="{{ _('Basemap') }}" hidden>
           <div class="layer-section-title">{{ _('Basemap') }}</div>
-          <div class="basemap-options" role="radiogroup" aria-label="{{ _('Basemap') }}">
-            <label><input type="radio" name="basemap" value="light" checked> <span>{{ _('Light') }}</span></label>
-            <label><input type="radio" name="basemap" value="dark"> <span>{{ _('Dark') }}</span></label>
-            <label><input type="radio" name="basemap" value="satellite"> <span>{{ _('Satellite') }}</span></label>
-          </div>
-          <p class="map-muted basemap-hint">{{ _('Light and Dark follow the page theme; Satellite stays selected until you change it.') }}</p>
+          <label class="visually-hidden" for="basemapEngineSelect">{{ _('Basemap engine') }}</label>
+          <select id="basemapEngineSelect" name="basemap" class="map-basemap-select" aria-label="{{ _('Basemap engine') }}">
+            <optgroup label="{{ _('Esri') }}">
+              <option value="light" selected>{{ _('Esri Light') }}</option>
+              <option value="dark">{{ _('Esri Dark') }}</option>
+              <option value="satellite">{{ _('ESRI World Imagery') }}</option>
+              <option value="esri-terrain">{{ _('ESRI World Terrain') }}</option>
+            </optgroup>
+            <optgroup label="{{ _('OpenStreetMap') }}">
+              <option value="osm">{{ _('OpenStreetMap') }}</option>
+            </optgroup>
+            <optgroup label="{{ _('Google') }}">
+              <option value="google-road">{{ _('Google Maps') }}</option>
+              <option value="google-satellite">{{ _('Google Satellite') }}</option>
+              <option value="google-terrain">{{ _('Google Terrain') }}</option>
+              <option value="google-hybrid">{{ _('Google Hybrid') }}</option>
+              <option value="google-transit">{{ _('Google Maps with Transit') }}</option>
+              <option value="google-traffic">{{ _('Google Maps with Traffic') }}</option>
+            </optgroup>
+            {% if carto_enabled and carto_api_key %}
+            <optgroup label="{{ _('CartoDB') }}">
+              <option value="carto-light">{{ _('CartoDB Positron (Light)') }}</option>
+              <option value="carto-dark">{{ _('CartoDB Dark Matter') }}</option>
+            </optgroup>
+            {% endif %}
+          </select>
+          <p class="map-muted basemap-hint">{{ _('Choose a basemap provider and style. Esri Light and Dark follow the page theme.') }}</p>
           <p class="map-muted map-provider-disclosure">{{ _('Basemap tiles are loaded from external map providers. See the privacy page for details.') }} <a href="/privacy">{{ _('Privacy') }}</a></p>
         </div>
       </div>
@@ -67,6 +90,8 @@
       <button type="button" class="map-round-button" id="shareButton" title="{{ _('Copy map link') }}" aria-label="{{ _('Copy map link') }}">↗</button>
       <button type="button" class="map-round-button" id="resetButton" title="{{ _('Reset view') }}" aria-label="{{ _('Reset view') }}">⌂</button>
       <button type="button" class="map-round-button" id="tableToggle" title="{{ _('Attribute table') }}" aria-label="{{ _('Attribute table') }}" aria-controls="mapTableCard" aria-expanded="false">▤</button>
+      <button type="button" class="map-round-button" id="mapCoordinatesToggle" title="{{ _('Show cursor coordinates') }}" aria-label="{{ _('Show cursor coordinates') }}" aria-pressed="false">⌖</button>
+      <button type="button" class="map-round-button" id="mapMiniMapToggle" title="{{ _('Toggle overview map') }}" aria-label="{{ _('Toggle overview map') }}" aria-pressed="false">▣</button>
       <button type="button" class="map-round-button" id="googleMapsButton" title="{{ _('Open Google Maps') }}" aria-label="{{ _('Open Google Maps') }}">G</button>
       <button type="button" class="map-round-button" id="streetViewButton" title="{{ _('Open Street View') }}" aria-label="{{ _('Open Street View') }}">S</button>
     </div>
@@ -76,12 +101,48 @@
         <div><span class="map-eyebrow">{{ _('Viewport') }}</span><h2>{{ _('Attributes') }}</h2></div>
         <button type="button" class="map-card-close" id="mapTableCloseButton" aria-label="{{ _('Close attribute table') }}">×</button>
       </div>
+      <div class="map-workbench-tabs" role="tablist" aria-label="{{ _('Map workbench views') }}">
+        <button type="button" id="mapWorkbenchTableTab" role="tab" aria-selected="true" aria-controls="mapTableViewPanel">{{ _('Table') }}</button>
+        <button type="button" id="mapWorkbenchAdjacencyTab" role="tab" aria-selected="false" aria-controls="mapAdjacencyViewPanel">{{ _('Adjacency') }}</button>
+        <button type="button" id="mapWorkbenchDrawingsTab" role="tab" aria-selected="false" aria-controls="mapDrawingsViewPanel">{{ _('Drawings') }}</button>
+      </div>
+      <section id="mapTableViewPanel" class="map-workbench-view" role="tabpanel" aria-labelledby="mapWorkbenchTableTab">
       <div class="map-table-toolbar">
         <label class="visually-hidden" for="mapTableLayerSelect">{{ _('Layer') }}</label>
         <select id="mapTableLayerSelect"></select>
         <input type="search" id="mapTableFilter" placeholder="{{ _('Filter…') }}">
+        <label class="map-table-page-size-label" for="mapTablePageSize">{{ _('Rows') }}</label>
+        <select id="mapTablePageSize" aria-label="{{ _('Rows per page') }}"><option>25</option><option selected>100</option><option>250</option><option>500</option></select>
         <button type="button" class="secondary-action compact" id="mapTableRefreshButton">{{ _('Refresh') }}</button>
         <span id="mapTableStatus" class="map-layer-meta" aria-live="polite"></span>
+      </div>
+      <div class="map-analysis-toolbar">
+        <div class="map-workbench-action-row">
+          <button type="button" class="secondary-action compact" id="mapSelectAllButton">{{ _('Select page') }}</button>
+          <button type="button" class="secondary-action compact" id="mapInvertSelectionButton">{{ _('Invert page selection') }}</button>
+          <button type="button" class="secondary-action compact" id="mapClearAnalysisSelectionButton">{{ _('Clear selection') }}</button>
+          <span id="mapAnalysisSelectionCount" class="map-layer-meta" aria-live="polite">{{ _('0 selected') }}</span>
+        </div>
+        <div class="map-workbench-action-row">
+          <button type="button" class="secondary-action compact" id="mapSelectOnMapButton" aria-pressed="false">{{ _('Select parcels on map') }}</button>
+          <button type="button" class="secondary-action compact" id="mapSelectPolygonButton" aria-pressed="false">{{ _('Select by polygon') }}</button>
+          <button type="button" class="secondary-action compact" id="mapSelectCircleButton" aria-pressed="false">{{ _('Select by circle') }}</button>
+        </div>
+        <div class="map-workbench-attribute-row">
+          <label class="visually-hidden" for="mapAttributeField">{{ _('Attribute') }}</label>
+          <select id="mapAttributeField"><option value="">{{ _('Attribute') }}</option></select>
+          <label class="visually-hidden" for="mapAttributeOperation">{{ _('Match type') }}</label>
+          <select id="mapAttributeOperation">
+            <option value="contains">{{ _('Contains') }}</option><option value="equals">{{ _('Equals') }}</option>
+            <option value="starts">{{ _('Starts with') }}</option><option value="ends">{{ _('Ends with') }}</option>
+            <option value="gt">{{ _('Greater than') }}</option><option value="gte">{{ _('At least') }}</option><option value="lt">{{ _('Less than') }}</option><option value="lte">{{ _('At most') }}</option>
+            <option value="empty">{{ _('Is empty') }}</option><option value="not_empty">{{ _('Is not empty') }}</option>
+          </select>
+          <input type="search" id="mapAttributeValue" placeholder="{{ _('Attribute value') }}">
+          <button type="button" class="secondary-action compact" id="mapApplyAttributeFilter">{{ _('Filter rows') }}</button>
+          <button type="button" class="secondary-action compact" id="mapClearAttributeFilter">{{ _('Clear field filter') }}</button>
+          <button type="button" class="secondary-action compact" id="mapSelectByAttributeButton">{{ _('Select matches') }}</button>
+        </div>
       </div>
       <div class="map-table-scroll">
         <table class="map-attribute-table"><thead id="mapTableHead"></thead><tbody id="mapTableBody"></tbody></table>
@@ -91,6 +152,39 @@
         <span id="mapTablePageInfo"></span>
         <button type="button" class="secondary-action compact" id="mapTableNextButton">{{ _('Next') }}</button>
       </div>
+      </section>
+      <section id="mapAdjacencyViewPanel" class="map-workbench-view" role="tabpanel" aria-labelledby="mapWorkbenchAdjacencyTab" hidden>
+        <div class="map-analysis-toolbar">
+          <label for="mapAdjacencyMethod">{{ _('Adjacency method') }}</label>
+          <select id="mapAdjacencyMethod"><option value="touches">{{ _('Touches') }}</option><option value="intersects" selected>{{ _('Intersects') }}</option><option value="overlaps">{{ _('Overlaps') }}</option></select>
+          <button type="button" class="secondary-action compact" id="mapRunAdjacencyButton">{{ _('Analyze selection') }}</button>
+          <span id="mapAdjacencyStatus" class="map-layer-meta" aria-live="polite">{{ _('Select parcels in the table to analyze them.') }}</span>
+        </div>
+        <div class="map-adjacency-results">
+          <section><h3>{{ _('Selected features') }}</h3><div id="mapAdjacencySelectedRows"></div></section>
+          <section><h3>{{ _('Adjacent features') }}</h3><div id="mapAdjacencyRows"></div></section>
+        </div>
+      </section>
+      <section id="mapDrawingsViewPanel" class="map-workbench-view" role="tabpanel" aria-labelledby="mapWorkbenchDrawingsTab" hidden>
+        <p class="map-layer-meta">{{ _('Draw map features locally. Import and export GeoJSON; save and load drawings when signed in.') }}</p>
+        <div class="map-workbench-action-row map-drawing-tools">
+          <button type="button" class="secondary-action compact" data-map-draw="polygon" aria-pressed="false">{{ _('Polygon') }}</button>
+          <button type="button" class="secondary-action compact" data-map-draw="line" aria-pressed="false">{{ _('Polyline') }}</button>
+          <button type="button" class="secondary-action compact" data-map-draw="point" aria-pressed="false">{{ _('Marker') }}</button>
+          <button type="button" class="secondary-action compact" id="mapEditDrawingButton">{{ _('Edit selected') }}</button>
+          <button type="button" class="secondary-action compact" id="mapDeleteDrawingButton" disabled>{{ _('Delete selected') }}</button>
+        </div>
+        <div class="map-workbench-action-row">
+          <button type="button" class="secondary-action compact" id="mapExportDrawingsButton" disabled>{{ _('Export GeoJSON') }}</button>
+          <button type="button" class="secondary-action compact" id="mapImportDrawingsButton">{{ _('Import GeoJSON') }}</button>
+          <input type="file" id="mapDrawingsFile" accept=".geojson,.json,application/geo+json,application/json" hidden>
+          <button type="button" class="secondary-action compact" id="mapSaveDrawingsButton" disabled>{{ _('Save drawings') }}</button>
+          <button type="button" class="secondary-action compact" id="mapLoadDrawingsButton">{{ _('Load drawings') }}</button>
+          <button type="button" class="secondary-action compact" id="mapClearDrawingsButton" disabled>{{ _('Clear drawings') }}</button>
+        </div>
+        <div id="mapDrawingStatus" class="map-layer-meta" aria-live="polite">{{ _('No drawings yet.') }}</div>
+        <ul id="mapDrawingList" class="map-drawing-list"></ul>
+      </section>
     </aside>
 
     <aside class="map-layers-card" id="mapLayersCard" aria-label="{{ _('Map layers') }}" hidden>
@@ -136,13 +230,46 @@
           <button type="button" class="secondary-action compact" id="refreshBulletinButton">{{ _('Refresh') }}</button>
         </div>
         <div id="enrichmentBulletinLegend" class="enrichment-legend"></div>
-        <div class="map-live-layer-row">
-          <button type="button" class="map-live-toggle" id="toggleSisterBuildings" aria-pressed="false"
-                  title="{{ _('SISTER building records for the selected parcel') }}">
-            {{ _('SISTER building records') }} <span id="sisterBuildingsCount"></span>
-          </button>
+        <div id="sisterLayerOptions" class="map-layer-sister-options" role="group" aria-label="{{ _('Cadastral parcels') }}">
+          <div class="map-live-layer-row">
+            <label class="map-live-checkbox" title="{{ _('Cadastral parcels with records in SISTER') }}">
+              <input type="checkbox" id="toggleSisterParcels" aria-describedby="sisterParcelsStatus" checked>
+              <span><i class="map-layer-swatch" style="background:#0f9d91" aria-hidden="true"></i>{{ _('Highlight requests') }} <span id="sisterParcelsCount"></span></span>
+            </label>
+            <button type="button" class="secondary-action compact" id="refreshVisuraFlagsButton">{{ _('Refresh') }}</button>
+          </div>
+          <div id="sisterParcelsStatus" class="map-layer-meta" aria-live="polite"></div>
+          <div class="map-live-layer-row">
+            <label class="map-live-checkbox" title="{{ _('Enriched PVP auction listings, filtered below') }}">
+              <input type="checkbox" id="toggleAuctionHighlight" aria-describedby="auctionParcelsStatus">
+              <span><i class="map-layer-swatch" style="background:#f97316" aria-hidden="true"></i>{{ _('Highlight auction sales') }} <span id="auctionParcelsCount"></span></span>
+            </label>
+            <button type="button" class="secondary-action compact" id="refreshAuctionFlagsButton">{{ _('Refresh') }}</button>
+          </div>
+          <div id="auctionParcelsStatus" class="map-layer-meta" aria-live="polite"></div>
         </div>
-        <div id="sisterBuildingsStatus" class="map-layer-meta" aria-live="polite"></div>
+        <section class="sister-batch-tools" aria-labelledby="sisterBatchHeading">
+          <h3 id="sisterBatchHeading" class="layer-section-title">{{ _('SISTER query batch') }}</h3>
+          <p class="map-layer-meta">{{ _('Select parcels by clicking them, drawing a polygon, or defining a circle.') }}</p>
+          <div class="sister-batch-tool-row" role="group" aria-label="{{ _('Parcel selection tools') }}">
+            <button type="button" class="secondary-action compact" id="sisterBatchClickButton" aria-pressed="false">{{ _('Click parcels') }}</button>
+            <button type="button" class="secondary-action compact" id="sisterBatchPolygonButton" aria-pressed="false">{{ _('Polygon') }}</button>
+            <button type="button" class="secondary-action compact" id="sisterBatchCircleButton" aria-pressed="false">{{ _('Circle') }}</button>
+          </div>
+          <div id="sisterBatchStatus" class="map-layer-meta" aria-live="polite">{{ _('No parcels selected') }}</div>
+          <ul id="sisterBatchList" class="sister-batch-list" aria-label="{{ _('Selected parcels') }}"></ul>
+          <div class="sister-batch-tool-row">
+            <button type="button" class="secondary-action compact" id="sisterBatchClearButton" disabled>{{ _('Clear selection') }}</button>
+            <button type="button" class="secondary-action compact sister-batch-export" id="sisterBatchExportButton" disabled>{{ _('Create SISTER CSV') }}</button>
+          </div>
+          <p class="map-layer-meta">{{ _('Downloads analytical historical visura requests for land and buildings. The CSV is not submitted automatically.') }}</p>
+        </section>
+        <section class="map-urban-contour-tools" aria-labelledby="urbanContourHeading">
+          <h3 id="urbanContourHeading" class="layer-section-title">{{ _('Urban contour') }}</h3>
+          <label class="map-live-checkbox"><input type="checkbox" id="urbanContourEnabled" checked><span>{{ _('Enable overlay') }}</span></label>
+          <label class="map-market-filter"><span>{{ _('Mode') }}</span><select id="urbanContourMode"><option value="broad">{{ _('Broad urban classes') }}</option><option value="strict">{{ _('Strict urban classes') }}</option></select></label>
+          <div id="urbanContourStatus" class="map-layer-meta" aria-live="polite">{{ _('Uses urban-class attributes in the current table results.') }}</div>
+        </section>
     </div>
 
       <div class="layer-section-title">{{ _('Market') }}</div>
@@ -268,6 +395,15 @@
       <div class="parcel-stat-strip" id="parcelStatStrip"></div>
       <nav class="parcel-section-nav" id="parcelSectionNav" aria-label="{{ _('Parcel sections') }}"></nav>
       <div id="directParcelContent" class="parcel-detail-content"></div>
+      <div class="parcel-sister-building-controls">
+        <div class="map-live-layer-row">
+          <button type="button" class="map-live-toggle" id="toggleSisterBuildings" aria-pressed="false" aria-describedby="sisterBuildingsStatus"
+                  title="{{ _('SISTER building records for the selected parcel') }}">
+            {{ _('SISTER building records') }} <span id="sisterBuildingsCount"></span>
+          </button>
+        </div>
+        <div id="sisterBuildingsStatus" class="map-layer-meta" aria-live="polite"></div>
+      </div>
       <div class="parcel-detail-actions">
         <button type="button" id="parcelPurchaseButton" class="secondary-action">{{ _('Purchase cadastral query') }}</button>
         <button type="button" id="parcelSaveButton" class="secondary-action">{{ _('Save parcel') }}</button>
