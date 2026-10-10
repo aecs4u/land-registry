@@ -266,6 +266,11 @@ class PvpSalesStore:
         await asyncio.shield(self._task)
         return self._snapshot
 
+    def _publish(self, snapshot: dict[str, Any]) -> None:
+        self._snapshot = snapshot
+        self._loaded_at = time.monotonic()
+        self.last_error = None
+
     async def _refresh(self) -> None:
         try:
             snapshot = await self._load()
@@ -299,6 +304,7 @@ class PvpSalesStore:
         started = time.perf_counter()
         west, south, east, north = ITALY_BOUNDS
         failures = []
+        published: Optional[dict[str, Any]] = None
         candidates = [
             (source, relation, detail_relation)
             for source, detail_relation in self._sources()
@@ -338,32 +344,47 @@ class PvpSalesStore:
                             await connection.execute("SET LOCAL work_mem = '64MB'")
                             await connection.execute("SET LOCAL jit = off")
                         rows = await connection.fetch(sql, timeout=330)
+                        # The sales are usable as soon as they are read. Build and
+                        # publish them before the optional parcel refinement below,
+                        # whose two queries can add tens of seconds, so a request
+                        # waiting on a cold start is answered from the base copy.
+                        # Normalization and grid construction stay off the event
+                        # loop so one cold refresh cannot stall unrelated requests.
+                        snapshot = await asyncio.to_thread(self._build_snapshot, rows)
+                        snapshot["columns"] = sorted(columns)
+                        snapshot["relation"] = relation
+                        snapshot["database"] = (
+                            "pvp_enriched" if detail_relation == "modelview.v_map_sales"
+                            else "pvp_enriched_modelview" if detail_relation == "public.v_map_sales"
+                            else "aecs4u-stats"
+                        )
+                        self._active_source, self._active_relation = source, detail_relation
+                        published = snapshot
+                        self._publish(snapshot)
+                        log.info(
+                            "PVP sales loaded from %s: %d geocoded sales in %.0f ms",
+                            relation, len(snapshot["points"]), (time.perf_counter() - started) * 1000,
+                        )
                         asset_references = []
                         if relation in {"modelview.v_map_sale_points", "modelview.v_map_sales"}:
                             asset_references = await self._asset_cadastral_references(
                                 connection, [row["sale_id"] for row in rows if row["sale_id"] is not None]
                             )
                 cadastral_points = await self._resolve_cadastral_points(asset_references)
-                # This view can contain hundreds of thousands of rows. Keep
-                # its Python-side normalization and grid construction off the
-                # event loop so one cold PVP refresh cannot stall unrelated
-                # parcel enrichment requests.
-                snapshot = await asyncio.to_thread(self._build_snapshot, rows)
-                await asyncio.to_thread(self._apply_cadastral_points, snapshot, cadastral_points)
-                snapshot["columns"] = sorted(columns)
-                snapshot["relation"] = relation
-                snapshot["database"] = (
-                    "pvp_enriched" if detail_relation == "modelview.v_map_sales"
-                    else "pvp_enriched_modelview" if detail_relation == "public.v_map_sales"
-                    else "aecs4u-stats"
-                )
-                self._active_source, self._active_relation = source, detail_relation
-                log.info(
-                    "PVP sales loaded from %s: %d geocoded sales in %.0f ms",
-                    relation, len(snapshot["points"]), (time.perf_counter() - started) * 1000,
-                )
-                return snapshot
+                refined = self._with_cadastral_points(snapshot, cadastral_points)
+                if refined is not snapshot:
+                    self._publish(refined)
+                    log.info(
+                        "PVP sales refined with %d parcel positions in %.0f ms",
+                        len(cadastral_points), (time.perf_counter() - started) * 1000,
+                    )
+                return refined
             except Exception as exc:
+                if published is not None:
+                    # The sales are already being served; a failed refinement
+                    # must not restart the load against another relation.
+                    log.warning("PVP sales parcel refinement failed: %s", exc)
+                    return published
                 failures.append(f"{relation}: {exc}")
                 log.debug("PVP map source %s unavailable: %s", relation, exc)
         raise RuntimeError("No usable PVP map view found (" + "; ".join(failures) + ")")
@@ -478,24 +499,30 @@ class PvpSalesStore:
         return result
 
     @staticmethod
-    def _apply_cadastral_points(
+    def _with_cadastral_points(
         snapshot: dict[str, Any], cadastral_points: dict[int, tuple[float, float]]
-    ) -> None:
+    ) -> dict[str, Any]:
+        """``snapshot`` with parcel-based positions, or ``snapshot`` itself if none apply.
+
+        The input is never modified: requests may be reading it while the
+        refined copy is built, and only the moved points are re-created.
+        """
         if not cadastral_points:
-            return
+            return snapshot
+        points = list(snapshot["points"])
         updated = False
-        for point in snapshot["points"]:
+        for index, point in enumerate(points):
             parcel_point = cadastral_points.get(point[0])
             if parcel_point is None:
                 continue
             longitude, latitude = parcel_point
-            point[1], point[2] = round(longitude, 5), round(latitude, 5)
             # PointOnSurface is a reliable pin within the parcel footprint,
             # while still being an approximation of the property's entrance.
-            point[6] = 1
+            points[index] = [point[0], round(longitude, 5), round(latitude, 5), *point[3:6], 1, *point[7:]]
             updated = True
-        if updated:
-            snapshot["spatial_index"] = PvpSalesStore._build_spatial_index(snapshot["points"])
+        if not updated:
+            return snapshot
+        return {**snapshot, "points": points, "spatial_index": PvpSalesStore._build_spatial_index(points)}
 
     @staticmethod
     def _build_spatial_index(points: list[list[Any]]) -> dict[tuple[int, int], list[int]]:

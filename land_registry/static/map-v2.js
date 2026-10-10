@@ -842,6 +842,8 @@
     const slider = document.createElement('input');
     slider.type = 'range';
     Object.assign(slider, { min: setting.min, max: setting.max, step: setting.step, value: setting.value });
+    // Fourteen sliders share the caption "Fill"; the name must say whose.
+    slider.setAttribute('aria-label', `${setting.label}: ${tr(layer.title)}`);
     slider.addEventListener('input', () => applyLayerOpacity(layer, Number(slider.value)));
     const caption = document.createElement('span');
     caption.textContent = setting.label;
@@ -1193,7 +1195,7 @@
       'label-cadastral-parcels', ...idsFor('label', layer => layer.id === 'postal-zones' || layer.id === 'cadastral-sheets' || layer.kind === 'mixed'),
       'fill-adjacent-parcels', 'line-adjacent-parcels', 'fill-sister-listed-parcels', 'line-sister-listed-parcels',
       'fill-auction-listed-parcels', 'line-auction-listed-parcels',
-      'selected-parcel-fill', 'selected-parcel-line', 'parcel-pvp-nearby-markers', 'parcel-pvp-nearby-labels',
+      'selected-parcel-fill', 'selected-parcel-casing', 'selected-parcel-line', 'parcel-pvp-nearby-markers', 'parcel-pvp-nearby-labels',
       'sister-batch-selection-fill', 'sister-batch-selection-line',
       'sister-batch-drawing-fill', 'sister-batch-drawing-line',
       'urban-contour-fill', 'urban-contour-line', 'urban-contour-rural',
@@ -1245,7 +1247,10 @@
     else {
       state.map.addSource('selected-parcel', { type: 'geojson', data: selected });
       state.map.addLayer({ id: 'selected-parcel-fill', type: 'fill', source: 'selected-parcel', paint: { 'fill-color': '#f08a24', 'fill-opacity': .24 } });
-      state.map.addLayer({ id: 'selected-parcel-line', type: 'line', source: 'selected-parcel', paint: { 'line-color': '#f08a24', 'line-width': 3, 'line-opacity': 1 } });
+      // The catalog is mostly orange (parcels, EGMS, energy ramps), so the
+      // selection is a white casing under a dark ring, readable on any layer.
+      state.map.addLayer({ id: 'selected-parcel-casing', type: 'line', source: 'selected-parcel', layout: { 'line-join': 'round' }, paint: { 'line-color': '#ffffff', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 5, 18, 9], 'line-opacity': .95 } });
+      state.map.addLayer({ id: 'selected-parcel-line', type: 'line', source: 'selected-parcel', layout: { 'line-join': 'round' }, paint: { 'line-color': '#111827', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 2, 18, 3.5], 'line-opacity': 1 } });
     }
   }
 
@@ -1609,6 +1614,59 @@
       list.innerHTML = `<p class="map-muted">${escapeHtml(tr('Shortlist unavailable.'))}</p>`;
       mapStatus(error.message || 'Shortlist unavailable', true);
     } finally { task.finish(); }
+  }
+
+  // One entry per catalog layer that has a rendered feature at the point, top
+  // layer first. A click used to resolve to the parcel (or the first overlay)
+  // and hide every other layer under the cursor.
+  function stackedOverlayFeatures(point, { skipAdministrative = false } = {}) {
+    if (!state.map) return [];
+    const mapLayerOwner = new Map();
+    state.catalog.forEach((layer) => {
+      if (layer.id === 'cadastral-parcels' || (skipAdministrative && isAdministrativeSubstitute(layer))) return;
+      ['fill', 'line', 'point', 'label'].forEach((prefix) => {
+        const id = `${prefix}-${layer.id}`;
+        if (state.map.getLayer(id)) mapLayerOwner.set(id, layer);
+      });
+    });
+    if (!mapLayerOwner.size) return [];
+    const seen = new Set();
+    const stack = [];
+    state.map.queryRenderedFeatures(point, { layers: [...mapLayerOwner.keys()] }).forEach((feature) => {
+      const layer = mapLayerOwner.get(feature.layer?.id);
+      if (!layer || seen.has(layer.id)) return;
+      seen.add(layer.id);
+      stack.push({ layer, feature });
+    });
+    return stack;
+  }
+
+  let layerStackPopup = null;
+
+  function closeLayerStack() {
+    layerStackPopup?.remove();
+    layerStackPopup = null;
+  }
+
+  function showLayerStack(stack, lngLat, heading) {
+    closeLayerStack();
+    const popup = new maplibregl.Popup({ maxWidth: '300px', closeButton: true, className: 'map-layer-stack-popup' })
+      .setLngLat(lngLat)
+      .addTo(state.map);
+    const items = stack.map((entry, index) => (
+      `<li><button type="button" class="map-layer-stack-item" data-stack-index="${index}">`
+      + `<i class="map-layer-swatch" style="background:${escapeHtml(layerColor(entry.layer.id))}" aria-hidden="true"></i>${escapeHtml(tr(entry.layer.title))}</button></li>`
+    )).join('');
+    popup.setHTML(`<strong>${escapeHtml(heading)}</strong><ul class="map-layer-stack">${items}</ul>`);
+    popup.getElement().addEventListener('click', (event) => {
+      const button = event.target.closest?.('[data-stack-index]');
+      const entry = button ? stack[Number(button.dataset.stackIndex)] : null;
+      if (!entry) return;
+      closeLayerStack();
+      showOverlayFeature(entry.layer, entry.feature, lngLat);
+    });
+    popup.on('close', () => { if (layerStackPopup === popup) layerStackPopup = null; });
+    layerStackPopup = popup;
   }
 
   function showOverlayFeature(layer, feature, lngLat) {
@@ -5301,6 +5359,7 @@
     state.map.on('moveend', () => { if (tableView.active) { tableView.page = 1; void loadTableData(); } });
     state.map.on('moveend', updateParcelZoomAffordance);
     state.map.on('click', (event) => {
+      closeLayerStack();
       if (state.sisterBatch.mode) {
         const parcelFeatures = state.map.getLayer('fill-cadastral-parcels')
           ? state.map.queryRenderedFeatures(event.point, { layers: ['fill-cadastral-parcels'] }) : [];
@@ -5312,30 +5371,39 @@
       if (interactionClick(event.lngLat, workbenchParcels[0] || null)) return;
       if (state.map.getLayer('parcel-pvp-nearby-markers')
         && state.map.queryRenderedFeatures(event.point, { layers: ['parcel-pvp-nearby-markers'] }).length) return;
+      // Other layers under the cursor are offered after a parcel is identified;
+      // the always-on administrative boundary would be listed for every click.
+      const alsoHere = () => {
+        const stack = stackedOverlayFeatures(event.point, { skipAdministrative: true });
+        if (stack.length) showLayerStack(stack, event.lngLat, tr('Also at this point'));
+      };
       const auctionParcelFeatures = state.map.getLayer('fill-auction-listed-parcels')
         ? state.map.queryRenderedFeatures(event.point, { layers: ['fill-auction-listed-parcels'] }) : [];
       if (auctionParcelFeatures[0]) {
         identifyAtPoint(event.lngLat, auctionParcelFeatures[0]);
+        alsoHere();
         return;
       }
       const sisterParcelFeatures = state.map.getLayer('fill-sister-listed-parcels')
         ? state.map.queryRenderedFeatures(event.point, { layers: ['fill-sister-listed-parcels'] }) : [];
       if (sisterParcelFeatures[0]) {
         identifyAtPoint(event.lngLat, sisterParcelFeatures[0]);
+        alsoHere();
         return;
       }
       const features = state.map.queryRenderedFeatures(event.point, { layers: state.map.getLayer('fill-cadastral-parcels') ? ['fill-cadastral-parcels'] : [] });
       if (features[0]) {
         identifyAtPoint(event.lngLat, features[0]);
+        alsoHere();
         return;
       }
-      const overlayLayers = state.catalog
-        .filter((layer) => layer.id !== 'cadastral-parcels' && (state.map.getLayer(`fill-${layer.id}`) || state.map.getLayer(`point-${layer.id}`)))
-        .flatMap((layer) => ['fill', 'line', 'point', 'label'].map(prefix => `${prefix}-${layer.id}`).filter(id => state.map.getLayer(id)));
-      const overlayFeature = overlayLayers.length ? state.map.queryRenderedFeatures(event.point, { layers: overlayLayers })[0] : null;
-      if (overlayFeature) {
-        const layer = state.catalog.find((candidate) => overlayFeature.layer?.id?.endsWith(candidate.id));
-        if (layer) showOverlayFeature(layer, overlayFeature, event.lngLat);
+      const overlayStack = stackedOverlayFeatures(event.point);
+      if (overlayStack.length > 1) {
+        showLayerStack(overlayStack, event.lngLat, tr('Layers at this point'));
+        return;
+      }
+      if (overlayStack.length) {
+        showOverlayFeature(overlayStack[0].layer, overlayStack[0].feature, event.lngLat);
         return;
       }
       // Clicks on these dedicated interactive layers are handled by their own

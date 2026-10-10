@@ -113,7 +113,7 @@
         <input type="search" id="mapTableFilter" placeholder="{{ _('Filter…') }}">
         <label class="map-table-page-size-label" for="mapTablePageSize">{{ _('Rows') }}</label>
         <select id="mapTablePageSize" aria-label="{{ _('Rows per page') }}"><option>25</option><option selected>100</option><option>250</option><option>500</option></select>
-        <button type="button" class="secondary-action compact" id="mapTableRefreshButton">{{ _('Refresh') }}</button>
+        <button type="button" class="secondary-action compact" id="mapTableRefreshButton" aria-label="{{ _('Refresh') }}: {{ _('Table') }}">{{ _('Refresh') }}</button>
         <span id="mapTableStatus" class="map-layer-meta" aria-live="polite"></span>
       </div>
       <div class="map-analysis-toolbar">
@@ -220,14 +220,14 @@
                   title="{{ _('Active fire detections nationwide (NASA FIRMS)') }}">
             {{ _('Active Fires') }} <span id="enrichmentFiresCount"></span>
           </button>
-          <button type="button" class="secondary-action compact" id="refreshFiresButton">{{ _('Refresh') }}</button>
+          <button type="button" class="secondary-action compact" id="refreshFiresButton" aria-label="{{ _('Refresh') }}: {{ _('Active Fires') }}">{{ _('Refresh') }}</button>
         </div>
         <div class="map-live-layer-row">
           <button type="button" class="map-live-toggle" id="toggleEnrichmentBulletin" aria-pressed="false"
                   title="{{ _('Civil Protection hydrogeological and hydraulic alert zones for today') }}">
             {{ _('Civil Protection Alerts') }} <span id="enrichmentBulletinCount"></span>
           </button>
-          <button type="button" class="secondary-action compact" id="refreshBulletinButton">{{ _('Refresh') }}</button>
+          <button type="button" class="secondary-action compact" id="refreshBulletinButton" aria-label="{{ _('Refresh') }}: {{ _('Civil Protection Alerts') }}">{{ _('Refresh') }}</button>
         </div>
         <div id="enrichmentBulletinLegend" class="enrichment-legend"></div>
         <div id="sisterLayerOptions" class="map-layer-sister-options" role="group" aria-label="{{ _('Cadastral parcels') }}">
@@ -236,7 +236,7 @@
               <input type="checkbox" id="toggleSisterParcels" aria-describedby="sisterParcelsStatus" checked>
               <span><i class="map-layer-swatch" style="background:#0f9d91" aria-hidden="true"></i>{{ _('Highlight requests') }} <span id="sisterParcelsCount"></span></span>
             </label>
-            <button type="button" class="secondary-action compact" id="refreshVisuraFlagsButton">{{ _('Refresh') }}</button>
+            <button type="button" class="secondary-action compact" id="refreshVisuraFlagsButton" aria-label="{{ _('Refresh') }}: {{ _('Highlight requests') }}">{{ _('Refresh') }}</button>
           </div>
           <div id="sisterParcelsStatus" class="map-layer-meta" aria-live="polite"></div>
           <div class="map-live-layer-row">
@@ -244,7 +244,7 @@
               <input type="checkbox" id="toggleAuctionHighlight" aria-describedby="auctionParcelsStatus">
               <span><i class="map-layer-swatch" style="background:#f97316" aria-hidden="true"></i>{{ _('Highlight auction sales') }} <span id="auctionParcelsCount"></span></span>
             </label>
-            <button type="button" class="secondary-action compact" id="refreshAuctionFlagsButton">{{ _('Refresh') }}</button>
+            <button type="button" class="secondary-action compact" id="refreshAuctionFlagsButton" aria-label="{{ _('Refresh') }}: {{ _('Highlight auction sales') }}">{{ _('Refresh') }}</button>
           </div>
           <div id="auctionParcelsStatus" class="map-layer-meta" aria-live="polite"></div>
         </div>
@@ -277,7 +277,7 @@
         <div class="map-live-layer-row">
           <button type="button" class="map-live-toggle" id="toggleSalesLayer" aria-pressed="false"
                   title="{{ _('Properties for sale, clustered and coloured by saleability') }}">{{ _('Sales') }} <span id="salesCount"></span></button>
-          <button type="button" class="secondary-action compact" id="refreshSalesButton">{{ _('Refresh') }}</button>
+          <button type="button" class="secondary-action compact" id="refreshSalesButton" aria-label="{{ _('Refresh') }}: {{ _('Sales') }}">{{ _('Refresh') }}</button>
         </div>
         <div class="map-market-filters">
           <label><span>{{ _('Sale period') }}</span><select id="salesPeriod"><option value="all">{{ _('All records') }}</option><option value="upcoming">{{ _('Upcoming') }}</option><option value="12m">{{ _('Last 12 months') }}</option><option value="5y">{{ _('Last 5 years') }}</option></select></label>
@@ -295,7 +295,7 @@
                   title="{{ _('Enriched PVP auction listings, filtered below') }}">
             {{ _('Auction listings') }} <span id="auctionCount"></span>
           </button>
-          <button type="button" class="secondary-action compact" id="refreshAuctionButton">{{ _('Refresh') }}</button>
+          <button type="button" class="secondary-action compact" id="refreshAuctionButton" aria-label="{{ _('Refresh') }}: {{ _('Auction listings') }}">{{ _('Refresh') }}</button>
         </div>
         <div class="map-market-filters">
           <label><span>{{ _('Type') }}</span>
@@ -334,7 +334,7 @@
           <h2>{{ _('Shortlist') }}</h2>
         </div>
         <div class="map-card-heading-actions">
-          <button type="button" class="secondary-action compact" id="shortlistRefreshButton">{{ _('Refresh') }}</button>
+          <button type="button" class="secondary-action compact" id="shortlistRefreshButton" aria-label="{{ _('Refresh') }}: {{ _('Shortlist') }}">{{ _('Refresh') }}</button>
           <button type="button" class="map-card-close shortlist-close-button" id="shortlistCloseButton" aria-label="{{ _('Close shortlist') }}">×</button>
         </div>
       </div>

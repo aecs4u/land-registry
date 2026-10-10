@@ -467,3 +467,39 @@ def test_layers_card_clears_the_open_parcel_sheet_on_desktop():
         ".direct-map-shell:has(.parcel-sheet:not([hidden])) .map-layers-card"
         " { right: calc(65px + clamp(380px, 36vw, 540px) + 12px); }"
     ) in STYLES
+
+
+def test_selected_parcel_ring_is_stacked_above_its_casing():
+    # Orange outlines dominate the catalog; the selection needs a white casing
+    # under a dark ring and the managed layer order must include both.
+    assert "id: 'selected-parcel-casing'" in SCRIPT
+    assert "'selected-parcel-fill', 'selected-parcel-casing', 'selected-parcel-line'" in SCRIPT
+    assert SCRIPT.index("id: 'selected-parcel-casing'") < SCRIPT.index("id: 'selected-parcel-line'")
+
+
+def test_repeated_layer_controls_have_distinguishing_accessible_names():
+    # Every layer row repeats the "Fill"/"Opacity" caption, and the panel has
+    # eight "Refresh" buttons; each must say which layer or feature it acts on.
+    assert "slider.setAttribute('aria-label', `${setting.label}: ${tr(layer.title)}`)" in SCRIPT
+    refresh = re.findall(r'<button[^>]*id="(\w*[Rr]efresh\w*Button)"([^>]*)>', TEMPLATE)
+    assert len(refresh) >= 8
+    for button_id, attributes in refresh:
+        assert "aria-label=\"{{ _('Refresh') }}: {{ _(" in attributes, button_id
+
+
+def test_click_lists_every_layer_under_the_cursor_instead_of_hiding_them():
+    for value in (
+        "function stackedOverlayFeatures(point",
+        "function showLayerStack(stack, lngLat, heading)",
+        "tr('Also at this point')",
+        "tr('Layers at this point')",
+        "closeLayerStack();",
+    ):
+        assert value in SCRIPT, value
+    # A parcel click still identifies the parcel first and then lists the rest;
+    # the always-on administrative boundary is not listed for every click.
+    assert "stackedOverlayFeatures(event.point, { skipAdministrative: true })" in SCRIPT
+    assert SCRIPT.count("alsoHere();") == 3
+    # Each entry reuses the existing per-layer popup rather than a second one.
+    assert "showOverlayFeature(entry.layer, entry.feature, lngLat)" in SCRIPT
+    assert ".map-layer-stack-item" in STYLES

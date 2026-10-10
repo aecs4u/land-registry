@@ -3587,3 +3587,9 @@ msgstr "su {n} nella vista; ingrandisci per vederne altre"
 
 msgid "mapped record(s)"
 msgstr "record sulla mappa"
+
+msgid "Also at this point"
+msgstr "Anche in questo punto"
+
+msgid "Layers at this point"
+msgstr "Livelli in questo punto"

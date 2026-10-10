@@ -121,7 +121,7 @@ Tile statuses were all 200 in my runs; the 503 storm below comes from the develo
 | Far move / zoom in | – | 1 request, `truncated:true` when the view holds more than the cap |
 | National zoom (< z8) | 717k markers prepared | 0 requests, hint shown |
 
-  The first request after a server restart still waits for the shared snapshot to load (about a minute for 717k rows); that cold start is a separate item (§7, point 2).
+  The first request after a server restart waits for the shared snapshot to load (about a minute for 717k rows; §7, point 2). *Changed: the snapshot is now published as soon as the rows are read and built; the two optional parcel-position queries run afterwards and swap in a refined copy. The cold wait is therefore the base read (about 15 s in the 09-28 audit) plus the build; it has not been re-measured against the production database.*
 
 #### C2. Everything on exhausts Postgres connections and fans out into a request storm
 - **Fan-out:** at z13, 10 tile layers × 16 tiles + 3 × 12 = **160 tile requests** in one burst, 17.5–19.9 s per tile (mostly queueing: browsers allow 6 HTTP/1.1 connections per host and the app's map pool is 8), settle 19.5 s, and a 1.7 s main-thread long task from decoding about 1.9 MB of MVT.

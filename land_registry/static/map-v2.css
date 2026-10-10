@@ -563,3 +563,9 @@ body.direct-map-page > .direct-map-shell { height: 100vh; flex: 0 0 100vh; }
   .direct-map-shell:has(.parcel-sheet:not([hidden])) .map-layers-card { right: calc(65px + clamp(380px, 36vw, 540px) + 12px); }
   .direct-map-shell:has(.parcel-sheet:not([hidden])) .map-task-progress { left: 20px; transform: none; width: min(380px, calc(100% - clamp(380px, 36vw, 540px) - 160px)); }
 }
+
+/* Layers under the clicked point: a compact list that opens each layer's popup. */
+.map-layer-stack-popup .maplibregl-popup-content { padding: 10px 12px; }
+.map-layer-stack { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 2px; }
+.map-layer-stack-item { display: flex; align-items: center; width: 100%; min-height: 32px; padding: 4px 8px; border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.map-layer-stack-item:hover, .map-layer-stack-item:focus-visible { background: color-mix(in srgb, var(--direct-map-border) 55%, transparent); }

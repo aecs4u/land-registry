@@ -413,3 +413,51 @@ async def test_nearby_sales_endpoint_does_not_wait_for_cold_snapshot(monkeypatch
     assert error.value.status_code == 503
     assert error.value.headers["Retry-After"] == "10"
     assert calls == [{"lat": 41.9, "lng": 12.5, "radius_km": 10, "limit": 8, "wait": False}]
+
+
+def test_sales_are_published_before_the_parcel_refinement_finishes():
+    columns = {"sale_id", "latitude", "longitude"}
+    connection = _Connection(columns, rows=[_row(1, 37.03, 15.21), _row(2, 44.1, 12.2)])
+    store = PvpSalesStore(_Source(connection))
+    base = {}
+
+    async def references(conn, sale_ids):
+        return [(1, "Siracusa", "SR", "10", "5")]
+
+    async def resolve(references):
+        # The base copy is already being served while the parcel lookup runs.
+        base["snapshot"] = store._snapshot
+        return {1: (15.3, 37.1)}
+
+    store._asset_cadastral_references = references
+    store._resolve_cadastral_points = resolve
+    refined = asyncio.run(_load_with_relation(store, "modelview.v_map_sales"))
+
+    assert base["snapshot"] is not None
+    assert base["snapshot"]["points"][0][1:3] == [15.21, 37.03]
+    assert refined is not base["snapshot"]
+    assert refined["points"][0][1:3] == [15.3, 37.1] and refined["points"][0][6] == 1
+    assert refined["points"][1] == base["snapshot"]["points"][1]
+    assert store._snapshot is refined
+
+
+async def _load_with_relation(store, relation):
+    # A source whose first candidate is the modelview detail relation.
+    store._source_candidates = [(store._connection_source, relation)]
+    return await store._load()
+
+
+def test_parcel_refinement_never_mutates_the_published_snapshot():
+    snapshot = PvpSalesStore._build_snapshot([_row(1, 37.03, 15.21), _row(2, 44.1, 12.2)])
+    original = [list(point) for point in snapshot["points"]]
+    index = snapshot["spatial_index"]
+
+    unchanged = PvpSalesStore._with_cadastral_points(snapshot, {})
+    unmatched = PvpSalesStore._with_cadastral_points(snapshot, {99: (10.0, 45.0)})
+    refined = PvpSalesStore._with_cadastral_points(snapshot, {2: (12.25, 44.15)})
+
+    assert unchanged is snapshot and unmatched is snapshot
+    assert refined is not snapshot
+    assert snapshot["points"] == original and snapshot["spatial_index"] is index
+    assert refined["points"][1][1:3] == [12.25, 44.15] and refined["points"][1][6] == 1
+    assert refined["days"] is snapshot["days"]
