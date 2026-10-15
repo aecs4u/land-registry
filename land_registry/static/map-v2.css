@@ -368,6 +368,10 @@ body.direct-map-page > .direct-map-shell { height: 100vh; flex: 0 0 100vh; }
 .parcel-sheet-heading { min-width: 0; }
 .parcel-sheet-header-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 5px; }
 .parcel-sheet-header-actions .secondary-action { display: inline-grid; place-items: center; min-width: 32px; min-height: 32px; padding: 5px; }
+.parcel-favorite-button { font-size: 18px; line-height: 1; }
+.parcel-favorite-button[aria-pressed="true"] { color: #b45309; border-color: #d97706; background: color-mix(in srgb, #f59e0b 16%, transparent); }
+.shortlist-favorite-mark { color: #b45309; }
+.shortlist-item-actions button[aria-pressed="true"] { border-color: #d97706; color: #b45309; }
 .parcel-sheet-header h2 { margin: 2px 0 0; font-size: 19px; overflow-wrap: anywhere; }
 .parcel-sheet-subtitle { margin: 3px 0 0; color: var(--direct-map-muted); font-size: 12px; overflow-wrap: anywhere; }
 .parcel-sheet-subtitle:empty { display: none; }
@@ -377,6 +381,9 @@ body.direct-map-page > .direct-map-shell { height: 100vh; flex: 0 0 100vh; }
 .parcel-stat:last-child { border-right: 0; }
 .parcel-stat-label { display: block; color: var(--direct-map-muted); font-size: 12px; line-height: 1.25; }
 .parcel-stat-value { display: block; margin-top: 2px; font-size: 13px; overflow-wrap: anywhere; }
+.parcel-stat[data-level="high"] .parcel-stat-value { color: color-mix(in srgb, #d92d20 70%, var(--direct-map-text)); }
+.parcel-stat[data-level="medium"] .parcel-stat-value { color: color-mix(in srgb, #b54708 70%, var(--direct-map-text)); }
+.parcel-stat[data-level="low"] .parcel-stat-value { color: color-mix(in srgb, #067647 70%, var(--direct-map-text)); }
 .parcel-section-nav { display: flex; gap: 4px; padding: 6px 10px; overflow-x: auto; border-bottom: 1px solid var(--direct-map-border); scrollbar-width: thin; }
 .parcel-section-nav:empty { display: none; }
 .parcel-section-nav button { flex: 0 0 auto; border: 0; border-radius: 6px; background: transparent; color: var(--direct-map-muted); cursor: pointer; font: inherit; font-size: 13px; min-height: 28px; padding: 5px 10px; }
@@ -404,6 +411,9 @@ body.direct-map-page > .direct-map-shell { height: 100vh; flex: 0 0 100vh; }
 .parcel-section-body { margin-top: 8px; }
 .parcel-section-footer { margin-top: 8px; }
 .parcel-section[data-state="empty"] .parcel-section-title { color: var(--direct-map-muted); }
+.parcel-section-status { color: var(--direct-map-muted); font-size: 11px; font-weight: 500; white-space: nowrap; }
+.parcel-section[data-coverage="unavailable"] { padding: 8px 0; }
+.parcel-section[data-coverage="unavailable"] .parcel-section-header i { opacity: 0.55; }
 .parcel-rows { margin: 0; }
 .parcel-rows > div { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-bottom: 1px dashed var(--direct-map-border); }
 .parcel-rows > div:last-child { border-bottom: 0; }
@@ -509,6 +519,14 @@ body.direct-map-page > .direct-map-shell { height: 100vh; flex: 0 0 100vh; }
 .parcel-average-bars .parcel-bar-row { grid-template-columns: minmax(112px, 1.4fr) minmax(48px, 2fr) minmax(82px, auto); }
 .parcel-average-bars .parcel-bar-row > span:first-child { overflow-wrap: anywhere; }
 .parcel-average-bars .parcel-bar-row > span:last-child { white-space: nowrap; }
+.parcel-indicator-highlights { list-style: none; margin: 0 0 10px; padding: 0; }
+.parcel-indicator-highlights li { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--direct-map-border); }
+.parcel-indicator-name { min-width: 0; font-size: 13px; font-weight: 550; }
+.parcel-indicator-name small { display: block; margin-top: 1px; color: var(--direct-map-muted); font-size: 11px; font-weight: 400; line-height: 1.3; }
+.parcel-indicator-latest { flex: 0 0 auto; text-align: right; font-size: 13px; }
+.parcel-indicator-latest small { display: block; color: var(--direct-map-muted); font-size: 11px; }
+.parcel-indicator-all > summary { cursor: pointer; font-size: 13px; font-weight: 650; padding: 4px 0; }
+.parcel-indicator-filter { width: 100%; margin: 6px 0; }
 .parcel-indicator-cluster { margin-top: 12px; }
 .parcel-indicator-cluster h4 { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 0 0 6px; font-size: 13px; font-weight: 650; }
 .parcel-indicator-cluster h4 small { color: var(--direct-map-muted); font-size: 11px; font-weight: 500; }

@@ -24,7 +24,7 @@ licences for Zornade's blocks are in
 | 2 Derived metrics | **App implementation and fixture tests done**; provisioned-data and Italian-copy review remain | OMI quote/history and MEF adapters; fixed-fixture metric tests; OMI estimator and income sections |
 | 3 Per-parcel geospatial | **Parcel hazard and EGMS grid-cell intersections implemented; MPS04 point estimate added**; MPS04, ISPRA mosaic and EGMS stores are absent on this review host. Coastal-change source selected, but its upstream query/store is not implemented; constraints remain gated on `aecs4u-stats#48` | ISPRA and EGMS polygon-intersection routes and panel sections; `/mps04/pga` with nearest-grid provenance and unavailable state; host readiness at `/api/v1/enrichment/status`; provisioning steps below; coastal query tracked in local issue draft 14 |
 | 4 Energy | **Municipal PV aggregates implemented**; parcel-level estimates and economics still wait for a defensible footprint and upstream work in `aecs4u-stats#31` | Energy tab reads the municipality solar block with its spatial scope and available source version |
-| 5 Report/export | **Panel-complete PDF and source catalog implemented**; provider-term and provisioned-data reviews remain | Bounded POST snapshot for the panel export and GET server-only fallback at `/parcel/report/{reference}`, report ID/version footer, provider links, licence status and OSM print attribution |
+| 5 Report/export | **Panel-complete PDF and source catalog implemented**; provider-term and provisioned-data reviews remain | Superseded 2026-10-10: Typst dossier at `/parcel/dossier/{reference}` built server-side (no snapshot), with report ID/version footer and a source register. The ReportLab `/parcel/report/{reference}` endpoints (bounded POST snapshot, GET fallback) are deprecated; see `PARCEL_DOSSIER.md` |
 | 6 Optional | Not started; requires a product decision | Feedback, public API v2, declared-price overlay |
 
 Sections 1–4.3 describe the audit **as found, before implementation**;
@@ -185,6 +185,30 @@ datasets are ingested as `aecs4u_stats` subpackages and consumed through
 layer is now identified, but no installed `aecs4u_stats` query/store contract
 supports it yet.
 
+**Re-check after the upgrade (2026-10-10, package 0.2.1, `uv.lock` still pins
+0.1.0).** The Python package still reads hazards and EGMS from per-host
+DuckDB/SQLite files, but the shared stats database now exposes them as foreign
+tables: `hazards.mps04_points` (17,602) and `mps04_hazard_curve` (1.67 M),
+`hazards.flood_hazard` (P1–P3) and `landslide_hazard` (AA, P1–P4), and
+`geo_surface_change.egms_subsidenza` (8.5 M cells). The app reported all three
+as `not_built` because it only probed the file stores. MPS04 PGA is now read
+from PostgreSQL first (`aget_mps04_pga_at_point`, 0.28 s; 0,154 g at the
+sample parcel, nearest grid point 958 m away), with the file store as
+fallback. The parcel-scale hazard card now takes its ISPRA candidates from
+PostgreSQL as well (`aget_parcel_hazard_intersections`, about 0.25 s; the
+sample parcel intersects no mapped polygon although its municipality shares
+are high). The same intersection code serves both stores. EGMS point lookups
+take about 39 s because the `egms_source` foreign server lacks
+`extensions=postgis`, so the predicate is not pushed down. The EGMS PostgreSQL
+path (`aget_parcel_subsidence_intersections`) therefore stays off until the
+option is set and reports `egms_postgres_pushdown_not_configured`
+(`scripts/sql/map-egms-fdw-pushdown.sql`, not applied). A failed PostgreSQL
+lookup backs off for 60 s and uses the file store, so the first requests after
+a dev reload can show the cards as unavailable. Still absent from both package and database: DEM, CORINE, building
+footprints, coastal change, composite risk, solar economics, protection
+constraints, and the OMI quote-fact schema (OMI stays the one-row-per-zone
+snapshot).
+
 ### 4.4 State after implementation slices on 2026-10-10
 
 - `/map` renders a section registry (`parcel-panel.js`) with 21 sections in
@@ -289,8 +313,20 @@ supports it yet.
   dependency; this historical layer must not be described as a current forecast.
 - Safety and quality-of-life routes prefer the local province/BES results and
   can fall back to country-level relocation indicators when those have no
-  matching rows. The response and panel label that fallback as country scope
-  and state that it does not describe the province or parcel. Demographic
+  matching rows. The routes still label that fallback as country scope, but the
+  panel no longer renders it: a country-wide index does not describe the
+  parcel's province, so those cards show a province-level "not available"
+  state. Quality of life leads with up to eight curated indicators (newest
+  value, year and unit each) and keeps the full year tables behind a filter.
+- Cards whose source cannot answer for the parcel (`unavailable`: SISTER cache
+  misses, parcel hazards, EGMS, bulletin, country-only fallbacks) start
+  collapsed with "Not available" in the header, while real negatives (no
+  concession, no fire, no POI) stay open. The municipal solar card also starts
+  collapsed, shows its high-viability share in the header and scales totals to
+  MWh/GWh. Deep links still open the targeted card.
+- The map catalogue now follows `?lang=` and the theme's `language` cookie as
+  well as `lang`: before, the header picker changed the chrome but the panel
+  stayed in the Accept-Language locale. App pickers write both cookies. Demographic
   routes can use the municipality population series, including the available
   age split, and identify it as municipality scope. These fallbacks improve
   availability without changing the geographic meaning of the source values;
@@ -312,13 +348,13 @@ incomplete · ❌ missing · — comparison not assessed. "Primary" is `/map`;
 |---|---|---|---|---|---|---|
 | S1 | Panel form factor | Centred sheet, about 720 px, one scroll | n/a | Side sheet, 380 to 540 px, docked right; bottom sheet at tablet and mobile widths | Sidebar-style panel | ✅ |
 | S2 | Sticky header with actions | Yes | n/a | Fixed header exposes accessible Copy link, Download PDF and Close actions; purchase, save, adjacent, clear and legacy actions remain in the fixed bottom bar | Partial | ✅ |
-| S3 | Stat strip (area, buildings, risk, price) | Yes | Data partly present | Five-cell strip: area, sheet, SISTER record count, OMI sale price, seismic zone. The SISTER count is not a physical footprint count; no composite risk ring | No | 🟡 |
+| S3 | Stat strip (area, buildings, risk, price) | Yes | Data partly present | Five-cell strip: area, sheet, OMI sale price, municipal flood/landslide class (worst of the P3 and P4 shares, unknown shares skipped, not a score), seismic zone. The SISTER unit count moved to the Buildings card badge because it is not a physical footprint count; no composite risk ring (gated on `aecs4u-stats#34`) | No | 🟡 |
 | S4 | Section navigation (tabs, scroll-spy) | Yes | n/a | Tab bar with scroll-spy, tab-fragment restoration, and direct card links using `#sezione-{id}` | No | ✅ |
 | S5 | Card with icon, count, source line | Yes | Shared envelope has a `source` field; values may be null | Per-card footer: source, dataset and model version, match method, resolution, benchmarks; icon and count badge | Footnotes | ✅ |
 | S6 | Progressive loading with skeletons | Yes | Local forced rebuild p95 10.580 s; PostgreSQL repeat-hit median 15 ms, p95 55 ms | Per-section skeletons; sections load lazily and independently; 503 failures can be retried; 404 sources show unavailable without retry. The first nearby-PVP request now returns while its shared snapshot warms; the underlying national view load remains expensive | Per-card loading | ✅ |
 | S7 | Deep link to a selected parcel | `?parcel=<id>` | `/parcel/by-reference` | ✅ `?parcel=<reference>` | ✅ | ✅ |
 | S8 | Share, save | Favourite, share | `/saved-parcels` | ✅ Copy link, Save | ✅ | ✅ |
-| S9 | Printable or PDF report | Yes | read-model blocks and version metadata | Direct-map PDF includes every registered section's captured text, state and available provenance, plus the server read model; report ID, version footer and source register | ✅ browser print, A4 dossier | ✅ |
+| S9 | Printable or PDF report | Yes | read-model blocks and version metadata | Direct-map PDF includes every registered section's captured text, state and available provenance, plus the server read model; report ID, version footer and source register | ✅ browser print, A4 dossier; server Typst dossier | ✅ |
 | S10 | Mobile layout | Not examined | n/a | Bottom sheet; actions in one scrolling row (checked at 390 px) | n/a | ✅ |
 | S11 | Shortlist with lifecycle, notes, tags | No (favourite only) | ✅ | ✅ | ✅ | ✅ ahead |
 
@@ -602,7 +638,7 @@ data, including its coverage, version and reuse terms.
 
 | Task | Files | Status |
 |---|---|---|
-| Section registry and typed renderers for `/map` | `static/parcel-panel.js`, `static/parcel-panel-core.js`, `map-v2.js` | Done. Analysis hand-off remains on `/map-legacy`; the report action downloads the server PDF |
+| Section registry and typed renderers for `/map` | `static/parcel-panel.js`, `static/parcel-panel-core.js`, `map-v2.js` | Done. Analysis hand-off remains on `/map-legacy`; the report action downloads the server-built Typst dossier |
 | Side sheet, sticky header actions, stat strip, tab bar | both `map_v2.html` templates, `map-v2.css` | Done. Copy link, PDF and Close stay in the fixed header; visibility after section scrolling is browser-checked |
 | OMI card: selectors, estimate, history chart and quote table | panel sections, `/omi/*` | Done (zone, type and state selector, local preview, server estimate, chart, and all current municipality quote rows). The estimator selector is capped at 80 valid sale quotes; the full table also includes rent-only rows |
 | Income, census, POIs, risks, bulletin, PVP, fires, safety, indicators | panel sections | Done |
@@ -777,6 +813,8 @@ are not estimates for the selected parcel, building, or roof.
   exists.
 
 ### Phase 5 — Report and export (about 1 to 2 weeks)
+
+> **Superseded 2026-10-10.** The panel-snapshot ReportLab export described below is deprecated. The direct map now downloads the Typst dossier from `GET /api/v1/enrichment/parcel/dossier/{reference}`, which is built entirely from server data; `POST` is accepted and ignores the body. Provenance logic (source catalog, versions footer, licence status) was carried over. See `PARCEL_DOSSIER.md`. The text below records the legacy implementation.
 
 **Panel-complete server PDF implemented.** The direct-map action loads any
 remaining registered sections in bounded batches, then POSTs their text,
@@ -1274,7 +1312,7 @@ Hostnames and paths only; no tokens or payloads recorded.
 | `rpc/user_has_parcel_access` | Entitlement check |
 | `rpc/get_recent_fire_hotspots`, `get_criticality_zones` | Live overlays |
 | `functions/v1/valutazione/osservazione` | Records a valuation observation when a parcel opens |
-| `rest/v1/saved_parcels` | Favourite state |
+| `rest/v1/saved_parcels` | Favourite state (ours: `is_favorite` on `saved_parcels`) |
 
 ## Appendix B. Mapping Zornade sections to land-registry blocks
 

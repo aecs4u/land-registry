@@ -1389,15 +1389,94 @@
       ? `?id=${encodeURIComponent(String(Number(featureId)))}`
       : '';
     reportLink.href = reference
-      ? `/api/v1/enrichment/parcel/report/${encodeURIComponent(reference)}${reportIdQuery}`
+      ? `/api/v1/enrichment/parcel/dossier/${encodeURIComponent(reference)}${reportIdQuery}`
       : '#';
     reportLink.setAttribute('aria-disabled', String(!reference));
     reportLink.tabIndex = reference ? 0 : -1;
     const saved = state.savedReference === reference;
     $('parcelSaveButton').disabled = saved;
     $('parcelSaveButton').textContent = saved ? tr('Saved') : tr('Save parcel');
+    syncFavoriteButton();
     $('directParcelPanel').hidden = false;
     $('mapHelpNote').hidden = true;
+  }
+
+  // Favourites are saved parcels with ``is_favorite`` set, so the shortlist
+  // list is the single source of truth for the star state.
+  function savedItemForReference(reference) {
+    if (!reference) return null;
+    return state.shortlistItems.find((item) => shortlistReference(item) === reference) || null;
+  }
+
+  function syncFavoriteButton() {
+    const button = $('parcelFavoriteButton');
+    if (!button) return;
+    const reference = state.selectedReference;
+    const favorite = Boolean(savedItemForReference(reference)?.is_favorite);
+    const label = favorite ? tr('Remove from favourites') : tr('Add to favourites');
+    button.disabled = !reference;
+    button.setAttribute('aria-pressed', String(favorite));
+    button.setAttribute('aria-label', label);
+    button.title = label;
+    if (button.firstElementChild) button.firstElementChild.textContent = favorite ? '★' : '☆';
+  }
+
+  async function patchSavedParcelFavorite(item, favorite) {
+    const response = await fetch(`/api/v1/saved-parcels/${encodeURIComponent(item.id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_favorite: favorite }),
+    });
+    if (response.status === 401) throw new Error('Sign in to save favourites');
+    if (!response.ok) throw new Error('Could not update favourite');
+  }
+
+  async function toggleFavorite() {
+    const reference = state.selectedReference;
+    if (!reference) return;
+    if (!window.landRegistrySignedIn) { mapStatus('Sign in to save favourites', true); return; }
+    $('parcelFavoriteButton').disabled = true;
+    const task = beginMapProgress('favorite-parcel', 'Updating favourite…');
+    try {
+      let item = savedItemForReference(reference);
+      if (!item) {
+        // Not on the shortlist yet: favouriting saves it as a favourite.
+        const created = await fetch('/api/v1/saved-parcels', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            source: 'cadastral',
+            national_reference: reference,
+            label: `Parcel ${reference}`,
+            geometry: state.selectedFeature?.geometry || null,
+            is_favorite: true,
+          }),
+        });
+        if (created.status === 401) throw new Error('Sign in to save favourites');
+        if (created.ok) {
+          state.savedReference = reference;
+          $('parcelSaveButton').disabled = true;
+          $('parcelSaveButton').textContent = tr('Saved');
+          await loadShortlist();
+          mapStatus('Added to favourites');
+          return;
+        }
+        if (created.status !== 409) throw new Error('Could not update favourite');
+        // Saved earlier (possibly before the shortlist loaded): reload and toggle.
+        await loadShortlist();
+        item = savedItemForReference(reference);
+        if (!item) throw new Error('Could not update favourite');
+      }
+      const next = !item.is_favorite;
+      await patchSavedParcelFavorite(item, next);
+      await loadShortlist();
+      mapStatus(next ? 'Added to favourites' : 'Removed from favourites');
+    } catch (error) {
+      mapStatus(error.message || 'Could not update favourite', true);
+    } finally {
+      task.finish();
+      syncFavoriteButton();
+    }
   }
 
   async function saveParcel() {
@@ -1440,10 +1519,9 @@
   async function downloadParcelReport(event) {
     const link = event.currentTarget;
     if (!link || link.getAttribute('aria-disabled') === 'true' || link.dataset.exporting === 'true') return;
-    // Retain the server-only GET as a useful fallback if the panel bundle did
-    // not load. With the bundle present, export every independently loaded
-    // section before asking the server to render the PDF.
-    if (typeof window.ParcelPanel?.createReportSnapshot !== 'function') return;
+    // The Typst dossier is built entirely on the server from the parcel
+    // reference, so no browser snapshot is needed. Fetching it here only adds
+    // progress and error feedback; the plain link works without JavaScript.
     event.preventDefault();
     const endpoint = link.href;
     const originalLabel = link.dataset.label || link.textContent.trim();
@@ -1453,14 +1531,7 @@
     link.textContent = tr('Preparing report…');
     link.title = '';
     try {
-      const snapshot = await window.ParcelPanel.createReportSnapshot((loaded, total) => {
-        link.textContent = tr('Loading report data: {loaded}/{total}', { loaded, total });
-      });
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/pdf' },
-        body: JSON.stringify(snapshot),
-      });
+      const response = await fetch(endpoint, { headers: { Accept: 'application/pdf' } });
       if (!response.ok) {
         let detail = '';
         try { detail = (await response.json()).detail || ''; } catch (_) { /* use the localized fallback */ }
@@ -1470,7 +1541,7 @@
       const objectUrl = URL.createObjectURL(blob);
       const download = document.createElement('a');
       download.href = objectUrl;
-      download.download = 'parcel-report.pdf';
+      download.download = 'parcel-dossier.pdf';
       document.body.append(download);
       download.click();
       download.remove();
@@ -1517,6 +1588,8 @@
     const parts = Object.entries(summary.by_status || {})
       .filter(([, count]) => count > 0)
       .map(([status, count]) => `${escapeHtml(statusLabel(status))}: ${count}`);
+    const favorites = state.shortlistItems.filter((item) => item.is_favorite).length;
+    if (favorites) parts.push(`★ ${favorites}`);
     summaryEl.innerHTML = `Total ${summary.total || 0}${parts.length ? ` · ${parts.join(' · ')}` : ''}`;
   }
 
@@ -1524,7 +1597,9 @@
     const status = $('shortlistStatusFilter')?.value || '';
     const priority = $('shortlistPriorityFilter')?.value || '';
     const sort = $('shortlistSort')?.value || 'recency';
+    const favoritesOnly = Boolean($('shortlistFavoriteFilter')?.checked);
     const items = state.shortlistItems.filter((item) => {
+      if (favoritesOnly && !item.is_favorite) return false;
       if (status && item.status !== status) return false;
       if (priority) {
         const itemPriority = item.priority ?? 0;
@@ -1543,6 +1618,7 @@
   function renderShortlist() {
     populateShortlistStatusFilter();
     renderShortlistSummary();
+    syncFavoriteButton();
     const list = $('shortlistList');
     if (!list) return;
     const items = filteredShortlistItems();
@@ -1560,7 +1636,7 @@
         <article class="shortlist-item" role="listitem">
           <div class="shortlist-item-header">
             <div>
-              <strong>${escapeHtml(item.label || reference || 'Saved parcel')}</strong>
+              <strong>${item.is_favorite ? '<span class="shortlist-favorite-mark" aria-hidden="true">★</span> ' : ''}${escapeHtml(item.label || reference || 'Saved parcel')}</strong>
               <small>${escapeHtml(reference || 'No cadastral reference')}</small>
               ${hazard}
             </div>
@@ -1573,6 +1649,7 @@
           ${item.notes ? `<small>${escapeHtml(item.notes).slice(0, 180)}</small>` : ''}
           <div class="shortlist-item-actions">
             <button type="button" data-shortlist-open="${escapeHtml(reference)}">Open</button>
+            <button type="button" data-shortlist-favorite="${escapeHtml(item.id)}" aria-pressed="${item.is_favorite ? 'true' : 'false'}">${escapeHtml(item.is_favorite ? tr('Unfavourite') : tr('Favourite'))}</button>
           </div>
         </article>`;
     }).join('');
@@ -1580,6 +1657,21 @@
       button.addEventListener('click', () => {
         const reference = button.getAttribute('data-shortlist-open');
         if (reference) void loadParcelByReference(reference, true);
+      });
+    });
+    list.querySelectorAll('[data-shortlist-favorite]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const id = button.getAttribute('data-shortlist-favorite');
+        const item = state.shortlistItems.find((entry) => String(entry.id) === id);
+        if (!item) return;
+        button.disabled = true;
+        try {
+          await patchSavedParcelFavorite(item, !item.is_favorite);
+          await loadShortlist();
+        } catch (error) {
+          button.disabled = false;
+          mapStatus(error.message || 'Could not update favourite', true);
+        }
       });
     });
   }
@@ -4826,6 +4918,7 @@
     $('locateButton').addEventListener('click', locate);
     $('shareButton').addEventListener('click', copyLink);
     $('parcelSaveButton').addEventListener('click', saveParcel);
+    $('parcelFavoriteButton')?.addEventListener('click', toggleFavorite);
     $('parcelReportLink')?.addEventListener('click', downloadParcelReport);
     $('parcelAdjacentButton').addEventListener('click', findAdjacentParcels);
     $('parcelShareButton').addEventListener('click', copyLink);
@@ -4950,7 +5043,7 @@
     renderAnalysisSelection();
     renderWorkbenchDrawings();
     $('shortlistRefreshButton').addEventListener('click', () => loadShortlist());
-    ['shortlistStatusFilter', 'shortlistPriorityFilter', 'shortlistSort'].forEach((id) => {
+    ['shortlistStatusFilter', 'shortlistPriorityFilter', 'shortlistSort', 'shortlistFavoriteFilter'].forEach((id) => {
       $(id).addEventListener('change', renderShortlist);
     });
     $('shortlistHazardFilter').addEventListener('change', () => loadShortlist());

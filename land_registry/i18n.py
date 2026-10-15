@@ -2,7 +2,8 @@
 Internationalisation support for Land Registry.
 
 Locales supported: it (Italian, default), en (English).
-Language detection order: cookie → Accept-Language header → default.
+Language detection order: ?lang= → cookies (the theme's language, then lang)
+→ Accept-Language header → default.
 
 Usage in templates:  {{ _('string') }}
 Usage in Python:     from land_registry.i18n import gettext as _
@@ -14,6 +15,7 @@ import gettext as _gettext
 import io
 import logging
 from pathlib import Path
+from urllib.parse import parse_qs
 from typing import Callable
 
 from fastapi import Request
@@ -25,6 +27,12 @@ logger = logging.getLogger(__name__)
 SUPPORTED_LOCALES: list[str] = ["it", "en"]
 DEFAULT_LOCALE = "it"
 LOCALE_COOKIE = "lang"
+# The shared aecs4u theme/i18n middleware reads ?lang= and a ``language``
+# cookie. The catalogue served to the map must follow the same signals, or the
+# header's language picker changes the chrome while the panel stays English.
+LOCALE_QUERY_PARAM = "lang"
+THEME_LOCALE_COOKIE = "language"
+LOCALE_COOKIE_MAX_AGE = 60 * 60 * 24 * 365
 TRANSLATIONS_DIR = Path(__file__).parent / "translations"
 DOMAIN = "land_registry"
 
@@ -80,14 +88,29 @@ def get_translation(locale: str) -> _gettext.NullTranslations:
     return _TRANSLATIONS.get(locale, _TRANSLATIONS.get(DEFAULT_LOCALE, _gettext.NullTranslations()))
 
 
+def _explicit_locale(request: Request) -> str:
+    """The ``?lang=`` value, read from the raw scope so partial scopes still work."""
+    raw = request.scope.get("query_string") or b""
+    values = parse_qs(raw.decode("latin-1")).get(LOCALE_QUERY_PARAM, [])
+    return values[0].strip().lower() if values else ""
+
+
 def detect_locale(request: Request) -> str:
     """Return the best matching locale for this request."""
-    # 1. Cookie
-    cookie = request.cookies.get(LOCALE_COOKIE, "")
-    if cookie in SUPPORTED_LOCALES:
-        return cookie
+    # 1. Explicit ?lang= (the theme's language picker links to it)
+    explicit = _explicit_locale(request)
+    if explicit in SUPPORTED_LOCALES:
+        return explicit
 
-    # 2. Accept-Language header
+    # 2. Cookies. The theme's picker is the control visible on every page and
+    # the shared middleware reads this one, so it leads; this app's pickers
+    # write both cookies, which keeps them in step.
+    for name in (THEME_LOCALE_COOKIE, LOCALE_COOKIE):
+        cookie = request.cookies.get(name, "").strip().lower()
+        if cookie in SUPPORTED_LOCALES:
+            return cookie
+
+    # 3. Accept-Language header
     accept = request.headers.get("accept-language", "")
     for part in accept.split(","):
         lang = part.strip().split(";")[0].split("-")[0].lower()
@@ -152,6 +175,13 @@ class LocaleMiddleware(BaseHTTPMiddleware):
             response = await call_next(request)
         finally:
             _current_locale.reset(token)
+        # Remember an explicit ?lang= choice so later navigations (the map
+        # rewrites its own URL) keep the language the user picked.
+        explicit = _explicit_locale(request)
+        if explicit in SUPPORTED_LOCALES:
+            for name in (THEME_LOCALE_COOKIE, LOCALE_COOKIE):
+                if request.cookies.get(name) != explicit:
+                    response.set_cookie(name, explicit, max_age=LOCALE_COOKIE_MAX_AGE, path="/", samesite="lax")
         return response
 
 

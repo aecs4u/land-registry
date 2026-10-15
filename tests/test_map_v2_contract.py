@@ -71,7 +71,7 @@ def test_direct_map_supports_selection_search_url_state_and_enrichment():
         "parcel-enrichment",
         "mousemove",
         "parcelReportLink",
-        "/api/v1/enrichment/parcel/report/",
+        "/api/v1/enrichment/parcel/dossier/",
         "searchController.abort()",
         "controller.signal",
         "Geometry",
@@ -503,3 +503,10 @@ def test_click_lists_every_layer_under_the_cursor_instead_of_hiding_them():
     # Each entry reuses the existing per-layer popup rather than a second one.
     assert "showOverlayFeature(entry.layer, entry.feature, lngLat)" in SCRIPT
     assert ".map-layer-stack-item" in STYLES
+
+
+def test_direct_map_exposes_favourites_on_saved_parcels():
+    for token in ("parcelFavoriteButton", "shortlistFavoriteFilter"):
+        assert f'id="{token}"' in TEMPLATE
+    for token in ("toggleFavorite", "is_favorite", "data-shortlist-favorite", "favoritesOnly"):
+        assert token in SCRIPT, token

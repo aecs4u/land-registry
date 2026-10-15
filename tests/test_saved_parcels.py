@@ -175,6 +175,7 @@ def test_saved_parcel_collection_contract_uses_configured_statuses_and_summary(m
         "total": 2,
         "by_status": {"triage": 1, "discarded": 1},
         "active_total": 1,
+        "favorites_total": 0,
     }
 
 
@@ -291,3 +292,68 @@ def test_dpc_bulletin_hazard_intersects_saved_parcel_geometry(monkeypatch):
     assert hazard["type"] == "dpc_criticality"
     assert hazard["zone"] == "Zona test"
     assert hazard["issue_time"] == "Bollettino 2026-09-13 12:00"
+
+
+def test_saved_parcel_favorite_flag_defaults_off_and_round_trips(db):
+    parcel = {
+        "source": "catasto",
+        "source_key": "CATASTO|REF=RM-FAVORITE",
+        "national_reference": "RM-FAVORITE",
+        "parcel_identity_id": "0b0f6a25-3b0e-5c5e-8d2f-6a3f0f5d1a11",
+        "parcel_version_id": None,
+        "dataset_version": None,
+        "label": "Favourite parcel",
+    }
+
+    plain_id = db.save_parcel("user-a", parcel)
+    assert db.get_saved_parcel(plain_id, "user-a")["is_favorite"] == 0
+
+    other = {**parcel, "parcel_identity_id": "6f1d4a0e-1c2b-5d3a-9e4f-7b8c9d0e1f22", "is_favorite": True}
+    favorite_id = db.save_parcel("user-a", other)
+    assert db.get_saved_parcel(favorite_id, "user-a")["is_favorite"] == 1
+
+    # False is a real value, not "no change": un-favouriting must persist.
+    assert db.update_saved_parcel(favorite_id, "user-a", is_favorite=False) is True
+    assert db.get_saved_parcel(favorite_id, "user-a")["is_favorite"] == 0
+    assert db.update_saved_parcel(favorite_id, "user-a", is_favorite=True) is True
+    assert db.get_saved_parcel(favorite_id, "user-a")["is_favorite"] == 1
+
+    # Ownership still applies to the new field.
+    assert db.update_saved_parcel(favorite_id, "user-b", is_favorite=False) is False
+    assert db.get_saved_parcel(favorite_id, "user-a")["is_favorite"] == 1
+
+
+def test_saved_parcel_favorite_column_is_added_to_existing_databases(tmp_path):
+    path = str(tmp_path / "legacy.sqlite")
+    connection = sqlite3.connect(path)
+    connection.execute(
+        """
+        CREATE TABLE saved_parcels (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, source TEXT NOT NULL,
+            source_key TEXT, national_reference TEXT, parcel_identity_id TEXT, parcel_version_id TEXT,
+            dataset_version TEXT, label TEXT, notes TEXT, status TEXT NOT NULL DEFAULT 'new',
+            priority INTEGER, tags TEXT DEFAULT '[]', geometry TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    connection.execute("INSERT INTO saved_parcels (user_id, source, label) VALUES ('user-a', 'catasto', 'Legacy')")
+    connection.commit()
+    connection.close()
+
+    migrated = SQLiteDatabase(db_path=path)
+    rows = migrated.get_saved_parcels("user-a")
+    assert [row["label"] for row in rows] == ["Legacy"]
+    assert rows[0]["is_favorite"] == 0
+
+
+def test_saved_parcel_favorite_contract():
+    assert SavedParcelUpdateRequest(is_favorite=False).is_favorite is False
+    assert SavedParcelCreateRequest(source="cadastral", national_reference="G273_000900.1", is_favorite=True).is_favorite
+
+    legacy_row = {"id": 1, "source": "cadastral", "national_reference": "G273_000900.1", "is_favorite": None}
+    assert api_router._saved_parcel_row_to_response(legacy_row)["is_favorite"] is False
+    assert api_router._saved_parcel_row_to_response({**legacy_row, "is_favorite": 1})["is_favorite"] is True
+
+    summary = api_router._saved_parcel_summary([{"status": "new", "is_favorite": True}, {"status": "new"}])
+    assert summary["favorites_total"] == 1

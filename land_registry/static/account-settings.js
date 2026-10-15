@@ -76,6 +76,8 @@
       }
       if (preferences.language && preferences.language !== currentLocale) {
         document.cookie = `${LOCALE_COOKIE}=${encodeURIComponent(preferences.language)}; path=/; max-age=31536000; SameSite=Lax`;
+        // The shared theme and i18n middleware read this one.
+        document.cookie = `language=${encodeURIComponent(preferences.language)}; path=/; max-age=31536000; SameSite=Lax`;
         setStatus(form, messages.reloading, false);
         window.location.reload();
         return;

@@ -112,6 +112,7 @@ function closeToolPanel(panelId) {
 
 function changeLang(lang) {
     document.cookie = 'lang=' + lang + '; path=/; max-age=31536000; SameSite=Lax';
+    document.cookie = 'language=' + lang + '; path=/; max-age=31536000; SameSite=Lax';
     window.location.reload();
 }
 

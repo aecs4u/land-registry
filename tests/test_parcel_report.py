@@ -404,8 +404,11 @@ async def test_post_report_includes_validated_browser_sections(monkeypatch):
     monkeypatch.setattr(enrichment_module.stats_service, "aget_parcel_enrichment", get_profile)
     seen = {}
 
-    def render(reference, parcel, profile, report_id, translate, sections):
+    def render(reference, parcel, profile, report_id, translate, sections, *, neighbours=None, locale=None):
         seen["snapshot"] = sections
+        # decorative context: a (possibly empty) list of outlines and the request locale for number formatting
+        assert isinstance(neighbours, list)
+        assert locale == "en"
         assert reference == "H501_1.2"
         assert parcel is selected
         assert sections[0]["body"] == "OMI & valuation details"

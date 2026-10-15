@@ -204,13 +204,49 @@
   }
 
   /**
-   * Default estimator surface. A parcel above 1 ha is almost never a single
-   * dwelling, so the user must enter the building's commercial surface.
+   * Estimator surface. Parcel geometry measures land, not the commercial
+   * floor area OMI prices apply to, so it is never prefilled: a 1,283 m² villa
+   * plot would otherwise be valued as 1,283 m² of dwelling. The user enters the
+   * building's commercial surface; ``hasParcelArea`` only drives the hint.
    */
   function defaultEstimateArea(areaSqm) {
     const area = toNumber(areaSqm);
-    if (area === null || area <= 0) return { value: '', tooLarge: false };
-    return area <= 10000 ? { value: Math.round(area), tooLarge: false } : { value: '', tooLarge: true };
+    return { value: '', hasParcelArea: area !== null && area > 0 };
+  }
+
+  const OMI_CONDITION_LABELS = {
+    P: 'Prevalent condition', N: 'Normal', O: 'Excellent', S: 'Poor',
+  };
+
+  /** OMI single-letter condition codes as words; other values pass through. */
+  function omiConditionLabel(code, tr) {
+    const raw = String(code ?? '').trim();
+    if (!raw) return '';
+    const label = OMI_CONDITION_LABELS[raw.toUpperCase()];
+    return label ? translate(tr, label) : raw;
+  }
+
+  /** Property type of a quote; the snapshot's placeholder ``0`` becomes a label. */
+  function omiTypologyLabel(quote, tr) {
+    const raw = String((quote && (quote.tipologia || quote.cod_tipologia)) ?? '').trim();
+    return raw && raw !== '0' ? raw : translate(tr, 'Type not specified');
+  }
+
+  /** One-line description of a quote for selectors: zone · type · condition · period. */
+  function omiQuoteLabel(quote, tr) {
+    const period = quote && quote.anno && quote.semestre ? `${quote.anno} S${quote.semestre}` : '';
+    return [
+      (quote && quote.zona) || '—',
+      omiTypologyLabel(quote, tr),
+      omiConditionLabel(quote && quote.stato_conservazione, tr),
+      period,
+    ].filter(Boolean).join(' · ');
+  }
+
+  /** True when no quote declares its reference semester (zone snapshot data). */
+  function omiQuotesLackPeriod(quotes) {
+    return Array.isArray(quotes) && quotes.length > 0
+      && quotes.every((quote) => !(quote && quote.anno && quote.semestre));
   }
 
   /** Comparable benchmark across the loaded quotes (median of band midpoints). */
@@ -325,11 +361,26 @@
     return { total, male, female, ageGroups };
   }
 
+  const BRACKET_PREFIX = { over: '> ', under: '< ', le: '≤ ' };
+
+  /** ``10_15k`` → ``10–15 k€``, ``over_120k`` → ``> 120 k€``, ``le_0`` → ``≤ 0``. */
+  function incomeBracketLabel(raw) {
+    let text = String(raw ?? '');
+    for (const [prefix, symbol] of Object.entries(BRACKET_PREFIX)) {
+      if (text.startsWith(`${prefix}_`)) {
+        text = symbol + text.slice(prefix.length + 1);
+        break;
+      }
+    }
+    text = text.replaceAll('_', '–');
+    return text.endsWith('k') ? `${text.slice(0, -1)} k€` : text;
+  }
+
   /** Income-bracket rows {label, pct (0..100 or null)}. */
   function incomeBracketRows(distribution) {
     return (distribution || []).map((row) => {
       const pct = toNumber(row.pct);
-      return { label: String(row.bracket ?? ''), pct: pct === null ? null : Math.max(0, Math.min(100, pct)) };
+      return { label: incomeBracketLabel(row.bracket), pct: pct === null ? null : Math.max(0, Math.min(100, pct)) };
     });
   }
 
@@ -340,6 +391,30 @@
     if (value >= 5) return 'high';
     if (value >= 1) return 'medium';
     return 'low';
+  }
+
+  const HAZARD_RANK = { low: 1, medium: 2, high: 3 };
+
+  /**
+   * Highest class of the municipal flood (P3) and landslide (P4) area shares.
+   * It is a worst-of reading, not a weighted score: a share that is not
+   * reported is skipped and never counted as low. ``null`` when neither is known.
+   */
+  function hydroHazardSummary(hydrogeological) {
+    const hydro = hydrogeological || {};
+    const shares = [
+      ['flood', hydro.flood && hydro.flood.area_pct && hydro.flood.area_pct.P3_high_probability],
+      ['landslide', hydro.landslide && hydro.landslide.area_pct && hydro.landslide.area_pct.P4_very_high],
+    ].map(([key, raw]) => ({ key, pct: toNumber(raw) }))
+      .filter((share) => share.pct !== null)
+      .map((share) => ({ ...share, level: riskLevel(share.pct) }));
+    if (!shares.length) return null;
+    // Highest class wins; within the same class the larger share is reported.
+    const top = shares.reduce((best, share) => {
+      const diff = HAZARD_RANK[share.level] - HAZARD_RANK[best.level];
+      return diff > 0 || (diff === 0 && share.pct > best.pct) ? share : best;
+    });
+    return { level: top.level, pct: top.pct, driver: top.key, assessed: shares.map((share) => share.key) };
   }
 
   function seismicLabel(zone, tr) {
@@ -358,6 +433,56 @@
 
   function foldName(name) {
     return String(name || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  }
+
+  // Quality-of-life highlights shown before the full indicator tables. The
+  // list is editorial: price and rent context first, then people and place.
+  // Patterns are matched against accent-folded indicator names.
+  const QUALITY_HIGHLIGHT_PATTERNS = [
+    'prezzo medio di vendita', 'canoni medi di locazione', 'mensilita di stipendio',
+    'reddito disponibile', 'tasso di occupazione', 'indice di criminalita',
+    'qualita dell\'aria', 'speranza di vita', 'raccolta differenziata', 'ecosistema urbano',
+  ];
+
+  /** Newest non-COVID numeric value of a quality-of-life indicator, or null. */
+  function latestIndicatorValue(indicator) {
+    let best = null;
+    Object.entries((indicator && indicator.values) || {}).forEach(([label, item]) => {
+      const value = toNumber(item && item.value);
+      const year = Number.parseInt(label, 10);
+      if (value === null || !Number.isFinite(year) || /covid/i.test(label)) return;
+      if (!best || year > best.year) {
+        best = { year, value, unit: (item && item.unit) || (indicator && indicator.unit) || null };
+      }
+    });
+    return best;
+  }
+
+  /**
+   * Up to ``limit`` curated indicators from the clustered quality-of-life
+   * payload, each with its newest value and year. The same indicator name
+   * recurs across clusters with different units, so the newest entry wins and
+   * its own unit travels with it. The COVID supplement is never a highlight.
+   */
+  function qualityHighlights(clusters, limit = 8) {
+    const entries = [];
+    (clusters || []).forEach((cluster) => {
+      if (/covid/i.test(String((cluster && (cluster.key || cluster.label)) || ''))) return;
+      ((cluster && cluster.indicators) || []).forEach((indicator) => {
+        const latest = latestIndicatorValue(indicator);
+        const name = String((indicator && indicator.name) || '').trim();
+        if (latest && name) entries.push({ name, folded: foldName(name).replace(/\s+/g, ' '), ...latest });
+      });
+    });
+    const picked = [];
+    QUALITY_HIGHLIGHT_PATTERNS.forEach((pattern) => {
+      if (picked.length >= limit) return;
+      const match = entries
+        .filter((entry) => entry.folded.includes(pattern) && !picked.includes(entry))
+        .reduce((best, entry) => (!best || entry.year > best.year ? entry : best), null);
+      if (match) picked.push(match);
+    });
+    return picked.map(({ name, year, value, unit }) => ({ name, year, value, unit }));
   }
 
   /** Bulletin zone properties whose comuni list contains ``muniName``, or null. */
@@ -469,8 +594,9 @@
     parseDateTime, formatDateTime, relativeAge, median,
     cadastralCodeOf, parcelAreaSqm, centroidOf, referenceParts,
     validOmiQuotes, quoteMidpoint, estimateOmiRange, defaultEstimateArea, quoteBenchmark,
+    omiConditionLabel, omiTypologyLabel, omiQuoteLabel, omiQuotesLackPeriod,
     omiHistorySeries, historyChartSvg,
-    censusSummary, censusDemographics, incomeBracketRows, riskLevel, seismicLabel, bulletinSeverity,
+    censusSummary, censusDemographics, incomeBracketLabel, incomeBracketRows, riskLevel, hydroHazardSummary, qualityHighlights, seismicLabel, bulletinSeverity,
     foldName, findBulletinZone, feedRefreshValue, parseFireObservationTime, indicatorLabel,
     flattenValues, safeHttpUrl, blockMetadataHtml,
   };

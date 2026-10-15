@@ -28,6 +28,7 @@ from land_registry.dependencies import MapSessionMiddleware, _map_state
 from land_registry.routers.api import api_router
 from land_registry.routers.auth_pages import router as auth_pages_router
 from land_registry.routers.enrichment import enrichment_router
+from land_registry.routers.parcel_dossier import parcel_dossier_router
 from land_registry.routers.cadastral_purchases import router as cadastral_purchases_router
 from land_registry.routers.api import account_workspace_snapshot, load_account_preferences
 from land_registry.routers.auth import get_current_user_optional
@@ -677,6 +678,8 @@ setup_billing(
 # duplicate OpenAPI operation IDs and a colliding `EnrichmentDatasetStatus`
 # schema name for every path land-registry already overrides.
 app.include_router(enrichment_router, prefix="/api/v1/enrichment", tags=["enrichment"])
+# The Typst dossier is declared before the deprecated ReportLab routes would match, and shares their prefix.
+app.include_router(parcel_dossier_router, prefix="/api/v1/enrichment", tags=["enrichment"])
 
 root_folder = os.path.dirname(__file__)
 

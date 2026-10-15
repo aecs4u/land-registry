@@ -540,7 +540,7 @@ async def get_mps04_pga(
     lng: float = Query(..., ge=-180, le=180),
 ):
     """INGV MPS04 PGA at the nearest native grid point to a parcel centroid."""
-    return await asyncio.to_thread(stats_service.get_mps04_pga_at_point, lat, lng)
+    return await stats_service.aget_mps04_pga_at_point(lat, lng)
 
 
 _CADASTRAL_BUILD_HINT = (
@@ -602,7 +602,7 @@ async def get_parcel_hazards(
     geometry = parcel.get("geometry") if isinstance(parcel, dict) else None
     if not geometry:
         raise HTTPException(status_code=404, detail="Parcel geometry is not available")
-    return await asyncio.to_thread(stats_service.get_parcel_hazard_intersections, geometry)
+    return await stats_service.aget_parcel_hazard_intersections(geometry)
 
 
 @enrichment_router.get("/parcel/subsidence/{national_reference}")
@@ -616,7 +616,7 @@ async def get_parcel_subsidence(
     geometry = parcel.get("geometry") if isinstance(parcel, dict) else None
     if not geometry:
         raise HTTPException(status_code=404, detail="Parcel geometry is not available")
-    return await asyncio.to_thread(stats_service.get_parcel_subsidence_intersections, geometry)
+    return await stats_service.aget_parcel_subsidence_intersections(geometry)
 
 
 @enrichment_router.get("/parcel/report/{national_reference}")
@@ -642,6 +642,39 @@ async def post_parcel_report(
     ])
 
 
+_REPORT_NEIGHBOUR_LIMIT = 30
+_REPORT_NEIGHBOUR_TIMEOUT_SECONDS = 4.0
+
+
+async def _report_neighbour_geometries(national_reference: str, feature_id: Optional[int]) -> list[dict]:
+    """Outlines of the adjacent parcels for the report's locator map.
+
+    Best effort: the report is still produced, without the surrounding parcels, when the canonical map source is
+    unavailable or slow.
+    """
+    try:
+        source = get_map_layer_source()
+        if not source.available:
+            return []
+        features = await asyncio.wait_for(
+            source.read_adjacent_features(
+                "cadastral-parcels",
+                national_reference,
+                limit=_REPORT_NEIGHBOUR_LIMIT,
+                feature_id=feature_id,
+                method="intersects",
+            ),
+            timeout=_REPORT_NEIGHBOUR_TIMEOUT_SECONDS,
+        )
+    except Exception:  # noqa: BLE001 - decorative context must never fail the report
+        return []
+    return [
+        feature["geometry"]
+        for feature in features or []
+        if isinstance(feature, dict) and isinstance(feature.get("geometry"), dict)
+    ]
+
+
 async def _build_parcel_report(
     national_reference: str,
     request: Request,
@@ -654,6 +687,8 @@ async def _build_parcel_report(
     from land_registry.parcel_report import profile_matches_parcel, render_parcel_report_pdf
 
     parcel = await get_parcel_by_reference(national_reference, id=id)
+    locale = detect_locale(request)
+    neighbours = await _report_neighbour_geometries(national_reference, id)
     try:
         profile = await stats_service.aget_parcel_enrichment(national_reference)
     except Exception:
@@ -668,8 +703,10 @@ async def _build_parcel_report(
         parcel,
         profile,
         report_id,
-        make_gettext(detect_locale(request)),
+        make_gettext(locale),
         sections,
+        neighbours=neighbours,
+        locale=locale,
     )
     return Response(
         pdf_bytes,
@@ -677,6 +714,9 @@ async def _build_parcel_report(
         headers={
             "Content-Disposition": 'attachment; filename="parcel-report.pdf"',
             "X-Report-ID": report_id,
+            # The ReportLab dossier is deprecated; the Typst dossier is its successor.
+            "Deprecation": "true",
+            "Link": f'</api/v1/enrichment/parcel/dossier/{national_reference}>; rel="successor-version"',
         },
     )
 

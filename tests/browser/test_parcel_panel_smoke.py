@@ -184,9 +184,11 @@ def test_panel_fills_sections_independently_and_survives_a_failing_source(server
         assert "not a geocoded address register" in page.inner_text("#parcel-section-address")
         assert any("/parcel/details/" in url and "view=panel" in url for url in requested)
         assert page.inner_text('[data-stat="area"] .parcel-stat-value').startswith("5545")
-        assert f"/api/v1/enrichment/parcel/report/{REFERENCE}" in page.get_attribute("#parcelReportLink", "href")
+        assert f"/api/v1/enrichment/parcel/dossier/{REFERENCE}" in page.get_attribute("#parcelReportLink", "href")
         assert page.get_attribute("#parcelReportLink", "aria-disabled") == "false"
-        page.wait_for_function("document.querySelector('[data-stat=\"buildings\"] .parcel-stat-value').textContent === '2'")
+        page.wait_for_function("document.querySelector('[data-stat=\"hazard\"] .parcel-stat-value').textContent.startsWith('High')")
+        assert page.get_attribute('[data-stat="hazard"]', "data-level") == "high"
+        assert page.locator('[data-stat="buildings"]').count() == 0
         page.wait_for_function("document.querySelector('[data-stat=\"seismic\"] .parcel-stat-value').textContent.includes('3')")
         assert "PGA (10 percent in 50 years)" in page.inner_text("#parcel-section-risks")
         assert "0,123 g" in page.inner_text("#parcel-section-risks")
@@ -420,45 +422,26 @@ def test_energy_tab_shows_only_municipal_solar_aggregates(server, browser):
         page.close()
 
 
-def test_pdf_export_posts_the_complete_panel_snapshot(server, browser):
+def test_pdf_export_downloads_the_server_built_dossier(server, browser):
     page, _ = _open_parcel(browser, server, {"width": 1440, "height": 900})
-    reports = []
+    requests = []
 
-    def report(route):
-        reports.append((route.request.post_data_json, len(route.request.post_data.encode("utf-8"))))
-        route.fulfill(status=200, content_type="application/pdf", body=b"%PDF-mock-report")
+    def dossier(route):
+        requests.append((route.request.method, route.request.post_data))
+        route.fulfill(
+            status=200,
+            content_type="application/pdf",
+            headers={"Content-Disposition": 'attachment; filename="parcel-dossier.pdf"'},
+            body=b"%PDF-mock-dossier",
+        )
 
-    page.route("**/api/v1/enrichment/parcel/report/**", report)
+    page.route("**/api/v1/enrichment/parcel/dossier/**", dossier)
     try:
         with page.expect_download(timeout=30000) as download_info:
             page.click("#parcelReportLink")
-        assert download_info.value.suggested_filename == "parcel-report.pdf"
-        assert len(reports) == 1
-        snapshot, request_size = reports[0]
-        assert request_size <= 220_000
-        sections = snapshot["sections"]
-        expected_count = page.locator(".parcel-section").count()
-        assert len(sections) == expected_count
-        assert {section["id"] for section in sections} >= {"identity", "omi", "census", "coverage"}
-        assert all(section["state"] in {"ready", "empty", "error"} for section in sections)
-        omi = next(section for section in sections if section["id"] == "omi")
-        assert "OMI zone and property type" in omi["body"]
-        assert "B31" in omi["body"]
-        assert omi["metadata"]["source"] == "OMI"
-
-        # Dense panel text stays within the request budget while preserving
-        # every section and marking the shortened bodies in the PDF payload.
-        page.evaluate("""() => document.querySelectorAll('.parcel-section-body').forEach((body) => {
-          body.textContent = 'x'.repeat(18000);
-        })""")
-        with page.expect_download(timeout=30000):
-            page.click("#parcelReportLink")
-        assert len(reports) == 2
-        bounded_snapshot, request_size = reports[1]
-        assert request_size <= 220_000
-        assert len(bounded_snapshot["sections"]) == expected_count
-        assert sum(len(section["body"]) for section in bounded_snapshot["sections"]) <= 180_000
-        assert any("Section text was shortened" in section["body"] for section in bounded_snapshot["sections"])
+        assert download_info.value.suggested_filename == "parcel-dossier.pdf"
+        # The dossier is built from server data: a plain GET, no panel snapshot is uploaded.
+        assert requests == [("GET", None)]
     finally:
         page.close()
 

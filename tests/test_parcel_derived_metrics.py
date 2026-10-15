@@ -294,14 +294,16 @@ def test_mps04_pga_reports_unbuilt_store_without_fabricating_zero(monkeypatch) -
 
 
 @pytest.mark.asyncio
-async def test_mps04_route_offloads_point_lookup(monkeypatch) -> None:
+async def test_mps04_route_uses_the_async_postgres_first_lookup(monkeypatch) -> None:
     seen = {}
 
-    def lookup(lat, lng):
+    async def lookup(lat, lng):
         seen.update(lat=lat, lng=lng)
         return {"available": True, "matched": False}
 
-    monkeypatch.setattr(enrichment_module.stats_service, "get_mps04_pga_at_point", lookup)
+    # The accessor offloads the local-store fallback to a worker thread itself
+    # (see tests/test_mps04_postgres.py); the route only awaits it.
+    monkeypatch.setattr(enrichment_module.stats_service, "aget_mps04_pga_at_point", lookup)
 
     result = await enrichment_module.get_mps04_pga(lat=41.89, lng=12.49)
 
@@ -320,7 +322,10 @@ async def test_parcel_hazard_route_resolves_canonical_geometry(monkeypatch) -> N
         return {"type": "Feature", "geometry": _polygon([[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]])}
 
     monkeypatch.setattr(enrichment_module, "get_parcel_by_reference", resolve)
-    monkeypatch.setattr(enrichment_module.stats_service, "get_parcel_hazard_intersections", lambda geometry: {"available": True})
+    async def intersections(geometry):
+        return {"available": True}
+
+    monkeypatch.setattr(enrichment_module.stats_service, "aget_parcel_hazard_intersections", intersections)
 
     result = await enrichment_module.get_parcel_hazards("H501_1.2", id=7)
 
@@ -339,11 +344,10 @@ async def test_parcel_subsidence_route_resolves_canonical_geometry(monkeypatch) 
         return {"type": "Feature", "geometry": _polygon([[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]])}
 
     monkeypatch.setattr(enrichment_module, "get_parcel_by_reference", resolve)
-    monkeypatch.setattr(
-        enrichment_module.stats_service,
-        "get_parcel_subsidence_intersections",
-        lambda geometry: {"available": True, "match_method": "parcel_polygon_intersection"},
-    )
+    async def intersections(geometry):
+        return {"available": True, "match_method": "parcel_polygon_intersection"}
+
+    monkeypatch.setattr(enrichment_module.stats_service, "aget_parcel_subsidence_intersections", intersections)
 
     result = await enrichment_module.get_parcel_subsidence("H501_1.2", id=7)
 

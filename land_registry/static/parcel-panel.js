@@ -250,6 +250,10 @@
   const text = (value) => esc(value);
   const note = (message) => `<p class="parcel-note">${esc(message)}</p>`;
   const empty = (message) => ({ body: note(message), empty: true });
+  // ``unavailable`` marks a coverage gap (the source cannot answer for this
+  // parcel), as opposed to a real negative such as "no active fire". Those
+  // cards start collapsed and say so in their header.
+  const unavailable = (message) => ({ ...empty(message), unavailable: true });
 
   function pvpMapPoints(payload) {
     const source = Array.isArray(payload) ? payload : (payload && (payload.points || payload.data || payload.features)) || [];
@@ -572,7 +576,7 @@
         const extraOpendataAddresses = opendataAddresses.filter((address) => !knownAddresses.has(normalizedOpenDataKey(address)));
         const meta = data ? { source: data.address_source || data.source, match_method: 'cadastral_reference' } : null;
         if (!addresses.length && !extraOpendataAddresses.length) {
-          return { ...empty(tr('No address is recorded in the SISTER cache for this parcel.')), meta };
+          return { ...unavailable(tr('No address is recorded in the SISTER cache for this parcel.')), meta };
         }
         const addressRows = addresses.map((address, index) => [
           addresses.length === 1 ? tr('Address') : tr('Address {n}', { n: index + 1 }),
@@ -609,7 +613,7 @@
         const meta = { source: data && data.source };
         if (!buildings.length) {
           const opendataHtml = opendataUnits.filter(hasBuildingOpenData).map((unit) => openDataUnitHtml(unit, ctx)).join('');
-          if (!opendataHtml) return { ...empty(tr('No building is recorded in the SISTER cache for this parcel.')), meta };
+          if (!opendataHtml) return { ...unavailable(tr('No building is recorded in the SISTER cache for this parcel.')), meta };
           return {
             badge: opendataUnits.length,
             meta,
@@ -639,12 +643,6 @@
           }).join('') + opendataUnits.filter((unit) => hasBuildingOpenData(unit) && !matchedUnits.has(unit)).map((unit) => openDataUnitHtml(unit, ctx)).join(''),
         };
       },
-      bind: (_el, data, ctx) => {
-        const count = data && data.available === true
-          ? Number(data.count ?? (Array.isArray(data.buildings) ? data.buildings.length : 0))
-          : null;
-        ctx.setStat('buildings', Number.isFinite(count) && count >= 0 ? Core.formatNumber(count) : '—');
-      },
     },
 
     {
@@ -662,12 +660,12 @@
           spatial_resolution: block.spatial_resolution,
         } : null;
         if (!block || block.available !== true) {
-          return { ...empty(ctx.tr('No cadastral OpenData record is available in the parcel profile.')), meta };
+          return { ...unavailable(ctx.tr('No cadastral OpenData record is available in the parcel profile.')), meta };
         }
         const units = openDataUnits(block);
         const records = units.map((unit, index) => openDataRecordHtml(unit, index, ctx)).filter(Boolean);
         if (!records.length) {
-          return { ...empty(ctx.tr('No cadastral OpenData record is available in the parcel profile.')), meta };
+          return { ...unavailable(ctx.tr('No cadastral OpenData record is available in the parcel profile.')), meta };
         }
         return {
           badge: records.length,
@@ -694,7 +692,7 @@
         if (!data) return empty(tr('The municipality code is not available for this parcel.'));
         const quoteList = Array.isArray(data.quotes) ? data.quotes : [];
         const quotes = Core.validOmiQuotes(data, data.zone);
-        if (!quoteList.length) return empty(tr('No OMI quotes are available for this municipality.'));
+        if (!quoteList.length) return unavailable(tr('No OMI quotes are available for this municipality.'));
         const meta = { source: data.source, dataset_version: data.dataset_version };
         const allQuotes = omiQuoteTable(quoteList, tr);
         const sisterUnits = data.sister && data.sister.available === true
@@ -717,11 +715,20 @@
           : detected
             ? `<p class="parcel-callout" data-tone="warn">${esc(tr('Zone {zone} was detected but has no quotes available: select and check an alternative.', { zone: detected }))}</p>`
             : `<p class="parcel-callout" data-tone="muted">${esc(tr('The OMI zone was not detected automatically: check the selection.'))}</p>`;
-        const options = quotes.slice(0, 80).map((quote, index) => {
-          const period = quote.anno && quote.semestre ? ` · ${quote.anno} S${quote.semestre}` : '';
-          const state = quote.stato_conservazione ? ` · ${quote.stato_conservazione}` : '';
-          return `<option value="${index}">${esc(`${tr('Zone')} ${quote.zona || '—'} · ${quote.tipologia || quote.cod_tipologia || tr('Type')}${state}${period}`)}</option>`;
-        }).join('');
+        const selectable = quotes.slice(0, 80);
+        const optionHtml = (quote, index) => `<option value="${index}">${esc(`${tr('Zone')} ${Core.omiQuoteLabel(quote, tr)}`)}</option>`;
+        // validOmiQuotes puts the detected zone's quotes first, so they form a
+        // contiguous prefix and the option values stay indexes into ``selectable``.
+        const detectedCount = detectedHasQuotes
+          ? selectable.filter((quote) => String(quote.zona || '').toUpperCase() === detected).length
+          : 0;
+        const options = detectedCount > 0 && detectedCount < selectable.length
+          ? `<optgroup label="${esc(tr('Detected zone {zone}', { zone: detected }))}">${selectable.slice(0, detectedCount).map(optionHtml).join('')}</optgroup>`
+            + `<optgroup label="${esc(tr('Other zones in the municipality'))}">${selectable.slice(detectedCount).map((quote, offset) => optionHtml(quote, detectedCount + offset)).join('')}</optgroup>`
+          : selectable.map(optionHtml).join('');
+        const snapshotNote = Core.omiQuotesLackPeriod(quoteList)
+          ? note(tr('These quotes come from a zone snapshot that lists one prevalent property type per zone and does not declare its reference semester. Check the band against the current OMI release.'))
+          : '';
         const quoteOverflowNote = quotes.length > 80
           ? note(tr('The estimator selector shows the first {limit} sale quotes; the table lists all current quotes.', { limit: 80 }))
           : '';
@@ -737,7 +744,8 @@
               <input id="parcelOmiArea" class="parcel-input" type="number" inputmode="decimal" min="1" step="1" value="${esc(initial.value)}" placeholder="${esc(tr('e.g. 100'))}">
             </div>
             ${hasSisterPropertyUnits && area ? note(tr('Parcel geometry area is not used for SISTER unit estimates; enter the commercial surface of the selected unit.')) : ''}
-            ${initial.tooLarge ? note(tr('The parcel measures {area}: enter the commercial surface of the building to estimate.', { area: Core.formatArea(area.value) })) : ''}
+            ${initial.hasParcelArea ? note(tr('The parcel measures {area}, which is land area, not floor area: enter the commercial surface of the building to estimate.', { area: Core.formatArea(area.value) })) : ''}
+            ${snapshotNote}
             <div id="parcelOmiQuoteRows" class="parcel-quote-rows"></div>
             <div id="parcelOmiEstimate" class="parcel-estimate" aria-live="polite"></div>
             <p class="parcel-note parcel-disclaimer">${esc(tr('Indicative estimate: surface × the selected OMI interval. It is not an appraisal and does not account for the building\'s commercial consistency, actual condition or whether the OMI zone is the right one.'))}</p>
@@ -828,27 +836,41 @@
         const { tr } = ctx;
         const block = ctx.block('solar');
         const data = (block && block.data) || {};
-        if (!block) return empty(tr('Municipal solar potential is not available for this municipality.'));
+        if (!block) return unavailable(tr('Municipal solar potential is not available for this municipality.'));
         const amount = (key, suffix, digits = 1) => {
           const value = Core.toNumber(data[key]);
           return value === null ? null : `${Core.formatNumber(value, digits)}${suffix}`;
         };
+        // Municipal totals run to millions of kWh; GWh/MWp keep them readable.
+        const scaled = (key, unit, kiloUnit, megaUnit) => {
+          const value = Core.toNumber(data[key]);
+          if (value === null) return null;
+          return value >= 1e6 ? `${Core.formatNumber(value / 1e6, 1)} ${megaUnit}`
+            : value >= 1e3 ? `${Core.formatNumber(value / 1e3, 1)} ${kiloUnit}`
+              : `${Core.formatNumber(value, 0)} ${unit}`;
+        };
+        // Shares and per-resident output lead; the municipal totals follow.
         const body = rows([
-          [tr('Buildings included in the estimate'), amount('pv_n_buildings', '', 0)],
-          [tr('Estimated maximum PV capacity'), amount('pv_kwp_max_total', ' kWp')],
-          [tr('Annual PV output (pessimistic)'), amount('pv_pvout_pessimistic_kwh_year_total', ' kWh/year', 0)],
-          [tr('Annual PV output (modern)'), amount('pv_pvout_modern_kwh_year_total', ' kWh/year', 0)],
-          [tr('PV output per resident'), amount('pv_pvout_per_capita_kwh', ' kWh', 0)],
           [tr('High viability'), amount('pv_high_viability_pct', '%')],
           [tr('Medium viability'), amount('pv_medium_viability_pct', '%')],
           [tr('Low viability'), amount('pv_low_viability_pct', '%')],
           [tr('Not eligible'), amount('pv_not_eligible_pct', '%')],
+          [tr('PV output per resident'), amount('pv_pvout_per_capita_kwh', ' kWh', 0)],
+          [tr('Buildings included in the estimate'), amount('pv_n_buildings', '', 0)],
+          [tr('Estimated maximum PV capacity'), scaled('pv_kwp_max_total', 'kWp', 'MWp', 'GWp')],
+          [tr('Annual PV output (pessimistic)'), scaled('pv_pvout_pessimistic_kwh_year_total', 'kWh/year', 'MWh/year', 'GWh/year')],
+          [tr('Annual PV output (modern)'), scaled('pv_pvout_modern_kwh_year_total', 'kWh/year', 'MWh/year', 'GWh/year')],
           [tr('Solar source observations'), amount('pv_observation_count', '', 0)],
         ]);
-        if (!body) return empty(tr('Municipal solar potential is not available for this municipality.'));
+        if (!body) return unavailable(tr('Municipal solar potential is not available for this municipality.'));
         const buildingCount = Core.toNumber(data.pv_n_buildings);
+        const highShare = amount('pv_high_viability_pct', '%');
         return {
           badge: buildingCount === null ? null : Core.formatNumber(buildingCount, 0),
+          // Municipal aggregates say little about one roof: start collapsed
+          // with the headline share in the header.
+          collapsed: true,
+          status: highShare ? `${tr('High viability')} ${highShare}` : null,
           meta: {
             source: block.source,
             dataset_version: block.dataset_version,
@@ -882,7 +904,7 @@
       render: (data, ctx) => {
         const { tr } = ctx;
         if (data && data.unresolved) return empty(tr('The municipality is not identified, so risks cannot be retrieved.'));
-        if (!data || (!data.seismic && !data.hydrogeological && !data.pga)) return empty(tr('No risk data is available for this municipality.'));
+        if (!data || (!data.seismic && !data.hydrogeological && !data.pga)) return unavailable(tr('No risk data is available for this municipality.'));
         const levelLabel = { high: tr('High'), medium: tr('Medium'), low: tr('Low'), unknown: '—' };
         const hydro = data.hydrogeological;
         const pga = data.pga;
@@ -915,9 +937,18 @@
           ])}`,
         };
       },
-      // The strip shows the seismic zone as soon as it is known.
+      // The strip shows the seismic zone and the municipal flood/landslide class as soon as they are known.
       bind: (el, data, ctx) => {
-        if (data && data.seismic && Core.isPresent(data.seismic.zone)) ctx.setStat('seismic', ctx.tr('Zone {n}', { n: data.seismic.zone }));
+        const { tr } = ctx;
+        if (data && data.seismic && Core.isPresent(data.seismic.zone)) ctx.setStat('seismic', tr('Zone {n}', { n: data.seismic.zone }));
+        const hazard = data ? Core.hydroHazardSummary(data.hydrogeological) : null;
+        if (!hazard) return;
+        const levelLabel = { high: tr('High'), medium: tr('Medium'), low: tr('Low') }[hazard.level];
+        const driver = hazard.driver === 'flood' ? tr('Flood hazard (P3)') : tr('Landslide hazard (P4)');
+        ctx.setStat('hazard', `${levelLabel} · ${Core.formatNumber(hazard.pct, 1)}%`, {
+          level: hazard.level,
+          title: `${driver}: ${Core.formatNumber(hazard.pct, 1)}% ${tr('of the area')}. ${tr('Highest class of the municipal flood and landslide shares; it describes the municipality, not this parcel, and is not a risk score.')}`,
+        });
       },
     },
 
@@ -937,7 +968,7 @@
         const { tr } = ctx;
         if (data && data.unresolved) return empty(tr('The parcel identifier is not available.'));
         if (!data || !data.available) return {
-          ...empty(tr('Parcel-scale ISPRA hazard polygons are not available on this server.')),
+          ...unavailable(tr('Parcel-scale ISPRA hazard polygons are not available on this server.')),
           meta: data ? { source: data.source, dataset_version: data.dataset_version } : null,
         };
         const classLabel = (value) => value || tr('No mapped hazard intersects this parcel.');
@@ -977,7 +1008,7 @@
           spatial_resolution: data.spatial_resolution,
         } : null;
         if (!data || !data.available) {
-          return { ...empty(tr('Agenzia Demanio parcel links are not available on this server.')), meta };
+          return { ...unavailable(tr('Agenzia Demanio parcel links are not available on this server.')), meta };
         }
         const matches = Array.isArray(data.matches) ? data.matches : [];
         if (!matches.length) return { ...empty(tr('No Agenzia Demanio concession is spatially linked to this parcel.')), meta };
@@ -1028,7 +1059,7 @@
           spatial_resolution: data.spatial_resolution,
           match_method: data.match_method,
         } : null;
-        if (!data || !data.available) return { ...empty(tr('EGMS ground-motion data is not available on this server.')), meta };
+        if (!data || !data.available) return { ...unavailable(tr('EGMS ground-motion data is not available on this server.')), meta };
         if (!data.matched) return { ...empty(tr('No EGMS grid cell intersects this parcel.')), meta };
         const velocity = Core.toNumber(data.mean_velocity_mm_per_year);
         const acceleration = Core.toNumber(data.mean_acceleration_mm_per_year_squared);
@@ -1061,7 +1092,7 @@
       },
       render: ({ bulletin, name }, ctx) => {
         const { tr } = ctx;
-        if (!bulletin) return empty(tr('The Civil Protection bulletin is not available.'));
+        if (!bulletin) return unavailable(tr('The Civil Protection bulletin is not available.'));
         if (bulletin.stale) return { body: note(tr('The bulletin has expired: today\'s alerts are not available.')) + feedRefreshNote(bulletin, tr), empty: true };
         const zone = Core.findBulletinZone(bulletin, name);
         if (!zone) return { body: note(tr('The municipality is not in today\'s bulletin.')) + feedRefreshNote(bulletin, tr), empty: true };
@@ -1122,7 +1153,7 @@
       load: async (ctx) => ctx.municipality(),
       render: (data, ctx) => {
         const { tr } = ctx;
-        if (!data) return empty(tr('No municipal data is available.'));
+        if (!data) return unavailable(tr('No municipal data is available.'));
         const population = data.population;
         const history = Array.isArray(data.population_history) ? data.population_history : [];
         const site = Core.safeHttpUrl(data.website);
@@ -1161,7 +1192,7 @@
       },
       render: (data, ctx) => {
         const { tr } = ctx;
-        if (!data) return empty(tr('No IRPEF data is available for this municipality.'));
+        if (!data) return unavailable(tr('No IRPEF data is available for this municipality.'));
         const averages = data.income_reference_averages || {};
         const averageValue = (scope, fallback) => {
           const value = averages[scope] && averages[scope].mean_taxable_income_eur;
@@ -1230,7 +1261,7 @@
         if (data && data.unresolved) return empty(tr('The parcel geometry is not available to locate the census section.'));
         const population = ctx.block('population');
         const summary = Core.censusSummary(data, population, BENCHMARKS.population_density_per_km2);
-        if (!summary) return empty(tr('No census section is available for this parcel.'));
+        if (!summary) return unavailable(tr('No census section is available for this parcel.'));
         const r = summary.ratios;
         const modelled = population && (population.confidence != null || population.spatial_resolution);
         return {
@@ -1264,18 +1295,11 @@
       },
       render: (data, ctx) => {
         const { tr } = ctx;
-        if (!data) return empty(tr('Safety data is not available.'));
-        if (data.spatial_resolution === 'country' && data.safety_index != null) {
-          return {
-            meta: { source: data.source, spatial_resolution: tr('country') },
-            body: `${rows([
-              [tr('Territorial scope'), text(data.country || tr('Italy'))],
-              [tr('Year'), data.year != null ? text(data.year) : null],
-              [tr('Safety index'), Core.formatNumber(data.safety_index, 2)],
-            ])}${note(tr(data.scope_note || 'Country-level safety indicator.', {
-              country: data.country || tr('Italy'),
-            }))}`,
-          };
+        if (!data) return unavailable(tr('Safety data is not available.'));
+        // A country-wide index says nothing about this parcel's province, so it
+        // is not presented as safety data here.
+        if (data.spatial_resolution === 'country') {
+          return unavailable(tr('No province-level safety data is available for this location.'));
         }
         return {
           meta: { source: data.source, spatial_resolution: tr('province') },
@@ -1299,6 +1323,7 @@
       id: 'quality', tab: 'context', icon: 'leaf', title: 'Quality of life', lazy: true,
       load: (ctx) => loadQualityOfLifeIndicators(ctx),
       render: (data, ctx) => renderQualityOfLifeIndicators(data, ctx),
+      bind: (el) => bindIndicatorFilter(el),
     },
 
     {
@@ -1527,7 +1552,7 @@
 
   function renderIndicators(data, ctx, emptyMessage) {
     const { tr } = ctx;
-    if (!data || !data.series || data.series.every((item) => !item.latest)) return empty(tr(emptyMessage));
+    if (!data || !data.series || data.series.every((item) => !item.latest)) return unavailable(tr(emptyMessage));
     const shown = data.series.filter((item) => item.latest);
     const resolution = data.spatial_resolution || 'province';
     const scopeNote = data.scope_note
@@ -1547,12 +1572,40 @@
     };
   }
 
+  /** Live filter over the full indicator tables; hides clusters with no match. */
+  function bindIndicatorFilter(el) {
+    const input = el.querySelector('[data-indicator-filter]');
+    if (!input) return;
+    const emptyNote = el.querySelector('[data-indicator-filter-empty]');
+    const clusters = [...el.querySelectorAll('[data-indicator-cluster]')];
+    input.addEventListener('input', () => {
+      const terms = Core.foldName(input.value).split(/\s+/).filter(Boolean);
+      let visible = 0;
+      clusters.forEach((cluster) => {
+        let shown = 0;
+        cluster.querySelectorAll('tbody tr').forEach((row) => {
+          const name = row.getAttribute('data-indicator-name') || '';
+          const match = terms.every((term) => name.includes(term));
+          row.hidden = !match;
+          if (match) shown += 1;
+        });
+        cluster.hidden = shown === 0;
+        visible += shown;
+      });
+      if (emptyNote) emptyNote.hidden = visible > 0 || terms.length === 0;
+    });
+  }
+
   function renderQualityOfLifeIndicators(data, ctx) {
     const { tr } = ctx;
     const clusters = data && Array.isArray(data.clusters) ? data.clusters : [];
     const years = data && Array.isArray(data.years) ? data.years : [];
     if (!clusters.some((cluster) => (cluster.indicators || []).length)) {
-      return empty(tr('Quality-of-life indicators are not available.'));
+      return unavailable(tr('Quality-of-life indicators are not available.'));
+    }
+    // Country-wide relocation indicators do not describe the parcel's province.
+    if (data.spatial_resolution === 'country') {
+      return unavailable(tr('No province-level quality-of-life indicators are available for this location.'));
     }
     const cell = (indicator, year) => {
       const item = indicator.values && indicator.values[year];
@@ -1564,22 +1617,36 @@
     };
     const body = clusters.map((cluster) => {
       const indicators = cluster.indicators || [];
-      const tableRows = indicators.map((indicator) => `<tr>
+      const tableRows = indicators.map((indicator) => `<tr data-indicator-name="${esc(Core.foldName(indicator.name))}">
         <th scope="row">${esc(tr(indicator.name))}${indicator.unit && !indicator.unit_varies
           ? `<small class="parcel-indicator-unit">${esc(indicator.unit)}</small>` : ''}</th>
         ${years.map((year) => cell(indicator, year)).join('')}
       </tr>`).join('');
-      return `<section class="parcel-indicator-cluster"><h4>${esc(tr(cluster.label))} <small>${indicators.length}</small></h4>
+      return `<section class="parcel-indicator-cluster" data-indicator-cluster><h4>${esc(tr(cluster.label))} <small>${indicators.length}</small></h4>
         <div class="parcel-indicator-scroll" role="region" tabindex="0" aria-label="${esc(tr(cluster.label))}">
           <table class="parcel-indicator-table"><thead><tr><th scope="col">${esc(tr('Indicator'))}</th>
             ${years.map((year) => `<th scope="col">${esc(year)}</th>`).join('')}
           </tr></thead><tbody>${tableRows}</tbody></table>
         </div></section>`;
     }).join('');
+    const total = clusters.reduce((sum, cluster) => sum + (cluster.indicators || []).length, 0);
+    const highlights = Core.qualityHighlights(clusters);
+    const highlightHtml = highlights.length
+      ? `<ul class="parcel-indicator-highlights" aria-label="${esc(tr('Key indicators'))}">${highlights.map((item) => `<li>
+          <span class="parcel-indicator-name">${esc(tr(item.name))}${item.unit ? `<small>${esc(item.unit)}</small>` : ''}</span>
+          <span class="parcel-indicator-latest"><strong>${esc(Core.formatNumber(item.value, Math.abs(item.value) >= 100 ? 0 : 2))}</strong><small>${esc(item.year)}</small></span>
+        </li>`).join('')}</ul>`
+      : '';
+    const allIndicators = `<details class="parcel-indicator-all"${highlights.length ? '' : ' open'}>
+      <summary>${esc(tr('All indicators ({n})', { n: total }))}</summary>
+      <input type="search" class="parcel-input parcel-indicator-filter" data-indicator-filter placeholder="${esc(tr('Filter indicators'))}" aria-label="${esc(tr('Filter indicators'))}" autocomplete="off">
+      <p class="parcel-note" data-indicator-filter-empty hidden>${esc(tr('No indicator matches the filter.'))}</p>
+      ${body}
+    </details>`;
     return {
-      badge: clusters.reduce((sum, cluster) => sum + (cluster.indicators || []).length, 0),
+      badge: total,
       meta: { source: data.source, spatial_resolution: tr(data.spatial_resolution || 'province') },
-      body: `${body}${note(data.scope_note
+      body: `${highlightHtml}${allIndicators}${note(data.scope_note
         ? tr(data.scope_note, {
           country: data.country_name || data.country_code || tr('Italy'),
           municipality: data.municipality || tr('this municipality'),
@@ -1623,8 +1690,8 @@
       const yieldPct = Core.toNumber(metrics.gross_rental_yield_pct);
       const percentile = Core.toNumber(metrics.zone_percentile_pct);
       const period = quote.anno && quote.semestre ? `${quote.anno} S${quote.semestre}` : '—';
-      return `<tr><td>${esc(quote.zona || '—')}</td><td>${esc(quote.tipologia || quote.cod_tipologia || '—')}</td>`
-        + `<td>${esc(quote.stato_conservazione || '—')}</td><td>${sale}</td><td>${rent}</td>`
+      return `<tr><td>${esc(quote.zona || '—')}</td><td>${esc(Core.omiTypologyLabel(quote, tr))}</td>`
+        + `<td>${esc(Core.omiConditionLabel(quote.stato_conservazione, tr) || '—')}</td><td>${sale}</td><td>${rent}</td>`
         + `<td>${yieldPct === null ? '—' : `${Core.formatNumber(yieldPct, 2)}%`}</td>`
         + `<td>${percentile === null ? '—' : `${Core.formatNumber(percentile, 1)}%`}</td><td>${esc(period)}</td></tr>`;
     }).join('');
@@ -1660,10 +1727,8 @@
     }
     const detectedZone = zoneMatch && zoneMatch.matched ? String(zoneMatch.zone || '').toUpperCase() : '';
     const optionsFor = (selectedIndex) => `<option value="">${esc(tr('Choose an OMI quote'))}</option>` + quotes.map((quote, index) => {
-      const period = quote.anno && quote.semestre ? ` · ${quote.anno} S${quote.semestre}` : '';
-      const state = quote.stato_conservazione ? ` · ${quote.stato_conservazione}` : '';
       const selected = selectedIndex === index ? ' selected' : '';
-      return `<option value="${index}"${selected}>${esc(`${quote.zona || '—'} · ${quote.tipologia || quote.cod_tipologia || tr('Type')}${state}${period}`)}</option>`;
+      return `<option value="${index}"${selected}>${esc(Core.omiQuoteLabel(quote, tr))}</option>`;
     }).join('');
     const buildingCards = units.map((unit, index) => {
       const category = unit.category || unit.building_type || '';
@@ -1741,7 +1806,7 @@
         const quote = quoteSelect.value === '' ? null : quotes[Number(quoteSelect.value)];
         const range = quote ? Core.estimateOmiRange(quote, unitArea.value) : null;
         result.innerHTML = range
-          ? `<span>${esc(tr('Indicative value'))}</span><strong>${esc(Core.formatCurrency(range.min))} – ${esc(Core.formatCurrency(range.max))}</strong><small>${esc(tr('Local preview'))} · ${esc(quote.zona || '')} · ${esc(quote.tipologia || quote.cod_tipologia || '')}</small>`
+          ? `<span>${esc(tr('Indicative value'))}</span><strong>${esc(Core.formatCurrency(range.min))} – ${esc(Core.formatCurrency(range.max))}</strong><small>${esc(tr('Local preview'))} · ${esc(Core.omiQuoteLabel(quote, tr))}</small>`
           : `<span>${esc(!quote ? tr('Choose an OMI quote to estimate this unit.') : tr('Enter a valid surface to compute the estimate.'))}</span>`;
       });
     }
@@ -1872,7 +1937,7 @@
 
   function sectionShell(section, tr) {
     return `<details class="parcel-section" id="parcel-section-${section.id}" data-section="${section.id}" data-tab="${section.tab}" data-state="idle" aria-labelledby="parcel-section-${section.id}-title" aria-busy="false" open>
-      <summary class="parcel-section-header"><i class="fas fa-${section.icon}" aria-hidden="true"></i><span class="parcel-section-title" id="parcel-section-${section.id}-title">${esc(tr(section.title))}</span><span class="parcel-section-badge" hidden></span></summary>
+      <summary class="parcel-section-header"><i class="fas fa-${section.icon}" aria-hidden="true"></i><span class="parcel-section-title" id="parcel-section-${section.id}-title">${esc(tr(section.title))}</span><span class="parcel-section-status" hidden></span><span class="parcel-section-badge" hidden></span></summary>
       <div class="parcel-section-body"></div>
       <div class="parcel-section-footer" hidden></div>
     </details>`;
@@ -1895,10 +1960,14 @@
         const model = view.readModel;
         return model && model.blocks && model.blocks[name] && model.blocks[name].available ? model.blocks[name] : null;
       },
-      setStat: (key, value) => {
+      setStat: (key, value, extra) => {
         if (!ctx.isCurrent()) return;
-        const cell = view.statStrip && view.statStrip.querySelector(`[data-stat="${key}"] .parcel-stat-value`);
-        if (cell) cell.textContent = value;
+        const stat = view.statStrip && view.statStrip.querySelector(`[data-stat="${key}"]`);
+        const cell = stat && stat.querySelector('.parcel-stat-value');
+        if (!cell) return;
+        cell.textContent = value;
+        if (extra && extra.title) stat.title = extra.title;
+        if (extra && extra.level) stat.dataset.level = extra.level;
       },
       fetchJson: async (url) => {
         const request = new AbortController();
@@ -1972,7 +2041,25 @@
     count.textContent = result.badge != null ? String(result.badge) : '';
     count.hidden = result.badge == null;
     setState(el, result.empty ? 'empty' : 'ready');
+    markCoverage(el, section.id, result, ctx.tr);
     alignNavigationTarget(section.id);
+  }
+
+  /**
+   * Header status and initial collapse. A coverage gap (``unavailable``) or a
+   * low-signal card (``collapsed``) starts closed with its status in the header,
+   * unless it is the deep-link target.
+   */
+  function markCoverage(el, sectionId, result, tr) {
+    const statusText = result.unavailable ? tr('Not available') : (result.status || '');
+    const status = el.querySelector('.parcel-section-status');
+    if (status) {
+      status.textContent = statusText;
+      status.hidden = !statusText;
+    }
+    if (result.unavailable) el.dataset.coverage = 'unavailable';
+    else delete el.dataset.coverage;
+    if ((result.unavailable || result.collapsed) && view.navigationTargetSection !== sectionId) el.open = false;
   }
 
   async function loadSection(section, el, ctx) {
@@ -1995,6 +2082,7 @@
           // The source is not provisioned on this server: retrying cannot help.
           setState(el, 'empty');
           el.querySelector('.parcel-section-body').innerHTML = note(failureMessage(404, ctx.tr));
+          markCoverage(el, section.id, { unavailable: true }, ctx.tr);
           alignNavigationTarget(section.id);
           return;
         }
@@ -2307,8 +2395,8 @@
     view.ctx = made.ctx;
     const area = Core.parcelAreaSqm(made.ctx.props);
     view.statStrip.innerHTML = stripCell('area', area && area.computed ? tr('Area (computed)') : tr('Area'))
-      + stripCell('sheet', tr('Sheet')) + stripCell('buildings', tr('SISTER records'))
-      + stripCell('price', tr('Sale price (OMI)')) + stripCell('seismic', tr('Seismic zone'));
+      + stripCell('sheet', tr('Sheet')) + stripCell('price', tr('Sale price (OMI)'))
+      + stripCell('hazard', tr('Flood / landslide')) + stripCell('seismic', tr('Seismic zone'));
     made.ctx.setStat('area', area ? Core.formatArea(area.value) : '—');
     made.ctx.setStat('sheet', String(made.ctx.props.sheet_number ?? made.ctx.props.sheet ?? made.ctx.props.foglio ?? '—'));
     renderNav(tr);

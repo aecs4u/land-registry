@@ -23,6 +23,7 @@ function makeCtx(overrides = {}) {
     block: () => null, isCurrent: () => true, setStat: () => {},
     municipality: async () => ({ name: 'Roma', province: 'Roma', istat_code: '058091' }),
     zoneMatch: async () => null,
+    sisterParcelRecords: async () => ({ ok: false, status: 404, data: null }),
     fetchJson: async () => ({ ok: true, status: 200, data: {} }),
     ...overrides,
   };
@@ -90,11 +91,28 @@ test('estimateOmiRange multiplies surface by the quote bounds and rejects bad in
   assert.equal(Core.estimateOmiRange(null, 10), null);
 });
 
-test('defaultEstimateArea asks for the building surface on large parcels', () => {
-  assert.deepEqual(Core.defaultEstimateArea(3764.85), { value: 3765, tooLarge: false });
-  assert.deepEqual(Core.defaultEstimateArea(10000), { value: 10000, tooLarge: false });
-  assert.deepEqual(Core.defaultEstimateArea(10001), { value: '', tooLarge: true });
-  assert.deepEqual(Core.defaultEstimateArea(null), { value: '', tooLarge: false });
+test('defaultEstimateArea never prefills land area as the commercial surface', () => {
+  assert.deepEqual(Core.defaultEstimateArea(1283.1), { value: '', hasParcelArea: true });
+  assert.deepEqual(Core.defaultEstimateArea(50000), { value: '', hasParcelArea: true });
+  assert.deepEqual(Core.defaultEstimateArea(null), { value: '', hasParcelArea: false });
+  assert.deepEqual(Core.defaultEstimateArea(0), { value: '', hasParcelArea: false });
+});
+
+test('OMI quote labels translate condition codes and the placeholder type', () => {
+  assert.equal(Core.omiConditionLabel('P', tr), 'Prevalent condition');
+  assert.equal(Core.omiConditionLabel('n', tr), 'Normal');
+  assert.equal(Core.omiConditionLabel('NORMALE', tr), 'NORMALE');
+  assert.equal(Core.omiConditionLabel(null, tr), '');
+  assert.equal(Core.omiTypologyLabel({ tipologia: '0', cod_tipologia: '0' }, tr), 'Type not specified');
+  assert.equal(Core.omiTypologyLabel({ cod_tipologia: '21' }, tr), '21');
+  assert.equal(
+    Core.omiQuoteLabel({ zona: 'E5', tipologia: 'Villas and small villas', stato_conservazione: 'P', anno: 2025, semestre: 2 }, tr),
+    'E5 · Villas and small villas · Prevalent condition · 2025 S2',
+  );
+  assert.equal(Core.omiQuoteLabel({ zona: 'R1', tipologia: '0', stato_conservazione: 'P' }, tr), 'R1 · Type not specified · Prevalent condition');
+  assert.equal(Core.omiQuotesLackPeriod([{ zona: 'A' }, { zona: 'B', anno: null }]), true);
+  assert.equal(Core.omiQuotesLackPeriod([{ zona: 'A', anno: 2025, semestre: 2 }]), false);
+  assert.equal(Core.omiQuotesLackPeriod([]), false);
 });
 
 test('quoteBenchmark is the median of midpoints with the latest year', () => {
@@ -180,6 +198,45 @@ test('census demographics require complete ISTAT 2021 sex and age fields', () =>
 test('income bracket rows clamp to 0..100', () => {
   const result = Core.incomeBracketRows([{ bracket: '0-10k', pct: 140 }, { bracket: 'x', pct: null }, { bracket: 'y', pct: -3 }]);
   assert.deepEqual(result.map((row) => row.pct), [100, null, 0]);
+});
+
+test('hydroHazardSummary reports the worst known class and skips unknown shares', () => {
+  const both = Core.hydroHazardSummary({
+    flood: { area_pct: { P3_high_probability: 6.2 } },
+    landslide: { area_pct: { P4_very_high: 0.4 } },
+  });
+  assert.deepEqual(both, { level: 'high', pct: 6.2, driver: 'flood', assessed: ['flood', 'landslide'] });
+
+  const landslideOnly = Core.hydroHazardSummary({ landslide: { area_pct: { P4_very_high: 1.5 } } });
+  assert.deepEqual(landslideOnly, { level: 'medium', pct: 1.5, driver: 'landslide', assessed: ['landslide'] });
+
+  // An unreported share is never read as low.
+  const unknownFlood = Core.hydroHazardSummary({ flood: { area_pct: {} }, landslide: { area_pct: { P4_very_high: 0.2 } } });
+  assert.equal(unknownFlood.level, 'low');
+  assert.deepEqual(unknownFlood.assessed, ['landslide']);
+
+  // Same class: the larger share is the one reported.
+  const tie = Core.hydroHazardSummary({
+    flood: { area_pct: { P3_high_probability: 6.4 } },
+    landslide: { area_pct: { P4_very_high: 11.1 } },
+  });
+  assert.equal(tie.driver, 'landslide');
+  assert.equal(tie.pct, 11.1);
+
+  assert.equal(Core.hydroHazardSummary({}), null);
+  assert.equal(Core.hydroHazardSummary(null), null);
+});
+
+test('income bracket keys are shown as readable ranges', () => {
+  assert.equal(Core.incomeBracketLabel('le_0'), '≤ 0');
+  assert.equal(Core.incomeBracketLabel('0_10k'), '0–10 k€');
+  assert.equal(Core.incomeBracketLabel('26_55k'), '26–55 k€');
+  assert.equal(Core.incomeBracketLabel('over_120k'), '> 120 k€');
+  assert.equal(Core.incomeBracketLabel(null), '');
+  assert.deepEqual(
+    Core.incomeBracketRows([{ bracket: 'le_0', pct: 0 }, { bracket: '75_120k', pct: 2.5 }]).map((row) => row.label),
+    ['≤ 0', '75–120 k€'],
+  );
 });
 
 test('time helpers', () => {
@@ -290,7 +347,11 @@ test('omi renders zone states, a surface prompt for large parcels and the quote 
   assert.match(detected.body, /<td>A1<\/td><td>Abitazioni civili<\/td><td>NORMALE<\/td><td>—<\/td><td>11–14<\/td>/);
   assert.equal(detected.badge, 3);
   assert.equal(detected.meta.dataset_version, '2025/2');
-  assert.match(detected.body, /value="5545"/);
+  assert.match(detected.body, /id="parcelOmiArea"[^>]*value=""/);
+  assert.match(detected.body, /which is land area, not floor area: enter the commercial surface/);
+  assert.match(detected.body, /<optgroup label="Detected zone B31"><option value="0">Zone B31/);
+  assert.match(detected.body, /<optgroup label="Other zones in the municipality"><option value="1">Zone C1/);
+  assert.doesNotMatch(detected.body, /zone snapshot/);
 
   const noQuotesForZone = section('omi').render({ quotes, zone: { matched: true, zone: 'ZZ' } }, makeCtx());
   assert.match(noQuotesForZone.body, /Zone ZZ was detected but has no quotes available/);
@@ -301,6 +362,7 @@ test('omi renders zone states, a surface prompt for large parcels and the quote 
   const large = section('omi').render({ quotes, zone: null }, makeCtx({ props: { area_sqm: 50000, sheet_number: '1' } }));
   assert.match(large.body, /enter the commercial surface/);
   assert.match(large.body, /value=""/);
+  assert.doesNotMatch(large.body, /<optgroup/);
 
   assert.equal(section('omi').render({ quotes: [] }, makeCtx()).empty, true);
   assert.equal(section('omi').render({ quotes: [{ zona: 'A', prezzo_min: 5, prezzo_max: 1 }] }, makeCtx()).empty, true);
@@ -417,7 +479,8 @@ test('municipal solar aggregates carry municipality provenance and are not frame
   }));
 
   assert.match(result.body, /Buildings included in the estimate/);
-  assert.match(result.body, /940\.000 kWh\/year/);
+  assert.match(result.body, /940 MWh\/year/);
+  assert.equal(result.collapsed, true);
   assert.match(result.body, /not estimates for this parcel, building, or roof/);
   assert.equal(result.meta.spatial_resolution, 'municipality');
   assert.equal(result.meta.match_method, 'municipality');
@@ -540,6 +603,7 @@ test('socioeconomic fallbacks translate labels and interpolate their geographic 
   assert.match(demographics.body, /Popolazione residente/);
   assert.match(demographics.body, /Indicatori a livello comunale per Roma/);
 
+  // A country-wide fallback is not shown as parcel context.
   const quality = section('quality').render({
     years: ['2024'],
     spatial_resolution: 'country',
@@ -551,16 +615,54 @@ test('socioeconomic fallbacks translate labels and interpolate their geographic 
       }],
     }],
   }, ctx);
-  assert.match(quality.body, /Indice di sicurezza/);
-  assert.match(quality.body, /Indicatori nazionali per Italy/);
-  assert.equal(quality.meta.spatial_resolution, 'paese');
+  assert.equal(quality.empty, true);
+  assert.match(quality.body, /No province-level quality-of-life indicators/);
+  assert.doesNotMatch(quality.body, /Indice di sicurezza/);
 
   const safety = section('safety').render({
     country: 'Italy', year: 2024, safety_index: 71.5, spatial_resolution: 'country',
     scope_note: 'Country-level safety index; it is not a count of reported crimes in this province or municipality.',
   }, ctx);
-  assert.equal(safety.meta.spatial_resolution, 'paese');
-  assert.match(safety.body, /Indice di sicurezza nazionale; non è un conteggio dei reati locali/);
+  assert.equal(safety.empty, true);
+  assert.match(safety.body, /No province-level safety data/);
+  assert.doesNotMatch(safety.body, /71[.,]5/);
+});
+
+test('quality of life leads with curated highlights and keeps the full tables behind a filter', () => {
+  const clusters = [
+    { key: 'justice_safety', label: 'Justice and safety', indicators: [
+      { name: 'Indice di criminalità', unit: 'Totale delitti denunciati ogni 100mila abitanti', values: { '2025': { value: 3936, unit: 'Totale delitti denunciati ogni 100mila abitanti' } } },
+      { name: 'Altri delitti mortali denunciati', unit: 'Per 100.000 abitanti', values: { '2024': { value: 3.9 } } },
+    ] },
+    { key: 'wealth_consumption', label: 'Wealth and consumption', indicators: [
+      { name: 'Prezzo medio di vendita delle case', unit: 'Per appartamenti nuovi di 100 mq', values: { '2022': { value: 1850 }, '2023': { value: 1900 } } },
+      { name: 'Indice di criminalità - totale dei delitti denunciati', unit: 'Denunce ogni 100mila abitanti', values: { '2023': { value: 3784.57 } } },
+    ] },
+    { key: 'covid_supplement', label: 'COVID-19 supplement', indicators: [
+      { name: 'Tasso di occupazione', values: { '2020 COVID': { value: 9 } } },
+    ] },
+  ];
+  const picks = Core.qualityHighlights(clusters);
+  assert.deepEqual(picks.map((item) => [item.name, item.year, item.value]), [
+    ['Prezzo medio di vendita delle case', 2023, 1900],
+    ['Indice di criminalità', 2025, 3936],
+  ]);
+  assert.equal(Core.qualityHighlights(clusters, 1).length, 1);
+  assert.deepEqual(Core.qualityHighlights(null), []);
+  assert.deepEqual(Core.qualityHighlights([{ key: 'x', indicators: [{ name: 'Tasso di occupazione', values: { '2021': { value: null } } }] }]), []);
+
+  const html = section('quality').render({ years: ['2022', '2023', '2025'], spatial_resolution: 'province', nuts3: 'ITG12', clusters }, makeCtx());
+  assert.match(html.body, /<ul class="parcel-indicator-highlights"/);
+  assert.match(html.body, /Totale delitti denunciati ogni 100mila abitanti/);
+  assert.match(html.body, /<details class="parcel-indicator-all">/);
+  assert.match(html.body, /All indicators \(5\)/);
+  assert.match(html.body, /data-indicator-filter/);
+  assert.match(html.body, /data-indicator-name="prezzo medio di vendita delle case"/);
+  assert.equal(html.badge, 5);
+
+  const noMatch = section('quality').render({ years: ['2024'], clusters: [{ key: 'a', label: 'A', indicators: [{ name: 'Bar', values: { '2024': { value: 1.6 } } }] }] }, makeCtx());
+  assert.doesNotMatch(noMatch.body, /parcel-indicator-highlights/);
+  assert.match(noMatch.body, /<details class="parcel-indicator-all" open>/);
 });
 
 test('pois groups by category, most numerous first', () => {
@@ -628,4 +730,73 @@ test('pvp skips parcel matching without a resolvable sheet and parcel', async ()
   assert.equal(pvp.matchAvailable, false);
   assert.ok(calls.some((url) => url.includes('/sales/nearby-points?')));
   assert.equal(calls.some((url) => url.includes('/parcel/pvp?')), false);
+});
+
+test('omi labels snapshot quotes without a declared semester and the placeholder type', () => {
+  const quotes = [
+    { zona: 'E5', cod_tipologia: '1', tipologia: 'Villas and small villas', stato_conservazione: 'P', prezzo_min: 770, prezzo_max: 1100 },
+    { zona: 'R1', cod_tipologia: '0', tipologia: '0', stato_conservazione: 'P', prezzo_min: 100, prezzo_max: 200 },
+  ];
+  const result = section('omi').render({ quotes, zone: { matched: true, zone: 'E5' } }, makeCtx());
+  assert.match(result.body, /zone snapshot that lists one prevalent property type per zone/);
+  assert.match(result.body, /Zone E5 · Villas and small villas · Prevalent condition</);
+  assert.match(result.body, /Zone R1 · Type not specified · Prevalent condition</);
+  assert.doesNotMatch(result.body, /· 0 ·/);
+});
+
+test('risks bind fills the seismic and hazard strip cells with scope in the tooltip', () => {
+  const calls = [];
+  const ctx = makeCtx({ setStat: (key, value, extra) => calls.push({ key, value, extra }) });
+  section('risks').bind(null, {
+    seismic: { zone: 2 },
+    hydrogeological: { flood: { area_pct: { P3_high_probability: 6.4 } }, landslide: { area_pct: { P4_very_high: 11.1 } } },
+  }, ctx);
+  assert.deepEqual(calls.find((call) => call.key === 'seismic'), { key: 'seismic', value: 'Zone 2', extra: undefined });
+  const hazard = calls.find((call) => call.key === 'hazard');
+  assert.equal(hazard.extra.level, 'high');
+  assert.match(hazard.value, /^High · 11[.,]1%$/);
+  assert.match(hazard.extra.title, /Landslide hazard \(P4\)/);
+  assert.match(hazard.extra.title, /not a risk score/);
+
+  const none = [];
+  section('risks').bind(null, { seismic: { zone: 3 } }, makeCtx({ setStat: (key) => none.push(key) }));
+  assert.deepEqual(none, ['seismic']);
+});
+
+test('coverage gaps are flagged unavailable while real negatives stay plain empty', async () => {
+  const ctx = makeCtx();
+  const flagged = [
+    section('parcel-hazards').render({ available: false }, ctx),
+    section('subsidence').render({ available: false }, ctx),
+    section('risks').render({}, ctx),
+    section('safety').render({ spatial_resolution: 'country', safety_index: 70 }, ctx),
+    section('omi').render({ quotes: [] }, ctx),
+  ];
+  flagged.forEach((result, index) => {
+    assert.equal(result.empty, true, `result ${index}`);
+    assert.equal(result.unavailable, true, `result ${index}`);
+  });
+  const negative = section('subsidence').render({ available: true, matched: false }, ctx);
+  assert.equal(negative.empty, true);
+  assert.equal(negative.unavailable, undefined);
+  const fires = section('pois').render({ total: 0 }, ctx);
+  assert.equal(fires.unavailable, undefined);
+});
+
+test('municipal solar card starts collapsed, leads with shares and scales large totals', () => {
+  const ctx = makeCtx({
+    block: (name) => (name === 'solar' ? {
+      source: 'stats', spatial_resolution: 'municipality',
+      data: {
+        pv_n_buildings: 44032, pv_kwp_max_total: 1927581.9, pv_pvout_modern_kwh_year_total: 2794208831,
+        pv_high_viability_pct: 95.3, pv_low_viability_pct: 0, pv_pvout_per_capita_kwh: 4397,
+      },
+    } : null),
+  });
+  const result = section('solar').render({}, ctx);
+  assert.equal(result.collapsed, true);
+  assert.equal(result.status, 'High viability 95,3%');
+  assert.match(result.body, /1[.,]9 GWp/);
+  assert.match(result.body, /2[.,]794[.,]2 GWh\/year|2\.?794,2 GWh\/year/);
+  assert.ok(result.body.indexOf('High viability') < result.body.indexOf('Estimated maximum PV capacity'));
 });

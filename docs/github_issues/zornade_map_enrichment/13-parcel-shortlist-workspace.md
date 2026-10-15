@@ -32,6 +32,10 @@ currently carries an active hazard alert.
   from hard-coding lifecycle values.
 - The primary direct map includes a shortlist workspace with status, priority,
   recency and active-hazard filters.
+- Favourites (2026-10-10): `is_favorite` boolean on `saved_parcels` (PostgreSQL
+  and SQLite, `ADD COLUMN IF NOT EXISTS` migration, partial index). The panel
+  header toggles it (creating the saved entry on first star), the shortlist has
+  a "Favourites only" filter, and the summary adds `favorites_total`.
 
 ## Dependencies
 - Existing `/api/v1/saved-parcels` persistence backend (SQLite/PostgreSQL).

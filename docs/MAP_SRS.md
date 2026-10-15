@@ -352,8 +352,15 @@ Introduced with version 1.2 and delivered. See §13 for the conformance evidence
 - Administrative geometry below the parcel zoom threshold (issue 09) — done.
 - Confidence indicators on modelled values (issue 10) — done.
 - Dataset version identifiers for reproducible reports (issue 11) — done.
-- Server-rendered parcel PDF with a report ID, dataset/model version footer and
-  source register — shipped at
+- Parcel PDF dossier: superseded by the Typst dossier at
+  `/api/v1/enrichment/parcel/dossier/{national_reference}`, built entirely
+  server-side with `aecs4u-documents` (see `docs/PARCEL_DOSSIER.md`). It has a
+  cover, summary, thematic sections and the source register described below, and
+  needs no browser snapshot. The ReportLab implementation (`parcel_report.py`,
+  `/parcel/report/{national_reference}`) is deprecated and kept only for
+  existing clients; the notes below describe that legacy behaviour.
+- Legacy server-rendered parcel PDF with a report ID, dataset/model version
+  footer and source register — shipped at
   `/api/v1/enrichment/parcel/report/{national_reference}`. Static labels follow
   the request locale. POST export adds all registered panel sections' captured
   text, state and available provenance to the server parcel model; section text
@@ -374,6 +381,8 @@ Introduced with version 1.2 and delivered. See §13 for the conformance evidence
   acceptance remain open.
 - Benchmark framing for panel metrics (issue 12) — done.
 - Parcel shortlist and workspace (issue 13) — done.
+- Favourites: a lightweight star on saved parcels (`is_favorite` flag on
+  `saved_parcels`, no separate table) — done; see MAP-FR-056 – 062 in §13.
 
 Remaining follow-on work is extension rather than implementation: populating
 confidence, benchmark and dataset-version fields for blocks whose upstream does
@@ -409,7 +418,8 @@ not yet expose them.
   application does not claim national completeness where data is partial.
 - Saved parcels use the existing authenticated `/api/v1/saved-parcels`
   contract and its configured SQLite/PostgreSQL persistence backend.
-- The direct map downloads the server-rendered parcel PDF. `/map-legacy` keeps
+- The direct map downloads the server-built Typst parcel dossier with a plain
+  GET (`/api/v1/enrichment/parcel/dossier/...`). `/map-legacy` keeps
   its existing browser print flow at `/map-legacy?parcel=...&report=1` for the
   legacy analysis view.
 
@@ -436,7 +446,7 @@ is required to extend them.
 | MAP-FR-053 | Met for current density, income, and OMI panel metrics | The parcel panel now renders inline benchmark context for census-section density, mean taxable income, and the selected OMI sale €/m² quote. Static national benchmarks are version-labelled for census density and IRPEF income; OMI uses the median of the currently loaded comparable municipal quotes to avoid a misleading national price reference. |
 | MAP-FR-054 | Met for current versioned blocks | The common parcel block envelope carries `dataset_version` and `model_version` where the source provides them. Cadastral, population/demographics, economics, and valuation blocks populate meaningful versions; the OMI estimator returns `model_version` and `dataset_version`; municipal solar data carries `solar_data_version` and `updated_at` when present. The panel renders available provenance and does not invent missing versions. |
 | MAP-FR-055 | Met for OMI | The estimator lets the user set typology, conservation state and surface, and recomputes against a server-side calculation with a local preview. |
-| MAP-FR-056 – 062 | Met | `/api/v1/saved-parcels` now behaves as a shortlist: entries carry configurable lifecycle status, priority, notes, tags, timestamps, summary counts, and active-hazard filtering. Existing records migrate to the initial status without data loss. The direct map renders a shortlist workspace with status/priority/recency filters and opens entries through the same `?parcel=<national-reference>` restoration path. |
+| MAP-FR-056 – 062 | Met | `/api/v1/saved-parcels` now behaves as a shortlist: entries carry configurable lifecycle status, priority, notes, tags, timestamps, summary counts, and active-hazard filtering. Existing records migrate to the initial status without data loss. The direct map renders a shortlist workspace with status/priority/recency filters and opens entries through the same `?parcel=<national-reference>` restoration path. Entries can be starred (`is_favorite`, a boolean column on `saved_parcels` with a partial index); the panel header has a star toggle, the shortlist has a "Favourites only" filter, and the summary reports `favorites_total`. |
 
 Non-functional clauses added in v1.2:
 

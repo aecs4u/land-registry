@@ -2651,6 +2651,7 @@ def _saved_parcel_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
         "total": len(items),
         "by_status": by_status,
         "active_total": sum(count for status, count in by_status.items() if status in active_statuses),
+        "favorites_total": sum(1 for item in items if item.get("is_favorite")),
     }
 
 
@@ -2889,6 +2890,8 @@ def _saved_parcel_row_to_response(row: Dict[str, Any]) -> Dict[str, Any]:
         "status": row.get("status") or _saved_parcel_initial_status(),
         "priority": row.get("priority"),
         "tags": _saved_parcel_tags(row.get("tags")),
+        # SQLite stores 0/1, PostgreSQL a boolean; legacy rows may be NULL.
+        "is_favorite": bool(row.get("is_favorite")),
         "active_hazard": row.get("active_hazard"),
         "geometry": geometry,
         "created_at": _contract_timestamp(row.get("created_at")),
@@ -2944,6 +2947,7 @@ def _saved_parcel_payload(request: SavedParcelCreateRequest) -> Dict[str, Any]:
         "status": _ensure_saved_parcel_status(request.status),
         "priority": request.priority,
         "tags": request.tags or [],
+        "is_favorite": bool(request.is_favorite),
         "geometry": request.geometry,
     }
 

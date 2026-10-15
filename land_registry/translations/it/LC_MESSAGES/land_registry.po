@@ -3593,3 +3593,124 @@ msgstr "Anche in questo punto"
 
 msgid "Layers at this point"
 msgstr "Livelli in questo punto"
+
+#: land_registry/parcel_report.py (parcel dossier PDF)
+msgid "Block"
+msgstr "Blocco"
+
+msgid "Data availability"
+msgstr "Disponibilità dei dati"
+
+msgid "Level"
+msgstr "Livello"
+
+msgid "Outline of the selected parcel (blue) and neighbouring parcels (grey), drawn from the cadastral geometry. Schematic, not a survey."
+msgstr "Contorno della particella selezionata (blu) e delle particelle confinanti (grigio), tracciato dalla geometria catastale. Schema indicativo, non un rilievo."
+
+msgid "Overview"
+msgstr "Sintesi"
+
+msgid "Page {page} of {total}"
+msgstr "Pagina {page} di {total}"
+
+msgid "Perimeter (m)"
+msgstr "Perimetro (m)"
+
+msgid "Provider details"
+msgstr "Dettaglio dei fornitori"
+
+msgid "Release / version"
+msgstr "Rilascio / versione"
+
+msgid "Rent (€/m² per month)"
+msgstr "Locazione (€/m² al mese)"
+
+msgid "Review status"
+msgstr "Stato della verifica"
+
+msgid "Sale price (€/m²)"
+msgstr "Prezzo di vendita (€/m²)"
+
+msgid "Sale price range (€/m²) by typology and condition"
+msgstr "Intervallo del prezzo di vendita (€/m²) per tipologia e stato"
+
+msgid "Section"
+msgstr "Sezione"
+
+msgid "Share of taxpayers by income bracket (%)"
+msgstr "Quota di contribuenti per fascia di reddito (%)"
+
+msgid "Typology"
+msgstr "Tipologia"
+
+msgid "Updated"
+msgstr "Aggiornato"
+
+msgid "Add to favourites"
+msgstr "Aggiungi ai preferiti"
+
+msgid "Remove from favourites"
+msgstr "Rimuovi dai preferiti"
+
+msgid "Favourite"
+msgstr "Preferita"
+
+msgid "Unfavourite"
+msgstr "Rimuovi dai preferiti"
+
+msgid "Favourites only"
+msgstr "Solo preferite"
+
+msgid "Sign in to save favourites"
+msgstr "Accedi per salvare i preferiti"
+
+msgid "Prevalent condition"
+msgstr "Stato di conservazione prevalente"
+
+msgid "Normal"
+msgstr "Normale"
+
+msgid "Excellent"
+msgstr "Ottimo"
+
+msgid "Poor"
+msgstr "Scadente"
+
+msgid "Type not specified"
+msgstr "Tipologia non specificata"
+
+msgid "Detected zone {zone}"
+msgstr "Zona rilevata {zone}"
+
+msgid "Other zones in the municipality"
+msgstr "Altre zone del comune"
+
+msgid "These quotes come from a zone snapshot that lists one prevalent property type per zone and does not declare its reference semester. Check the band against the current OMI release."
+msgstr "Queste quotazioni provengono da un'istantanea delle zone che riporta una sola tipologia prevalente per zona e non dichiara il semestre di riferimento. Verifica la fascia rispetto all'ultima pubblicazione OMI."
+
+msgid "The parcel measures {area}, which is land area, not floor area: enter the commercial surface of the building to estimate."
+msgstr "La particella misura {area}, che è superficie di terreno e non superficie dei locali: inserisci la superficie commerciale del fabbricato da stimare."
+
+msgid "Flood / landslide"
+msgstr "Alluvione / frana"
+
+msgid "Highest class of the municipal flood and landslide shares; it describes the municipality, not this parcel, and is not a risk score."
+msgstr "Classe più alta tra le quote comunali di alluvione e frana: descrive il comune, non questa particella, e non è un punteggio di rischio."
+
+msgid "Key indicators"
+msgstr "Indicatori principali"
+
+msgid "All indicators ({n})"
+msgstr "Tutti gli indicatori ({n})"
+
+msgid "Filter indicators"
+msgstr "Filtra gli indicatori"
+
+msgid "No indicator matches the filter."
+msgstr "Nessun indicatore corrisponde al filtro."
+
+msgid "No province-level safety data is available for this location."
+msgstr "Per questa posizione non sono disponibili dati sulla sicurezza a livello provinciale."
+
+msgid "No province-level quality-of-life indicators are available for this location."
+msgstr "Per questa posizione non sono disponibili indicatori sulla qualità della vita a livello provinciale."

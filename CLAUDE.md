@@ -18,6 +18,7 @@ Land Registry Viewer for Italian cadastral (land registry) data. Supports file u
 - **land_registry/cadastral_db.py** - CadastralDatabase class for querying parcel data
 - **land_registry/config.py** - Application settings (S3, local paths, environment detection)
 - **land_registry/dashboard.py** - Panel/Bokeh dashboard integration
+- **land_registry/parcel_dossier.py** - Typst parcel dossier PDF (via `aecs4u-documents`; template `land_registry/documents/parcel_dossier.typ`, SVG charts in `parcel_dossier_svg.py`, route in `routers/parcel_dossier.py`). Replaces the deprecated ReportLab `parcel_report.py`; design notes and the future to-do list are in `docs/PARCEL_DOSSIER.md`
 
 ### Frontend
 
@@ -128,6 +129,10 @@ The dev server runs on **port 8000**. Panel/Bokeh dashboard runs on **port 5006*
 - `GET /api/v1/get-cadastral-structure/` - Load Italian cadastral hierarchy (cached)
 - `POST /api/v1/load-cadastral-files/` - Load multiple cadastral files (parallel, returns all at once)
 - `POST /api/v1/load-cadastral-files-stream/` - **Streaming** loader (NDJSON, progressive rendering)
+
+### Reports
+- `GET /api/v1/enrichment/parcel/dossier/{reference}` - Typst parcel dossier PDF built server-side (cover, summary, thematic sections, source register); `POST` accepts and ignores a panel snapshot
+- `GET|POST /api/v1/enrichment/parcel/report/{reference}` - **deprecated** ReportLab dossier (sends `Deprecation` and `Link: rel=successor-version` headers)
 
 ### Spatial Analysis
 - `POST /api/v1/get-adjacent-polygons/` - Find adjacent polygons using spatial predicates

@@ -116,6 +116,7 @@ class SavedParcelCreateRequest(SavedParcelCreateRequestBase, table=False):
     status: str | None = Field(default=None, min_length=1, max_length=64)
     priority: int | None = Field(default=None, ge=0, le=5)
     tags: list[str] | None = None
+    is_favorite: bool | None = None
 
     @field_validator("tags", mode="before")
     @classmethod
@@ -129,6 +130,7 @@ class SavedParcelResponse(SavedParcelResponseBase, table=False):
     status: str = "new"
     priority: int | None = None
     tags: list[str] = Field(default_factory=list)
+    is_favorite: bool = False
     active_hazard: dict[str, Any] | None = None
 
 
@@ -138,6 +140,7 @@ class SavedParcelUpdateRequest(SavedParcelUpdateRequestBase, table=False):
     status: str | None = Field(default=None, min_length=1, max_length=64)
     priority: int | None = Field(default=None, ge=0, le=5)
     tags: list[str] | None = None
+    is_favorite: bool | None = None
 
     @field_validator("tags", mode="before")
     @classmethod
@@ -154,6 +157,7 @@ class SavedParcelUpdateRequest(SavedParcelUpdateRequestBase, table=False):
             and self.status is None
             and self.priority is None
             and self.tags is None
+            and self.is_favorite is None
         ):
             raise ValueError("at least one saved-parcel field is required")
         return self

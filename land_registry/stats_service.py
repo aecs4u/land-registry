@@ -2516,6 +2516,169 @@ class _AsyncPostgresSource:
             "source": "Agenzia delle Entrate OMI current zone snapshot via aecs4u-stats PostgreSQL",
         }
 
+    async def hazard_polygons_in_bbox(
+        self, west: float, south: float, east: float, north: float, *, limit: int
+    ) -> Optional[tuple[Dict[str, Any], Dict[str, Any]]]:
+        """Candidate ISPRA (landslide, flood) polygons for a bounding box.
+
+        ``None`` means the hazards schema is not provisioned. Each collection
+        carries ``metadata.total_count`` so callers can detect the row cap.
+        """
+        if not await self._relations_available(_ISPRA_POSTGRES_RELATIONS):
+            return None
+
+        async def collect(table: str, code_field: str, label_field: str) -> Dict[str, Any]:
+            rows = await self._fetch(
+                f"""
+                SELECT {code_field} AS code, {label_field} AS label,
+                       ST_AsGeoJSON(geom, 7) AS geojson
+                FROM {table}
+                WHERE geom && ST_MakeEnvelope(%s, %s, %s, %s, 4326)
+                LIMIT %s
+                """,
+                (west, south, east, north, limit),
+            )
+            return {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": {code_field: row["code"], label_field: row["label"]},
+                        "geometry": json.loads(row["geojson"]),
+                    }
+                    for row in rows
+                    if row["geojson"]
+                ],
+                "metadata": {"total_count": len(rows)},
+            }
+
+        landslide, flood = await asyncio.gather(
+            collect("hazards.landslide_hazard", "hazard_code", "hazard_label"),
+            collect("hazards.flood_hazard", "scenario_code", "scenario_label"),
+        )
+        return landslide, flood
+
+    async def egms_pushdown_ready(self) -> bool:
+        """Whether PostGIS predicates on the EGMS foreign table reach the source.
+
+        Without ``extensions=postgis`` on the foreign server every spatial
+        filter pulls all 8.5 million cells across the connection (tens of
+        seconds), so the PostgreSQL path stays off until it is configured.
+        """
+        now = time.monotonic()
+        cached = self._optional_relations_cache.get(("__egms_pushdown__",))
+        if cached is not None and now < cached[1]:
+            return cached[0]
+        row = await self._fetchrow(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM pg_foreign_table ft
+                JOIN pg_class r ON r.oid = ft.ftrelid
+                JOIN pg_namespace n ON n.oid = r.relnamespace
+                JOIN pg_foreign_server fs ON fs.oid = ft.ftserver
+                CROSS JOIN LATERAL unnest(fs.srvoptions) AS option_text
+                WHERE n.nspname = 'geo_surface_change'
+                  AND r.relname = 'egms_subsidenza'
+                  AND left(option_text, 11) = 'extensions='
+                  AND position('postgis' in option_text) > 0
+            ) AS ready
+            """
+        )
+        ready = bool(row and row["ready"])
+        self._optional_relations_cache[("__egms_pushdown__",)] = (ready, now + (300 if ready else 60))
+        return ready
+
+    async def egms_cells_in_bbox(
+        self, west: float, south: float, east: float, north: float, *, limit: int
+    ) -> Optional[Dict[str, Any]]:
+        """Candidate EGMS cells for a bounding box, or ``None`` when not usable."""
+        if not await self._relations_available(_EGMS_POSTGRES_RELATIONS):
+            return None
+        if not await self.egms_pushdown_ready():
+            return None
+        rows = await self._fetch(
+            """
+            SELECT mean_velocity, acceleration, risk_class, risk_class_label,
+                   velocity_class_label, trend, signal_quality,
+                   ST_AsGeoJSON(geom, 7) AS geojson
+            FROM geo_surface_change.egms_subsidenza
+            WHERE geom && ST_MakeEnvelope(%s, %s, %s, %s, 4326)
+            LIMIT %s
+            """,
+            (west, south, east, north, limit),
+        )
+        return {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {
+                        key: row[key]
+                        for key in (
+                            "mean_velocity", "acceleration", "risk_class", "risk_class_label",
+                            "velocity_class_label", "trend", "signal_quality",
+                        )
+                    },
+                    "geometry": json.loads(row["geojson"]),
+                }
+                for row in rows
+                if row["geojson"]
+            ],
+            "metadata": {"total_count": len(rows)},
+        }
+
+    async def mps04_pga_at_point(
+        self,
+        lat: float,
+        lng: float,
+        *,
+        exceedance_probability_pct: float = 10.0,
+        grid_variant: str = "native",
+        max_distance_m: float = 5000.0,
+    ) -> Optional[Dict[str, Any]]:
+        """PGA (period 0) at the nearest MPS04 grid point.
+
+        ``None`` means the hazards schema is not provisioned; ``{}`` means it is
+        but no grid point lies within ``max_distance_m``.
+        """
+        if not await self._relations_available(_MPS04_POSTGRES_RELATIONS):
+            return None
+        row = await self._fetchrow(
+            """
+            WITH target AS (SELECT ST_SetSRID(ST_MakePoint(%s, %s), 4326) AS geom),
+            nearest AS (
+                SELECT p.point_id, p.lon, p.lat,
+                       ST_Distance(p.geom::geography, t.geom::geography) AS distance_m
+                FROM hazards.mps04_points p, target t
+                WHERE p.grid_variant = %s
+                ORDER BY p.geom <-> t.geom
+                LIMIT 1
+            )
+            SELECT n.point_id, n.lon, n.lat, n.distance_m,
+                   c.value_median, c.value_p16, c.value_p84
+            FROM nearest n
+            JOIN hazards.mps04_hazard_curve c
+              ON c.point_id = n.point_id
+             AND c.grid_variant = %s
+             AND c.period_s = 0
+             AND c.exceedance_probability_pct = %s
+            WHERE n.distance_m <= %s
+            """,
+            (lng, lat, grid_variant, grid_variant, exceedance_probability_pct, max_distance_m),
+        )
+        if row is None:
+            return {}
+        return {
+            "point_id": row["point_id"],
+            "point_lat": row["lat"],
+            "point_lng": row["lon"],
+            "distance_m": round(float(row["distance_m"]), 1),
+            "pga_g": row["value_median"],
+            "pga_p16_g": row["value_p16"],
+            "pga_p84_g": row["value_p84"],
+        }
+
     async def omi_zone_at_point(
         self,
         province: str,
@@ -5742,6 +5905,29 @@ async def aenrichment_status() -> Dict[str, Any]:
     except asyncio.CancelledError:
         probe.cancel()
         raise
+    source = await _get_async_postgres_source()
+    for key, relations, needs_pushdown in (
+        ("hazards_mps04", _MPS04_POSTGRES_RELATIONS, False),
+        ("hazards_ispra_mosaics", _ISPRA_POSTGRES_RELATIONS, False),
+        ("egms_subsidence", _EGMS_POSTGRES_RELATIONS, True),
+    ):
+        if status.get(key, {}).get("available") or source is None:
+            continue
+        try:
+            provisioned = bool(await asyncio.wait_for(source._relations_available(relations), timeout=6))
+            if provisioned and needs_pushdown:
+                provisioned = bool(await asyncio.wait_for(source.egms_pushdown_ready(), timeout=6))
+        except Exception:
+            provisioned = False
+        if provisioned:
+            status[key] = {
+                **status.get(key, {}),
+                "available": True,
+                "reason": None,
+                "storage": "aecs4u-stats PostgreSQL",
+            }
+        elif needs_pushdown and status.get(key, {}).get("reason") == "not_built":
+            status[key] = {**status[key], "reason": "postgres_pushdown_not_configured"}
     status["parcel_enrichment_read_model"] = {
         **await _aparcel_enrichment_read_model_status(),
         "source": "aecs4u-stats PostgreSQL serving schema",
@@ -6699,6 +6885,128 @@ def get_environmental_risks(istat_code: int | str) -> Optional[Dict[str, Any]]:
     }
 
 
+_MPS04_BASE: Dict[str, Any] = {
+    "source": "INGV MPS04 seismic hazard model",
+    "source_url": "https://mps04-ws.pi.ingv.it/",
+    "terms_url": "https://data.ingv.it/docs/note-legali.html",
+    "license": "CC BY 4.0",
+    "attribution": "INGV MPS04 seismic hazard model; data made available by INGV under CC BY 4.0.",
+    "model_version": "MPS04",
+    "spatial_resolution": "0.05° native grid; nearest grid point",
+    "match_method": "nearest_grid_point",
+    "exceedance_probability_pct": 10.0,
+    "exposure_period_years": 50,
+    "grid_variant": "native",
+    "max_distance_m": 5000,
+}
+_MPS04_POSTGRES_RELATIONS = ("hazards.mps04_points", "hazards.mps04_hazard_curve")
+_ISPRA_POSTGRES_RELATIONS = ("hazards.landslide_hazard", "hazards.flood_hazard")
+_EGMS_POSTGRES_RELATIONS = ("geo_surface_change.egms_subsidenza",)
+_POSTGRES_STORAGE_LABEL = "aecs4u-stats PostgreSQL"
+
+
+def _parcel_bounds(geometry: Dict[str, Any]) -> Optional[tuple[float, float, float, float]]:
+    """WGS84 bounds of a GeoJSON geometry or Feature, or ``None`` if unusable."""
+    try:
+        value = geometry.get("geometry") if geometry.get("type") == "Feature" else geometry
+        parcel = shape(value)
+        if parcel.is_empty:
+            return None
+        if not parcel.is_valid:
+            parcel = parcel.buffer(0)
+        return None if parcel.is_empty else tuple(parcel.bounds)  # type: ignore[return-value]
+    except Exception:
+        return None
+
+
+async def aget_parcel_hazard_intersections(geometry: Dict[str, Any]) -> Dict[str, Any]:
+    """PostgreSQL-first parcel ISPRA intersections with the local store as fallback."""
+    bounds = _parcel_bounds(geometry)
+    source = await _get_async_postgres_source() if bounds else None
+    if bounds and source is not None and time.monotonic() >= source._retry_at:
+        try:
+            collections = await asyncio.wait_for(
+                source.hazard_polygons_in_bbox(*bounds, limit=5000), timeout=15
+            )
+        except Exception:
+            source._retry_at = time.monotonic() + 60
+            logger.warning("PostgreSQL hazard polygon lookup failed; using local store", exc_info=True)
+        else:
+            if collections is not None:
+                result = await asyncio.to_thread(
+                    get_parcel_hazard_intersections, geometry, collections=collections
+                )
+                return {**result, "storage": _POSTGRES_STORAGE_LABEL}
+    return await asyncio.to_thread(get_parcel_hazard_intersections, geometry)
+
+
+async def aget_parcel_subsidence_intersections(geometry: Dict[str, Any]) -> Dict[str, Any]:
+    """PostgreSQL-first parcel EGMS summary, used only once PostGIS pushdown is set up."""
+    bounds = _parcel_bounds(geometry)
+    source = await _get_async_postgres_source() if bounds else None
+    if bounds and source is not None and time.monotonic() >= source._retry_at:
+        try:
+            collection = await asyncio.wait_for(
+                source.egms_cells_in_bbox(*bounds, limit=_EGMS_PARCEL_CANDIDATE_LIMIT + 1),
+                timeout=15,
+            )
+        except Exception:
+            source._retry_at = time.monotonic() + 60
+            logger.warning("PostgreSQL EGMS lookup failed; using local store", exc_info=True)
+        else:
+            if collection is not None:
+                result = await asyncio.to_thread(
+                    get_parcel_subsidence_intersections, geometry, collection=collection
+                )
+                return {**result, "storage": _POSTGRES_STORAGE_LABEL}
+    result = await asyncio.to_thread(get_parcel_subsidence_intersections, geometry)
+    if result.get("reason") == "egms_not_built" and source is not None:
+        # Say why the shared database was not used, so an operator can act on it.
+        try:
+            provisioned = await asyncio.wait_for(
+                source._relations_available(_EGMS_POSTGRES_RELATIONS), timeout=6
+            )
+        except Exception:
+            provisioned = False
+        if provisioned:
+            return {**result, "reason": "egms_postgres_pushdown_not_configured"}
+    return result
+
+
+async def aget_mps04_pga_at_point(lat: float, lng: float) -> Dict[str, Any]:
+    """PostgreSQL-first MPS04 PGA with the local file store as fallback.
+
+    The shared stats database now carries the MPS04 grid and hazard curves, so
+    the panel no longer depends on a per-host DuckDB/SQLite store. The response
+    shape matches :func:`get_mps04_pga_at_point`.
+    """
+    source = await _get_async_postgres_source()
+    if source is not None and time.monotonic() >= source._retry_at:
+        try:
+            row = await asyncio.wait_for(source.mps04_pga_at_point(lat, lng), timeout=8)
+        except Exception:
+            source._retry_at = time.monotonic() + 60
+            logger.warning("PostgreSQL MPS04 lookup failed; using local store", exc_info=True)
+        else:
+            if row is not None:
+                base = {**_MPS04_BASE, "storage": "aecs4u-stats PostgreSQL hazards schema"}
+                if not row:
+                    return {**base, "available": True, "matched": False}
+                return {
+                    **base,
+                    "available": True,
+                    "matched": True,
+                    "point_id": row["point_id"],
+                    "point_lat": row["point_lat"],
+                    "point_lng": row["point_lng"],
+                    "distance_m": row["distance_m"],
+                    "pga_g": row["pga_g"],
+                    "pga_p16_g": row["pga_p16_g"],
+                    "pga_p84_g": row["pga_p84_g"],
+                }
+    return await asyncio.to_thread(get_mps04_pga_at_point, lat, lng)
+
+
 def get_mps04_pga_at_point(lat: float, lng: float) -> Dict[str, Any]:
     """Return INGV MPS04 PGA for the nearest native grid point to a parcel point.
 
@@ -6706,20 +7014,7 @@ def get_mps04_pga_at_point(lat: float, lng: float) -> Dict[str, Any]:
     a nearest-grid lookup (not interpolation) and is limited to 5 km by the
     upstream adapter. An absent local store or unmatched point stays explicit.
     """
-    base = {
-        "source": "INGV MPS04 seismic hazard model",
-        "source_url": "https://mps04-ws.pi.ingv.it/",
-        "terms_url": "https://data.ingv.it/docs/note-legali.html",
-        "license": "CC BY 4.0",
-        "attribution": "INGV MPS04 seismic hazard model; data made available by INGV under CC BY 4.0.",
-        "model_version": "MPS04",
-        "spatial_resolution": "0.05° native grid; nearest grid point",
-        "match_method": "nearest_grid_point",
-        "exceedance_probability_pct": 10.0,
-        "exposure_period_years": 50,
-        "grid_variant": "native",
-        "max_distance_m": 5000,
-    }
+    base = dict(_MPS04_BASE)
     if not _mps04_db_available or not _mps04_pga_at_point:
         return {**base, "available": False, "reason": "mps04_not_supported"}
     try:
@@ -6750,18 +7045,29 @@ def get_mps04_pga_at_point(lat: float, lng: float) -> Dict[str, Any]:
         return {**base, "available": False, "reason": "mps04_lookup_failed"}
 
 
-def get_parcel_hazard_intersections(geometry: Dict[str, Any]) -> Dict[str, Any]:
-    """Intersect an authoritative parcel polygon with local ISPRA hazard mosaics."""
+def get_parcel_hazard_intersections(
+    geometry: Dict[str, Any],
+    *,
+    collections: Optional[tuple[Dict[str, Any], Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Intersect an authoritative parcel polygon with ISPRA hazard mosaics.
+
+    ``collections`` is an optional ``(landslide, flood)`` pair of candidate
+    FeatureCollections already fetched for the parcel bounding box (for example
+    from PostgreSQL); without it the local polygon stores are queried.
+    """
     base = {
         "source": "ISPRA PAI/PGRA polygon mosaics",
         "dataset_version": "ISPRA_PAI_2020_2021_PGRA_2020",
         "spatial_resolution": "parcel polygon intersection",
         "match_method": "parcel_polygon_intersection",
     }
-    if not all((_ispra_mosaics_db_available, _landslide_hazard_in_bbox, _flood_hazard_in_bbox)):
+    if collections is None and not all(
+        (_ispra_mosaics_db_available, _landslide_hazard_in_bbox, _flood_hazard_in_bbox)
+    ):
         return {**base, "available": False, "reason": "ispra_mosaics_not_supported"}
     try:
-        if not _ispra_mosaics_db_available():
+        if collections is None and not _ispra_mosaics_db_available():
             return {**base, "available": False, "reason": "ispra_mosaics_not_built"}
         geometry_value = geometry.get("geometry") if geometry.get("type") == "Feature" else geometry
         parcel = shape(geometry_value)
@@ -6782,8 +7088,11 @@ def get_parcel_hazard_intersections(geometry: Dict[str, Any]) -> Dict[str, Any]:
 
         west, south, east, north = parcel.bounds
         limit = 5000
-        landslide = _landslide_hazard_in_bbox(west, south, east, north, limit=limit)
-        flood = _flood_hazard_in_bbox(west, south, east, north, limit=limit)
+        if collections is None:
+            landslide = _landslide_hazard_in_bbox(west, south, east, north, limit=limit)
+            flood = _flood_hazard_in_bbox(west, south, east, north, limit=limit)
+        else:
+            landslide, flood = collections
 
         def summarize(collection: Dict[str, Any], field: str, priority: Dict[str, int]) -> Dict[str, Any]:
             intersections: dict[str, list[Any]] = {}
@@ -6879,8 +7188,16 @@ def get_subsidence_at_point(lat: float, lng: float) -> Dict[str, Any]:
         return {**base, "available": False, "reason": "egms_lookup_failed"}
 
 
-def get_parcel_subsidence_intersections(geometry: Dict[str, Any]) -> Dict[str, Any]:
-    """Summarize EGMS cells intersecting a parcel, weighted by overlap area."""
+def get_parcel_subsidence_intersections(
+    geometry: Dict[str, Any],
+    *,
+    collection: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Summarize EGMS cells intersecting a parcel, weighted by overlap area.
+
+    ``collection`` is an optional candidate FeatureCollection already fetched
+    for the parcel bounding box; without it the local EGMS store is queried.
+    """
     contract = _EGMS_CONTRACT
     base = {
         "source": getattr(contract, "source", None)
@@ -6890,10 +7207,10 @@ def get_parcel_subsidence_intersections(geometry: Dict[str, Any]) -> Dict[str, A
         "spatial_resolution": "100 m EGMS grid cells intersecting parcel polygon",
         "match_method": "parcel_polygon_intersection",
     }
-    if not _egms_db_available or not _subsidence_in_bbox:
+    if collection is None and (not _egms_db_available or not _subsidence_in_bbox):
         return {**base, "available": False, "reason": "egms_not_supported"}
     try:
-        if not _egms_db_available():
+        if collection is None and not _egms_db_available():
             return {**base, "available": False, "reason": "egms_not_built"}
 
         geometry_value = geometry.get("geometry") if geometry.get("type") == "Feature" else geometry
@@ -6915,9 +7232,10 @@ def get_parcel_subsidence_intersections(geometry: Dict[str, Any]) -> Dict[str, A
 
         candidate_limit = _EGMS_PARCEL_CANDIDATE_LIMIT
         west, south, east, north = parcel.bounds
-        collection = _subsidence_in_bbox(
-            west, south, east, north, direction="U", limit=candidate_limit + 1
-        )
+        if collection is None:
+            collection = _subsidence_in_bbox(
+                west, south, east, north, direction="U", limit=candidate_limit + 1
+            )
         candidates = (collection or {}).get("features", [])
         candidate_limit_reached = len(candidates) > candidate_limit
         candidates = candidates[:candidate_limit]
