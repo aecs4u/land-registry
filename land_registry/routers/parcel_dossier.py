@@ -1,8 +1,8 @@
 """Parcel dossier PDF endpoint (Typst, via ``aecs4u-documents``).
 
 ``GET /api/v1/enrichment/parcel/dossier/{national_reference}`` replaces the deprecated ReportLab endpoints under
-``/parcel/report/``. The report is built entirely server-side from the parcel reference, so it needs no browser
-snapshot; ``POST`` is accepted for clients still sending one and ignores the body.
+``/parcel/report/``. The report is built server-side from the parcel reference. ``POST`` can also carry validated
+inputs for a previously calculated parcel PV scenario; the server re-fetches PVGIS and recalculates its economics.
 """
 
 from __future__ import annotations
@@ -13,10 +13,12 @@ from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
+from pydantic import BaseModel, ConfigDict
 
 from land_registry import parcel_dossier
 from land_registry.i18n import detect_locale
 from land_registry.map_layers import get_map_layer_source
+from land_registry.models import SolarEconomicsRequest
 from land_registry.routers.auth import get_current_user_optional
 
 log = logging.getLogger(__name__)
@@ -24,6 +26,14 @@ log = logging.getLogger(__name__)
 parcel_dossier_router = APIRouter()
 
 _NEIGHBOUR_TIMEOUT_SECONDS = 4.0
+
+
+class ParcelDossierRequest(BaseModel):
+    """Optional report inputs; ignore legacy panel snapshots from older clients."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    solar_scenario: SolarEconomicsRequest | None = None
 
 
 async def _neighbour_geometries(reference: str, feature_id: Optional[int]) -> list[dict[str, Any]]:
@@ -70,7 +80,12 @@ async def _saved_parcel_for(user: Any, reference: str) -> Optional[dict[str, Any
 
 
 async def build_parcel_dossier(
-    national_reference: str, request: Request, *, feature_id: Optional[int] = None, user: Any = None
+    national_reference: str,
+    request: Request,
+    *,
+    feature_id: Optional[int] = None,
+    user: Any = None,
+    solar_scenario: SolarEconomicsRequest | None = None,
 ) -> Response:
     from land_registry.routers import enrichment
 
@@ -80,7 +95,9 @@ async def build_parcel_dossier(
         raise
     locale = detect_locale(request)
     neighbours = await _neighbour_geometries(national_reference, feature_id)
-    inputs = await parcel_dossier.gather_inputs(national_reference, parcel, neighbours=neighbours)
+    inputs = await parcel_dossier.gather_inputs(
+        national_reference, parcel, neighbours=neighbours, solar_scenario=solar_scenario
+    )
     report_id = parcel_dossier.new_report_id()
     saved = await _saved_parcel_for(user, national_reference)
     variables, files = parcel_dossier.build_dossier(
@@ -121,7 +138,14 @@ async def post_parcel_dossier(
     national_reference: str,
     request: Request,
     id: Annotated[Optional[int], Query(ge=1, description="Canonical feature id from the selected parcel")] = None,
+    body: ParcelDossierRequest | None = None,
     user=Depends(get_current_user_optional),
 ):
-    """Same report; a posted panel snapshot is ignored because the dossier is built from server data."""
-    return await build_parcel_dossier(national_reference, request, feature_id=id, user=user)
+    """Same report, optionally including a server-recomputed parcel PV scenario."""
+    return await build_parcel_dossier(
+        national_reference,
+        request,
+        feature_id=id,
+        user=user,
+        solar_scenario=body.solar_scenario if body else None,
+    )

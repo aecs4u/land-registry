@@ -17,6 +17,7 @@
   const ADMIN_SUBSTITUTE_LAYER_IDS = ['geo-boundaries'];
   const SEARCH_DEBOUNCE_MS = 250;
   const LAST_VIEW_KEY = 'land-registry.map.lastView';
+  const WELCOME_TOUR_KEY = 'land-registry.map.welcome-seen.v1';
   const BASEMAPS = ['light', 'dark', 'satellite'];
   const state = {
     map: null,
@@ -32,6 +33,9 @@
     searchRequest: 0,
     searchController: null,
     searchActiveIndex: -1,
+    parcelFinderRequest: 0,
+    parcelFinderController: null,
+    parcelFinderRegionsLoaded: false,
     initializing: false,
     layerFailures: new Set(),
     activeLayers: null,
@@ -74,6 +78,55 @@
     const text = (window._i18n && window._i18n[key]) || key;
     return values ? text.replace(/\{(\w+)\}/g, (_, name) => values[name] ?? '') : text;
   };
+
+  function setupWelcomeTour() {
+    const dialog = $('mapWelcomeDialog');
+    const opener = $('mapGuideButton');
+    if (!dialog || !opener) return;
+
+    const steps = [...dialog.querySelectorAll('[data-map-tour-step]')];
+    const count = $('mapWelcomeStepCount');
+    const previous = $('mapWelcomePrevious');
+    const next = $('mapWelcomeNext');
+    const finish = $('mapWelcomeFinish');
+    let current = 0;
+    const markSeen = () => {
+      try { window.localStorage.setItem(WELCOME_TOUR_KEY, '1'); } catch (_) { /* storage may be disabled */ }
+    };
+    const render = () => {
+      steps.forEach((step, index) => { step.hidden = index !== current; });
+      if (count) count.textContent = tr('Step {current} of {total}', { current: current + 1, total: steps.length });
+      if (previous) previous.hidden = current === 0;
+      if (next) next.hidden = current === steps.length - 1;
+      if (finish) finish.hidden = current !== steps.length - 1;
+    };
+    const open = () => {
+      current = 0;
+      render();
+      if (typeof dialog.showModal === 'function') dialog.showModal();
+      else dialog.setAttribute('open', '');
+      next?.focus();
+    };
+    const close = () => {
+      if (typeof dialog.close === 'function') dialog.close();
+      else dialog.removeAttribute('open');
+      markSeen();
+    };
+
+    opener.addEventListener('click', open);
+    $('mapWelcomeClose')?.addEventListener('click', close);
+    $('mapWelcomeSkip')?.addEventListener('click', close);
+    previous?.addEventListener('click', () => { current = Math.max(0, current - 1); render(); });
+    next?.addEventListener('click', () => { current = Math.min(steps.length - 1, current + 1); render(); });
+    finish?.addEventListener('click', close);
+    dialog.addEventListener('close', markSeen);
+
+    let seen = false;
+    try { seen = window.localStorage.getItem(WELCOME_TOUR_KEY) === '1'; } catch (_) { /* storage may be disabled */ }
+    // Shared parcel links should open directly on their selected parcel; the
+    // guide remains available through the question-mark button.
+    if (!seen && !new URLSearchParams(window.location.search).has('parcel')) open();
+  }
   const LAYER_GROUPS = ['administrative', 'cadastral', 'market', 'risk', 'demographics', 'energy', 'territory'];
 
   // Progress belongs to a task, so an older request cannot dismiss a newer
@@ -682,7 +735,9 @@
     if (state.map.getLayer('label-cadastral-parcels')) return;
     state.map.addLayer({
       id: 'label-cadastral-parcels', type: 'symbol', source: layerSourceId({ id: 'cadastral-parcels' }), 'source-layer': 'cadastral-parcels',
-      minzoom: 17, filter: ['all', ['!=', ['slice', ['to-string', ['coalesce', ['get', 'parcel'], '']], 0, 6], 'STRADA'], ['!=', ['slice', ['to-string', ['coalesce', ['get', 'parcel'], '']], 0, 5], 'ACQUA']], layout: { 'text-field': ['coalesce', ['get', 'parcel'], ['get', 'canonical_reference'], ''], 'text-font': ['noto-sans-regular'], 'text-size': 11, 'text-allow-overlap': false, 'text-padding': 2 },
+      minzoom: 16,
+      filter: ['all', ['!=', ['slice', ['to-string', ['coalesce', ['get', 'parcel'], '']], 0, 6], 'STRADA'], ['!=', ['slice', ['to-string', ['coalesce', ['get', 'parcel'], '']], 0, 5], 'ACQUA']],
+      layout: { 'text-field': ['coalesce', ['get', 'parcel'], ['get', 'canonical_reference'], ''], 'text-font': ['noto-sans-regular'], 'text-size': 11, 'text-allow-overlap': false, 'text-padding': 2 },
       paint: { 'text-color': '#263b4d', 'text-halo-color': '#fff', 'text-halo-width': 1.5 },
     });
   }
@@ -1519,9 +1574,8 @@
   async function downloadParcelReport(event) {
     const link = event.currentTarget;
     if (!link || link.getAttribute('aria-disabled') === 'true' || link.dataset.exporting === 'true') return;
-    // The Typst dossier is built entirely on the server from the parcel
-    // reference, so no browser snapshot is needed. Fetching it here only adds
-    // progress and error feedback; the plain link works without JavaScript.
+    // The Typst dossier is built on the server. Include validated inputs only
+    // when the parcel panel has a current, successfully calculated PV scenario.
     event.preventDefault();
     const endpoint = link.href;
     const originalLabel = link.dataset.label || link.textContent.trim();
@@ -1531,7 +1585,23 @@
     link.textContent = tr('Preparing report…');
     link.title = '';
     try {
-      const response = await fetch(endpoint, { headers: { Accept: 'application/pdf' } });
+      const options = { headers: { Accept: 'application/pdf' } };
+      const scenarioForm = document.querySelector('.parcel-solar-scenario-form');
+      const reportUrl = new URL(endpoint, window.location.href);
+      const reportReference = decodeURIComponent(reportUrl.pathname.split('/').pop() || '');
+      const reportFeatureId = reportUrl.searchParams.get('id') || '';
+      const scenarioMatchesParcel = scenarioForm
+        && scenarioForm.dataset.reportReference === reportReference
+        && (scenarioForm.dataset.reportFeatureId || '') === reportFeatureId;
+      if (scenarioMatchesParcel && scenarioForm.dataset.reportScenario) {
+        try {
+          const scenario = JSON.parse(scenarioForm.dataset.reportScenario);
+          options.method = 'POST';
+          options.headers['Content-Type'] = 'application/json';
+          options.body = JSON.stringify({ solar_scenario: scenario });
+        } catch (_) { /* malformed local state falls back to the server-only report */ }
+      }
+      const response = await fetch(endpoint, options);
       if (!response.ok) {
         let detail = '';
         try { detail = (await response.json()).detail || ''; } catch (_) { /* use the localized fallback */ }
@@ -1615,6 +1685,35 @@
     return items;
   }
 
+  function shortlistEditorHtml(item) {
+    const itemStatus = String(item.status || '');
+    const statuses = state.shortlistStatuses.slice();
+    if (itemStatus && !statuses.some((status) => String(status.value) === itemStatus)) {
+      statuses.unshift({ value: itemStatus, label: itemStatus });
+    }
+    const statusOptions = statuses.map((status) => {
+      const value = String(status.value);
+      return `<option value="${escapeHtml(value)}"${value === itemStatus ? ' selected' : ''}>${escapeHtml(status.label || value)}</option>`;
+    }).join('');
+    const itemPriority = item.priority == null ? '' : String(item.priority);
+    const priorityOptions = `<option value=""${itemPriority === '' ? ' selected' : ''}>${escapeHtml(tr('Unset'))}</option>`
+      + [1, 2, 3, 4, 5].map((priority) => `<option value="${priority}"${itemPriority === String(priority) ? ' selected' : ''}>${priority === 5 ? escapeHtml(tr('5 high')) : priority === 1 ? escapeHtml(tr('1 low')) : priority}</option>`).join('');
+    return `<details class="shortlist-edit">
+      <summary>${escapeHtml(tr('Edit details'))}</summary>
+      <form data-shortlist-edit-form="${escapeHtml(item.id)}">
+        <label><span>${escapeHtml(tr('Status'))}</span><select name="status" required>${statusOptions}</select></label>
+        <label><span>${escapeHtml(tr('Priority'))}</span><select name="priority">${priorityOptions}</select></label>
+        <label><span>${escapeHtml(tr('Notes'))}</span><textarea name="notes" rows="3" maxlength="5000">${escapeHtml(item.notes || '')}</textarea></label>
+        <label><span>${escapeHtml(tr('Tags'))}</span><input name="tags" type="text" maxlength="1019" placeholder="${escapeHtml(tr('Separate tags with commas'))}" value="${escapeHtml((item.tags || []).join(', '))}"></label>
+        <div class="shortlist-edit-actions">
+          <button type="submit">${escapeHtml(tr('Save changes'))}</button>
+          <button type="button" data-shortlist-edit-cancel>${escapeHtml(tr('Cancel'))}</button>
+        </div>
+        <p class="shortlist-edit-status" role="status" aria-live="polite"></p>
+      </form>
+    </details>`;
+  }
+
   function renderShortlist() {
     populateShortlistStatusFilter();
     renderShortlistSummary();
@@ -1629,8 +1728,19 @@
     list.innerHTML = items.map((item) => {
       const reference = shortlistReference(item);
       const tags = (item.tags || []).slice(0, 4).map((tag) => `<span>#${escapeHtml(tag)}</span>`).join('');
+      const hazardTime = item.active_hazard?.issue_time || item.active_hazard?.observed_at;
+      const rawFireDistance = item.active_hazard?.distance_km;
+      const fireDistance = rawFireDistance == null ? null : Number(rawFireDistance);
+      const hazardLabel = item.active_hazard?.type === 'firms_fire' && Number.isFinite(fireDistance)
+        ? tr('FIRMS fire detection {distance} km from parcel', {
+          distance: fireDistance.toLocaleString(document.documentElement.lang || 'en', {
+            minimumFractionDigits: 1,
+            maximumFractionDigits: 1,
+          }),
+        })
+        : (item.active_hazard?.label || tr('Active hazard'));
       const hazard = item.active_hazard
-        ? `<small class="shortlist-hazard">${escapeHtml(item.active_hazard.label || 'Active hazard')}${item.active_hazard.issue_time ? ` · ${escapeHtml(item.active_hazard.issue_time)}` : ''}</small>`
+        ? `<small class="shortlist-hazard">${escapeHtml(hazardLabel)}${hazardTime ? ` · ${escapeHtml(hazardTime)}` : ''}</small>`
         : '';
       return `
         <article class="shortlist-item" role="listitem">
@@ -1647,6 +1757,7 @@
             ${tags}
           </div>
           ${item.notes ? `<small>${escapeHtml(item.notes).slice(0, 180)}</small>` : ''}
+          ${shortlistEditorHtml(item)}
           <div class="shortlist-item-actions">
             <button type="button" data-shortlist-open="${escapeHtml(reference)}">Open</button>
             <button type="button" data-shortlist-favorite="${escapeHtml(item.id)}" aria-pressed="${item.is_favorite ? 'true' : 'false'}">${escapeHtml(item.is_favorite ? tr('Unfavourite') : tr('Favourite'))}</button>
@@ -1672,6 +1783,53 @@
           button.disabled = false;
           mapStatus(error.message || 'Could not update favourite', true);
         }
+      });
+    });
+    list.querySelectorAll('[data-shortlist-edit-form]').forEach((form) => {
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const id = form.getAttribute('data-shortlist-edit-form');
+        const item = state.shortlistItems.find((entry) => String(entry.id) === id);
+        const status = form.querySelector('.shortlist-edit-status');
+        const submit = form.querySelector('button[type="submit"]');
+        if (!item || !submit) return;
+        const tags = [...new Set(form.elements.namedItem('tags').value.split(',').map((tag) => tag.trim()).filter(Boolean))];
+        if (tags.length > 20 || tags.some((tag) => tag.length > 50)) {
+          status.textContent = tr('Review the tags and try again.');
+          return;
+        }
+        const priorityValue = form.elements.namedItem('priority').value;
+        const payload = {
+          status: form.elements.namedItem('status').value,
+          priority: priorityValue === '' ? null : Number(priorityValue),
+          notes: form.elements.namedItem('notes').value.trim() || null,
+          tags,
+        };
+        submit.disabled = true;
+        const task = beginMapProgress('shortlist-update', 'Saving…');
+        try {
+          const response = await fetch(`/api/v1/saved-parcels/${encodeURIComponent(item.id)}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          if (response.status === 401) throw new Error(tr('Sign in to use your shortlist'));
+          if (!response.ok) throw new Error(tr('Could not update shortlist item'));
+          await loadShortlist();
+          mapStatus(tr('Shortlist item updated'));
+        } catch (error) {
+          status.textContent = error.message || tr('Could not update shortlist item');
+          mapStatus(status.textContent, true);
+        } finally {
+          submit.disabled = false;
+          task.finish();
+        }
+      });
+    });
+    list.querySelectorAll('[data-shortlist-edit-cancel]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const editor = button.closest('details.shortlist-edit');
+        if (editor) editor.open = false;
       });
     });
   }
@@ -2057,6 +2215,179 @@
     clearTimeout(state.searchTimer);
     state.searchTimer = null;
     void search(query, explicit);
+  }
+
+  function setParcelFinderStatus(message, error = false) {
+    const status = $('parcelFinderStatus');
+    if (!status) return;
+    status.textContent = message;
+    status.classList.toggle('is-error', error);
+  }
+
+  function fillParcelFinderSelect(id, placeholder, entries, valueOf, labelOf) {
+    const select = $(id);
+    select.replaceChildren(new Option(tr(placeholder), ''));
+    entries.forEach((entry) => {
+      const value = String(valueOf(entry) ?? '').trim();
+      const label = String(labelOf(entry) ?? value).trim();
+      if (!value || !label) return;
+      select.add(new Option(label, value));
+    });
+    select.disabled = select.options.length < 2;
+    return select.options.length - 1;
+  }
+
+  function parcelFinderRequest(url, onData, onError) {
+    state.parcelFinderController?.abort();
+    const controller = new AbortController();
+    const requestId = ++state.parcelFinderRequest;
+    state.parcelFinderController = controller;
+    void (async () => {
+      try {
+        const response = await fetch(url, { signal: controller.signal });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json();
+        if (requestId === state.parcelFinderRequest) onData(payload);
+      } catch (error) {
+        if (error.name === 'AbortError' || requestId !== state.parcelFinderRequest) return;
+        onError?.(error);
+        setParcelFinderStatus(tr('Search service unavailable; try again.'), true);
+      }
+    })();
+  }
+
+  function resetParcelFinderAfter(level) {
+    const resetRegion = level === 'region';
+    const resetProvince = resetRegion || level === 'province';
+    const resetMunicipality = resetProvince || level === 'municipality';
+    const resetSheet = resetMunicipality || level === 'sheet';
+    if (resetRegion) fillParcelFinderSelect('parcelFinderRegion', 'Select a region', [], (item) => item, (item) => item);
+    if (resetProvince) fillParcelFinderSelect('parcelFinderProvince', 'Select a province', [], (item) => item, (item) => item);
+    if (resetMunicipality) fillParcelFinderSelect('parcelFinderMunicipality', 'Select a municipality', [], () => '', () => '');
+    if (resetSheet) fillParcelFinderSelect('parcelFinderSheet', 'Select a sheet', [], () => '', () => '');
+    if (resetMunicipality) $('parcelFinderParcel').value = '';
+    $('parcelFinderParcel').disabled = resetSheet;
+    updateParcelFinderSubmit();
+  }
+
+  function updateParcelFinderSubmit() {
+    const submit = $('parcelFinderSubmit');
+    if (!submit) return;
+    submit.disabled = !(
+      $('parcelFinderMunicipality')?.value
+      && $('parcelFinderSheet')?.value
+      && $('parcelFinderParcel')?.value.trim()
+    );
+  }
+
+  function loadParcelFinderRegions() {
+    setParcelFinderStatus(tr('Loading...'));
+    parcelFinderRequest('/api/v1/get-regions/', (payload) => {
+      const regions = Array.isArray(payload.regions) ? payload.regions : [];
+      const count = fillParcelFinderSelect(
+        'parcelFinderRegion', 'Select a region', regions, (region) => region, (region) => region,
+      );
+      setParcelFinderStatus(count ? tr('Select a region to continue.') : tr('No cadastral areas available.'), !count);
+    }, () => { state.parcelFinderRegionsLoaded = false; });
+  }
+
+  function loadParcelFinderProvinces(region) {
+    resetParcelFinderAfter('province');
+    if (!region) { setParcelFinderStatus(tr('Select a region to continue.')); return; }
+    setParcelFinderStatus(tr('Loading...'));
+    parcelFinderRequest(`/api/v1/get-provinces/?regions=${encodeURIComponent(region)}`, (payload) => {
+      const provinces = Array.isArray(payload.provinces) ? payload.provinces : [];
+      const count = fillParcelFinderSelect(
+        'parcelFinderProvince', 'Select a province', provinces, (province) => province, (province) => province,
+      );
+      setParcelFinderStatus(count ? tr('Select a province to continue.') : tr('No cadastral areas available.'), !count);
+    });
+  }
+
+  function loadParcelFinderMunicipalities(region, province) {
+    resetParcelFinderAfter('municipality');
+    if (!region || !province) return;
+    setParcelFinderStatus(tr('Loading...'));
+    const params = new URLSearchParams({ regions: region, provinces: province });
+    parcelFinderRequest(`/api/v1/get-municipalities/?${params}`, (payload) => {
+      const municipalities = Array.isArray(payload.municipalities) ? payload.municipalities : [];
+      const usable = municipalities.filter((municipality) => municipality.code && municipality.code !== 'N/A');
+      const count = fillParcelFinderSelect(
+        'parcelFinderMunicipality', 'Select a municipality', usable,
+        (municipality) => municipality.code, (municipality) => municipality.name,
+      );
+      setParcelFinderStatus(count ? tr('Select a municipality to load sheets.') : tr('No cadastral areas available.'), !count);
+    });
+  }
+
+  function loadParcelFinderSheets(comuneCode) {
+    resetParcelFinderAfter('sheet');
+    if (!comuneCode) return;
+    setParcelFinderStatus(tr('Loading...'));
+    parcelFinderRequest(`/api/v1/enrichment/fogli/${encodeURIComponent(comuneCode)}`, (payload) => {
+      const sheets = Array.isArray(payload.fogli) ? payload.fogli : [];
+      const count = fillParcelFinderSelect(
+        'parcelFinderSheet', 'Select a sheet', sheets,
+        (sheet) => sheet.sheet_number, (sheet) => sheet.sheet_number,
+      );
+      const parcelInput = $('parcelFinderParcel');
+      parcelInput.disabled = !count;
+      setParcelFinderStatus(count ? tr('Enter a parcel number.') : tr('No cadastral areas available.'), !count);
+      updateParcelFinderSubmit();
+    });
+  }
+
+  function searchParcelFromFinder(event) {
+    event.preventDefault();
+    const comune = $('parcelFinderMunicipality').value;
+    const foglio = $('parcelFinderSheet').value;
+    const particella = $('parcelFinderParcel').value.trim();
+    if (!comune || !foglio || !particella) return;
+    clearTimeout(state.searchTimer);
+    state.searchController?.abort();
+    state.searchRequest += 1;
+    const query = `${comune} ${foglio} ${particella}`;
+    setParcelFinderStatus(tr('Searching…'));
+    const url = `/api/v1/map/search?query=${encodeURIComponent(query)}`;
+    parcelFinderRequest(url, (payload) => {
+      const results = Array.isArray(payload.results) ? payload.results.filter((item) => item.kind === 'parcel') : [];
+      state.searchActiveIndex = results.length ? 0 : -1;
+      renderSearchResults(results);
+      if (!results.length) {
+        setParcelFinderStatus(tr('No result'));
+      } else if (results.length === 1) {
+        setParcelFinderStatus(tr('Parcel found'));
+        chooseSearchResult(results[0]);
+      } else {
+        setParcelFinderStatus(tr('Choose a matching parcel.'));
+        $('mapSearchInput').focus();
+      }
+    });
+  }
+
+  function setupParcelFinder() {
+    const finder = $('mapParcelFinder');
+    if (!finder) return;
+    finder.addEventListener('toggle', () => {
+      if (!finder.open || state.parcelFinderRegionsLoaded) return;
+      state.parcelFinderRegionsLoaded = true;
+      loadParcelFinderRegions();
+    });
+    $('parcelFinderRegion').addEventListener('change', (event) => {
+      renderSearchResults([]);
+      loadParcelFinderProvinces(event.target.value);
+    });
+    $('parcelFinderProvince').addEventListener('change', () => {
+      renderSearchResults([]);
+      loadParcelFinderMunicipalities($('parcelFinderRegion').value, $('parcelFinderProvince').value);
+    });
+    $('parcelFinderMunicipality').addEventListener('change', () => {
+      renderSearchResults([]);
+      loadParcelFinderSheets($('parcelFinderMunicipality').value);
+    });
+    $('parcelFinderSheet').addEventListener('change', updateParcelFinderSubmit);
+    $('parcelFinderParcel').addEventListener('input', updateParcelFinderSubmit);
+    $('parcelFinderForm').addEventListener('submit', searchParcelFromFinder);
   }
 
   // Human label for a Nominatim hit; its addresstype/type says whether the
@@ -3589,6 +3920,38 @@
     return '#facc15';
   }
 
+  function fireObservationTimestamp(detection = {}) {
+    const date = String(detection.acq_date || '').trim();
+    const rawTime = String(detection.acq_time ?? '').replace(/\D/g, '');
+    if (!rawTime) return null;
+    const time = rawTime.padStart(4, '0').slice(0, 4);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{4}$/.test(time)) return null;
+    const hours = Number(time.slice(0, 2));
+    const minutes = Number(time.slice(2));
+    if (hours > 23 || minutes > 59) return null;
+    const timestamp = Date.parse(`${date}T${time.slice(0, 2)}:${time.slice(2)}:00Z`);
+    if (!Number.isFinite(timestamp) || new Date(timestamp).toISOString().slice(0, 10) !== date) return null;
+    return timestamp;
+  }
+
+  function relativeFireAge(timestamp) {
+    const elapsedSeconds = Math.round((Date.now() - timestamp) / 1000);
+    const locale = document.documentElement.lang || 'en';
+    const relativeTime = new Intl.RelativeTimeFormat(locale, { numeric: 'auto', style: 'short' });
+    if (Math.abs(elapsedSeconds) < 60) return relativeTime.format(-elapsedSeconds, 'second');
+    const elapsedMinutes = Math.round(elapsedSeconds / 60);
+    if (Math.abs(elapsedMinutes) < 60) return relativeTime.format(-elapsedMinutes, 'minute');
+    const elapsedHours = Math.round(elapsedMinutes / 60);
+    if (Math.abs(elapsedHours) < 24) return relativeTime.format(-elapsedHours, 'hour');
+    return relativeTime.format(-Math.round(elapsedHours / 24), 'day');
+  }
+
+  function formatFireObservation(timestamp) {
+    return new Intl.DateTimeFormat(document.documentElement.lang || 'en', {
+      dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC',
+    }).format(timestamp);
+  }
+
   function addPoiOverlayLayer() {
     ensureOverlaySource('enrichment-poi');
     if (state.map.getLayer('point-enrichment-poi')) return;
@@ -3703,8 +4066,15 @@
       const feature = event.features?.[0];
       if (!feature) return;
       const props = feature.properties;
+      const observationTime = props.observation_time == null || props.observation_time === ''
+        ? Number.NaN
+        : Number(props.observation_time);
+      const hasObservationTime = Number.isFinite(observationTime);
       new maplibregl.Popup({ maxWidth: '280px' }).setLngLat(event.lngLat).setHTML(
-        `<div class="fires-popup"><strong>NASA FIRMS detection</strong><div>${escapeHtml(props.observed || '—')}</div><div>FRP: ${props.frp != null ? escapeHtml(`${props.frp} MW`) : '—'}</div></div>`,
+        `<div class="fires-popup"><strong>${escapeHtml(tr('NASA FIRMS detection'))}</strong>`
+        + `<div>${escapeHtml(tr('Observed (UTC)'))}: ${escapeHtml(hasObservationTime ? formatFireObservation(observationTime) : props.observed || '—')}</div>`
+        + `<div>${escapeHtml(tr('Age'))}: ${escapeHtml(hasObservationTime ? relativeFireAge(observationTime) : tr('Not available'))}</div>`
+        + `<div>${escapeHtml(tr('Fire radiative power'))}: ${props.frp != null ? escapeHtml(`${props.frp} MW`) : '—'}</div></div>`,
       ).addTo(state.map);
     });
   }
@@ -3722,7 +4092,12 @@
         const lng = Number(detection.longitude);
         if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
         return { type: 'Feature', geometry: { type: 'Point', coordinates: [lng, lat] },
-          properties: { color: fireColor(detection.confidence), frp: detection.frp, observed: detection.acq_date || '' } };
+          properties: {
+            color: fireColor(detection.confidence),
+            frp: detection.frp,
+            observed: detection.acq_date || '',
+            observation_time: fireObservationTimestamp(detection),
+          } };
       }).filter(Boolean);
       state.map.getSource('enrichment-fires')?.setData({ type: 'FeatureCollection', features });
       if (countElement) countElement.textContent = data.count ? `(${data.count})` : '(0)';
@@ -4247,22 +4622,83 @@
     const canvas = state.map?.getCanvas();
     if (canvas) canvas.style.cursor = workbench.mode || workbench.editingDrawing ? 'crosshair' : '';
     if (state.fallbackMap) state.fallbackMap.getContainer().style.cursor = workbench.mode || workbench.editingDrawing ? 'crosshair' : '';
-    const drawDoubleClick = ['select-polygon', 'draw-polygon', 'draw-line'].includes(workbench.mode);
+    const drawDoubleClick = [
+      'select-polygon', 'select-circle', 'draw-polygon', 'draw-line', 'draw-rectangle', 'draw-circle',
+    ].includes(workbench.mode);
     if (state.map?.doubleClickZoom) drawDoubleClick ? state.map.doubleClickZoom.disable() : state.map.doubleClickZoom.enable();
     if (state.fallbackMap?.doubleClickZoom) drawDoubleClick ? state.fallbackMap.doubleClickZoom.disable() : state.fallbackMap.doubleClickZoom.enable();
     const status = $('mapDrawingStatus');
-    if (status && workbench.mode?.startsWith('draw-')) status.textContent = tr('Click to add vertices; double-click to finish the drawing.');
+    if (status && workbench.mode?.startsWith('draw-')) {
+      const instructions = {
+        'draw-rectangle': 'Click two opposite corners to draw a rectangle.',
+        'draw-circle': 'Click the center, then a point on the circle edge.',
+      };
+      status.textContent = tr(instructions[workbench.mode] || 'Click to add vertices; double-click to finish the drawing.');
+    }
   }
 
   function workbenchCircleSelectionRing(center, edge) {
-    const radius = Math.hypot(edge[0] - center[0], edge[1] - center[1]);
-    const latitudeScale = Math.max(.2, Math.cos(center[1] * Math.PI / 180));
+    return workbenchCircleRing(center, workbenchCircleRadiusMeters(center, edge));
+  }
+
+  function workbenchCircleRadiusMeters(center, edge) {
+    const toRadians = (degrees) => degrees * Math.PI / 180;
+    const latitude = toRadians(center[1]);
+    const edgeLatitude = toRadians(edge[1]);
+    const deltaLatitude = edgeLatitude - latitude;
+    const deltaLongitude = toRadians(edge[0] - center[0]);
+    const haversine = Math.sin(deltaLatitude / 2) ** 2
+      + Math.cos(latitude) * Math.cos(edgeLatitude) * Math.sin(deltaLongitude / 2) ** 2;
+    return 2 * 6371008.8 * Math.asin(Math.sqrt(Math.min(1, haversine)));
+  }
+
+  function workbenchCircleRing(center, radiusMeters, steps = 64) {
+    const angularDistance = radiusMeters / 6371008.8;
+    const latitude = center[1] * Math.PI / 180;
+    const longitude = center[0] * Math.PI / 180;
     const coordinates = [];
-    for (let step = 0; step <= 64; step += 1) {
-      const angle = step / 64 * Math.PI * 2;
-      coordinates.push([center[0] + Math.cos(angle) * radius / latitudeScale, center[1] + Math.sin(angle) * radius]);
+    for (let step = 0; step <= steps; step += 1) {
+      // GeoJSON polygon outer rings use counter-clockwise winding.
+      const bearing = -step / steps * Math.PI * 2;
+      const destinationLatitude = Math.asin(
+        Math.sin(latitude) * Math.cos(angularDistance)
+        + Math.cos(latitude) * Math.sin(angularDistance) * Math.cos(bearing),
+      );
+      const destinationLongitude = longitude + Math.atan2(
+        Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(latitude),
+        Math.cos(angularDistance) - Math.sin(latitude) * Math.sin(destinationLatitude),
+      );
+      coordinates.push([destinationLongitude * 180 / Math.PI, destinationLatitude * 180 / Math.PI]);
     }
     return [coordinates];
+  }
+
+  function workbenchRectangleRing(first, opposite) {
+    const west = Math.min(first[0], opposite[0]);
+    const east = Math.max(first[0], opposite[0]);
+    const south = Math.min(first[1], opposite[1]);
+    const north = Math.max(first[1], opposite[1]);
+    return [[
+      [west, south], [east, south], [east, north], [west, north], [west, south],
+    ]];
+  }
+
+  function addWorkbenchDrawing(geometry, name, properties = {}) {
+    const feature = {
+      type: 'Feature',
+      id: `drawing-${Date.now()}`,
+      properties: { name: tr(name), ...properties },
+      geometry,
+    };
+    workbench.drawings.push(feature);
+    workbench.selectedDrawing = feature.id;
+    workbench.mode = null;
+    workbench.vertices = [];
+    workbench.circleCenter = null;
+    renderWorkbenchDrawings();
+    updateWorkbenchModeUi();
+    renderWorkbenchPreview();
+    return feature;
   }
 
   function interactionClick(lngLat, feature = null) {
@@ -4281,31 +4717,59 @@
       }
       return true;
     }
+    if (workbench.mode === 'draw-rectangle') {
+      if (!workbench.vertices.length) {
+        workbench.vertices.push(point);
+        renderWorkbenchPreview();
+        return true;
+      }
+      const first = workbench.vertices[0];
+      if (first[0] === point[0] || first[1] === point[1]) {
+        mapStatus(tr('Rectangle needs two distinct corners.'), true);
+        return true;
+      }
+      const coordinates = workbenchRectangleRing(first, point);
+      addWorkbenchDrawing(
+        { type: 'Polygon', coordinates },
+        'Rectangle',
+        { drawing_shape: 'rectangle' },
+      );
+      return true;
+    }
     if (workbench.mode === 'select-polygon' || workbench.mode === 'draw-polygon' || workbench.mode === 'draw-line') {
       workbench.vertices.push(point);
       renderWorkbenchPreview();
       return true;
     }
-    if (workbench.mode === 'select-circle') {
+    if (workbench.mode === 'select-circle' || workbench.mode === 'draw-circle') {
       if (!workbench.circleCenter) workbench.circleCenter = point;
       else {
-      const polygon = workbenchCircleSelectionRing(workbench.circleCenter, point);
-        const selected = mapFeaturesInPolygon(polygon);
-        selected.forEach((parcel) => addAnalysisFeature(parcel));
-        workbench.circleCenter = null;
-        toggleWorkbenchMode('select-circle');
-        renderAnalysisSelection();
-        if (selected.length && workbench.selection.size >= 5000) mapStatus(tr('Selection is limited to 5,000 features.'), true);
+        if (workbench.mode === 'draw-circle') {
+          const center = workbench.circleCenter;
+          const radiusMeters = workbenchCircleRadiusMeters(center, point);
+          if (radiusMeters <= 0) {
+            mapStatus(tr('Circle needs a center and a distinct edge point.'), true);
+            return true;
+          }
+          addWorkbenchDrawing(
+            { type: 'Polygon', coordinates: workbenchCircleRing(center, radiusMeters) },
+            'Circle',
+            { drawing_shape: 'circle', radius_m: Math.round(radiusMeters * 10) / 10 },
+          );
+        } else {
+          const polygon = workbenchCircleSelectionRing(workbench.circleCenter, point);
+          const selected = mapFeaturesInPolygon(polygon);
+          selected.forEach((parcel) => addAnalysisFeature(parcel));
+          workbench.circleCenter = null;
+          toggleWorkbenchMode('select-circle');
+          renderAnalysisSelection();
+          if (selected.length && workbench.selection.size >= 5000) mapStatus(tr('Selection is limited to 5,000 features.'), true);
+        }
       }
       return true;
     }
     if (workbench.mode === 'draw-point') {
-      const feature = { type: 'Feature', id: `drawing-${Date.now()}`, properties: { name: tr('Marker') }, geometry: { type: 'Point', coordinates: point } };
-      workbench.drawings.push(feature);
-      workbench.selectedDrawing = feature.id;
-      workbench.mode = null;
-      renderWorkbenchDrawings();
-      updateWorkbenchModeUi();
+      addWorkbenchDrawing({ type: 'Point', coordinates: point }, 'Marker');
       return true;
     }
     return false;
@@ -4324,19 +4788,13 @@
       workbench.mode = null;
       renderAnalysisSelection();
       if (selected.length && workbench.selection.size >= 5000) mapStatus(tr('Selection is limited to 5,000 features.'), true);
+    } else if (mode === 'draw-line' && vertices.length >= 2) {
+      addWorkbenchDrawing({ type: 'LineString', coordinates: vertices }, 'Polyline');
+      return;
     } else if (mode === 'draw-polygon' && vertices.length >= 3) {
       const coordinates = [...vertices, vertices[0]];
-      const feature = { type: 'Feature', id: `drawing-${Date.now()}`, properties: { name: tr('Polygon') }, geometry: { type: 'Polygon', coordinates: [coordinates] } };
-      workbench.drawings.push(feature);
-      workbench.selectedDrawing = feature.id;
-      workbench.mode = null;
-      renderWorkbenchDrawings();
-    } else if (mode === 'draw-line' && vertices.length >= 2) {
-      const feature = { type: 'Feature', id: `drawing-${Date.now()}`, properties: { name: tr('Polyline') }, geometry: { type: 'LineString', coordinates: vertices } };
-      workbench.drawings.push(feature);
-      workbench.selectedDrawing = feature.id;
-      workbench.mode = null;
-      renderWorkbenchDrawings();
+      addWorkbenchDrawing({ type: 'Polygon', coordinates: [coordinates] }, 'Polygon');
+      return;
     }
     updateWorkbenchModeUi();
     renderWorkbenchPreview();
@@ -4346,7 +4804,11 @@
     const vertices = [...workbench.vertices];
     if (cursor) vertices.push([cursor.lng, cursor.lat]);
     let feature = null;
-    if (workbench.circleCenter && cursor) feature = { type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: workbenchCircleSelectionRing(workbench.circleCenter, [cursor.lng, cursor.lat]) } };
+    if (workbench.circleCenter && cursor) {
+      feature = { type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: workbenchCircleSelectionRing(workbench.circleCenter, [cursor.lng, cursor.lat]) } };
+    } else if (workbench.mode === 'draw-rectangle' && vertices.length >= 2) {
+      feature = { type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: workbenchRectangleRing(vertices[0], vertices[1]) } };
+    }
     else if (vertices.length >= 2) feature = { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: vertices } };
     const collection = feature ? { type: 'FeatureCollection', features: [feature] } : emptyFeatureCollection();
     setGeoJSONOverlay('workbench-preview', collection, [
@@ -4412,6 +4874,10 @@
       const coordinates = geometryCoordinates(feature.geometry);
       const old = coordinates[workbench.editVertex];
       replaceCoordinate(feature.geometry, old, replacement);
+      if (feature.properties?.drawing_shape) {
+        delete feature.properties.drawing_shape;
+        delete feature.properties.radius_m;
+      }
     }
     workbench.editVertex = null;
     renderWorkbenchDrawings();
@@ -4888,12 +5354,16 @@
     if (!card) return;
     card.classList.toggle('mobile-open', open);
     card.hidden = !open;
-    $('shortlistToggle')?.setAttribute('aria-expanded', String(open));
+    document.querySelectorAll('.shortlist-toggle').forEach((toggle) => {
+      toggle.setAttribute('aria-expanded', String(open));
+    });
     if (open) loadShortlist();
   }
 
   function setupControls() {
+    setupWelcomeTour();
     populatePoiCategories();
+    setupParcelFinder();
     $('mapSearchForm').addEventListener('submit', (event) => {
       event.preventDefault();
       // With results already listed, Enter picks the first one (combobox
@@ -5047,14 +5517,14 @@
       $(id).addEventListener('change', renderShortlist);
     });
     $('shortlistHazardFilter').addEventListener('change', () => loadShortlist());
-    $('shortlistToggle')?.addEventListener('click', () => {
+    document.querySelectorAll('.shortlist-toggle').forEach((toggle) => toggle.addEventListener('click', () => {
       if (!window.landRegistrySignedIn) {
         const next = encodeURIComponent(window.location.pathname + window.location.search);
         window.location.assign(`/auth/login?next=${next}`);
         return;
       }
       setShortlistOpen($('parcelShortlistCard').hidden);
-    });
+    }));
     $('shortlistCloseButton')?.addEventListener('click', () => setShortlistOpen(false));
     $('resetButton').addEventListener('click', () => {
       if (state.map) state.map.fitBounds(ITALY_BOUNDS, { padding: 20 });
@@ -5105,11 +5575,21 @@
       if (salesButton) { salesButton.disabled = true; salesButton.title = 'Sign in to use sales data'; salesButton.setAttribute('aria-disabled', 'true'); }
       const shortlist = $('parcelShortlistCard');
       if (shortlist) shortlist.hidden = true;
-      const shortlistToggle = $('shortlistToggle');
-      shortlistToggle?.classList.add('is-signed-out');
-      if (shortlistToggle) { shortlistToggle.innerHTML = '<span aria-hidden="true">☰</span> Sign in to use your shortlist'; shortlistToggle.title = 'Sign in to use your shortlist'; }
+      document.querySelectorAll('.shortlist-toggle').forEach((toggle) => {
+        const label = tr('Sign in to use your shortlist');
+        const icon = toggle.querySelector('[aria-hidden="true"]');
+        toggle.classList.add('is-signed-out');
+        toggle.setAttribute('aria-label', label);
+        toggle.title = label;
+        toggle.replaceChildren(
+          ...(icon ? [icon] : []),
+          document.createTextNode(`${icon ? ' ' : ''}${label}`),
+        );
+      });
     } else {
-      $('shortlistToggle')?.classList.add('is-collapsible');
+      document.querySelectorAll('.shortlist-toggle').forEach((toggle) => {
+        toggle.classList.add('is-collapsible');
+      });
       const close = $('shortlistCloseButton');
       if (close) close.style.display = 'inline-block';
     }

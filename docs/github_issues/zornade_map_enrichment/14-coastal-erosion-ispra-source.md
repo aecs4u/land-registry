@@ -4,6 +4,17 @@ Add an upstream, cache-backed query for ISPRA's national shoreline-change
 layer so the parcel panel can show mapped coastal change within 1 km of a
 parcel.
 
+**Implementation status (2026-10-15):** the application has a local PostGIS
+snapshot schema, a dry-run-first/atomic refresh script, an indexed 1 km parcel
+query, `/api/v1/enrichment/parcel/coastal-erosion/{reference}`, the lazy
+parcel-panel section, `/api/v2` standalone and risk components, and Typst
+dossier source-register attribution. The configured stats database was
+provisioned from the complete ISPRA object-ID list: 99,229 features across 664
+ISTAT municipalities. Two real Civitavecchia parcels returned 35 and 67 mapped
+segments; a dense-area query returned the explicit 100-candidate partial state.
+Target stats databases still need the same schema and snapshot, and provider
+reuse review remains open.
+
 ## Source and contract
 
 - Dataset: ISPRA `Linea di Costa 2020 v2.0`.
@@ -16,12 +27,12 @@ parcel.
 - The 2020 characterization uses mostly Google Maps imagery from 2017–2020;
   this is a historical change layer, not a current erosion forecast.
 
-Proposed query: `coastal_changes_near_geometry(geometry, radius_m=1000,
-limit=5)`. Return only validated source attributes, segment geometry or a
-generalized representation, parcel-to-segment distance, source release,
-spatial accuracy and a completeness state. Keep the upstream FeatureServer
-outside parcel request handling: import or cache the vector data in the shared
-spatial store and query it locally with a bounded candidate limit.
+Query: the refresh script reads the FeatureServer outside parcel request
+handling and stores validated line geometry and selected source attributes in
+`spatial.ispra_coastal_dynamics`. The app queries the shared local PostGIS
+snapshot with `ST_DWithin`, a 1 km radius and a 100-candidate cap. It reports
+parcel-to-segment distances, source release, positional accuracy and whether
+the local query reached its cap.
 
 ## Coverage semantics
 
@@ -38,18 +49,24 @@ spatial store and query it locally with a bounded candidate limit.
 
 ## Acceptance criteria
 
-- Tests cover parcel geometry with an erosion segment, with only a stable or
-  advancing segment, with no mapped segment, and with an unavailable store.
-- Candidate caps produce an explicit partial result.
+- Tests cover parcel geometry with erosion, stable and advancing segments,
+  unknown coverage, an unavailable store and candidate-cap partial results
+  (`tests/test_coastal_erosion.py`; 6 passed).
+- Candidate caps produce an explicit partial result. A dense-area query on the
+  configured stats database returned 100 candidates with `coverage_status:
+  partial` and `query_complete: false`.
 - The returned metadata names ISPRA, the 2006–2020 period, CC BY 4.0, 5 m
-  positional accuracy and the 5 m classification threshold.
+  positional accuracy and the 5 m classification threshold. *(Implemented.)*
 - The panel keeps the section separate from ISPRA flood/landslide hazards and
-  does not label the historic line as a current forecast.
-- The PDF source register carries the ISPRA citation and licence.
+  does not label the historic line as a current forecast. *(Implemented.)*
+- The PDF source register carries the ISPRA citation and licence. *(Implemented.)*
 
 ## Dependencies
 
-- Upstream `aecs4u_stats` ingestion, local query function and source contract.
+- Provision and refresh the local PostGIS table on each target stats database;
+  verify status, parcel coverage and no-match/candidate-cap behavior there. The
+  configured database has the complete 99,229-feature source snapshot, and the
+  application reader has successfully queried it.
 - Validate how the Google imagery lineage relates to redistribution of the
   ISPRA vector product before publishing derived parcel reports.
 

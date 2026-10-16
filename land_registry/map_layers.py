@@ -125,6 +125,25 @@ MAP_LAYERS: tuple[MapLayerSpec, ...] = (
     MapLayerSpec("seismic-classification", "Seismic classification", "hazards.v_seismic_classification_map", "geom", id_column="istat_code", min_zoom=6, max_features=3000, properties=("istat_code", "comune", "regione", "provincia", "zone", "zone_label"), group="risk", color="#7a4cb5", z_order=110, fill_opacity=0.2, color_match=("zone_label", (("zone 1", "#7d1515"), ("zone 2", "#c44444"), ("zone 3", "#e6a700"), ("zone 4", "#5b8f55"))), require_gist_index=False, tile_revision="1"),
     MapLayerSpec("surface-subsidence", "Ground movement (EGMS)", "geo_surface_change.egms_subsidenza", "geom", id_column="risk_index", min_zoom=8, max_features=3000, geojson_max_area=4.0, properties=("risk_index", "mean_velocity", "acceleration", "risk_class", "risk_class_label", "velocity_class_label", "signal_quality"), group="risk", color="#c45c2d", z_order=115, fill_opacity=0.25, require_gist_index=False, tile_revision="2"),
     MapLayerSpec(
+        "landscape-constraints", "Landscape constraints",
+        "spatial.protection_area", "geom", min_zoom=8, max_features=3000,
+        coverage="partial",
+        coverage_note="Published regional source coverage can be incomplete",
+        properties=("id", "category", "source", "source_id", "source_label", "act_reference", "source_url", "is_binding", "source_release"),
+        group="territory", color="#5c8a52", z_order=75, fill_opacity=0.2,
+        color_match=("category", (("art136", "#4c772f"), ("art142", "#78a641"), ("art157", "#ad8a38"))),
+        tile_revision="1",
+    ),
+    MapLayerSpec(
+        "heritage-protections", "Cultural heritage protections",
+        "spatial.protection_area", "geom", min_zoom=10, max_features=3000,
+        coverage="partial",
+        coverage_note="Published regional source coverage can be incomplete",
+        properties=("id", "category", "source", "source_id", "source_label", "act_reference", "source_url", "is_binding", "source_release"),
+        kind="mixed", group="territory", color="#9b4c83", z_order=76,
+        polygon_color="#934274", fill_opacity=0.24, tile_revision="1",
+    ),
+    MapLayerSpec(
         "solar-potential", "Solar potential by municipality",
         "solar.solar_potential_comuni", "geom", id_column="id",
         properties=(
@@ -156,6 +175,11 @@ MAP_LAYERS: tuple[MapLayerSpec, ...] = (
 )
 
 _BY_ID = {layer.id: layer for layer in MAP_LAYERS}
+_PROTECTION_LAYER_TYPES = {
+    "landscape-constraints": "landscape",
+    "heritage-protections": "cultural_heritage",
+}
+PROTECTION_LAYER_IDS = frozenset(_PROTECTION_LAYER_TYPES)
 _HAZARDS_SOURCE_RELATIONS = {
     "flood-hazard": "public.flood_hazard",
     "landslide-hazard": "public.landslide_hazard",
@@ -227,8 +251,13 @@ def get_map_layer(layer_id: str) -> MapLayerSpec:
         raise KeyError(f"Unknown map layer: {layer_id}") from exc
 
 
-def map_layer_catalog() -> list[dict[str, Any]]:
-    return [layer.public() for layer in MAP_LAYERS]
+def map_layer_catalog(include_protection_ids: Optional[set[str]] = None) -> list[dict[str, Any]]:
+    included = include_protection_ids or set()
+    return [
+        layer.public()
+        for layer in MAP_LAYERS
+        if layer.id not in PROTECTION_LAYER_IDS or layer.id in included
+    ]
 
 
 def _json_value(value: Any) -> Any:
@@ -496,6 +525,7 @@ class PostgresMapLayerSource:
         self._egms_routes: dict[str, tuple[Any, float]] = {}
         self._cadastral_routes: dict[str, tuple[Any, float]] = {}
         self._resolved_relations: dict[str, tuple[str, float]] = {}
+        self._protection_layer_ids_cache: tuple[set[str], float] | None = None
 
     def _source_for(self, layer: MapLayerSpec) -> Any:
         if layer.id == "census-sections" and self.census_connection_source is not None:
@@ -832,7 +862,45 @@ class PostgresMapLayerSource:
             return _istat_boundary_relation()
         if layer.id == "solar-potential":
             return _solar_potential_relation()
+        if layer.id in _PROTECTION_LAYER_TYPES:
+            protection_type = _PROTECTION_LAYER_TYPES[layer.id]
+            return f"(SELECT * FROM {resolved_relation} WHERE protection_type = '{protection_type}')"
         return resolved_relation
+
+    async def available_protection_layer_ids(self) -> set[str]:
+        """Expose optional protection map layers only after their schema is ready."""
+        cached = self._protection_layer_ids_cache
+        if cached and cached[1] > time.monotonic():
+            return set(cached[0])
+        available: set[str] = set()
+        source = self.connection_source
+        if source is not None:
+            try:
+                async with source.connection() as connection:
+                    relation = await connection.fetchval(
+                        "SELECT to_regclass('spatial.protection_area')::text"
+                    )
+                    if relation:
+                        required = {
+                            "id", "protection_type", "category", "source", "source_id",
+                            "source_label", "act_reference", "source_url", "is_binding",
+                            "source_release", "geom",
+                        }
+                        columns = await connection.fetch(
+                            """
+                            SELECT attname::text AS name
+                            FROM pg_attribute
+                            WHERE attrelid = to_regclass('spatial.protection_area')
+                              AND attnum > 0 AND NOT attisdropped
+                            """
+                        )
+                        column_names = {row["name"] for row in columns}
+                        if required.issubset(column_names):
+                            available = set(PROTECTION_LAYER_IDS)
+            except Exception as exc:
+                log.debug("Protection map-layer readiness check failed: %s", exc)
+        self._protection_layer_ids_cache = (available, time.monotonic() + 300)
+        return set(available)
 
     async def read_mvt(self, layer_id: str, z: int, x: int, y: int) -> bytes:
         layer = get_map_layer(layer_id)
@@ -886,6 +954,7 @@ class PostgresMapLayerSource:
             # this, so only polygons that would vanish are skipped.
             min_polygon_area = 0.25 * (tile_width / 4096) ** 2
             point_filter = ""
+            polygon_keys_sql = "SELECT NULL::text AS idconc, NULL::text AS snapshot_id WHERE FALSE"
             if layer.id == "maritime-concessions":
                 # Keep marker-only concessions, but do not place a marker over
                 # a matching footprint that survives clipping/quantization.
@@ -898,6 +967,7 @@ class PostgresMapLayerSource:
                         WHERE p.idconc = t.idconc AND p.snapshot_id = t.snapshot_id
                     )
                 """
+                polygon_keys_sql = "SELECT DISTINCT idconc, snapshot_id FROM polygon_features"
             feature_ctes = f"""
                 polygon_features AS (
                     SELECT * FROM (
@@ -910,7 +980,7 @@ class PostgresMapLayerSource:
                     WHERE geom IS NOT NULL
                     LIMIT %s
                 ), polygon_keys AS (
-                    SELECT DISTINCT idconc, snapshot_id FROM polygon_features
+                    {polygon_keys_sql}
                 ), point_features AS (
                     SELECT {columns},
                            ST_AsMVTGeom(ST_Transform(t.{layer.geometry_column}, 3857), bounds.tile, 4096, 64, true) AS geom
@@ -955,6 +1025,101 @@ class PostgresMapLayerSource:
         async with layer_source.connection() as connection:
             tile = await connection.fetchval(_asyncpg_sql(sql), *params)
         return tile or b""
+
+    async def read_protection_constraints(self, parcel_geometry: dict[str, Any]) -> dict[str, Any]:
+        """Return protection records and coverage for one canonical parcel."""
+        unknown_coverage = {"landscape": "unknown", "cultural_heritage": "unknown"}
+        unavailable = {
+            "status": "unavailable",
+            "constraints": [],
+            "coverage": unknown_coverage,
+            "truncated": False,
+            "reason": "not_built",
+            "source": "SITAP / Vincoli in Rete / Catalogo Generale via aecs4u-stats",
+        }
+        source = self.connection_source
+        if source is None:
+            unavailable["reason"] = "source_unavailable"
+            return unavailable
+
+        geometry_json = json.dumps(parcel_geometry, separators=(",", ":"))
+        async with source.connection() as connection:
+            if not await connection.fetchval(
+                "SELECT to_regclass('spatial.protection_area')::text"
+            ):
+                return unavailable
+            rows = await connection.fetch(
+                """
+                WITH parcel AS (
+                    SELECT ST_SetSRID(ST_GeomFromGeoJSON($1), 4326) AS geom
+                )
+                SELECT a.id, a.protection_type, a.category, a.source, a.source_id,
+                       a.source_label, a.act_reference, a.source_url, a.is_binding,
+                       a.source_release, normalized.geometry_valid,
+                       CASE WHEN NOT normalized.geometry_valid
+                                  OR ST_Dimension(normalized.geom) = 0 THEN NULL
+                            ELSE ST_Area(ST_Transform(ST_Intersection(normalized.geom, p.geom), 3035))
+                                 / NULLIF(ST_Area(ST_Transform(p.geom, 3035)), 0)
+                       END AS overlap_ratio
+                FROM spatial.protection_area AS a
+                CROSS JOIN parcel AS p
+                CROSS JOIN LATERAL (
+                    SELECT ST_IsValid(a.geom) AS geometry_valid,
+                           CASE WHEN ST_IsValid(a.geom) THEN a.geom ELSE ST_MakeValid(a.geom) END AS geom
+                ) AS normalized
+                WHERE a.protection_type IN ('landscape', 'cultural_heritage')
+                  AND a.geom && p.geom
+                  AND normalized.geom && p.geom
+                  AND ST_Intersects(normalized.geom, p.geom)
+                  AND NOT ST_Touches(normalized.geom, p.geom)
+                ORDER BY a.protection_type, a.id
+                LIMIT 101
+                """,
+                geometry_json,
+            )
+
+            coverage: dict[str, str] = dict(unknown_coverage)
+            coverage_relation = await connection.fetchval(
+                "SELECT to_regclass('spatial.protection_coverage')::text"
+            )
+            if coverage_relation:
+                for protection_type in unknown_coverage:
+                    covered = await connection.fetchval(
+                        """
+                        WITH parcel AS (
+                            SELECT ST_SetSRID(ST_GeomFromGeoJSON($1), 4326) AS geom
+                        )
+                        SELECT COALESCE(bool_or(ST_Covers(c.geom, p.geom)), FALSE)
+                        FROM spatial.protection_coverage AS c
+                        CROSS JOIN parcel AS p
+                        WHERE c.protection_type = $2
+                        """,
+                        geometry_json,
+                        protection_type,
+                    )
+                    if covered:
+                        coverage[protection_type] = "covered"
+
+        truncated = len(rows) > 100
+        constraints = [
+            {
+                key: (float(row[key]) if key == "overlap_ratio" and row[key] is not None else row[key])
+                for key in (
+                    "id", "protection_type", "category", "source", "source_id",
+                    "source_label", "act_reference", "source_url", "is_binding",
+                    "source_release", "geometry_valid", "overlap_ratio",
+                )
+            }
+            for row in rows[:100]
+        ]
+        return {
+            "status": "published",
+            "constraints": constraints,
+            "coverage": coverage,
+            "truncated": truncated,
+            "reason": None,
+            "source": "SITAP / Vincoli in Rete / Catalogo Generale via aecs4u-stats",
+        }
 
     async def read_geojson(self, layer_id: str, bbox: tuple[float, float, float, float], limit: int, offset: int = 0) -> dict[str, Any]:
         layer = get_map_layer(layer_id)
@@ -1686,6 +1851,56 @@ class PostgresMapLayerSource:
                 "geometry": json.loads(geometry) if geometry else None,
             })
         return features
+
+    async def read_parcel_by_id(self, feature_id: int) -> Optional[dict[str, Any]]:
+        """Return one cadastral parcel, including WGS84 geometry, by stable map ID."""
+        layer = get_map_layer("cadastral-parcels")
+        layer_source = await self._layer_source_for(layer)
+        if layer_source is None:
+            return None
+        columns = self._source_columns(layer, self._properties_for(layer, layer_source))
+        relation = self._query_relation(layer, await self._resolve_relation_for(layer, layer_source))
+        geometry_ref = self._column_ref("t", layer.geometry_column)
+        if layer_source is self.cadastral_connection_source:
+            geometry = f"ST_AsGeoJSON({geometry_ref})"
+            computed_area = f"COALESCE(t.area_sqm, ST_Area({geometry_ref}::geography))"
+            municipality_name = "t.municipality_name"
+        else:
+            geometry = f"ST_AsGeoJSON(ST_Transform({geometry_ref}, 4326))"
+            computed_area = f"ST_Area({geometry_ref}::geography)"
+            municipality_name = (
+                "(SELECT u.canonical_name FROM geo.geo_unit AS u "
+                "WHERE u.id = t.municipality_id)"
+            )
+        sql = f"""
+            SELECT {columns},
+                   {geometry} AS geometry,
+                   {computed_area} AS computed_area_sqm,
+                   {municipality_name} AS municipality_name
+            FROM {relation} AS t
+            WHERE t.{layer.id_column} = %s
+            LIMIT 1
+        """
+        async with layer_source.connection() as connection:
+            row = await connection.fetchrow(_asyncpg_sql(sql), int(feature_id))
+        if not row:
+            return None
+        values = dict(row)
+        geometry_value = values.pop("geometry", None)
+        properties = {
+            key: _json_value(values.get(key))
+            for key in self._properties_for(layer, layer_source)
+        }
+        if values.get("computed_area_sqm") is not None:
+            properties["area_sqm"] = _json_value(values["computed_area_sqm"])
+        if values.get("municipality_name") is not None:
+            properties["municipality_name"] = _json_value(values["municipality_name"])
+        return {
+            "type": "Feature",
+            "id": values.get(layer.id_column),
+            "properties": properties,
+            "geometry": json.loads(geometry_value) if geometry_value else None,
+        }
 
     async def read_feature_details(self, layer_id: str, feature_id: int) -> Optional[dict[str, Any]]:
         """Return one allow-listed feature and related maritime records."""

@@ -3829,6 +3829,18 @@ body.dark-mode .drawing-subsection-divider {
   color: #666;
 }
 
+.enrichment-risk-score {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.enrichment-risk-score meter {
+  width: 84px;
+  height: 8px;
+}
+
 .enrichment-indicator-cluster { margin-top: 12px; }
 .enrichment-indicator-cluster h4 { display: flex; justify-content: space-between; gap: 8px; margin: 0 0 6px; font-size: 13px; }
 .enrichment-indicator-cluster h4 small { color: #777; font-size: 11px; font-weight: 400; }
@@ -5335,6 +5347,13 @@ body.parcel-report-open { overflow: hidden; }
   margin: 6px 0 0;
   font-size: 12px;
   color: #b3261e;
+}
+
+.zone-keyboard-help {
+  margin: 6px 0 0;
+  color: #5f6368;
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .zone-edit-form input[type="text"],
@@ -7178,6 +7197,13 @@ body.dark-mode .nav-dropdown-item:hover { background: #383838; }
   width: 100%; box-sizing: border-box; border: 1px solid #ced4da;
   border-radius: 4px; padding: 5px 8px; font-size: 13px; background: #fff;
 }
+.map-renderer-notice {
+  margin: 4px 0 9px; padding: 7px 8px; border-left: 3px solid #d97706;
+  border-radius: 3px; background: #fff7ed; color: #7c2d12; font-size: 12px; line-height: 1.4;
+}
+.tool-checkbox-label { display: flex !important; align-items: center; gap: 6px; }
+.tool-checkbox-label input { margin: 0; }
+.map-renderer-help { display: block; margin: 3px 0 0 22px; color: #6b7280; font-size: 11px; }
 .tool-btn {
   flex: 1; background: #3b5bdb; color: #fff; border: none; border-radius: 5px;
   padding: 7px 10px; font-size: 12px; font-weight: 500; cursor: pointer;

@@ -199,6 +199,55 @@ async def test_async_parcel_context_includes_optional_municipal_solar_aggregates
 
 
 @pytest.mark.asyncio
+async def test_municipality_solar_lookup_returns_aggregates_and_provenance(monkeypatch):
+    source = stats_service._AsyncPostgresSource("postgresql://localhost/stats")
+    row = {
+        "pv_n_buildings": 120,
+        "pv_pvout_pessimistic_kwh_year_total": 540000,
+        "pv_pvout_modern_kwh_year_total": 690000,
+        "pv_pvout_per_capita_kwh": 2200,
+        "pv_kwp_max_total": 420,
+        "pv_high_viability_pct": 12.5,
+        "pv_medium_viability_pct": 44.0,
+        "pv_low_viability_pct": 31.0,
+        "pv_not_eligible_pct": 12.5,
+        "solar_data_version": "solar-comuni-2026-09",
+        "solar_updated_at": "2026-09-30",
+    }
+    monkeypatch.setattr(source, "_relations_available", AsyncMock(return_value=True))
+    fetchrow = AsyncMock(return_value=row)
+    monkeypatch.setattr(source, "_fetchrow", fetchrow)
+    monkeypatch.setattr(stats_service, "_get_async_postgres_source", AsyncMock(return_value=source))
+
+    result = await stats_service.aget_municipality_solar_potential("058091")
+
+    assert result == {
+        "available": True,
+        "data": {key: value for key, value in row.items() if key.startswith("pv_")},
+        "source": "aecs4u-stats solar.solar_potential_comuni",
+        "dataset_version": "solar-comuni-2026-09",
+        "updated_at": "2026-09-30",
+        "match_method": "cadastral municipality code",
+        "spatial_resolution": "municipality",
+    }
+    sql, params = fetchrow.await_args.args
+    assert "FROM solar.solar_potential_comuni" in sql
+    assert params == ("058091",)
+
+
+@pytest.mark.asyncio
+async def test_municipality_solar_lookup_reports_no_data_without_querying_missing_table(monkeypatch):
+    source = stats_service._AsyncPostgresSource("postgresql://localhost/stats")
+    monkeypatch.setattr(source, "_relations_available", AsyncMock(return_value=False))
+    fetchrow = AsyncMock(side_effect=AssertionError("missing solar table was queried"))
+    monkeypatch.setattr(source, "_fetchrow", fetchrow)
+    monkeypatch.setattr(stats_service, "_get_async_postgres_source", AsyncMock(return_value=source))
+
+    assert await stats_service.aget_municipality_solar_potential("058091") is None
+    fetchrow.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_country_relocation_indicators_keep_country_scope_and_units(monkeypatch):
     source = stats_service._AsyncPostgresSource("postgresql://localhost/stats")
     fetch = AsyncMock(side_effect=[
@@ -401,6 +450,11 @@ async def test_feature_specific_read_models_use_distinct_cache_keys(monkeypatch)
             return True
 
         async def context_for_parcel(self, *args, **kwargs):
+            return None
+
+        async def sister_buildings_for_parcel(self, *args, **kwargs):
+            # The panel view now asks for SISTER records; a missing view
+            # (``None``) must not make the build look partial.
             return None
 
     class FakeMapSource:

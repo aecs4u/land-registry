@@ -4,7 +4,7 @@ The parcel read model declares a long list of blocks (``_PARCEL_DETAIL_BLOCKS``)
 but only some are filled by ``_build_parcel_enrichment``. This test pins that
 split with every external source stubbed, so a change in coverage is a visible,
 deliberate edit instead of a silent one. See
-``docs/PARCEL_PANEL_GAP_ANALYSIS_2026-10.md`` (Phase 0 and Phase 3).
+``docs/ZORNADE_GAP_ANALYSIS.md (Appendix A)`` (Phase 0 and Phase 3).
 """
 
 from land_registry import stats_service

@@ -23,7 +23,17 @@ from pydantic import BaseModel, Field, ValidationError
 
 from land_registry import stats_service
 from land_registry.map_layers import get_map_layer_source
-from land_registry.models import EnrichmentDatasetStatus
+from land_registry.models import EnrichmentDatasetStatus, SolarEconomicsRequest
+from land_registry.solar_economics import (
+    PVGIS_DATA_PERIOD,
+    PVGIS_MODEL,
+    PVGIS_SOURCE_URL,
+    SolarSourceTimeout,
+    SolarSourceUnavailable,
+    assumptions_from_request,
+    annual_yield_per_kwp,
+    calculate_economics,
+)
 
 enrichment_router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -42,9 +52,10 @@ class ParcelReportSnapshot(BaseModel):
 
 
 _REPORT_SECTION_IDS = {
-    "identity", "omi", "pvp", "address", "buildings", "opendata", "risks", "parcel-hazards",
+    "identity", "omi", "pvp", "address", "buildings", "opendata", "risks", "parcel-hazards", "coastal_erosion",
     "agenziademanio", "solar", "subsidence", "bulletin", "fires", "municipality", "income",
-    "census", "safety", "demographics", "quality", "pois", "coverage",
+    "census", "safety", "demographics", "quality", "pois", "nightlights", "land-cover", "terrain", "coverage",
+    "protection-constraints",
 }
 _MAX_REPORT_SNAPSHOT_BYTES = 240_000
 
@@ -116,6 +127,9 @@ async def _get_risks_with_postgres_fallback(istat_code: str):
         result = {"istat_code": str(istat_code), "seismic": None, "hydrogeological": None}
     if not result.get("seismic"):
         result["seismic"] = await stats_service.aget_seismic_by_istat_code(istat_code)
+    result.update(stats_service._composite_risk_fields(
+        result.get("seismic"), result.get("hydrogeological")
+    ))
     return result
 
 
@@ -279,6 +293,150 @@ async def get_municipality(cadastral_code: str):
             detail=f"No municipality found for cadastral code '{cadastral_code}'",
         )
     return result
+
+
+@enrichment_router.get("/land-cover/{national_reference}")
+async def get_parcel_land_cover(
+    national_reference: str,
+    id: Annotated[Optional[int], Query(ge=1, description="Canonical map feature id of the selected parcel")] = None,
+):
+    """Return CORINE 2018 majority land-cover class for one parcel."""
+    try:
+        result = await stats_service.aget_parcel_land_cover(national_reference, feature_id=id)
+    except stats_service.CanonicalParcelLookupError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Canonical map source unavailable for feature-specific land-cover lookup",
+        ) from exc
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No cadastral parcel found for '{national_reference}'",
+        )
+    return result
+
+
+@enrichment_router.get("/terrain/{national_reference}")
+async def get_parcel_terrain(
+    national_reference: str,
+    id: Annotated[Optional[int], Query(ge=1, description="Canonical map feature id of the selected parcel")] = None,
+):
+    """Return TINITALY 1.1 terrain statistics for one parcel."""
+    try:
+        result = await stats_service.aget_parcel_terrain(national_reference, feature_id=id)
+    except stats_service.CanonicalParcelLookupError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Canonical map source unavailable for feature-specific terrain lookup",
+        ) from exc
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No cadastral parcel found for '{national_reference}'",
+        )
+    return result
+
+
+@enrichment_router.get("/building-footprints/{national_reference}")
+async def get_parcel_building_footprints(
+    national_reference: str,
+    id: Annotated[Optional[int], Query(ge=1, description="Canonical map feature id of the selected parcel")] = None,
+):
+    """Return mapped OpenStreetMap building footprints intersecting one parcel."""
+    try:
+        result = await stats_service.aget_parcel_building_footprints(
+            national_reference, feature_id=id
+        )
+    except stats_service.CanonicalParcelLookupError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Canonical map source unavailable for feature-specific building lookup",
+        ) from exc
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No cadastral parcel found for '{national_reference}'",
+        )
+    return result
+
+
+@enrichment_router.get("/anncsu-addresses/{national_reference}")
+async def get_parcel_anncsu_addresses(
+    national_reference: str,
+    id: Annotated[Optional[int], Query(ge=1, description="Canonical map feature id of the selected parcel")] = None,
+):
+    """Return geocoded ANNCSU civic-address points inside one parcel."""
+    try:
+        result = await stats_service.aget_parcel_anncsu_addresses(
+            national_reference, feature_id=id
+        )
+    except stats_service.CanonicalParcelLookupError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Canonical map source unavailable for feature-specific address lookup",
+        ) from exc
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No cadastral parcel found for '{national_reference}'",
+        )
+    return result
+
+
+@enrichment_router.post("/solar-economics/{national_reference}")
+async def post_parcel_solar_economics(
+    national_reference: str,
+    scenario: SolarEconomicsRequest,
+    id: Annotated[Optional[int], Query(ge=1, description="Canonical feature ID of the selected parcel")] = None,
+):
+    """Calculate an editable PV economics scenario using PVGIS yield at the parcel centroid.
+
+    The user supplies system size and assumptions. Parcel area is never treated
+    as roof area or used to infer an installable system size.
+    """
+    parcel = await get_parcel_by_reference(national_reference, id=id)
+    centroid = await asyncio.to_thread(stats_service._parcel_centroid, parcel)
+    if centroid is None:
+        raise HTTPException(status_code=422, detail="Parcel geometry is unavailable for a PVGIS location")
+
+    try:
+        production = await annual_yield_per_kwp(
+            lat=centroid["lat"],
+            lng=centroid["lng"],
+            tilt_degrees=scenario.tilt_degrees,
+            aspect_degrees=scenario.aspect_degrees,
+            system_losses_pct=scenario.system_losses_pct,
+        )
+    except SolarSourceTimeout as exc:
+        raise HTTPException(status_code=504, detail="PVGIS did not respond in time. Retry the calculation.") from exc
+    except SolarSourceUnavailable as exc:
+        raise HTTPException(status_code=503, detail="PVGIS is temporarily unavailable for this scenario.") from exc
+
+    economics, calculation_method = calculate_economics(
+        production["annual_yield_kwh_per_kwp"],
+        scenario.system_kwp,
+        assumptions_from_request(scenario),
+    )
+    return {
+        "national_reference": national_reference,
+        "location": {
+            **centroid,
+            "match_method": "parcel geometry centroid",
+            "spatial_scope": "PVGIS location estimate; not a roof measurement",
+        },
+        "production": production,
+        "scenario": scenario.model_dump(),
+        "economics": economics,
+        "calculation_method": calculation_method,
+        "provenance": {
+            "source_key": "pvgis",
+            "source": PVGIS_MODEL,
+            "dataset_period": PVGIS_DATA_PERIOD,
+            "endpoint": PVGIS_SOURCE_URL,
+            "yield_method": "PVGIS PVcalc long-term monthly production for a 1 kWp reference system",
+            "financial_inputs": "user supplied; defaults are illustrative only",
+        },
+    }
 
 
 @enrichment_router.get("/pois/")
@@ -603,6 +761,40 @@ async def get_parcel_hazards(
     if not geometry:
         raise HTTPException(status_code=404, detail="Parcel geometry is not available")
     return await stats_service.aget_parcel_hazard_intersections(geometry)
+
+
+@enrichment_router.get("/parcel/constraints/{national_reference}")
+async def get_parcel_protection_constraints(
+    national_reference: str,
+    id: Annotated[int, Query(ge=1, description="Required canonical feature ID because parcel references can repeat")],
+):
+    """Return intersecting landscape and cultural-heritage source records."""
+    source = get_map_layer_source()
+    parcel = await get_parcel_by_reference(national_reference, id=id)
+    geometry = parcel.get("geometry") if isinstance(parcel, dict) else None
+    if not geometry:
+        raise HTTPException(status_code=404, detail="Parcel geometry is not available")
+    try:
+        result = await source.read_protection_constraints(geometry)
+    except Exception as exc:
+        logger.warning("Protection constraint lookup failed for parcel %s", id, exc_info=True)
+        raise HTTPException(status_code=503, detail="Protection constraints query failed") from exc
+    result["parcel_id"] = id
+    return result
+
+
+@enrichment_router.get("/parcel/coastal-erosion/{national_reference}")
+async def get_parcel_coastal_erosion(
+    national_reference: str,
+    id: Annotated[Optional[int], Query(ge=1, description="Canonical feature ID hint from the selected parcel")] = None,
+):
+    """Query the local ISPRA 2006–2020 shoreline-change snapshot."""
+    source = get_map_layer_source()
+    parcel = await get_parcel_by_reference(national_reference, id=id if source.available else None)
+    geometry = parcel.get("geometry") if isinstance(parcel, dict) else None
+    if not geometry:
+        raise HTTPException(status_code=404, detail="Parcel geometry is not available")
+    return await stats_service.aget_parcel_coastal_erosion(geometry)
 
 
 @enrichment_router.get("/parcel/subsidence/{national_reference}")

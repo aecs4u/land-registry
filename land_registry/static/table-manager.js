@@ -519,16 +519,34 @@ function changeMappingPageSize() { loadTableData('mapping', 1); }
 function goToMappingPage(page) { goToPage('mapping', page); }
 
 function normalizeMappingWorkflow(workflow) {
-    return workflow === 'rents' ? 'rents' : 'sales';
+    return workflow === 'sales' || workflow === 'rents' ? workflow : null;
+}
+
+function parseMappingZoneId(value) {
+    const rawValue = String(value ?? '');
+    if (!/^\d+$/.test(rawValue)) return null;
+
+    const zoneId = Number(rawValue);
+    return Number.isSafeInteger(zoneId) && zoneId > 0 ? zoneId : null;
 }
 
 function normalizeMappingContext(context) {
     if (!context || typeof context !== 'object') return null;
-    const zoneId = parseInt(context.zoneId, 10);
-    if (!Number.isFinite(zoneId)) return null;
+    const zoneId = parseMappingZoneId(context.zoneId);
+    const workflow = normalizeMappingWorkflow(context.workflow);
+    if (context.error) {
+        return { zoneId, workflow, error: context.error };
+    }
+    if (zoneId === null || workflow === null) {
+        return {
+            zoneId,
+            workflow,
+            error: zoneId === null ? 'invalid_zone' : 'invalid_workflow'
+        };
+    }
     return {
         zoneId,
-        workflow: normalizeMappingWorkflow(context.workflow)
+        workflow
     };
 }
 
@@ -536,12 +554,23 @@ function getMappingContextFromUrl() {
     const params = new URLSearchParams(window.location.search);
     if (params.get(MAPPING_VIEW_QUERY_KEY) !== 'mapping') return null;
 
-    const zoneId = parseInt(params.get(MAPPING_ZONE_QUERY_KEY) || '', 10);
-    if (!Number.isFinite(zoneId)) return null;
+    const rawZoneId = params.get(MAPPING_ZONE_QUERY_KEY);
+    const rawWorkflow = params.get(MAPPING_WORKFLOW_QUERY_KEY);
+    if (rawZoneId === null && rawWorkflow === null) return null;
+
+    const zoneId = parseMappingZoneId(rawZoneId);
+    const workflow = normalizeMappingWorkflow(rawWorkflow);
+    if (zoneId === null || workflow === null) {
+        return {
+            zoneId,
+            workflow,
+            error: zoneId === null ? 'invalid_zone' : 'invalid_workflow'
+        };
+    }
 
     return {
         zoneId,
-        workflow: normalizeMappingWorkflow(params.get(MAPPING_WORKFLOW_QUERY_KEY))
+        workflow
     };
 }
 
@@ -549,16 +578,24 @@ function updateMappingUrlContext(context) {
     const params = new URLSearchParams(window.location.search);
     params.set(MAPPING_VIEW_QUERY_KEY, 'mapping');
 
-    if (context && Number.isFinite(Number(context.zoneId))) {
-        params.set(MAPPING_ZONE_QUERY_KEY, String(context.zoneId));
-        params.set(MAPPING_WORKFLOW_QUERY_KEY, normalizeMappingWorkflow(context.workflow));
-    } else {
-        params.delete(MAPPING_ZONE_QUERY_KEY);
-        params.delete(MAPPING_WORKFLOW_QUERY_KEY);
+    if (!context || !context.error) {
+        if (
+            context &&
+            Number.isSafeInteger(Number(context.zoneId)) &&
+            Number(context.zoneId) > 0
+        ) {
+            params.set(MAPPING_ZONE_QUERY_KEY, String(context.zoneId));
+            params.set(MAPPING_WORKFLOW_QUERY_KEY, normalizeMappingWorkflow(context.workflow));
+        } else {
+            params.delete(MAPPING_ZONE_QUERY_KEY);
+            params.delete(MAPPING_WORKFLOW_QUERY_KEY);
+        }
     }
 
-    const query = params.toString();
-    const nextUrl = query ? `${window.location.pathname}?${query}` : window.location.pathname;
+    const pathname = window.location.pathname === '/map-legacy' ? '/map' : window.location.pathname;
+    if (pathname === '/map') params.delete('legacy');
+    const canonicalQuery = params.toString();
+    const nextUrl = canonicalQuery ? `${pathname}?${canonicalQuery}` : pathname;
     window.history.replaceState({}, '', nextUrl);
 }
 

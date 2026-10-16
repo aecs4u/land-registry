@@ -1,8 +1,8 @@
 # Protection constraints: aecs4u-stats → land-registry contract
 
-**Status:** proposed on 2026-09-27 for [aecs4u-stats#48](https://github.com/aecs4u/aecs4u-stats/issues/48). **Implementation status (checked 2026-10-09): the land-registry side is not implemented.** `land_registry/map_layers.py` has no `PROTECTION_AREA_TABLE`, `PROTECTION_COVERAGE_TABLE` or `_PROTECTION_PROPERTIES`, there are no `landscape-constraints` or `heritage-protections` catalog layers, no `GET /api/v1/enrichment/parcel/constraints/{reference}` route and no panel section. Git history shows only this document was added (commit `8268a8a`). The sections below describe the intended behaviour; the work is scheduled as Phase 3, item 1 of [PARCEL_PANEL_GAP_ANALYSIS_2026-10.md](PARCEL_PANEL_GAP_ANALYSIS_2026-10.md). Until aecs4u-stats publishes the tables below, the two map layers stay out of the catalog, and the parcel panel shows no constraint section.
+**Status:** proposed on 2026-09-27 for [aecs4u-stats#48](https://github.com/aecs4u/aecs4u-stats/issues/48). **Land-registry implementation status (2026-10-15):** the required-ID parcel endpoint, lazy panel section and both map-layer specifications are implemented. The layer catalog validates the `spatial.protection_area` schema and rechecks readiness every five minutes; until that table is provisioned the layers remain hidden. The endpoint returns `status: unavailable` and unknown coverage when the source table is absent. The upstream schema, import and regional coverage are still pending, so no live constraint result has been verified. The sections below describe the shared contract and expected behaviour.
 
-This is what land-registry reads. Table and column names can change, but they must change in both repositories together. On the land-registry side they live in `land_registry/map_layers.py` (`PROTECTION_AREA_TABLE`, `PROTECTION_COVERAGE_TABLE`, `_PROTECTION_PROPERTIES`).
+This is what land-registry reads. Table and column names can change, but they must change in both repositories together. The allow-listed table and required properties are encoded in `land_registry/map_layers.py` and `land_registry/routers/enrichment.py`.
 
 ## `spatial.protection_area` (required)
 
@@ -50,6 +50,7 @@ When a parcel intersects no rows of a type, land-registry reports "none recorded
   - The polygon `id` is required, because parcel references are not unique.
   - A row matches when it intersects the parcel. Rows that only touch its boundary are excluded.
   - Each polygon row carries `overlap_ratio`, the share of the parcel it covers. Points have `null`.
+  - Each row carries `geometry_valid`; invalid source geometries may be identified using a repaired copy for intersection, but have a null overlap ratio.
   - Up to 100 rows are returned; `truncated` flags more.
 
   ```json
@@ -68,4 +69,6 @@ When a parcel intersects no rows of a type, land-registry reports "none recorded
 
 - **Parcel panel.** A "Protection constraints" section appears above the optional enrichment. It lists each record with its act, overlap share, source link, and a "catalogue record, not a binding constraint" note where applicable. It ends with "Source data, not a legal certificate; confirm with the competent Soprintendenza."
 
-- **Not wired yet.** The account-settings page does not offer these layers as opening defaults while they are marked `pending_release`. Remove that flag in `map_layers.py` once the tables ship.
+- **Public API v2.** The `risk` section includes a `protection_constraints` component when requested, with matched rows, per-type coverage, binding status, availability and truncation state. The component is unavailable until the source table is provisioned; unknown coverage is preserved. Source reuse terms remain under review.
+
+- **Readiness gating.** The dynamic catalog omits both layers until the expected relation and columns are present. Once the shared tables ship, they become available through the map's normal overlay catalog without a code restart; source coverage remains partial until the coverage relation proves full parcel coverage.

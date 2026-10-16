@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
@@ -143,7 +144,11 @@ def test_build_dossier_summarises_the_parcel_from_sourced_values():
     assert kpis["Superficie"]["value"] == "1.283 m²"
     assert kpis["€/m² (OMI)"]["value"] == "935" and kpis["€/m² (OMI)"]["hint"] == "770–1.100"
     assert kpis["Zona sismica"]["value"] == "2"
-    assert [section["id"] for section in variables["sections"]] == ["map", "cadastre", "location", "buildings", "risks", "population", "income", "omi"]
+    assert [section["id"] for section in variables["sections"]] == [
+        "map", "cadastre", "location", "municipality_profile", "buildings", "anncsu_addresses",
+        "risks", "terrain", "land_cover", "population", "quality_of_life", "income", "solar",
+        "nightlights", "omi",
+    ]
     assert {"cover_map.svg", "locator_map.svg", "chart_age.svg", "chart_income_avg.svg", "qr.svg"} <= set(files)
     assert variables["report"]["id"] == "PR-TEST000001"
 
@@ -165,10 +170,173 @@ def test_missing_evidence_is_stated_not_converted_to_a_value():
     sparse_kpis = {item["label"]: item["value"] for item in sparse["kpis"]}
     assert sparse_kpis["€/m² (OMI)"] == sparse_kpis["Zona sismica"] == sparse_kpis["Densità (ab/km²)"] == "n.d."
     for section in sparse["sections"]:
-        if section["id"] in {"buildings", "population", "income", "omi"}:
+        if section["id"] in {"municipality_profile", "buildings", "population", "quality_of_life", "income", "solar", "nightlights", "omi"}:
             assert section["blocks"][0]["type"] == "unavailable", section["id"]
     assert sparse["sources"] and sparse["sources"][0]["title"] == "Dati catastali e identificativi"
     assert "chart_age.svg" not in files
+
+
+def test_municipal_solar_section_scales_aggregates_and_keeps_municipality_scope():
+    variables, _ = _build(
+        _inputs(
+            solar={
+                "available": True,
+                "data": {
+                    "pv_n_buildings": 120,
+                    "pv_pvout_pessimistic_kwh_year_total": 540000,
+                    "pv_pvout_modern_kwh_year_total": 1_260_000,
+                    "pv_pvout_per_capita_kwh": 2200,
+                    "pv_kwp_max_total": 2_400_000,
+                    "pv_high_viability_pct": 12.5,
+                    "pv_medium_viability_pct": 44.0,
+                    "pv_low_viability_pct": 31.0,
+                    "pv_not_eligible_pct": 12.5,
+                },
+                "source": "aecs4u-stats solar.solar_potential_comuni",
+                "dataset_version": "solar-comuni-2026-09",
+                "updated_at": "2026-09-30",
+                "match_method": "cadastral municipality code",
+                "spatial_resolution": "municipality",
+            }
+        )
+    )
+
+    section = next(section for section in variables["sections"] if section["id"] == "solar")
+    rows = dict(section["blocks"][0]["rows"])
+    assert rows["Alta idoneità"] == "12,5 %"
+    assert rows["Media idoneità"] == "44,0 %"
+    assert rows["Produzione annua per residente"] == "2.200 kWh/anno"
+    assert rows["Capacità fotovoltaica massima stimata"] == "2,4 GWp"
+    assert rows["Produzione annua (scenario prudenziale)"] == "540,0 MWh/anno"
+    assert rows["Produzione annua (scenario moderno)"] == "1,3 GWh/anno"
+    assert section["blocks"][1]["text"] == (
+        "Aggregati riferiti al comune: non sono stime per questa particella, per un edificio o per un tetto."
+    )
+
+    source = next(item for item in variables["sources"] if item["title"] == "Potenziale solare comunale")
+    source_rows = dict(source["rows"])
+    assert source_rows["Versione dataset"] == "solar-comuni-2026-09"
+    assert "Potenziale solare comunale=solar-comuni-2026-09" in variables["versions"]
+
+
+def test_municipality_profile_shows_population_history_and_municipal_scope():
+    municipality = {
+        "name": "Palermo",
+        "province": "Palermo",
+        "province_sigla": "PA",
+        "region": "Sicilia",
+        "istat_code": "82053",
+        "is_provincial_capital": True,
+        "website": "https://www.comune.palermo.it/",
+        "source": "ISTAT municipality profile via aecs4u-stats PostgreSQL",
+        "population_history": [
+            {"year": 2020, "resident_population": 657561},
+            {"year": 2022, "resident_population": 630167},
+        ],
+    }
+    variables, files = _build(_inputs(municipality=municipality), locale="en")
+    section = next(item for item in variables["sections"] if item["id"] == "municipality_profile")
+    table = next(block for block in section["blocks"] if block["type"] == "table")
+    assert table["rows"] == [["2020", "657,561"], ["2022", "630,167"]]
+    assert "chart_municipality_population.svg" in files
+    assert "Figures refer to the whole municipality" in section["blocks"][-1]["text"]
+    source = next(item for item in variables["sources"] if item["title"] == "Municipality profile")
+    assert dict(source["rows"])["Spatial resolution"] == "municipality"
+
+
+def test_quality_of_life_section_shows_latest_annual_provincial_edition_only():
+    quality_of_life = {
+        "years": ["2022", "2023", "2023 COVID", "2024"],
+        "source": "ISTAT BES via aecs4u-stats quality_of_life",
+        "clusters": [
+            {
+                "key": "wealth_consumption",
+                "label": "Wealth and consumption",
+                "indicators": [
+                    {
+                        "name": "Average household income",
+                        "unit": "euros",
+                        "values": {
+                            "2023": {"value": 24610.5, "unit": "euros", "temporal_reference": "2022"},
+                            "2024": {"value": 25125, "unit": "euros", "temporal_reference": "2023"},
+                        },
+                    },
+                    {
+                        "name": "Unemployment rate",
+                        "unit": "%",
+                        "values": {
+                            "2023 COVID": {"value": 5.2, "unit": "%", "temporal_reference": "2020"},
+                        },
+                    },
+                ],
+            },
+            {
+                "key": "covid_supplement",
+                "label": "COVID-19 supplement",
+                "indicators": [
+                    {
+                        "name": "COVID-only indicator",
+                        "unit": "index",
+                        "values": {"2023 COVID": {"value": 1, "unit": "index", "temporal_reference": "2020"}},
+                    },
+                ],
+            },
+        ],
+    }
+    variables, _ = _build(_inputs(quality_of_life=quality_of_life), locale="en")
+    section = next(item for item in variables["sections"] if item["id"] == "quality_of_life")
+    table = next(block for block in section["blocks"] if block["type"] == "table")
+    assert table["rows"] == [["Average household income", "25,125", "2023", "euros"]]
+    assert "COVID-only indicator" not in str(section["blocks"])
+    assert "latest annual edition is shown" in section["blocks"][-1]["text"]
+    source = next(item for item in variables["sources"] if item["title"] == "Quality of life (province)")
+    metadata = dict(source["rows"])
+    assert metadata["Spatial resolution"] == "province (NUTS3)"
+    assert metadata["Dataset release / vintage"] == "2024"
+
+
+@pytest.mark.asyncio
+async def test_gather_inputs_fetches_solar_for_the_resolved_istat_municipality(monkeypatch):
+    from land_registry import stats_service
+
+    municipality = {
+        "name": "Palermo",
+        "province": "Palermo",
+        "province_sigla": "PA",
+        "region": "Sicilia",
+        "istat_code": "082053",
+    }
+    solar = {
+        "available": True,
+        "data": {"pv_n_buildings": 120},
+        "source": "aecs4u-stats solar.solar_potential_comuni",
+        "dataset_version": "solar-comuni-2026-09",
+        "spatial_resolution": "municipality",
+        "match_method": "cadastral municipality code",
+    }
+    municipality_lookup = AsyncMock(return_value=municipality)
+    solar_lookup = AsyncMock(return_value=solar)
+    monkeypatch.setattr(stats_service, "aget_municipality_by_cadastral_code", municipality_lookup)
+    monkeypatch.setattr(stats_service, "aget_municipality_solar_potential", solar_lookup)
+    monkeypatch.setattr(stats_service, "aget_omi_zone_at_point", AsyncMock(return_value=None))
+    monkeypatch.setattr(stats_service, "aget_census_section_at_point", AsyncMock(return_value=None))
+    monkeypatch.setattr(stats_service, "aget_income_profile", AsyncMock(return_value=None))
+    monkeypatch.setattr(stats_service, "get_environmental_risks", lambda *_: None)
+    monkeypatch.setattr(stats_service, "aget_seismic_by_istat_code", AsyncMock(return_value=None))
+    monkeypatch.setattr(stats_service, "aget_mps04_pga_at_point", AsyncMock(return_value=None))
+    monkeypatch.setattr(stats_service, "aget_parcel_hazard_intersections", AsyncMock(return_value=None))
+    monkeypatch.setattr(stats_service, "aget_parcel_subsidence_intersections", AsyncMock(return_value=None))
+    monkeypatch.setattr(stats_service, "aget_parcel_coastal_erosion", AsyncMock(return_value=None))
+    monkeypatch.setattr(stats_service, "aget_parcel_nightlights", AsyncMock(return_value=None))
+    monkeypatch.setattr(stats_service, "aget_buildings_for_parcel", AsyncMock(return_value=None))
+    qol_lookup = AsyncMock(return_value=None)
+    monkeypatch.setattr(stats_service, "aget_quality_of_life_indicators", qol_lookup)
+
+    inputs = await pd.gather_inputs(REFERENCE, _parcel())
+
+    assert inputs["solar"] == solar
+    solar_lookup.assert_awaited_once_with("082053")
+    qol_lookup.assert_awaited_once_with("G273")
 
 
 def test_source_register_lists_each_provider_once_with_versions_not_invented():
@@ -205,7 +373,99 @@ def test_english_locale_uses_english_labels_and_separators():
 
 @pytest.mark.asyncio
 async def test_dossier_compiles_to_a_multi_page_pdf():
-    variables, files = _build(saved={"label": "Corner lot", "status": "new", "is_favorite": False})
+    solar = {
+        "available": True,
+        "data": {"pv_n_buildings": 12, "pv_high_viability_pct": 25.0},
+        "source": "aecs4u-stats solar.solar_potential_comuni",
+        "dataset_version": "solar-comuni-2026-09",
+        "spatial_resolution": "municipality",
+        "match_method": "cadastral municipality code",
+    }
+    municipality = {
+        "name": "Palermo",
+        "province": "Palermo",
+        "province_sigla": "PA",
+        "region": "Sicilia",
+        "istat_code": "82053",
+        "population_history": [
+            {"year": 2020, "resident_population": 657561},
+            {"year": 2022, "resident_population": 630167},
+        ],
+        "source": "ISTAT municipality profile via aecs4u-stats PostgreSQL",
+    }
+    quality_of_life = {
+        "years": ["2024"],
+        "source": "ISTAT BES via aecs4u-stats quality_of_life",
+        "clusters": [
+            {
+                "key": "wealth_consumption",
+                "indicators": [
+                    {
+                        "name": "Average household income",
+                        "unit": "euros",
+                        "values": {"2024": {"value": 25125, "unit": "euros", "temporal_reference": "2023"}},
+                    },
+                ],
+            },
+        ],
+    }
+    variables, files = _build(
+        _inputs(solar=solar, municipality=municipality, quality_of_life=quality_of_life),
+        saved={"label": "Corner lot", "status": "new", "is_favorite": False},
+    )
+    pdf = await pd.render_dossier_pdf(variables, files)
+
+    assert pdf.startswith(b"%PDF")
+    assert len(pdf) > 20_000
+
+
+@pytest.mark.asyncio
+async def test_dossier_compiles_with_server_recomputed_solar_scenario():
+    from land_registry.models import SolarEconomicsRequest
+    from land_registry.solar_economics import assumptions_from_request, calculate_economics
+
+    request = SolarEconomicsRequest(system_kwp=5, lifetime_years=25)
+    annual_yield = 1450.0
+    economics, calculation_method = calculate_economics(
+        annual_yield,
+        request.system_kwp,
+        assumptions_from_request(request),
+    )
+    scenario = {
+        "available": True,
+        "source": "PVGIS 5.3 / PVGIS-SARAH3",
+        "location": {
+            "lat": 38.1909,
+            "lng": 13.3072,
+            "match_method": "parcel geometry centroid",
+            "spatial_scope": "PVGIS location estimate; not a roof measurement",
+        },
+        "production": {
+            "annual_yield_kwh_per_kwp": annual_yield,
+            "monthly_yield_kwh_per_kwp": [annual_yield / 12] * 12,
+            "model": "PVGIS 5.3 / PVGIS-SARAH3",
+            "data_period": "2005–2023",
+            "source_url": "https://joint-research-centre.ec.europa.eu/",
+        },
+        "scenario": request.model_dump(),
+        "economics": economics,
+        "calculation_method": calculation_method,
+        "dataset_version": "2005–2023",
+        "model_version": "PVGIS 5.3 / PVGIS-SARAH3",
+    }
+
+    variables, files = _build(_inputs(solar_scenario=scenario))
+    section = next(item for item in variables["sections"] if item["id"] == "solar_scenario")
+    assert [block["type"] for block in section["blocks"]] == ["kv", "kv", "image", "table", "note"]
+    assert "chart_solar_cash_flow.svg" in files
+    solar_source = next(
+        source for source in variables["sources"]
+        if source["title"] == "Scenario fotovoltaico della particella"
+    )
+    source_rows = dict(solar_source["rows"])
+    assert any("PVGIS 5.3 / PVGIS-SARAH3" in value for value in source_rows.values())
+    assert "2005–2023" in source_rows.values()
+
     pdf = await pd.render_dossier_pdf(variables, files)
 
     assert pdf.startswith(b"%PDF")
@@ -230,7 +490,7 @@ def _client(monkeypatch):
     async def fake_parcel(reference, id=None):
         return _parcel()
 
-    async def fake_gather(reference, parcel, *, neighbours=None):
+    async def fake_gather(reference, parcel, *, neighbours=None, solar_scenario=None):
         return _inputs()
 
     async def no_neighbours(reference, feature_id):

@@ -2676,22 +2676,48 @@ function addDataControls(map) {
 // Use the optional legacy WebGL renderer when explicitly loaded by a host;
 // otherwise keep the canonical map functional with Leaflet's Canvas renderer.
 function renderGeoJsonLayer(geojson, options = {}) {
+    let selectedScheme = window.MapRenderingControls?.getSettings?.().colorScheme || 'default';
+    let colorScheme = window.MapColorSchemes?.create(geojson, selectedScheme, {
+        color: options.color || '#3388ff',
+    });
+    const colorFunction = options.colorFunction || ((index, feature) => {
+        const currentScheme = window.MapRenderingControls?.getSettings?.().colorScheme || 'default';
+        if (currentScheme !== selectedScheme) {
+            selectedScheme = currentScheme;
+            colorScheme = window.MapColorSchemes?.create(geojson, selectedScheme, {
+                color: options.color || '#3388ff',
+            });
+        }
+        return colorScheme?.colorForFeature(feature, index) || options.color || '#3388ff';
+    });
     if (window.WebGLRenderer && typeof window.WebGLRenderer.renderGeoJSON === 'function') {
-        return window.WebGLRenderer.renderGeoJSON(geojson, options);
+        return window.WebGLRenderer.renderGeoJSON(geojson, {
+            ...options,
+            map: map || (window.getFoliumMapInstance && window.getFoliumMapInstance()),
+            colorFunction,
+        });
     }
 
     const featureCount = Array.isArray(geojson?.features) ? geojson.features.length : 0;
+    const featureIndexes = new WeakMap();
+    (geojson.features || []).forEach((feature, index) => {
+        if (feature && typeof feature === 'object') featureIndexes.set(feature, index);
+    });
     const renderer = featureCount >= 750 && typeof L.canvas === 'function'
         ? L.canvas({ padding: 0.5 }) : undefined;
     return L.geoJSON(geojson, {
         ...(renderer ? { renderer } : {}),
-        style: () => ({
-            color: options.color || '#3388ff',
-            weight: options.weight || 2,
-            opacity: 1,
-            fillColor: options.color || '#3388ff',
-            fillOpacity: options.fillOpacity ?? 0.4,
-        }),
+        style: feature => {
+            const index = featureIndexes.get(feature) || 0;
+            const color = colorFunction(index, feature);
+            return {
+                color,
+                weight: options.weight || 2,
+                opacity: 1,
+                fillColor: color,
+                fillOpacity: options.fillOpacity ?? 0.4,
+            };
+        },
         onEachFeature: (feature, layer) => {
             if (typeof options.onClick === 'function') {
                 layer.on('click', event => options.onClick(feature, layer, event));
@@ -5092,10 +5118,10 @@ document.addEventListener('DOMContentLoaded', function() {
     // Keyboard Shortcuts
     // ==========================================
     document.addEventListener('keydown', function(e) {
-        // Don't trigger shortcuts when typing in inputs
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) {
-            return;
-        }
+        if (shouldIgnoreGlobalShortcut(e)) return;
+        // The zone manager owns zoom keys after it installs its richer
+        // navigation handler; otherwise both listeners zoomed on one key.
+        if (window.zoneKeyboardState?.initialized && ['+', '=', '-', '_'].includes(e.key)) return;
 
         switch (e.key) {
             case 'Escape':
@@ -5834,6 +5860,7 @@ window.savedZones = {};       // zone_id -> { layer, visible }
 window.zoneLayerGroup = null; // L.LayerGroup for all zone layers
 window.zoneMicrozones = {};   // zone_id -> [microzones]
 window.zoneSearchTerm = '';
+window.zoneSearchFilterTimer = null;
 window.savedMicrozones = {};  // microzone_id -> { zoneId, layer, visible }
 window.microzoneLayerGroup = null;
 window.microzonesDrawnByZone = {}; // zone_id -> boolean
@@ -6138,7 +6165,8 @@ function findCachedMicrozone(zoneId, microzoneId) {
 }
 
 function formatWorkflowLabel(workflow) {
-    return workflow === 'rents' ? 'Rents' : 'Sales';
+    var label = workflow === 'rents' ? 'Rents' : 'Sales';
+    return (window._i18n && window._i18n[label]) || label;
 }
 
 function shouldShowMicrozoneLayer(microzone) {
@@ -6323,19 +6351,25 @@ async function drawAllMicrozonesForZone(zoneId, options) {
     var opts = options || {};
     var shouldZoom = opts.zoom !== false;
     try {
-        var microzones = await loadMicrozonesForZone(zoneId, true, true);
+        var microzones = await loadMicrozonesForZone(zoneId, false, true);
         window.microzonesDrawnByZone[zoneId] = true;
 
         pruneMicrozoneLayerCacheForZoneMicrozones(zoneId, microzones);
         var layersToZoom = [];
-        microzones.forEach(function(microzone) {
+        for (var i = 0; i < microzones.length; i += 1) {
+            var microzone = microzones[i];
             if (syncMicrozoneLayer(microzone)) {
                 var entry = window.savedMicrozones[microzone.id];
                 if (entry && entry.layer) {
                     layersToZoom.push(entry.layer);
                 }
             }
-        });
+            // Give the browser a chance to paint while large zone collections
+            // are converted into Leaflet layers.
+            if ((i + 1) % 25 === 0) {
+                await new Promise(function(resolve) { window.setTimeout(resolve, 0); });
+            }
+        }
 
         if (shouldZoom && layersToZoom.length > 0) {
             fitMapToLayerBounds(layersToZoom, [28, 28]);
@@ -6494,6 +6528,7 @@ function applyZoneSearchFilter() {
     var noResults = document.getElementById('zoneSearchNoResults');
     var term = input ? input.value.trim().toLowerCase() : '';
     window.zoneSearchTerm = term;
+    window.zoneKeyboardState.jumpIndex = -1;
 
     var items = Array.from(document.querySelectorAll('#zoneList .zone-item'));
     var visibleCount = 0;
@@ -6517,11 +6552,21 @@ function applyZoneSearchFilter() {
     }
 }
 
+function scheduleZoneSearchFilter() {
+    window.clearTimeout(window.zoneSearchFilterTimer);
+    window.zoneSearchFilterTimer = window.setTimeout(function() {
+        window.zoneSearchFilterTimer = null;
+        applyZoneSearchFilter();
+    }, 60);
+}
+
 function clearZoneSearch() {
     var input = document.getElementById('zoneSearchInput');
     if (input) {
         input.value = '';
     }
+    window.clearTimeout(window.zoneSearchFilterTimer);
+    window.zoneSearchFilterTimer = null;
     applyZoneSearchFilter();
 }
 
@@ -6907,7 +6952,22 @@ window.applyMappingZoneContext = async function(context) {
     var contextEl = ensureMappingZoneContextElement();
     if (!contextEl) return;
 
-    if (!context || !Number.isFinite(Number(context.zoneId))) {
+    if (context && context.error) {
+        var errorKey = context.error === 'invalid_workflow'
+            ? 'Invalid workflow in mapping link'
+            : 'Invalid zone in mapping link';
+        var fallbackMessage = context.error === 'invalid_workflow'
+            ? 'Invalid workflow in mapping link'
+            : 'Invalid zone in mapping link';
+        var errorMessage = (window._i18n && window._i18n[errorKey]) || fallbackMessage;
+        window.currentMappingZoneContext = context;
+        contextEl.style.display = 'inline-flex';
+        contextEl.classList.add('is-error');
+        contextEl.innerHTML = '<span class="mapping-zone-name">' + escapeHtml(errorMessage) + '</span>';
+        return;
+    }
+
+    if (!context || !Number.isSafeInteger(Number(context.zoneId)) || Number(context.zoneId) <= 0) {
         window.currentMappingZoneContext = null;
         contextEl.style.display = 'none';
         contextEl.classList.remove('is-error');
@@ -6941,7 +7001,7 @@ window.applyMappingZoneContext = async function(context) {
             '<span class="mapping-zone-name">' + escapeHtml(zone.name || ('Zone #' + zoneId)) + '</span>';
 
         if (!window.savedZones[zoneId] || !window.savedZones[zoneId].layer) {
-            renderZoneOnMap(zone, true);
+            renderZoneOnMap(zone, false);
         }
 
         focusZoneCard(zoneId, true);
@@ -6950,7 +7010,10 @@ window.applyMappingZoneContext = async function(context) {
         contextEl.classList.add('is-error');
         contextEl.innerHTML =
             '<span class="mapping-zone-workflow">' + formatWorkflowLabel(workflow) + '</span>' +
-            '<span class="mapping-zone-name">Zone #' + zoneId + ' unavailable</span>';
+            '<span class="mapping-zone-name">' + escapeHtml(
+                ((window._i18n && window._i18n['Zone #{id} unavailable or not accessible']) ||
+                    'Zone #{id} unavailable or not accessible').replace('{id}', String(zoneId))
+            ) + '</span>';
     }
 };
 
@@ -6961,6 +7024,8 @@ function zoneCardHtml(zone) {
     var safeName = escapeHtml(zone.name || 'Unnamed');
     var color = zone.color || '#3388ff';
     var checked = zone.is_visible ? ' checked' : '';
+    var microzoneCount = Number(zone.microzone_count);
+    if (!Number.isSafeInteger(microzoneCount) || microzoneCount < 0) microzoneCount = 0;
 
     return '' +
         '<div class="zone-item' + visibleClass + '" data-zone-id="' + zone.id + '">' +
@@ -6969,7 +7034,7 @@ function zoneCardHtml(zone) {
         '      <input class="zone-vis-toggle" type="checkbox"' + checked + ' onchange="event.stopPropagation(); toggleZoneVisibility(' + zone.id + ', this.checked);" />' +
         '      <span class="zone-color-swatch" style="background:' + color + ';"></span>' +
         '      <span class="zone-name">' + safeName + '</span>' +
-        '      <span class="zone-micro-count" id="zoneMicroCount_' + zone.id + '">0</span>' +
+        '      <span class="zone-micro-count" id="zoneMicroCount_' + zone.id + '">' + microzoneCount + '</span>' +
         '      <span class="zone-expand-indicator">▼</span>' +
         '    </div>' +
         '    <div class="zone-item-actions">' +
@@ -6978,7 +7043,7 @@ function zoneCardHtml(zone) {
         '    </div>' +
         '  </div>' +
         '  <div class="zone-item-body" id="zoneBody_' + zone.id + '" style="display:none;">' +
-        '    <div class="zone-item-meta"><small>' + typeTxt + ' | ' + dateTxt + ' | micros: <span id="zoneMicroCountBody_' + zone.id + '">0</span></small></div>' +
+        '    <div class="zone-item-meta"><small>' + typeTxt + ' | ' + dateTxt + ' | micros: <span id="zoneMicroCountBody_' + zone.id + '">' + microzoneCount + '</span></small></div>' +
         '    <div class="zone-business-actions">' +
         '      <button type="button" class="zone-sales-btn" onclick="event.stopPropagation(); return openZoneWorkflow(' + zone.id + ', &quot;sales&quot;, event);">Sales</button>' +
         '      <button type="button" class="zone-rents-btn" onclick="event.stopPropagation(); return openZoneWorkflow(' + zone.id + ', &quot;rents&quot;, event);">Rents</button>' +
@@ -7019,9 +7084,6 @@ function renderZoneList(zones) {
     });
 
     container.innerHTML = html;
-    zones.forEach(function(zone) {
-        loadMicrozonesForZone(zone.id, true, window.microzonesDrawnByZone[zone.id]);
-    });
     applyZoneSearchFilter();
 }
 
@@ -7152,7 +7214,7 @@ async function zoomToZone(zoneId) {
         var response = await _authenticatedFetch('/api/v1/zones/' + zoneId);
         if (response.ok) {
             var data = await response.json();
-            renderZoneOnMap(data.zone, true);
+            renderZoneOnMap(data.zone, false);
             var newEntry = window.savedZones[zoneId];
             if (newEntry && newEntry.layer) {
                 fitMapToLayerBounds([newEntry.layer], [30, 30]);

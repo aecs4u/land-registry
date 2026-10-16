@@ -20,7 +20,7 @@ import os
 import pandas as pd
 from pathlib import Path
 from datetime import datetime, timezone
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 import tempfile
 from typing import Dict, Any, List, Literal, Optional
 import hashlib
@@ -70,6 +70,7 @@ from land_registry.map_layers import (
     map_layer_catalog,
 )
 from land_registry.map_observability import map_metrics
+from land_registry.parcel_search import parse_cadastral_components
 from land_registry.parcel_flag_refresh import (
     get_parcel_flag_refresh,
     start_parcel_flag_refresh,
@@ -340,6 +341,8 @@ class CadastralQueryRequest(BaseModel):
 class PointLookupRequest(BaseModel):
     """Request for point-in-cadastral lookup."""
 
+    model_config = ConfigDict(strict=True, extra="forbid")
+
     lon: float = Field(..., ge=-180, le=180, description="Longitude (WGS84)")
     lat: float = Field(..., ge=-90, le=90, description="Latitude (WGS84)")
     regione: Optional[str] = Field(default=None, max_length=50)
@@ -351,6 +354,8 @@ class PointLookupRequest(BaseModel):
 
 class ZoneOverlayLookupRequest(BaseModel):
     """Request for cadastral lookup using a zone geometry."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
 
     zone_geojson: Dict[str, Any] = Field(..., description="GeoJSON Feature geometry used as overlay")
     relation: Literal["within", "intersects"] = Field(default="intersects")
@@ -2673,6 +2678,64 @@ def _geometry_centroid_lat_lng(geometry: Any) -> Optional[tuple[float, float]]:
         return None
 
 
+def _project_geometry_to_local_meters(geometry: Any):
+    """Project a GeoJSON geometry to a local distance-preserving CRS."""
+    if not isinstance(geometry, dict):
+        return None
+    center = _geometry_centroid_lat_lng(geometry)
+    if center is None:
+        return None
+    lat, lng = center
+    try:
+        from pyproj import CRS, Transformer
+        from shapely.geometry import shape
+        from shapely.ops import transform
+
+        local_crs = CRS.from_proj4(
+            f"+proj=aeqd +lat_0={lat:.8f} +lon_0={lng:.8f} +datum=WGS84 +units=m +no_defs"
+        )
+        transformer = Transformer.from_crs("EPSG:4326", local_crs, always_xy=True)
+        projected = transform(transformer.transform, shape(geometry))
+        if projected.is_empty:
+            return None
+        return projected, transformer, lat, lng
+    except Exception:
+        logger.debug("Unable to project saved parcel for distance checks", exc_info=True)
+        return None
+
+
+def _firms_observation_time(detection: dict[str, Any]) -> Optional[str]:
+    """Return a FIRMS acquisition timestamp in UTC when the row provides one."""
+    raw_timestamp = detection.get("observed_at") or detection.get("timestamp")
+    if raw_timestamp:
+        try:
+            parsed = datetime.fromisoformat(str(raw_timestamp).replace("Z", "+00:00"))
+            if parsed.tzinfo is None or parsed.utcoffset() is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+        except ValueError:
+            pass
+
+    acquisition_date = str(detection.get("acq_date") or "").strip()
+    acquisition_time = "".join(
+        character for character in str(detection.get("acq_time") or "") if character.isdigit()
+    )
+    if not acquisition_date or not acquisition_time:
+        return None
+    try:
+        if len(acquisition_time) <= 4:
+            parsed = datetime.strptime(
+                f"{acquisition_date}{acquisition_time.zfill(4)}", "%Y-%m-%d%H%M"
+            )
+        else:
+            parsed = datetime.strptime(
+                f"{acquisition_date}{acquisition_time.zfill(6)}", "%Y-%m-%d%H%M%S"
+            )
+        return parsed.replace(tzinfo=timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    except ValueError:
+        return None
+
+
 def _feed_issue_time(payload: Optional[dict[str, Any]]) -> Optional[str]:
     if not payload:
         return None
@@ -2837,17 +2900,44 @@ async def _saved_parcel_active_hazard(row: Dict[str, Any]) -> Optional[dict[str,
         bulletin_hazard = await asyncio.to_thread(_active_bulletin_hazard, geometry)
         if bulletin_hazard:
             return bulletin_hazard
-    centroid = _geometry_centroid_lat_lng(geometry)
-    if not centroid:
+    projected = _project_geometry_to_local_meters(geometry)
+    if not projected:
         return None
-    lat, lng = centroid
-    fires = await asyncio.to_thread(stats_service.get_active_fires, 25.0, lat, lng)
-    if fires and fires.get("count"):
+    parcel_metric, transformer, lat, lng = projected
+    radius_m = 25_000.0
+    from shapely.geometry import Point
+
+    # Query a square large enough to include a 25 km buffer around the parcel,
+    # then apply the exact distance check below. The extra kilometre covers
+    # the geographic bounding-box approximation used by the FIRMS adapter.
+    extent_m = parcel_metric.hausdorff_distance(Point(0, 0))
+    query_radius_km = min(500.0, 26.0 + extent_m / 1000.0)
+    fires = await asyncio.to_thread(stats_service.get_active_fires, query_radius_km, lat, lng)
+    detections = fires.get("detections") if isinstance(fires, dict) else None
+    if not detections:
+        return None
+
+    matched: list[tuple[float, dict[str, Any]]] = []
+    for detection in detections:
+        try:
+            point_lat = float(detection.get("latitude"))
+            point_lng = float(detection.get("longitude"))
+            x, y = transformer.transform(point_lng, point_lat)
+            distance_m = float(parcel_metric.distance(Point(x, y)))
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if distance_m <= radius_m:
+            matched.append((distance_m, detection))
+    if matched:
+        distance_m, nearest = min(matched, key=lambda item: item[0])
         return {
             "type": "firms_fire",
-            "label": "Active FIRMS fire detection within 25 km",
-            "count": fires.get("count"),
-            "issue_time": _feed_issue_time(fires),
+            "label": "Active FIRMS fire detection",
+            "count": len(matched),
+            "distance_km": round(distance_m / 1000.0, 2),
+            "radius_km": radius_m / 1000.0,
+            "match_method": "parcel_geometry_distance",
+            "observed_at": _firms_observation_time(nearest),
             "source": fires.get("source"),
         }
     return None
@@ -3002,7 +3092,13 @@ async def _saved_parcel_row(saved_parcel_id: int, user_id: str) -> Optional[Dict
     responses={401: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
 )
 async def list_saved_parcels(
-    active_hazard: bool = Query(False, description="Return only shortlist entries with a current active hazard signal"),
+    active_hazard: bool = Query(
+        False,
+        description=(
+            "Return only entries whose parcel geometry intersects an active DPC criticality zone or lies within "
+            "25 km of an active FIRMS fire detection. FIRMS results report nearest distance and acquisition time."
+        ),
+    ),
     user: ClerkUser = Depends(get_current_user),
 ):
     """List the authenticated user's parcel references and observed versions."""
@@ -3081,9 +3177,16 @@ async def update_saved_parcel(
     if not saved:
         raise HTTPException(status_code=404, detail="Saved parcel not found")
 
-    fields = request.model_dump(exclude_none=True)
+    fields = request.model_dump(exclude_unset=True)
     if "status" in fields:
+        if fields["status"] is None:
+            raise HTTPException(status_code=422, detail="Saved-parcel status cannot be null")
         fields["status"] = _ensure_saved_parcel_status(fields["status"])
+    if "tags" in fields and fields["tags"] is None:
+        fields["tags"] = []
+    for name, value in tuple(fields.items()):
+        if value is None and name not in {"notes", "priority", "tags"}:
+            fields.pop(name)
     if request.dataset_version and saved.get("parcel_identity_id"):
         try:
             fields["parcel_version_id"] = str(
@@ -3138,6 +3241,7 @@ def _zone_row_to_response(row: dict, include_geojson: bool = False) -> dict:
         'polygon_type': row.get('zone_type', row.get('polygon_type', 'polygon')),
         'color': row.get('color', '#3388ff'),
         'area_sqm': row.get('area_sqm'),
+        'microzone_count': int(row.get('microzone_count') or 0),
         'centroid_lat': row.get('centroid_lat'),
         'centroid_lng': row.get('centroid_lng'),
         'is_visible': bool(row.get('is_visible', 1)),
@@ -4020,41 +4124,24 @@ async def zone_overlay_lookup(
         if zone_geom.is_empty or not zone_geom.is_valid:
             raise HTTPException(status_code=400, detail="Invalid zone geometry")
 
-        min_lon, min_lat, max_lon, max_lat = zone_geom.bounds
         cadastral_filter = CadastralFilter(
             regione=request.regione,
             provincia=request.provincia,
             comune=request.comune,
             layer_type=request.layer_type,
-            bbox=(min_lon, min_lat, max_lon, max_lat),
+            intersects_wkt=zone_geom.wkt if request.relation == "intersects" else None,
+            within_wkt=zone_geom.wkt if request.relation == "within" else None,
             limit=request.limit,
             offset=0,
         )
         result = db.query(cadastral_filter, as_geojson=True)
         features = result.get("features", [])
-
-        filtered_items: List[CadastralLookupItem] = []
-        for feature in features:
-            geometry_data = feature.get("geometry")
-            if not geometry_data:
-                continue
-            try:
-                parcel_geom = shapely_shape(geometry_data)
-            except Exception:
-                continue
-
-            is_match = (
-                parcel_geom.within(zone_geom)
-                if request.relation == "within"
-                else parcel_geom.intersects(zone_geom)
-            )
-            if is_match:
-                filtered_items.append(_feature_to_lookup_item(feature, relation=request.relation))
+        items = [_feature_to_lookup_item(feature, relation=request.relation) for feature in features]
 
         return {
             "success": True,
-            "total": len(filtered_items),
-            "items": filtered_items,
+            "total": len(items),
+            "items": items,
             "metadata": _geojson_lineage(
                 "land-registry.cadastral", request.layer_type, "zone geometry overlay lookup"
             ),
@@ -4497,11 +4584,9 @@ async def search_map(query: str = Query(..., min_length=2, max_length=120), limi
     # ``H501 000100 42`` (comune code, foglio, particella).  Keep the parser
     # intentionally strict so free-form place names cannot become database
     # filters.
-    component_match = re.fullmatch(
-        r"([A-Z]\d{3})[\s_/-]+(\d+)[\s./-]+(\d+)", lookup_reference
-    )
+    component_match = parse_cadastral_components(lookup_reference)
     if component_match and not parcel_results:
-        comune, foglio, particella = component_match.groups()
+        comune, foglio, particella = component_match
         try:
             collection = await asyncio.wait_for(
                 asyncio.to_thread(
@@ -4538,7 +4623,12 @@ async def search_map(query: str = Query(..., min_length=2, max_length=120), limi
                 })
 
     municipalities: list[dict[str, Any]] = []
-    if source.available and not parcel_results and not looks_like_parcel_reference:
+    if (
+        source.available
+        and not parcel_results
+        and not looks_like_parcel_reference
+        and component_match is None
+    ):
         try:
             search_source = get_map_search_source()
             municipalities = await asyncio.wait_for(
@@ -4578,10 +4668,17 @@ async def search_map(query: str = Query(..., min_length=2, max_length=120), limi
 async def get_map_layers():
     """Return the allow-listed canonical spatial layers and their contracts."""
     source = get_map_layer_source()
+    try:
+        protection_layers = await asyncio.wait_for(
+            source.available_protection_layer_ids(), timeout=3
+        )
+    except asyncio.TimeoutError:
+        logger.warning("Protection map-layer readiness check timed out")
+        protection_layers = set()
     return {
         "source": "aecs4u-stats PostgreSQL/PostGIS",
         "available": source.available,
-        "layers": map_layer_catalog(),
+        "layers": map_layer_catalog(include_protection_ids=protection_layers),
     }
 
 

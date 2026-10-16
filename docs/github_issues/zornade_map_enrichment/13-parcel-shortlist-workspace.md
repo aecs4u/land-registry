@@ -11,16 +11,18 @@ currently carries an active hazard alert.
   product configuration — the map must not hard-code a fixed set of values.
 - A shortlist view: filter and sort by status, priority and recency; filter to
   entries whose parcels intersect an active DPC criticality zone or FIRMS
-  detection, reusing the hazard layers already wired up.
+  detection within 25 km of the parcel geometry, reusing the hazard layers
+  already wired up.
 - Selecting an entry restores map state and opens the detail panel, reusing the
   existing `?parcel=<national-reference>` restoration path.
 - Summary counts: total and per active status.
 
 ## Acceptance Criteria
 - A saved parcel round-trips status, priority, notes and tags.
-- The hazard filter returns only parcels with a currently active DPC criticality
-  polygon intersection or FIRMS fire signal, and states the alert/feed issue
-  time when available.
+- The hazard filter returns only parcels whose geometry intersects a currently
+  active DPC criticality polygon or lies within 25 km of an active FIRMS fire
+  point. FIRMS matches report the nearest distance and acquisition timestamp;
+  DPC matches report the bulletin issue time when available.
 - Selecting an entry lands on the same map state as the shared-link path.
 - Existing saved-parcel records migrate without loss and default to the initial
   status.
@@ -32,6 +34,13 @@ currently carries an active hazard alert.
   from hard-coding lifecycle values.
 - The primary direct map includes a shortlist workspace with status, priority,
   recency and active-hazard filters.
+- Each shortlist item has an inline editor for status, priority, notes and tags;
+  clearing notes or priority persists as an explicit null value.
+- FIRMS shortlist matching uses the distance from the parcel geometry, not the
+  enclosing rectangular query bounds, and shows the nearest detection's
+  distance and UTC acquisition time when present.
+- Selecting an item restores the parcel through the same reference lookup used
+  by shared links and opens its detail panel.
 - Favourites (2026-10-10): `is_favorite` boolean on `saved_parcels` (PostgreSQL
   and SQLite, `ADD COLUMN IF NOT EXISTS` migration, partial index). The panel
   header toggles it (creating the saved entry on first star), the shortlist has

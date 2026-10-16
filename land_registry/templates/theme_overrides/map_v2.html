@@ -27,6 +27,11 @@
         <i class="fas fa-map-marked-alt" aria-hidden="true"></i><span>{{ _('Cadastral map') }}</span>
       </a>
     </div>
+    <div class="nav-item">
+      <a class="nav-link" href="/data-sources" title="{{ _('Data sources and reuse') }}">
+        <i class="fas fa-database" aria-hidden="true"></i><span>{{ _('Data Sources') }}</span>
+      </a>
+    </div>
   </div>
 </div>
 <div class="sidebar-group" data-group="account">
@@ -57,6 +62,28 @@
       </form>
       <div id="mapSearchStatus" class="map-search-status" aria-live="polite"></div>
       <p class="map-muted map-search-privacy">{{ _('Search fallback sends your place name to OpenStreetMap Nominatim.') }} <a href="/privacy">{{ _('Privacy') }}</a></p>
+      <details class="map-parcel-finder" id="mapParcelFinder">
+        <summary>{{ _('Browse by cadastral hierarchy') }}</summary>
+        <form class="map-parcel-finder-form" id="parcelFinderForm">
+          <label>{{ _('Region') }}
+            <select id="parcelFinderRegion" disabled><option value="">{{ _('Select a region') }}</option></select>
+          </label>
+          <label>{{ _('Province') }}
+            <select id="parcelFinderProvince" disabled><option value="">{{ _('Select a province') }}</option></select>
+          </label>
+          <label>{{ _('Municipality') }}
+            <select id="parcelFinderMunicipality" disabled><option value="">{{ _('Select a municipality') }}</option></select>
+          </label>
+          <label>{{ _('Sheet') }}
+            <select id="parcelFinderSheet" disabled><option value="">{{ _('Select a sheet') }}</option></select>
+          </label>
+          <label class="map-parcel-finder-number">{{ _('Parcel number') }}
+            <input id="parcelFinderParcel" type="text" inputmode="search" autocomplete="off" maxlength="40" disabled>
+          </label>
+          <button id="parcelFinderSubmit" type="submit" disabled>{{ _('Find parcel') }}</button>
+        </form>
+        <p id="parcelFinderStatus" class="map-parcel-finder-status" aria-live="polite">{{ _('Choose an area to start.') }}</p>
+      </details>
       <div id="mapSearchResults" class="map-search-results" role="listbox" hidden></div>
     </div>
 
@@ -99,6 +126,7 @@
           <p class="map-muted map-provider-disclosure">{{ _('Basemap tiles are loaded from external map providers. See the privacy page for details.') }} <a href="/privacy">{{ _('Privacy') }}</a></p>
         </div>
       </div>
+      <button type="button" class="map-round-button btn btn-light" id="mapGuideButton" title="{{ _('Open map guide') }}" aria-label="{{ _('Open map guide') }}" aria-haspopup="dialog" aria-controls="mapWelcomeDialog">?</button>
       <button type="button" class="map-round-button" id="purchasesOpenButton" title="{{ _('My purchases') }}" aria-label="{{ _('My purchases') }}">€</button>
       <button type="button" class="map-round-button btn btn-light" id="locateButton" title="{{ _('Locate me') }}" aria-label="{{ _('Locate me') }}"><i class="fas fa-location-arrow" aria-hidden="true"></i></button>
       <button type="button" class="map-round-button btn btn-light" id="shareButton" title="{{ _('Copy map link') }}" aria-label="{{ _('Copy map link') }}"><i class="fas fa-share-alt" aria-hidden="true"></i></button>
@@ -184,6 +212,8 @@
         <div class="map-workbench-action-row map-drawing-tools">
           <button type="button" class="secondary-action compact btn btn-outline-secondary" data-map-draw="polygon" aria-pressed="false">{{ _('Polygon') }}</button>
           <button type="button" class="secondary-action compact btn btn-outline-secondary" data-map-draw="line" aria-pressed="false">{{ _('Polyline') }}</button>
+          <button type="button" class="secondary-action compact btn btn-outline-secondary" data-map-draw="rectangle" aria-pressed="false">{{ _('Rectangle') }}</button>
+          <button type="button" class="secondary-action compact btn btn-outline-secondary" data-map-draw="circle" aria-pressed="false">{{ _('Circle') }}</button>
           <button type="button" class="secondary-action compact btn btn-outline-secondary" data-map-draw="point" aria-pressed="false">{{ _('Marker') }}</button>
           <button type="button" class="secondary-action compact btn btn-outline-secondary" id="mapEditDrawingButton">{{ _('Edit selected') }}</button>
           <button type="button" class="secondary-action compact btn btn-outline-secondary" id="mapDeleteDrawingButton" disabled>{{ _('Delete selected') }}</button>
@@ -335,7 +365,7 @@
         <i class="fas fa-layer-group" aria-hidden="true"></i> {{ _('Layers') }}
       </button>
 
-      <button type="button" class="shortlist-toggle btn btn-light" id="shortlistToggle" aria-controls="parcelShortlistCard" aria-expanded="false">
+      <button type="button" class="shortlist-toggle btn btn-light" id="shortlistToggleTheme" aria-label="{{ _('Shortlist') }}" aria-controls="parcelShortlistCard" aria-expanded="false">
         <i class="fas fa-list-check" aria-hidden="true"></i> {{ _('Shortlist') }}
       </button>
     </div>
@@ -400,6 +430,42 @@
 
     {% include "partials/cadastral_purchases.html" %}
     <div class="map-help-note" id="mapHelpNote">{{ _('Zoom in to see cadastral parcels') }}</div>
+
+    <dialog class="map-welcome-dialog" id="mapWelcomeDialog" aria-labelledby="mapWelcomeTitle" aria-describedby="mapWelcomeIntro">
+      <div class="map-welcome-content">
+        <header class="map-card-heading">
+          <div>
+            <span class="map-eyebrow">{{ _('Map guide') }}</span>
+            <h2 id="mapWelcomeTitle">{{ _('Welcome to the cadastral map') }}</h2>
+          </div>
+          <button type="button" class="map-card-close" id="mapWelcomeClose" aria-label="{{ _('Close map guide') }}">×</button>
+        </header>
+        <p id="mapWelcomeIntro">{{ _('A quick guide to finding parcels and exploring map data.') }}</p>
+        <div class="map-welcome-steps" aria-live="polite" aria-atomic="true">
+          <section data-map-tour-step>
+            <h3>{{ _('Find a place or parcel') }}</h3>
+            <p>{{ _('Search by municipality or cadastral reference, or browse from region to parcel number.') }}</p>
+          </section>
+          <section data-map-tour-step hidden>
+            <h3>{{ _('Explore map layers') }}</h3>
+            <p>{{ _('Open Layers to turn data overlays on or off. Use Basemap to change the map style.') }}</p>
+          </section>
+          <section data-map-tour-step hidden>
+            <h3>{{ _('Open a parcel workspace') }}</h3>
+            <p>{{ _('Zoom in until parcels appear, then select one. Review available data, save it to your shortlist, or share a link.') }}</p>
+          </section>
+        </div>
+        <div class="map-welcome-footer">
+          <p class="map-muted" id="mapWelcomeStepCount" aria-live="polite"></p>
+          <div class="map-welcome-actions">
+            <button type="button" class="secondary-action" id="mapWelcomeSkip">{{ _('Skip tour') }}</button>
+            <button type="button" class="secondary-action" id="mapWelcomePrevious" hidden>{{ _('Previous') }}</button>
+            <button type="button" class="map-welcome-primary" id="mapWelcomeNext">{{ _('Next') }}</button>
+            <button type="button" class="map-welcome-primary" id="mapWelcomeFinish" hidden>{{ _('Finish tour') }}</button>
+          </div>
+        </div>
+      </div>
+    </dialog>
   </section>
 </div>
 {% endblock %}

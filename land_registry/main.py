@@ -26,6 +26,8 @@ from land_registry.rate_limit import RateLimitMiddleware
 from land_registry.map_observability import MapMetricsMiddleware, map_metrics
 from land_registry.dependencies import MapSessionMiddleware, _map_state
 from land_registry.routers.api import api_router
+from land_registry.routers.api_v2 import router as api_v2_router
+from land_registry.routers.api_keys import router as api_keys_router
 from land_registry.routers.auth_pages import router as auth_pages_router
 from land_registry.routers.enrichment import enrichment_router
 from land_registry.routers.parcel_dossier import parcel_dossier_router
@@ -34,9 +36,16 @@ from land_registry.routers.api import account_workspace_snapshot, load_account_p
 from land_registry.routers.auth import get_current_user_optional
 from land_registry.legal_pages import PAGE_KEYS, build_page
 from land_registry.map_layers import get_map_layer_source, map_layer_catalog
+from land_registry.source_catalog import PARCEL_API_FIELD_CATALOG, SOURCE_CATALOG
 from land_registry.models import UserPreferences
 from land_registry.s3_storage import get_s3_storage
-from land_registry.config import app_settings, panel_settings, get_panel_url, db_settings
+from land_registry.config import (
+    app_settings,
+    panel_settings,
+    get_panel_url,
+    db_settings,
+    public_api_settings,
+)
 from land_registry.models import HealthResponse, TableDataResponse, ServiceUnavailableResponse
 
 # Import aecs4u-auth for authentication setup (optional)
@@ -654,6 +663,8 @@ if _AUTH_AVAILABLE:
 
 # Include the API router with /api/v1 prefix
 app.include_router(api_router, prefix="/api/v1")
+app.include_router(api_keys_router, prefix="/api/v1", tags=["public-api-keys"])
+app.include_router(api_v2_router, prefix="/api/v2", tags=["public-api-v2"])
 app.include_router(cadastral_purchases_router, prefix="/api/v1")
 
 # Use the shared billing services; the cadastral router owns its scoped checkout
@@ -934,6 +945,11 @@ async def _build_main_map_shell_context(request: Request) -> dict:
         "Analyzing spatial relationships...": gt("Analyzing spatial relationships..."),
         "No zones saved yet.": gt("No zones saved yet."),
         "No zones match the search.": gt("No zones match the search."),
+        "Sales": gt("Sales"),
+        "Rents": gt("Rents"),
+        "Invalid zone in mapping link": gt("Invalid zone in mapping link"),
+        "Invalid workflow in mapping link": gt("Invalid workflow in mapping link"),
+        "Zone #{id} unavailable or not accessible": gt("Zone #{id} unavailable or not accessible"),
         "Select region…": gt("Select region…"),
         "Select province…": gt("Select province…"),
         "Select municipality…": gt("Select municipality…"),
@@ -1000,9 +1016,14 @@ async def serve_map_shell(request: Request, user=Depends(get_current_user_option
     """Serve the direct map as the primary experience.
 
     ``?legacy=1`` remains a compatibility escape hatch for upload and
-    analysis workflows while the Folium page is being retired.
+    analysis workflows while the Folium page is being retired. Mapping-view
+    deep links stay on the compatibility shell because that view owns the
+    saved-zone workflow context.
     """
-    if request.query_params.get("legacy") == "1":
+    if (
+        request.query_params.get("legacy") == "1"
+        or request.query_params.get("view") == "mapping"
+    ):
         return await _serve_legacy_map_shell(request)
     return await serve_direct_map(request, user)
 
@@ -1151,6 +1172,8 @@ async def account_settings(request: Request, user=Depends(get_current_user_optio
         "Settings",
         preferences=(preferences or UserPreferences()).model_dump(),
         preferences_available=preferences is not None,
+        api_key_max_active=public_api_settings.max_active_keys,
+        api_key_requests_per_hour=public_api_settings.requests_per_hour,
         map_layers=layers,
         supported_locales=_ACCOUNT_LOCALES,
         current_locale=detect_locale(request),
@@ -1170,6 +1193,66 @@ def _make_info_page(key: str):
 # The footer, cookie banner and header link to these; they used to 404.
 for _page_key in PAGE_KEYS:
     app.add_api_route(f"/{_page_key}", _make_info_page(_page_key), methods=["GET"], response_class=HTMLResponse, include_in_schema=False)
+
+
+@app.get("/data-sources", response_class=HTMLResponse)
+async def data_sources_page(request: Request):
+    """Publish provider attribution plus parcel-API field methodology and freshness."""
+    gettext = make_gettext(detect_locale(request))
+    basis_labels = {
+        "official_terms_reviewed": gettext("Official provider terms reviewed"),
+        "official_methodology_reviewed": gettext("Official provider methodology reviewed"),
+        "official_general_policy_reviewed": gettext("Official general data policy reviewed; product licence pending"),
+        "official_policy_scope_reviewed": gettext("Official policy scope reviewed; product-specific terms pending"),
+        "official_reuse_policy_reviewed": gettext("Official reuse policy reviewed; no licence name asserted"),
+        "official_service_access_reviewed": gettext("Official service access reviewed; data reuse terms pending"),
+        "official_provider_terms_reviewed_no_data_license_asserted": gettext(
+            "Official provider terms reviewed; no data licence asserted"
+        ),
+        "official_data_use_policy_reviewed": gettext(
+            "Official data-use policy reviewed; no separate licence asserted"
+        ),
+        "official_public_access_reviewed": gettext("Official public-access guide reviewed; reuse licence not stated"),
+        "provider_product_page_reviewed": gettext("Provider product page reviewed"),
+        "provider_public_guide_open_license_name_unverified": gettext(
+            "Provider guide states an open licence; the named licence is unverified"
+        ),
+        "upstream_contract_review_pending": gettext("Upstream package contract; provider terms review pending"),
+        "adapter_declaration_review_pending": gettext("Adapter declaration; official provider terms review pending"),
+        "citation_verified_license_pending": gettext("Provider citation verified; licence review pending"),
+        "provider_terms_review_pending": gettext("Provider terms review pending"),
+    }
+    sources = [
+        {
+            "entry": entry,
+            "review_status": basis_labels.get(entry.license_basis, gettext("Provider terms review pending")),
+        }
+        for entry in SOURCE_CATALOG
+    ]
+    source_entries = {entry.key: entry for entry in SOURCE_CATALOG}
+    parcel_fields = [
+        {
+            "entry": field,
+            "fields": gettext(field.fields),
+            "provider_note": gettext(field.provider_note) if field.provider_note else "",
+            "method_scope": gettext(field.method_scope),
+            "version_freshness": gettext(field.version_freshness),
+            "sources": [
+                source_entries[key]
+                for key in field.source_keys
+                if key in source_entries
+            ],
+        }
+        for field in PARCEL_API_FIELD_CATALOG
+    ]
+    context = {
+        "_": gettext,
+        "sources": sources,
+        "parcel_fields": parcel_fields,
+        "page_title": gettext("Data sources and reuse"),
+        "clerk_publishable_key": get_auth_config().clerk_publishable_key,
+    }
+    return templates.TemplateResponse(request, "data_sources.html", context)
 
 
 @app.get("/map_table")

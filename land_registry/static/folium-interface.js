@@ -146,7 +146,7 @@ function _handleCadastralClick(feature, layer, event, baseColor) {
     if (event) L.DomEvent.stopPropagation(event);
     if (layer._selected) {
         layer._selected = false;
-        layer.setStyle({ fillColor: baseColor, fillOpacity: 0.3 });
+        layer.setStyle({ fillColor: baseColor, fillOpacity: layer._webglHitTest ? 0.001 : 0.3 });
         const idx = (window.selectedPolygons || []).indexOf(layer);
         if (idx > -1) window.selectedPolygons.splice(idx, 1);
     } else {
@@ -164,33 +164,61 @@ function _handleCadastralClick(feature, layer, event, baseColor) {
 
 function _createCadastralLayer(geojson, color, popupPriorityKeys, layerOptions = {}) {
     const features = Array.isArray(geojson?.features) ? geojson.features : [];
-    const colorForFeature = layerOptions.colorForFeature || (() => color);
-    const options = { style: feature => _cadStyle(colorForFeature(feature)) };
-    if (features.length >= CADASTRAL_CANVAS_THRESHOLD && typeof L.canvas === 'function') {
-        options.renderer = L.canvas({ padding: 0.5 });
-    }
-    const layer = L.geoJSON(geojson, options);
-    // One delegated listener handles all child features and avoids allocating
-    // a per-parcel event closure in large result sets.
-    layer.on('click', event => {
-        const featureLayer = event.layer;
-        const feature = featureLayer && featureLayer.feature;
+    let schemeName = window.MapRenderingControls?.getSettings?.().colorScheme || 'default';
+    let scheme = window.MapColorSchemes?.create(geojson, schemeName, { color });
+    const colorForFeature = (feature, index) => {
+        const selectedScheme = window.MapRenderingControls?.getSettings?.().colorScheme || 'default';
+        if (selectedScheme !== schemeName) {
+            schemeName = selectedScheme;
+            scheme = window.MapColorSchemes?.create(geojson, schemeName, { color });
+        }
+        if (schemeName === 'default' && layerOptions.colorForFeature) {
+            return layerOptions.colorForFeature(feature);
+        }
+        return scheme?.colorForFeature(feature, index) || color;
+    };
+    const onFeatureClick = (feature, featureLayer, event, featureIndex) => {
         if (!featureLayer || !feature) return;
         const popupHtml = _buildPopupContent(feature.properties, popupPriorityKeys);
-        if (popupHtml && !featureLayer.getPopup()) {
+        if (popupHtml && featureLayer.getPopup && !featureLayer.getPopup()) {
             featureLayer.bindPopup(popupHtml, { maxWidth: 350 });
         }
         _handleCadastralClick(
             feature,
             featureLayer,
-            event.originalEvent || event,
-            colorForFeature(feature)
+            event?.originalEvent || event,
+            colorForFeature(feature, featureIndex)
         );
-    });
+    };
+    let layer;
+    if (window.WebGLRenderer?.renderGeoJSON) {
+        layer = window.WebGLRenderer.renderGeoJSON(geojson, {
+            color,
+            colorFunction: (index, feature) => colorForFeature(feature, index),
+            weight: 1.5,
+            fillOpacity: 0.3,
+            useStripes: false,
+            enablePopups: false,
+            onClick: onFeatureClick,
+        });
+    } else {
+        const options = { style: feature => _cadStyle(colorForFeature(feature)) };
+        if (features.length >= CADASTRAL_CANVAS_THRESHOLD && typeof L.canvas === 'function') {
+            options.renderer = L.canvas({ padding: 0.5 });
+        }
+        layer = L.geoJSON(geojson, options);
+        // One delegated listener handles all child features and avoids allocating
+        // a per-parcel event closure in large result sets.
+        layer.on('click', event => onFeatureClick(
+            event.layer?.feature, event.layer, event.originalEvent || event
+        ));
+    }
+    if (!layer) return null;
     window._cadastralLabelLayers.add(layer);
     // The layer is constructed before it is attached to Folium's map, so
     // install label refreshes once Leaflet fires the add event.
     layer.on('add', () => _installCadastralLabelUpdates(layer));
+    layer.on('remove', () => window._cadastralLabelLayers.delete(layer));
     layer.options.cadastralInteractionBound = true;
     return layer;
 }

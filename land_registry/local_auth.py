@@ -24,6 +24,7 @@ from sqlalchemy import DateTime
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from aecs4u_auth import SQLModelUserStorage, verify_password
+from aecs4u_auth.api_keys import ApiKeyTable
 from aecs4u_auth.users.models import User
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,17 @@ _TIMESTAMP_COLUMNS = (
 # mapped type here, at import time, before any engine/table touches it.
 for _col_name in _TIMESTAMP_COLUMNS:
     User.__table__.columns[_col_name].type = DateTime(timezone=True)
+del _col_name
+
+_API_KEY_TIMESTAMP_COLUMNS = (
+    "expires_at",
+    "last_used_at",
+    "created_at",
+    "updated_at",
+    "revoked_at",
+)
+for _col_name in _API_KEY_TIMESTAMP_COLUMNS:
+    ApiKeyTable.__table__.columns[_col_name].type = DateTime(timezone=True)
 del _col_name
 
 _engine: AsyncEngine | None = None
@@ -97,40 +109,61 @@ def init_engine(database_url: str) -> None:
 
 
 async def ensure_user_table() -> None:
-    """Create aecs4u-auth's shared ``users`` table if it doesn't exist yet.
+    """Create the shared user and API-key tables required by account auth.
 
-    Only this one table is created here — not the full aecs4u_auth demo
-    schema (api keys, applications, organizations) which this app doesn't use.
+    The app uses aecs4u-auth's API-key table for Clerk-owned developer keys,
+    plus a small PostgreSQL table for atomic per-key hourly quota counters. It
+    does not initialize the package's unrelated demo tables.
     """
     if _engine is None:
         return
     from sqlalchemy import text
 
     async with _engine.begin() as conn:
-        await conn.run_sync(User.metadata.create_all)
+        await conn.run_sync(lambda sync_conn: User.__table__.create(sync_conn, checkfirst=True))
+        await conn.run_sync(lambda sync_conn: ApiKeyTable.__table__.create(sync_conn, checkfirst=True))
 
         dialect = conn.engine.dialect.name
         if dialect != "postgresql":
             return  # SQLite dev fallback has no timezone-aware timestamp type to migrate to.
 
-        result = await conn.execute(
-            text(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_name = 'users' AND data_type = 'timestamp without time zone' "
-                "AND column_name = ANY(:cols)"
-            ),
-            {"cols": list(_TIMESTAMP_COLUMNS)},
-        )
-        naive_columns = [row[0] for row in result]
-        for column in naive_columns:
-            await conn.execute(
+        for table_name, columns in (
+            ("users", _TIMESTAMP_COLUMNS),
+            ("api_keys", _API_KEY_TIMESTAMP_COLUMNS),
+        ):
+            result = await conn.execute(
                 text(
-                    f'ALTER TABLE users ALTER COLUMN "{column}" '
-                    f"TYPE timestamptz USING \"{column}\" AT TIME ZONE 'UTC'"
-                )
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = :table_name "
+                    "AND data_type = 'timestamp without time zone' "
+                    "AND column_name = ANY(:cols)"
+                ),
+                {"table_name": table_name, "cols": list(columns)},
             )
-        if naive_columns:
-            logger.info("Widened users timestamp columns to timestamptz: %s", naive_columns)
+            naive_columns = [row[0] for row in result]
+            for column in naive_columns:
+                await conn.execute(
+                    text(
+                        f'ALTER TABLE "{table_name}" ALTER COLUMN "{column}" '
+                        f"TYPE timestamptz USING \"{column}\" AT TIME ZONE 'UTC'"
+                    )
+                )
+            if naive_columns:
+                logger.info(
+                    "Widened %s timestamp columns to timestamptz: %s",
+                    table_name,
+                    naive_columns,
+                )
+
+        await conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS api_key_hourly_usage ("
+                "api_key_id varchar PRIMARY KEY REFERENCES api_keys(id) ON DELETE CASCADE, "
+                "window_start bigint NOT NULL, "
+                "request_count integer NOT NULL DEFAULT 0 CHECK (request_count >= 0)"
+                ")"
+            )
+        )
 
 
 async def dispose_engine() -> None:
@@ -146,6 +179,11 @@ def get_storage() -> SQLModelUserStorage:
     if _storage is None:
         raise RuntimeError("local_auth.init_engine() must run before the app serves requests")
     return _storage
+
+
+def get_engine() -> AsyncEngine | None:
+    """Return the shared async auth engine, if PostgreSQL auth is configured."""
+    return _engine
 
 
 _require_storage = get_storage  # internal alias used by the callbacks below

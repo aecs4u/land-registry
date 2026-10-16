@@ -644,7 +644,11 @@ class SQLiteDatabase:
         allowed = {
             "parcel_version_id", "dataset_version", "label", "notes", "status", "priority", "tags", "is_favorite",
         }
-        updates = [(name, value) for name, value in fields.items() if name in allowed and value is not None]
+        updates = [
+            (name, value)
+            for name, value in fields.items()
+            if name in allowed and (value is not None or name in {"notes", "priority"})
+        ]
         if not updates:
             return False
 
@@ -802,13 +806,20 @@ class SQLiteDatabase:
 
     def get_zones(self, user_id: str = None) -> List[Dict[str, Any]]:
         """Get zones, optionally filtered by user."""
+        select = """
+            SELECT zones.*,
+                   (SELECT COUNT(*) FROM microzones
+                    WHERE microzones.zone_id = zones.id
+                      AND microzones.user_id IS zones.user_id) AS microzone_count
+            FROM zones
+        """
         if user_id:
             rows = self.execute(
-                "SELECT * FROM zones WHERE user_id = ? ORDER BY created_at DESC",
+                select + " WHERE zones.user_id = ? ORDER BY zones.created_at DESC",
                 (user_id,)
             )
         else:
-            rows = self.execute("SELECT * FROM zones ORDER BY created_at DESC")
+            rows = self.execute(select + " ORDER BY zones.created_at DESC")
         return [dict(row) for row in rows]
 
     def get_zone(self, zone_id: int, user_id: str = None) -> Optional[Dict[str, Any]]:

@@ -8,6 +8,8 @@ when Playwright or a browser is unavailable.
 """
 
 import json
+import os
+import shutil
 import socket
 import threading
 import time
@@ -109,7 +111,16 @@ def server():
 def browser():
     with playwright_sync.sync_playwright() as p:
         try:
-            instance = p.chromium.launch()
+            executable = (
+                os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH")
+                or shutil.which("chromium")
+                or shutil.which("google-chrome")
+            )
+            instance = (
+                p.chromium.launch(executable_path=executable)
+                if executable
+                else p.chromium.launch()
+            )
         except Exception as exc:  # browser binaries not installed
             pytest.skip(f"Chromium unavailable: {exc}")
         yield instance
@@ -207,6 +218,7 @@ def test_panel_fills_sections_independently_and_survives_a_failing_source(server
         assert "temporarily unavailable" in page.inner_text("#parcel-section-bulletin")
         assert _state(page, "income") == "ready"
         assert _state(page, "census") == "empty"
+        page.locator("#parcel-section-census > summary").click()
         assert "No matching data was found" in page.inner_text("#parcel-section-census")
         assert page.locator("#parcel-section-census .parcel-retry").count() == 0
         assert _state(page, "identity") == "ready"
@@ -414,7 +426,9 @@ def test_energy_tab_shows_only_municipal_solar_aggregates(server, browser):
         )
         assert page.get_attribute('#parcelSectionNav button[data-tab="energy"]', "aria-current") == "true"
         assert page.evaluate("location.hash") == "#energia"
-        assert "940.000 kWh/year" in page.inner_text("#parcel-section-solar")
+        page.locator("#parcel-section-solar > summary").click()
+        assert "940 MWh/year" in page.inner_text("#parcel-section-solar")
+        assert "1,2 GWh/year" in page.inner_text("#parcel-section-solar")
         assert "not estimates for this parcel, building, or roof" in page.inner_text("#parcel-section-solar")
         assert "solar-fixture-2026" in page.inner_text("#parcel-section-solar")
         assert "2026-09-30" in page.inner_text("#parcel-section-solar")

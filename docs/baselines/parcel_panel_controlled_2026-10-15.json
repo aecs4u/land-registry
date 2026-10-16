@@ -1,0 +1,1096 @@
+{
+  "captured_at": "2026-10-15T10:36:38+00:00",
+  "base_url": "http://127.0.0.1:8017",
+  "details_view": "panel",
+  "refresh_first": true,
+  "summary": {
+    "percentile_method": "nearest_rank",
+    "unique_parcels": 20,
+    "canonical_feature_ids": 20,
+    "duplicate_reference_groups": 0,
+    "duplicate_reference_feature_pairs": 0,
+    "duplicate_reference_warm_hits": 0,
+    "duplicate_reference_cache_isolated": null,
+    "feature_id_cache_attempts": 40,
+    "feature_id_cache_checks": 40,
+    "feature_id_cache_mismatches": 0,
+    "parcels_per_area": {
+      "roma-centro": 5,
+      "milano-centro": 5,
+      "tolfa-comune": 5,
+      "monte-romano-campagna": 5
+    },
+    "details_calls_ok": 40,
+    "details_calls_failed": 0,
+    "details_response_seconds": {
+      "n": 40,
+      "median": 2.044,
+      "p95": 5.869,
+      "max": 6.833
+    },
+    "cold_build_seconds": {
+      "n": 20,
+      "median": 4.614,
+      "p95": 6.188,
+      "max": 6.833
+    },
+    "cache_hit_seconds": {
+      "n": 20,
+      "median": 0.014,
+      "p95": 0.157,
+      "max": 0.258
+    },
+    "cache_hits_observed": 20,
+    "cache_databases": {
+      "aecs4u-stats PostgreSQL via asyncpg": {
+        "calls": 40,
+        "cached_calls": 20,
+        "response_seconds": {
+          "n": 40,
+          "median": 2.044,
+          "p95": 5.869,
+          "max": 6.833
+        },
+        "cached_seconds": {
+          "n": 20,
+          "median": 0.014,
+          "p95": 0.157,
+          "max": 0.258
+        }
+      }
+    },
+    "details_bytes_median": 20229,
+    "block_coverage": {
+      "basic": "20/20",
+      "buildings": "20/20",
+      "cadastral": "20/20",
+      "demographics": "20/20",
+      "economics": "20/20",
+      "population": "20/20",
+      "solar": "20/20",
+      "valuation": "20/20"
+    }
+  },
+  "rows": [
+    {
+      "area": "roma-centro",
+      "lat": 41.8986,
+      "lng": 12.4769,
+      "reference": "H501A048600.D",
+      "feature_id": 3027788762458545,
+      "lookup_status": 200,
+      "lookup_seconds": 0.203,
+      "first": {
+        "status": 200,
+        "seconds": 5.056,
+        "bytes": 21094,
+        "cached": false,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 3027788762458545,
+        "read_model_feature_id": 3027788762458545,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 0.021,
+        "bytes": 21143,
+        "cached": true,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 3027788762458545,
+        "read_model_feature_id": 3027788762458545,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "roma-centro",
+      "lat": 41.8971,
+      "lng": 12.4769,
+      "reference": "H501A048600.114",
+      "feature_id": 2305633795279879,
+      "lookup_status": 200,
+      "lookup_seconds": 0.012,
+      "first": {
+        "status": 200,
+        "seconds": 4.605,
+        "bytes": 19877,
+        "cached": false,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 2305633795279879,
+        "read_model_feature_id": 2305633795279879,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 0.018,
+        "bytes": 19926,
+        "cached": true,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 2305633795279879,
+        "read_model_feature_id": 2305633795279879,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "roma-centro",
+      "lat": 41.9001,
+      "lng": 12.4769,
+      "reference": "H501A048600.A",
+      "feature_id": 2844300197277226,
+      "lookup_status": 200,
+      "lookup_seconds": 0.011,
+      "first": {
+        "status": 200,
+        "seconds": 4.373,
+        "bytes": 19595,
+        "cached": false,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 2844300197277226,
+        "read_model_feature_id": 2844300197277226,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 0.015,
+        "bytes": 19644,
+        "cached": true,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 2844300197277226,
+        "read_model_feature_id": 2844300197277226,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "roma-centro",
+      "lat": 41.8986,
+      "lng": 12.4749,
+      "reference": "H501A048500.351",
+      "feature_id": 2499779243620083,
+      "lookup_status": 200,
+      "lookup_seconds": 0.016,
+      "first": {
+        "status": 200,
+        "seconds": 3.879,
+        "bytes": 19826,
+        "cached": false,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 2499779243620083,
+        "read_model_feature_id": 2499779243620083,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 0.015,
+        "bytes": 19875,
+        "cached": true,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 2499779243620083,
+        "read_model_feature_id": 2499779243620083,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "roma-centro",
+      "lat": 41.8986,
+      "lng": 12.4789,
+      "reference": "H501A048600.78",
+      "feature_id": 1144761818266146,
+      "lookup_status": 200,
+      "lookup_seconds": 0.011,
+      "first": {
+        "status": 200,
+        "seconds": 3.83,
+        "bytes": 21083,
+        "cached": false,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 1144761818266146,
+        "read_model_feature_id": 1144761818266146,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 0.013,
+        "bytes": 21132,
+        "cached": true,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 1144761818266146,
+        "read_model_feature_id": 1144761818266146,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "milano-centro",
+      "lat": 45.4642,
+      "lng": 9.19,
+      "reference": "F205_039000.STRADA288",
+      "feature_id": 620964381125148,
+      "lookup_status": 200,
+      "lookup_seconds": 0.016,
+      "first": {
+        "status": 200,
+        "seconds": 6.188,
+        "bytes": 19284,
+        "cached": false,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 620964381125148,
+        "read_model_feature_id": 620964381125148,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 0.011,
+        "bytes": 19333,
+        "cached": true,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 620964381125148,
+        "read_model_feature_id": 620964381125148,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "milano-centro",
+      "lat": 45.4627,
+      "lng": 9.19,
+      "reference": "F205_043700.STRADA331",
+      "feature_id": 911287980764993,
+      "lookup_status": 200,
+      "lookup_seconds": 0.019,
+      "first": {
+        "status": 200,
+        "seconds": 4.237,
+        "bytes": 23673,
+        "cached": false,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 911287980764993,
+        "read_model_feature_id": 911287980764993,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 0.011,
+        "bytes": 23722,
+        "cached": true,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 911287980764993,
+        "read_model_feature_id": 911287980764993,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "milano-centro",
+      "lat": 45.4657,
+      "lng": 9.19,
+      "reference": "F205_039000.98",
+      "feature_id": 389675538235243,
+      "lookup_status": 200,
+      "lookup_seconds": 0.019,
+      "first": {
+        "status": 200,
+        "seconds": 4.255,
+        "bytes": 30363,
+        "cached": false,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 389675538235243,
+        "read_model_feature_id": 389675538235243,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 0.014,
+        "bytes": 30412,
+        "cached": true,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 389675538235243,
+        "read_model_feature_id": 389675538235243,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "milano-centro",
+      "lat": 45.4642,
+      "lng": 9.192,
+      "reference": "F205_039000.H",
+      "feature_id": 2495412976289728,
+      "lookup_status": 200,
+      "lookup_seconds": 0.012,
+      "first": {
+        "status": 200,
+        "seconds": 4.299,
+        "bytes": 24117,
+        "cached": false,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 2495412976289728,
+        "read_model_feature_id": 2495412976289728,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 0.013,
+        "bytes": 24166,
+        "cached": true,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 2495412976289728,
+        "read_model_feature_id": 2495412976289728,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "milano-centro",
+      "lat": 45.4672,
+      "lng": 9.19,
+      "reference": "F205_038900.STRADA285",
+      "feature_id": 3501772837405456,
+      "lookup_status": 200,
+      "lookup_seconds": 0.016,
+      "first": {
+        "status": 200,
+        "seconds": 4.609,
+        "bytes": 20582,
+        "cached": false,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 3501772837405456,
+        "read_model_feature_id": 3501772837405456,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 0.014,
+        "bytes": 20631,
+        "cached": true,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 3501772837405456,
+        "read_model_feature_id": 3501772837405456,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "tolfa-comune",
+      "lat": 42.1517,
+      "lng": 11.9394,
+      "reference": "L192_002300.STRADA114",
+      "feature_id": 413483609692761,
+      "lookup_status": 200,
+      "lookup_seconds": 0.02,
+      "first": {
+        "status": 200,
+        "seconds": 5.243,
+        "bytes": 34953,
+        "cached": false,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 413483609692761,
+        "read_model_feature_id": 413483609692761,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 0.016,
+        "bytes": 35002,
+        "cached": true,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 413483609692761,
+        "read_model_feature_id": 413483609692761,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "tolfa-comune",
+      "lat": 42.1502,
+      "lng": 11.9394,
+      "reference": "L192_002300.898",
+      "feature_id": 813461374523519,
+      "lookup_status": 200,
+      "lookup_seconds": 0.017,
+      "first": {
+        "status": 200,
+        "seconds": 5.869,
+        "bytes": 16562,
+        "cached": false,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 813461374523519,
+        "read_model_feature_id": 813461374523519,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 0.157,
+        "bytes": 16611,
+        "cached": true,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 813461374523519,
+        "read_model_feature_id": 813461374523519,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "tolfa-comune",
+      "lat": 42.1532,
+      "lng": 11.9394,
+      "reference": "L192_002300.STRADA103",
+      "feature_id": 3272715213689455,
+      "lookup_status": 200,
+      "lookup_seconds": 0.137,
+      "first": {
+        "status": 200,
+        "seconds": 6.833,
+        "bytes": 38610,
+        "cached": false,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 3272715213689455,
+        "read_model_feature_id": 3272715213689455,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 0.258,
+        "bytes": 38659,
+        "cached": true,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 3272715213689455,
+        "read_model_feature_id": 3272715213689455,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "tolfa-comune",
+      "lat": 42.1517,
+      "lng": 11.9374,
+      "reference": "L192_002300.1368",
+      "feature_id": 754514710409481,
+      "lookup_status": 200,
+      "lookup_seconds": 0.142,
+      "first": {
+        "status": 200,
+        "seconds": 5.343,
+        "bytes": 16479,
+        "cached": false,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 754514710409481,
+        "read_model_feature_id": 754514710409481,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 0.01,
+        "bytes": 16528,
+        "cached": true,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 754514710409481,
+        "read_model_feature_id": 754514710409481,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "tolfa-comune",
+      "lat": 42.1517,
+      "lng": 11.9414,
+      "reference": "L192_002300.1459",
+      "feature_id": 1577352934010384,
+      "lookup_status": 200,
+      "lookup_seconds": 0.018,
+      "first": {
+        "status": 200,
+        "seconds": 5.712,
+        "bytes": 16382,
+        "cached": false,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 1577352934010384,
+        "read_model_feature_id": 1577352934010384,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 0.013,
+        "bytes": 16431,
+        "cached": true,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 1577352934010384,
+        "read_model_feature_id": 1577352934010384,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "monte-romano-campagna",
+      "lat": 42.25,
+      "lng": 11.9,
+      "reference": "F603_003000.15",
+      "feature_id": 4074655227869472,
+      "lookup_status": 200,
+      "lookup_seconds": 0.017,
+      "first": {
+        "status": 200,
+        "seconds": 5.26,
+        "bytes": 18290,
+        "cached": false,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 4074655227869472,
+        "read_model_feature_id": 4074655227869472,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 0.016,
+        "bytes": 18339,
+        "cached": true,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 4074655227869472,
+        "read_model_feature_id": 4074655227869472,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "monte-romano-campagna",
+      "lat": 42.2485,
+      "lng": 11.9,
+      "reference": "F603_003000.21",
+      "feature_id": 2143190851494736,
+      "lookup_status": 200,
+      "lookup_seconds": 0.024,
+      "first": {
+        "status": 200,
+        "seconds": 5.47,
+        "bytes": 24664,
+        "cached": false,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 2143190851494736,
+        "read_model_feature_id": 2143190851494736,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 0.02,
+        "bytes": 24713,
+        "cached": true,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 2143190851494736,
+        "read_model_feature_id": 2143190851494736,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "monte-romano-campagna",
+      "lat": 42.2515,
+      "lng": 11.9,
+      "reference": "F603_003000.17",
+      "feature_id": 4115618345628101,
+      "lookup_status": 200,
+      "lookup_seconds": 0.027,
+      "first": {
+        "status": 200,
+        "seconds": 4.62,
+        "bytes": 16356,
+        "cached": false,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 4115618345628101,
+        "read_model_feature_id": 4115618345628101,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 0.01,
+        "bytes": 16405,
+        "cached": true,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 4115618345628101,
+        "read_model_feature_id": 4115618345628101,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "monte-romano-campagna",
+      "lat": 42.253,
+      "lng": 11.9,
+      "reference": "F603_003000.55",
+      "feature_id": 691371466977484,
+      "lookup_status": 200,
+      "lookup_seconds": 0.013,
+      "first": {
+        "status": 200,
+        "seconds": 4.474,
+        "bytes": 25206,
+        "cached": false,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 691371466977484,
+        "read_model_feature_id": 691371466977484,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 0.019,
+        "bytes": 25255,
+        "cached": true,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 691371466977484,
+        "read_model_feature_id": 691371466977484,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    },
+    {
+      "area": "monte-romano-campagna",
+      "lat": 42.253,
+      "lng": 11.902,
+      "reference": "F603_003000.40",
+      "feature_id": 3870508357561351,
+      "lookup_status": 200,
+      "lookup_seconds": 0.012,
+      "first": {
+        "status": 200,
+        "seconds": 4.2,
+        "bytes": 17258,
+        "cached": false,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 3870508357561351,
+        "read_model_feature_id": 3870508357561351,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      },
+      "second": {
+        "status": 200,
+        "seconds": 0.012,
+        "bytes": 17307,
+        "cached": true,
+        "cache_database": "aecs4u-stats PostgreSQL via asyncpg",
+        "requested_feature_id": 3870508357561351,
+        "read_model_feature_id": 3870508357561351,
+        "feature_id_matches": true,
+        "blocks_available": [
+          "basic",
+          "buildings",
+          "cadastral",
+          "demographics",
+          "economics",
+          "population",
+          "solar",
+          "valuation"
+        ],
+        "blocks_declared": 22
+      }
+    }
+  ]
+}

@@ -26,7 +26,7 @@ from collections.abc import Awaitable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from land_registry import parcel_dossier_svg as svg
 from land_registry.source_catalog import SourceCatalogEntry, find_source_catalog_entry
@@ -85,11 +85,24 @@ _TEXT: dict[str, tuple[str, str]] = {
     "sec_map": ("Mappa e inquadramento", "Map and location"),
     "sec_cadastre": ("Dati catastali e identificativi", "Cadastral data and identifiers"),
     "sec_location": ("Localizzazione", "Location"),
+    "sec_municipality_profile": ("Profilo comunale", "Municipality profile"),
     "sec_buildings": ("Edifici e indirizzi", "Buildings and addresses"),
+    "sec_osm_buildings": ("Copertura degli edifici OSM", "OSM building footprints"),
     "sec_risks": ("Rischi e vincoli", "Risks and constraints"),
+    "sec_terrain": ("Terreno (TINITALY)", "Terrain (TINITALY)"),
+    "sec_land_cover": ("Copertura del suolo (CORINE)", "Land cover (CORINE)"),
     "sec_population": ("Popolazione e demografia", "Population and demographics"),
+    "sec_quality_of_life": ("Qualità della vita (provincia)", "Quality of life (province)"),
     "sec_income": ("Economia e redditi", "Economy and income"),
+    "sec_solar": ("Potenziale solare comunale", "Municipal solar potential"),
+    "sec_solar_scenario": ("Scenario fotovoltaico della particella", "Parcel PV scenario"),
+    "sec_nightlights": ("Luminosità notturna", "Night lights"),
     "sec_omi": ("Quotazioni OMI", "OMI quotations"),
+    "omi_boundary_title": ("Confini delle zone OMI", "OMI zone boundaries"),
+    "omi_boundary_note": (
+        "La zona automatica usa confini OMI del periodo {vintage}; la geometria è approssimativa e va verificata.",
+        "The automatic match uses OMI boundaries from {vintage}; the geometry is approximate and should be checked.",
+    ),
     "sec_sources": ("Fonti, rilasci dei dataset e licenze", "Sources, dataset releases and licences"),
     "sec_personal": ("Appendice: dati personali", "Appendix: personal data"),
     # fields
@@ -103,9 +116,17 @@ _TEXT: dict[str, tuple[str, str]] = {
     "f_province_code": ("Sigla provincia", "Province code"),
     "f_region": ("Regione", "Region"),
     "f_postcode": ("CAP", "Postcode"),
+    "f_latest_population": ("Popolazione residente disponibile", "Latest available resident population"),
+    "f_population_year": ("Anno di riferimento", "Reference year"),
+    "f_provincial_capital": ("Capoluogo di provincia", "Provincial capital"),
+    "f_official_website": ("Sito istituzionale", "Official website"),
     "f_istat": ("Codice ISTAT", "ISTAT code"),
     "f_nuts3": ("NUTS3", "NUTS3"),
     "f_residents": ("Residenti nel comune", "Municipal residents"),
+    "f_qol_indicator": ("Indicatore ISTAT", "ISTAT indicator"),
+    "f_qol_value": ("Valore", "Value"),
+    "f_qol_period": ("Periodo di riferimento", "Reference period"),
+    "f_qol_unit": ("Unità", "Unit"),
     "f_area": ("Superficie (m²)", "Area (m²)"),
     "f_perimeter": ("Perimetro (m)", "Perimeter (m)"),
     "f_release": ("Rilascio dati", "Data release"),
@@ -129,20 +150,102 @@ _TEXT: dict[str, tuple[str, str]] = {
     "f_vacant": ("Abitazioni vuote", "Vacant dwellings"),
     "f_hh_size": ("Dimensione media famiglia", "Average household size"),
     "f_census_section": ("Sezione di censimento 2021", "Census section 2021"),
+    "f_land_cover_class": ("Classe prevalente", "Majority class"),
+    "f_land_cover_code": ("Codice CORINE", "CORINE code"),
+    "f_land_cover_share": ("Quota della particella", "Share of parcel"),
+    "f_land_cover_coverage": ("Copertura cartografata", "Mapped coverage"),
+    "f_elevation_min": ("Quota minima", "Minimum elevation"),
+    "f_elevation_mean": ("Quota media", "Mean elevation"),
+    "f_elevation_max": ("Quota massima", "Maximum elevation"),
+    "f_elevation_range": ("Dislivello", "Elevation range"),
+    "f_elevation_std": ("Deviazione standard della quota", "Elevation standard deviation"),
+    "f_slope_mean": ("Pendenza media", "Mean slope"),
+    "f_slope_max": ("Pendenza massima", "Maximum slope"),
+    "f_terrain_tri": ("Indice medio di rugosità (TRI)", "Mean terrain ruggedness (TRI)"),
+    "f_aspect_predominant": ("Esposizione prevalente", "Predominant aspect"),
+    "f_aspect_mean": ("Esposizione media", "Mean aspect"),
+    "f_terrain_samples": ("Campioni raster validi", "Valid raster samples"),
+    "f_terrain_coverage": ("Copertura", "Coverage"),
     "f_income_year": ("Anno d'imposta", "Tax year"),
     "f_taxpayers": ("Contribuenti", "Taxpayers"),
     "f_mean_income": ("Reddito imponibile medio", "Mean taxable income"),
+    "f_pv_high": ("Alta idoneità", "High viability"),
+    "f_pv_medium": ("Media idoneità", "Medium viability"),
+    "f_pv_low": ("Bassa idoneità", "Low viability"),
+    "f_pv_not_eligible": ("Non idoneo", "Not eligible"),
+    "f_pv_buildings": ("Edifici inclusi nella stima", "Buildings included in estimate"),
+    "f_pv_capacity": ("Capacità fotovoltaica massima stimata", "Estimated maximum PV capacity"),
+    "f_pv_output_pessimistic": ("Produzione annua (scenario prudenziale)", "Annual output (pessimistic scenario)"),
+    "f_pv_output_modern": ("Produzione annua (scenario moderno)", "Annual output (modern scenario)"),
+    "f_pv_per_resident": ("Produzione annua per residente", "Annual output per resident"),
+    "f_scenario_system": ("Potenza impianto ipotizzata", "Assumed system size"),
+    "f_scenario_yield": ("Produzione PVGIS per kWp", "PVGIS yield per kWp"),
+    "f_scenario_generation": ("Produzione nel primo anno", "First-year generation"),
+    "f_scenario_capex": ("Costo iniziale stimato", "Estimated upfront cost"),
+    "f_scenario_npv": ("Valore attuale netto", "Net present value"),
+    "f_scenario_lcoe": ("Costo livellato dell'energia", "Levelized cost of energy"),
+    "f_scenario_payback": ("Rientro semplice", "Simple payback"),
+    "f_scenario_discounted_payback": ("Rientro attualizzato", "Discounted payback"),
+    "f_scenario_tilt": ("Inclinazione", "Tilt"),
+    "f_scenario_aspect": ("Azimut PVGIS", "PVGIS aspect"),
+    "f_scenario_losses": ("Perdite di sistema", "System losses"),
+    "f_scenario_self_consumption": ("Autoconsumo ipotizzato", "Assumed self-consumption"),
+    "f_scenario_lifetime": ("Durata dello scenario", "Scenario lifetime"),
+    "f_scenario_install_cost": ("Costo installazione per kWp", "Installation cost per kWp"),
+    "f_scenario_electricity_price": ("Prezzo energia autoconsumata", "Self-consumed electricity price"),
+    "f_scenario_export_price": ("Prezzo energia immessa", "Export electricity price"),
+    "f_scenario_maintenance": ("Manutenzione annua per kWp", "Annual maintenance per kWp"),
+    "f_scenario_degradation": ("Degrado annuo", "Annual degradation"),
+    "f_scenario_discount": ("Tasso di attualizzazione", "Discount rate"),
+    "f_scenario_year": ("Anno", "Year"),
+    "f_scenario_cash_flow": ("Flusso netto", "Net cash flow"),
+    "f_scenario_cumulative": ("Flusso cumulato", "Cumulative cash flow"),
+    "f_scenario_generation_short": ("Produzione", "Generation"),
+    "f_scenario_revenue": ("Ricavi", "Revenue"),
+    "f_nightlights_radiance": ("Radiazione annuale", "Annual radiance"),
+    "f_nightlights_year": ("Anno di osservazione", "Observation year"),
+    "f_nightlights_pixels": ("Pixel validi", "Valid pixels"),
+    "f_nightlights_method": ("Metodo di campionamento", "Sampling method"),
     "f_seismic_zone": ("Zona sismica del comune", "Municipal seismic zone"),
     "f_landslide": ("Frane (comune): aree P3+P4, % del territorio", "Landslides (municipality): P3+P4 areas, % of territory"),
     "f_flood": ("Alluvioni (comune): scenario P2, % del territorio", "Floods (municipality): P2 scenario, % of territory"),
     "f_pga": ("PGA attesa (INGV MPS04)", "Expected PGA (INGV MPS04)"),
+    "f_composite_risk": ("Indice comunale di pericolosità", "Municipal hazard context index"),
+    "f_protection_records": ("Vincoli e beni tutelati", "Protection records"),
+    "f_protection_landscape_coverage": ("Copertura della fonte paesaggistica", "Landscape source coverage"),
+    "f_protection_heritage_coverage": ("Copertura della fonte sui beni culturali", "Cultural heritage source coverage"),
+    "f_protection_category": ("Categoria normativa", "Legal category"),
+    "f_protection_act": ("Atto o decreto", "Act or decree"),
+    "f_protection_overlap": ("Sovrapposizione con la particella", "Parcel overlap"),
+    "f_protection_source": ("Fonte", "Source"),
+    "f_source_record": ("Scheda della fonte", "Source record"),
     "f_hazard_landslide": ("Frane sulla particella: classe più alta", "Landslide on the parcel: highest class"),
     "f_hazard_flood": ("Alluvioni sulla particella: scenario più alto", "Flood on the parcel: highest scenario"),
+    "f_coastal_period": ("Classificazione ISPRA 2006–2020", "ISPRA 2006–2020 classification"),
+    "f_coastal_nearest": ("Tratto cartografato più vicino", "Nearest mapped segment"),
+    "f_coastal_count": ("Tratti entro 1 km", "Segments within 1 km"),
+    "f_coastal_accuracy": ("Accuratezza posizionale dichiarata", "Reported positional accuracy"),
+    "f_coastal_threshold": ("Soglia di classificazione", "Classification threshold"),
     "f_subsidence_class": ("Classe di movimento (EGMS)", "Movement class (EGMS)"),
     "f_subsidence_velocity": ("Velocità verticale media", "Mean vertical velocity"),
     "f_buildings_count": ("Edifici registrati", "Recorded buildings"),
+    "f_osm_building_count": ("Impronte di edifici mappate", "Mapped building footprints"),
+    "f_osm_footprint_area": ("Superficie delle impronte nella particella", "Footprint area inside parcel"),
+    "f_osm_coverage": ("Superficie della particella coperta", "Parcel area covered"),
     "f_land_count": ("Terreni registrati", "Recorded land records"),
     "f_addresses": ("Indirizzi", "Addresses"),
+    "sec_anncsu_addresses": ("Numeri civici georeferenziati (ANNCSU)", "Geocoded civic addresses (ANNCSU)"),
+    "f_coordinate_method": ("Metodo di georeferenziazione", "Coordinate method"),
+    "f_municipality_coordinate_coverage": ("Copertura coordinate nel comune", "Municipality coordinate coverage"),
+    "f_anncsu_match": ("Esito della corrispondenza civici", "Civic-address match result"),
+    "anncsu_coverage_full": ("Copertura coordinate quasi completa", "Coordinate coverage is nearly complete"),
+    "anncsu_coverage_partial": ("Copertura coordinate parziale", "Coordinate coverage is partial"),
+    "anncsu_coverage_unknown": ("Copertura coordinate non nota", "Coordinate coverage is unknown"),
+    "anncsu_method_1": ("Rilievo sul campo, accuratezza stimata < 5 m", "Field survey, estimated accuracy < 5 m"),
+    "anncsu_method_2": ("Rilievo sul campo, accuratezza stimata ≥ 5 m", "Field survey, estimated accuracy ≥ 5 m"),
+    "anncsu_method_3": ("Derivazione indiretta, accuratezza stimata < 5 m", "Indirect mapping, estimated accuracy < 5 m"),
+    "anncsu_method_4": ("Derivazione indiretta, accuratezza stimata ≥ 5 m", "Indirect mapping, estimated accuracy ≥ 5 m"),
+    "anncsu_method_5": ("Derivazione indiretta tramite Portale per i Comuni", "Indirect mapping via Portale per i Comuni"),
     "f_label": ("Nome di riferimento", "Reference name"),
     "f_status": ("Stato", "Status"),
     "f_priority": ("Priorità", "Priority"),
@@ -172,6 +275,36 @@ _TEXT: dict[str, tuple[str, str]] = {
         "Zona sismica a scala comunale e PGA a griglia: non sono una valutazione ingegneristica della particella.",
         "Municipal seismic zone and gridded PGA are not an engineering assessment of the parcel.",
     ),
+    "composite_risk_note": (
+        "Indice euristico comunale con componenti disponibili pesate in modo uguale; i componenti mancanti sono esclusi. Non è una probabilità, una stima per la particella o una valutazione ingegneristica.",
+        "Heuristic municipality-level index with equal weights for available components; missing components are excluded. It is not a probability, a parcel estimate or an engineering assessment.",
+    ),
+    "protection_note": (
+        "Dati di fonte, non un certificato legale; verificare con la Soprintendenza competente.",
+        "Source data, not a legal certificate; confirm with the competent Soprintendenza.",
+    ),
+    "protection_coverage_full": ("Copertura completa della particella", "Full parcel coverage"),
+    "protection_coverage_unknown": ("Copertura non verificata; il mancato riscontro non esclude un vincolo", "Coverage not confirmed; no match does not rule out a constraint"),
+    "protection_no_records": ("Nessun record interseca la particella nelle fonti coperte", "No source record intersects the parcel in the covered sources"),
+    "protection_unresolved": ("Non determinato: la copertura della fonte non è confermata", "Not determined: source coverage is not confirmed"),
+    "protection_invalid_geometry": ("Sovrapposizione non calcolata: geometria della fonte non valida", "Overlap not calculated: source geometry is invalid"),
+    "protection_point_geometry": ("Record puntuale; la sovrapposizione areale non si applica", "Point record; area overlap does not apply"),
+    "protection_non_binding": ("Record di catalogo; non costituisce un vincolo cogente", "Catalogue record; not a binding constraint"),
+    "protection_truncated": ("Oltre 100 record intersecano la particella; l'elenco è incompleto", "More than 100 records intersect the parcel; the list is truncated"),
+    "coastal_note": (
+        "La dinamica costiera descrive le variazioni osservate tra il 2006 e il 2020; non è una previsione attuale. "
+        "Un tratto non trovato non dimostra l'assenza di erosione.",
+        "Coastal change describes observations from 2006 to 2020; it is not a current forecast. "
+        "No mapped segment does not establish absence of erosion.",
+    ),
+    "coastal_coverage_note": (
+        "Il dataset esclude alcuni tratti di costa a dinamica molto variabile, comprese parti del delta del Po e della costa friulana.",
+        "The dataset excludes some highly variable coastal segments, including parts of the Po Delta and Friulian coast.",
+    ),
+    "coastal_partial": (
+        "La ricerca locale ha raggiunto il limite di elementi; il risultato è parziale.",
+        "The local query reached its candidate limit; this result is partial.",
+    ),
     "buildings_note": (
         "Edifici e indirizzi provengono dalla cache SISTER abbinata per comune, foglio e particella: la copertura può essere incompleta.",
         "Buildings and addresses come from the SISTER cache matched by municipality, sheet and parcel; coverage may be incomplete.",
@@ -179,6 +312,30 @@ _TEXT: dict[str, tuple[str, str]] = {
     "buildings_none": (
         "Nessun record SISTER per questa particella: non significa assenza di edifici. Verificare con visura catastale.",
         "No SISTER record for this parcel: this does not mean there are no buildings. Verify with a cadastral extract.",
+    ),
+    "anncsu_unmatched": (
+        "Nessun punto ANNCSU georeferenziato ricade nella particella. Il risultato non dimostra che sia priva di indirizzo.",
+        "No geocoded ANNCSU point falls inside the parcel. This does not show that it has no address.",
+    ),
+    "anncsu_no_point": (
+        "Nessun punto civico è disponibile per questa particella.",
+        "No civic-address point is available for this parcel.",
+    ),
+    "anncsu_partial_unmatched": (
+        "Nessun punto corrispondente è stato trovato prima del limite di ricerca; il risultato è parziale.",
+        "No matching point was found before the search limit; the result is partial.",
+    ),
+    "anncsu_note": (
+        "Le coordinate sono fornite dai comuni e possono mancare per alcuni numeri civici; la copertura comunale è indicativa.",
+        "Municipalities supply the coordinates, and some civic addresses may have none; municipal coverage is an indication only.",
+    ),
+    "anncsu_partial": (
+        "La ricerca ha raggiunto un limite; l'elenco può essere incompleto.",
+        "The query reached a limit; the list may be incomplete.",
+    ),
+    "osm_buildings_note": (
+        "Le impronte OpenStreetMap sono mappate dalla comunità e la copertura può essere incompleta. Le aree sono tagliate sul confine della particella; le geometrie sovrapposte sono conteggiate una sola volta.",
+        "OpenStreetMap building footprints are community mapped and coverage may be incomplete. Areas are clipped to the parcel boundary; overlapping geometries are counted once.",
     ),
     "history_none": ("Storico OMI non disponibile per questa zona.", "OMI history is not available for this zone."),
     "hazard_parcel": (
@@ -189,7 +346,81 @@ _TEXT: dict[str, tuple[str, str]] = {
         "Dati IRPEF a scala comunale: non descrivono i redditi di chi abita nella particella.",
         "IRPEF data are municipal aggregates; they do not describe the incomes of people living on the parcel.",
     ),
+    "land_cover_note": (
+        "CLC 2018 ha un'unità minima di mappatura di 25 ha e una larghezza minima di 100 m; descrive il contesto generale del suolo, non un rilievo della particella né la classificazione di un edificio.",
+        "CLC 2018 has a 25 ha minimum mapping unit and a 100 m minimum width; this is broad land-cover context, not a parcel survey or building classification.",
+    ),
+    "land_cover_not_built": (
+        "Dati CORINE regionali non installati su questo server.",
+        "Regional CORINE data are not installed on this server.",
+    ),
+    "land_cover_no_match": (
+        "Nessun poligono CORINE interseca questa particella; la classe è sconosciuta.",
+        "No CORINE polygon intersects this parcel; its class is unknown.",
+    ),
+    "terrain_note": (
+        "TINITALY è un modello del terreno a 10 m privo degli edifici. Fornisce contesto generale, non un rilievo della particella né una valutazione ingegneristica.",
+        "TINITALY is a 10 m bare-earth terrain model. It is context, not a parcel survey or engineering assessment.",
+    ),
+    "terrain_not_built": (
+        "Dati altimetrici TINITALY non installati per questa regione.",
+        "TINITALY terrain data are not installed for this region.",
+    ),
+    "terrain_no_match": (
+        "Nessuna cella altimetrica TINITALY valida per questa particella.",
+        "No valid TINITALY elevation cells were found for this parcel.",
+    ),
+    "terrain_point_fallback": (
+        "È stato campionato un punto rappresentativo perché nessun centro di cella raster ricade nella particella.",
+        "A representative point was sampled because no raster cell centre falls inside this parcel.",
+    ),
+    "terrain_flat": ("Pianeggiante", "Flat"),
+    "solar_scope_note": (
+        "Aggregati riferiti al comune: non sono stime per questa particella, per un edificio o per un tetto.",
+        "Municipal aggregates only; these are not estimates for this parcel, a building or a roof.",
+    ),
+    "solar_scenario_note": (
+        "Stima di produzione PVGIS al centroide catastale, non una valutazione del tetto. Potenza, orientamento, autoconsumo, prezzi e costi derivano dagli input dello scenario; non sono simulati profili orari o ombreggiamento. Flussi pre-imposte, senza incentivi, finanziamento o sostituzione dell'inverter.",
+        "PVGIS production estimate at the cadastral parcel centroid, not a roof assessment. System size, orientation, self-consumption, prices and costs come from the scenario inputs; hourly load and shading are not simulated. Cash flows are pre-tax and exclude incentives, financing and inverter replacement.",
+    ),
+    "solar_scenario_timeout": (
+        "PVGIS non ha risposto in tempo; lo scenario non è stato incluso in questo PDF.",
+        "PVGIS did not respond in time; the scenario was not included in this PDF.",
+    ),
+    "solar_scenario_unavailable": (
+        "PVGIS non è disponibile; lo scenario non è stato incluso in questo PDF.",
+        "PVGIS is unavailable; the scenario was not included in this PDF.",
+    ),
+    "solar_scenario_geometry": (
+        "Geometria della particella non disponibile; non è stato possibile localizzare lo scenario.",
+        "Parcel geometry is unavailable, so the scenario could not be located.",
+    ),
+    "municipality_profile_note": (
+        "Dati riferiti all'intero comune. La serie storica può avere anni mancanti e non descrive la particella.",
+        "Figures refer to the whole municipality. The series may have missing years and does not describe the parcel.",
+    ),
+    "quality_of_life_note": (
+        "Indicatori ISTAT riferiti alla provincia (NUTS3), non al comune o alla particella. È mostrata l'ultima edizione annuale; i periodi di riferimento variano tra indicatori. Nomi e unità seguono la pubblicazione ISTAT; il supplemento COVID è escluso.",
+        "ISTAT indicators refer to the province (NUTS3), not the municipality or parcel. The latest annual edition is shown; reference periods vary by indicator. Names and units follow the ISTAT release; the COVID supplement is omitted.",
+    ),
+    "qol_cluster_wealth_consumption": ("Ricchezza e consumi", "Wealth and consumption"),
+    "qol_cluster_business_work": ("Imprese e lavoro", "Business and work"),
+    "qol_cluster_environment_services": ("Ambiente e servizi", "Environment and services"),
+    "qol_cluster_demography_society": ("Demografia e società", "Demography and society"),
+    "qol_cluster_justice_safety": ("Giustizia e sicurezza", "Justice and safety"),
+    "qol_cluster_culture_leisure": ("Cultura e tempo libero", "Culture and leisure"),
+    "nightlights_note": (
+        "NASA Black Marble usa una griglia di circa 460 m. La radiazione annuale è un indicatore su scala ampia e può non rappresentare l'illuminazione della particella o di un edificio.",
+        "NASA Black Marble uses a roughly 460 m grid. Annual radiance is a broad-area proxy and may not represent lighting on the parcel or a building.",
+    ),
+    "nightlights_unmatched": (
+        "Nessun pixel valido di buona qualità per questa particella; i dati mancanti o fuori copertura non sono considerati pari a zero.",
+        "No good-quality pixel is available for this parcel; missing or out-of-coverage data are not treated as zero.",
+    ),
+    "nightlights_point_method": ("pixel del punto rappresentativo", "representative-point pixel"),
+    "nightlights_mean_method": ("media dei pixel nella particella", "mean of parcel pixels"),
     "chart_age": ("Popolazione della sezione per fascia di età", "Section population by age group"),
+    "chart_municipality_population": ("Popolazione residente nel comune per anno", "Municipal resident population by year"),
     "chart_income_dist": ("Contribuenti per fascia di reddito, quota sul totale (%)", "Taxpayers per income bracket, share of total (%)"),
     "chart_income_avg": ("Reddito imponibile medio per ambito (€)", "Mean taxable income by area (€)"),
     "chart_omi_range": ("Intervalli di compravendita OMI per tipologia (€/m²)", "OMI sale ranges per typology (€/m²)"),
@@ -203,6 +434,8 @@ _TEXT: dict[str, tuple[str, str]] = {
     "r_provider": ("Fornitore in catalogo", "Catalogue provider"),
     "r_url": ("URL fornitore", "Provider URL"),
     "r_vintage": ("Rilascio / vintage", "Dataset release / vintage"),
+    "r_match_method": ("Metodo di corrispondenza", "Match method"),
+    "r_spatial_resolution": ("Risoluzione spaziale", "Spatial resolution"),
     "r_dataset": ("Versione dataset", "Dataset version"),
     "r_model": ("Versione modello", "Model version"),
     "r_updated": ("Aggiornato", "Updated"),
@@ -299,6 +532,18 @@ def _fmt(value: Any, locale: str, decimals: int | None = None, unit: str = "") -
     return f"{format_number(number, locale, decimals)}{(' ' + unit) if unit else ''}"
 
 
+def _fmt_scaled(value: Any, locale: str, unit: str, kilo_unit: str, mega_unit: str) -> str | None:
+    """Format large municipal totals without changing their stated units."""
+    number = _number(value)
+    if number is None:
+        return None
+    if number >= 1_000_000:
+        return _fmt(number / 1_000_000, locale, 1, mega_unit)
+    if number >= 1_000:
+        return _fmt(number / 1_000, locale, 1, kilo_unit)
+    return _fmt(number, locale, 0, unit)
+
+
 def _pct(value: Any, locale: str, decimals: int = 1) -> str | None:
     return _fmt(value, locale, decimals, "%")
 
@@ -387,6 +632,10 @@ def source_register_rows(source: Any, metadata: dict[str, Any], locale: str) -> 
         [text["r_licence"], str(reported or catalogue_licence or text["r_not_reported_meta"])],
         [text["r_licence_status"], _licence_status(entry, bool(reported), locale)],
     ]
+    if metadata.get("match_method"):
+        rows.append([text["r_match_method"], str(metadata["match_method"])])
+    if metadata.get("spatial_resolution"):
+        rows.append([text["r_spatial_resolution"], str(metadata["spatial_resolution"])])
     if entry is not None and entry.terms_url:
         rows.append([text["r_terms"], entry.terms_url])
     if entry is not None and entry.citation:
@@ -398,7 +647,10 @@ def source_register_rows(source: Any, metadata: dict[str, Any], locale: str) -> 
 
 def _provenance(source: Any, payload: dict[str, Any] | None, **extra: Any) -> dict[str, Any]:
     payload = payload or {}
-    keys = ("dataset_version", "data_vintage", "model_version", "license", "licence", "updated_at")
+    keys = (
+        "dataset_version", "data_vintage", "model_version", "license", "licence", "updated_at",
+        "match_method", "spatial_resolution",
+    )
     meta = {key: payload.get(key) for key in keys if payload.get(key)}
     meta.update({key: value for key, value in extra.items() if value})
     return {"source": source or payload.get("source"), "metadata": meta}
@@ -427,7 +679,13 @@ async def _safe(awaitable: Awaitable[Any], name: str, timeout: float = SOURCE_TI
         return None
 
 
-async def gather_inputs(reference: str, parcel: dict[str, Any], *, neighbours: list[Any] | None = None) -> dict[str, Any]:
+async def gather_inputs(
+    reference: str,
+    parcel: dict[str, Any],
+    *,
+    neighbours: list[Any] | None = None,
+    solar_scenario: Any = None,
+) -> dict[str, Any]:
     """Collect every server-side source the dossier uses. Missing sources are ``None``."""
     from land_registry import stats_service
 
@@ -466,6 +724,66 @@ async def gather_inputs(reference: str, parcel: dict[str, Any], *, neighbours: l
             return None
         return await _safe(stats_service.aget_census_section_at_point(point[0], point[1], cadastral_code=code), "census")
 
+    async def protection_constraints() -> Any:
+        if not geometry:
+            return {"status": "unavailable", "reason": "parcel_geometry_unavailable"}
+        from land_registry.map_layers import get_map_layer_source
+
+        return await _safe(
+            get_map_layer_source().read_protection_constraints(geometry),
+            "protection-constraints",
+        )
+
+    async def parcel_solar_scenario() -> dict[str, Any] | None:
+        if solar_scenario is None:
+            return None
+        from land_registry import solar_economics
+
+        try:
+            centroid = await asyncio.to_thread(stats_service._parcel_centroid, parcel)
+            if centroid is None:
+                return {"available": False, "reason": "parcel_geometry_unavailable"}
+            scenario = solar_scenario.model_dump() if hasattr(solar_scenario, "model_dump") else dict(solar_scenario)
+            production = await solar_economics.annual_yield_per_kwp(
+                lat=centroid["lat"],
+                lng=centroid["lng"],
+                tilt_degrees=scenario["tilt_degrees"],
+                aspect_degrees=scenario["aspect_degrees"],
+                system_losses_pct=scenario["system_losses_pct"],
+            )
+            economics, calculation_method = solar_economics.calculate_economics(
+                production["annual_yield_kwh_per_kwp"],
+                scenario["system_kwp"],
+                solar_economics.assumptions_from_request(scenario),
+            )
+            return {
+                "available": True,
+                "source": production.get("model") or solar_economics.PVGIS_MODEL,
+                "location": {
+                    **centroid,
+                    "match_method": "parcel geometry centroid",
+                    "spatial_scope": "PVGIS location estimate; not a roof measurement",
+                },
+                "production": production,
+                "scenario": scenario,
+                "economics": economics,
+                "calculation_method": calculation_method,
+                "dataset_version": production.get("data_period") or solar_economics.PVGIS_DATA_PERIOD,
+                "model_version": production.get("model") or solar_economics.PVGIS_MODEL,
+            }
+        except solar_economics.SolarSourceTimeout:
+            return {"available": False, "reason": "pvgis_timeout"}
+        except solar_economics.SolarSourceUnavailable:
+            return {"available": False, "reason": "pvgis_unavailable"}
+        except Exception as exc:  # noqa: BLE001 - optional scenario must not fail the dossier
+            log.warning("Dossier parcel solar scenario unavailable for %s: %s", reference, exc)
+            return {"available": False, "reason": "scenario_calculation_failed"}
+
+    solar = (
+        _safe(stats_service.aget_municipality_solar_potential(str(istat)), "municipal-solar")
+        if istat else _none()
+    )
+
     results = await asyncio.gather(
         omi(),
         census(),
@@ -474,11 +792,36 @@ async def gather_inputs(reference: str, parcel: dict[str, Any], *, neighbours: l
         _safe(stats_service.aget_mps04_pga_at_point(*point), "mps04") if point else _none(),
         _safe(stats_service.aget_parcel_hazard_intersections(geometry), "hazards") if geometry else _none(),
         _safe(stats_service.aget_parcel_subsidence_intersections(geometry), "subsidence") if geometry else _none(),
+        _safe(stats_service.aget_parcel_coastal_erosion(geometry), "coastal-erosion", timeout=12) if geometry else _none(),
+        protection_constraints(),
+        _safe(stats_service.aget_parcel_nightlights(geometry), "nightlights") if geometry else _none(),
+        _safe(
+            asyncio.to_thread(stats_service.get_land_cover_for_feature, parcel, municipality),
+            "land-cover",
+        ) if geometry else _none(),
+        _safe(
+            asyncio.to_thread(stats_service.get_terrain_for_feature, parcel, municipality),
+            "terrain",
+        ) if geometry else _none(),
+        _safe(
+            asyncio.to_thread(stats_service.get_building_footprints_for_feature, parcel, municipality),
+            "building-footprints",
+        ) if geometry else _none(),
         _safe(
             stats_service.aget_buildings_for_parcel(reference, cadastral_code=code, municipality=municipality), "buildings"
         ),
+        _safe(
+            asyncio.to_thread(stats_service.get_anncsu_addresses_for_feature, parcel, municipality, code),
+            "anncsu-addresses",
+        ) if geometry else _none(),
+        solar,
+        _safe(stats_service.aget_quality_of_life_indicators(code), "quality-of-life", timeout=15) if code else _none(),
+        _safe(parcel_solar_scenario(), "parcel-solar-scenario", timeout=18)
+        if solar_scenario is not None else _none(),
     )
-    (zone, quotes, history), census_feature, income, risks, mps04, hazards, subsidence, buildings = results
+    (zone, quotes, history), census_feature, income, risks, mps04, hazards, subsidence, coastal, protection, nightlights, land_cover, terrain, building_footprints, buildings, anncsu_addresses, solar_profile, quality_of_life, parcel_solar = results
+    if solar_scenario is not None and parcel_solar is None:
+        parcel_solar = {"available": False, "reason": "scenario_calculation_failed"}
     return {
         "reference": reference,
         "parcel": parcel,
@@ -494,7 +837,17 @@ async def gather_inputs(reference: str, parcel: dict[str, Any], *, neighbours: l
         "mps04": mps04,
         "hazards": hazards,
         "subsidence": subsidence,
+        "coastal_erosion": coastal,
+        "protection_constraints": protection,
+        "nightlights": nightlights,
+        "land_cover": land_cover,
+        "terrain": terrain,
+        "building_footprints": building_footprints,
         "buildings": buildings,
+        "anncsu_addresses": anncsu_addresses,
+        "solar": solar_profile,
+        "solar_scenario": parcel_solar,
+        "quality_of_life": quality_of_life,
     }
 
 
@@ -610,6 +963,7 @@ def build_dossier(
         tone = _SEISMIC_TONE.get(int(seismic_zone), "medium") if str(seismic_zone).isdigit() else "medium"
         chips.append({"label": f"{text['seismic']} {seismic_zone}", "tone": tone})
     subsidence = inputs.get("subsidence") or {}
+    coastal = inputs.get("coastal_erosion") or {}
     if subsidence.get("available") and subsidence.get("matched"):
         cls = subsidence.get("dominant_class")
         if cls:
@@ -686,6 +1040,82 @@ def build_dossier(
         }
     )
 
+    # --- municipality profile and population history
+    population_history = municipality.get("population_history") or []
+    population_by_year: dict[str, float] = {}
+    if isinstance(population_history, list):
+        for entry in population_history:
+            if not isinstance(entry, dict) or entry.get("year") is None:
+                continue
+            residents = _number(entry.get("resident_population"))
+            if residents is not None:
+                population_by_year[str(entry["year"])] = residents
+    latest_population = municipality.get("population")
+    if isinstance(latest_population, dict):
+        year = latest_population.get("year")
+        residents = _number(latest_population.get("resident_population"))
+        if year is not None and residents is not None:
+            population_by_year[str(year)] = residents
+    ordered_population = sorted(population_by_year.items(), key=lambda item: item[0])
+    latest_year, latest_residents = ordered_population[-1] if ordered_population else (None, None)
+    municipality_blocks: list[dict[str, Any]] = []
+    if municipality:
+        profile_rows = [
+            [text["f_latest_population"], _fmt(latest_residents, locale, 0)],
+            [text["f_population_year"], latest_year],
+            [
+                text["f_provincial_capital"],
+                text["yes"] if municipality.get("is_provincial_capital") is True else (
+                    text["no"] if municipality.get("is_provincial_capital") is False else None
+                ),
+            ],
+            [text["f_official_website"], municipality.get("website")],
+        ]
+        profile_rows = [row for row in profile_rows if row[1] not in (None, "")]
+        if profile_rows:
+            municipality_blocks.append(_kv(profile_rows))
+        if ordered_population:
+            municipality_blocks.append(
+                {
+                    "type": "table",
+                    "columns": [
+                        {"title": text["f_population_year"], "align": "left", "width": "24mm"},
+                        {"title": text["f_latest_population"], "align": "right", "width": "1fr"},
+                    ],
+                    "rows": [[year, _fmt(residents, locale, 0) or "–"] for year, residents in ordered_population],
+                }
+            )
+            if len(ordered_population) > 1:
+                chart = svg.column_chart_svg(
+                    ordered_population,
+                    520.0,
+                    150.0,
+                    value_format=lambda value: format_number(value, locale, 0),
+                )
+                if chart:
+                    files["chart_municipality_population.svg"] = chart.encode()
+                    municipality_blocks.append(
+                        {
+                            "type": "image",
+                            "file": "chart_municipality_population.svg",
+                            "caption": text["chart_municipality_population"],
+                        }
+                    )
+        municipality_blocks.append({"type": "note", "text": text["municipality_profile_note"]})
+        register.append(
+            {
+                "title": text["sec_municipality_profile"],
+                **_provenance(municipality.get("source"), municipality, spatial_resolution="municipality"),
+            }
+        )
+    else:
+        municipality_blocks.append({"type": "unavailable", "text": text["unavailable"]})
+    if municipality and not ordered_population and not municipality.get("website") and municipality.get("is_provincial_capital") is None:
+        municipality_blocks.insert(0, {"type": "unavailable", "text": text["unavailable"]})
+    sections.append(
+        {"id": "municipality_profile", "title": text["sec_municipality_profile"], "blocks": municipality_blocks}
+    )
+
     # --- buildings
     b_blocks: list[dict[str, Any]] = []
     if buildings_known and not buildings_found:
@@ -708,7 +1138,92 @@ def build_dossier(
         register.append({"title": text["sec_buildings"], **_provenance(buildings.get("source"), buildings)})
     else:
         b_blocks.append({"type": "unavailable", "text": text["unavailable"]})
+    footprint_block = inputs.get("building_footprints") or {}
+    footprint_data = footprint_block.get("data") or {}
+    if footprint_block.get("available") is True:
+        b_blocks.append(
+            _kv(
+                [
+                    [text["f_osm_building_count"], _fmt(footprint_data.get("building_count"), locale, 0)],
+                    [text["f_osm_footprint_area"], _fmt(footprint_data.get("footprint_area_sqm"), locale, 1, "m²")],
+                    [text["f_osm_coverage"], _fmt(footprint_data.get("coverage_pct"), locale, 2, "%")],
+                ]
+            )
+        )
+        b_blocks.append({"type": "note", "text": text["osm_buildings_note"]})
+        register.append({
+            "title": text["sec_osm_buildings"],
+            **_provenance(footprint_block.get("source"), footprint_block),
+        })
+    else:
+        b_blocks.append({"type": "unavailable", "text": text["unavailable"]})
+        register.append({
+            "title": text["sec_osm_buildings"],
+            **_provenance(footprint_block.get("source"), footprint_block),
+        })
     sections.append({"id": "buildings", "title": text["sec_buildings"], "blocks": b_blocks})
+
+    # --- geocoded civic addresses
+    anncsu_block = inputs.get("anncsu_addresses") or {}
+    anncsu_data = anncsu_block.get("data") or {}
+    anncsu_rows: list[list[str | None]] = []
+    if anncsu_block.get("available") is True and isinstance(anncsu_data, dict):
+        anncsu_addresses = anncsu_data.get("addresses") or []
+        for address in anncsu_addresses[:12]:
+            label = str(address.get("address") or "").strip()
+            method_code = str(address.get("coordinate_method") or "")
+            method = text.get(f"anncsu_method_{method_code}") or address.get("coordinate_method_label") or method_code
+            if label:
+                anncsu_rows.append([label, str(method) if method else None])
+        coverage_pct = _number(anncsu_data.get("municipality_coordinate_coverage_pct"))
+        coverage_status = str(anncsu_data.get("municipality_coordinate_coverage_status") or "").lower()
+        if coverage_status not in {"full", "partial", "unknown"}:
+            coverage_status = (
+                "unknown" if coverage_pct is None
+                else "full" if coverage_pct >= 99.99
+                else "partial"
+            )
+        coverage_label = text[f"anncsu_coverage_{coverage_status}"]
+        if coverage_pct is not None:
+            coverage_label = f"{coverage_label} · {_pct(coverage_pct, locale, 2)}"
+        anncsu_rows.append([text["f_municipality_coordinate_coverage"], coverage_label])
+        if not anncsu_addresses:
+            result_status = str(anncsu_data.get("status") or "")
+            match_result = (
+                text["anncsu_partial_unmatched"] if result_status == "partial"
+                else text["anncsu_unmatched"] if result_status == "no_geocoded_match"
+                else text["anncsu_no_point"]
+            )
+            anncsu_rows.append([text["f_anncsu_match"], match_result])
+        anncsu_blocks: list[dict[str, Any]] = []
+        if anncsu_rows:
+            anncsu_blocks.append(_kv(anncsu_rows))
+        anncsu_blocks.append({"type": "note", "text": text["anncsu_note"]})
+        if anncsu_data.get("status") == "partial" or anncsu_data.get("candidate_limit_reached") or anncsu_data.get("truncated"):
+            anncsu_blocks.append({"type": "note", "text": text["anncsu_partial"]})
+        anncsu_metadata = {
+            "source": anncsu_block.get("source"),
+            "dataset_version": anncsu_block.get("dataset_version"),
+            "updated_at": anncsu_block.get("updated_at"),
+            "match_method": anncsu_block.get("match_method"),
+            "spatial_resolution": anncsu_block.get("spatial_resolution"),
+            "license": anncsu_block.get("license"),
+        }
+        register.append({
+            "title": text["sec_anncsu_addresses"],
+            **_provenance(anncsu_block.get("source"), anncsu_metadata),
+        })
+    else:
+        anncsu_blocks = [{"type": "unavailable", "text": text["unavailable"]}]
+        register.append({
+            "title": text["sec_anncsu_addresses"],
+            **_provenance(anncsu_block.get("source"), anncsu_block),
+        })
+    sections.append({
+        "id": "anncsu_addresses",
+        "title": text["sec_anncsu_addresses"],
+        "blocks": anncsu_blocks,
+    })
 
     # --- risks
     r_rows: list[list[str | None]] = []
@@ -727,6 +1242,31 @@ def build_dossier(
     mps04 = inputs.get("mps04") or {}
     pga = _number(mps04.get("pga_g") if mps04.get("pga_g") is not None else mps04.get("pga"))
     r_rows.append([text["f_pga"], _fmt(pga, locale, 3, "g") if mps04.get("available") else None])
+    composite_score = _number(risks.get("composite_score"))
+    if composite_score is not None and 0 <= composite_score <= 100:
+        composite_value = _fmt(composite_score, locale, 1, "/100")
+        if risks.get("composite_score_version"):
+            composite_value = f"{composite_value} · {risks['composite_score_version']}"
+        r_rows.append([text["f_composite_risk"], composite_value])
+    protection = inputs.get("protection_constraints") or {}
+    protection_records = protection.get("constraints") or []
+    protection_coverage = protection.get("coverage") or {}
+    if protection.get("status") == "published":
+        r_rows.append([text["f_protection_records"], str(len(protection_records))])
+        r_rows.append([
+            text["f_protection_landscape_coverage"],
+            text["protection_coverage_full"] if protection_coverage.get("landscape") == "covered"
+            else text["protection_coverage_unknown"],
+        ])
+        r_rows.append([
+            text["f_protection_heritage_coverage"],
+            text["protection_coverage_full"] if protection_coverage.get("cultural_heritage") == "covered"
+            else text["protection_coverage_unknown"],
+        ])
+        register.append({
+            "title": text["sec_risks"],
+            **_provenance(protection.get("source"), protection),
+        })
     hazards = inputs.get("hazards") or {}
     if hazards.get("available"):
         land, flo = hazards.get("landslide") or {}, hazards.get("flood") or {}
@@ -739,8 +1279,31 @@ def build_dossier(
         r_rows.append([text["f_subsidence_class"], str(class_text) if class_text else None])
         r_rows.append([text["f_subsidence_velocity"], _fmt(subsidence.get("mean_velocity_mm_per_year"), locale, 2, "mm/anno" if locale == "it" else "mm/yr")])
         register.append({"title": text["sec_risks"], **_provenance(subsidence.get("source"), subsidence)})
+    if coastal.get("available"):
+        nearest = coastal.get("nearest_segment") or {}
+        if coastal.get("matched"):
+            r_rows.append([
+                text["f_coastal_period"],
+                str(nearest.get("classification") or text["no_match"]),
+            ])
+            r_rows.append([
+                text["f_coastal_nearest"],
+                _fmt(nearest.get("distance_m"), locale, 0, "m"),
+            ])
+            r_rows.append([text["f_coastal_count"], str(coastal.get("segment_count") or 0)])
+            r_rows.append([text["f_coastal_accuracy"], _fmt(coastal.get("positional_accuracy_m"), locale, 0, "m")])
+            r_rows.append([text["f_coastal_threshold"], _fmt(coastal.get("classification_threshold_m"), locale, 0, "m")])
+        else:
+            r_rows.append([text["f_coastal_period"], text["no_match"]])
+        register.append({"title": text["sec_risks"], **_provenance(coastal.get("source"), coastal)})
     if hydro:
         register.append({"title": text["sec_risks"], **_provenance(hydro.get("source"), hydro)})
+    seismic_source = risks.get("seismic") if isinstance(risks.get("seismic"), dict) else {}
+    if seismic_source:
+        register.append({
+            "title": text["sec_risks"],
+            **_provenance(seismic_source.get("source"), seismic_source),
+        })
     if mps04.get("available"):
         register.append({"title": text["sec_risks"], **_provenance(mps04.get("source"), mps04)})
     risk_blocks: list[dict[str, Any]] = [_kv(r_rows)]
@@ -749,10 +1312,161 @@ def build_dossier(
         unavailable_notes.append(f"{text['hazard_parcel']}: {text['unavailable'].lower()}")
     if not (subsidence.get("available") and subsidence.get("matched")):
         unavailable_notes.append(f"{text['f_subsidence_class']}: {text['unavailable'].lower()}")
+    if not coastal.get("available"):
+        unavailable_notes.append(f"{text['f_coastal_period']}: {text['unavailable'].lower()}")
+    if protection.get("status") != "published":
+        unavailable_notes.append(f"{text['f_protection_records']}: {text['unavailable'].lower()}")
     if unavailable_notes:
         risk_blocks.append({"type": "unavailable", "text": " · ".join(unavailable_notes)})
     risk_blocks.append({"type": "note", "text": text["seismic_note"]})
+    if composite_score is not None and 0 <= composite_score <= 100:
+        risk_blocks.append({"type": "note", "text": text["composite_risk_note"]})
+    risk_blocks.append({"type": "note", "text": text["coastal_note"]})
+    if coastal.get("available"):
+        risk_blocks.append({"type": "note", "text": text["coastal_coverage_note"]})
+    if coastal.get("truncated"):
+        risk_blocks.append({"type": "note", "text": text["coastal_partial"]})
+    if protection.get("status") == "published":
+        if protection_records:
+            for record in protection_records[:100]:
+                ratio = _number(record.get("overlap_ratio"))
+                if record.get("geometry_valid") is False:
+                    overlap = text["protection_invalid_geometry"]
+                elif ratio is None:
+                    overlap = text["protection_point_geometry"]
+                else:
+                    overlap = _pct(ratio * 100, locale, 1)
+                source_url = str(record.get("source_url") or "").strip()
+                try:
+                    parsed_url = urlsplit(source_url)
+                except ValueError:
+                    parsed_url = None
+                if (
+                    parsed_url is None
+                    or parsed_url.scheme.lower() not in {"http", "https"}
+                    or not parsed_url.netloc
+                ):
+                    source_url = ""
+                record_rows = [
+                    [text["f_protection_records"], str(record.get("source_label") or record.get("category") or record.get("id"))],
+                    [text["f_protection_category"], str(record.get("category") or "")],
+                    [text["f_protection_act"], str(record.get("act_reference") or "")],
+                    [text["f_protection_overlap"], overlap],
+                    [text["f_protection_source"], str(record.get("source") or "")],
+                    [text["f_source_record"], source_url],
+                ]
+                risk_blocks.append(_kv(record_rows))
+                if record.get("is_binding") is False:
+                    risk_blocks.append({"type": "note", "text": text["protection_non_binding"]})
+        elif all(protection_coverage.get(kind) == "covered" for kind in ("landscape", "cultural_heritage")):
+            risk_blocks.append({"type": "note", "text": text["protection_no_records"]})
+        else:
+            risk_blocks.append({"type": "unavailable", "text": text["protection_unresolved"]})
+        if protection.get("truncated"):
+            risk_blocks.append({"type": "note", "text": text["protection_truncated"]})
+        risk_blocks.append({"type": "note", "text": text["protection_note"]})
     sections.append({"id": "risks", "title": text["sec_risks"], "blocks": risk_blocks})
+
+    # --- TINITALY terrain
+    terrain_block = inputs.get("terrain") or {}
+    terrain = terrain_block.get("data") or {}
+    terrain_blocks: list[dict[str, Any]] = []
+    register.append({
+        "title": text["sec_terrain"],
+        **_provenance(terrain_block.get("source"), terrain_block),
+    })
+    if terrain_block.get("available") and terrain:
+        terrain_blocks.append(
+            _kv(
+                [
+                    [text["f_elevation_min"], _fmt(terrain.get("elevation_min_m"), locale, 1, "m")],
+                    [text["f_elevation_mean"], _fmt(terrain.get("elevation_mean_m"), locale, 1, "m")],
+                    [text["f_elevation_max"], _fmt(terrain.get("elevation_max_m"), locale, 1, "m")],
+                    [text["f_elevation_range"], _fmt(terrain.get("ruggedness_index_m"), locale, 1, "m")],
+                    [text["f_elevation_std"], _fmt(terrain.get("elevation_std_m"), locale, 1, "m")],
+                    [text["f_slope_mean"], _fmt(terrain.get("slope_mean_deg"), locale, 1, "°")],
+                    [text["f_slope_max"], _fmt(terrain.get("slope_max_deg"), locale, 1, "°")],
+                    [text["f_terrain_tri"], _fmt(terrain.get("tri_mean_m"), locale, 1, "m")],
+                    [text["f_aspect_predominant"], str(terrain.get("aspect_predominant") or "") or None],
+                    [text["f_aspect_mean"], _fmt(terrain.get("aspect_mean_deg"), locale, 1, "°")],
+                    [text["f_terrain_samples"], _fmt(terrain.get("sample_count"), locale, 0)],
+                    [text["f_terrain_coverage"], _pct(terrain.get("coverage_pct"), locale, 1)],
+                ]
+            )
+        )
+        if terrain.get("match_method") == "representative_point_fallback":
+            terrain_blocks.append({"type": "note", "text": text["terrain_point_fallback"]})
+        terrain_blocks.append({"type": "note", "text": text["terrain_note"]})
+    else:
+        reason = terrain_block.get("reason")
+        message = (
+            text["terrain_not_built"] if reason == "not_built"
+            else text["terrain_no_match"] if reason == "no_matching_raster"
+            else text["unavailable"]
+        )
+        terrain_blocks.append({"type": "unavailable", "text": message})
+        terrain_blocks.append({"type": "note", "text": text["terrain_note"]})
+    sections.append({"id": "terrain", "title": text["sec_terrain"], "blocks": terrain_blocks})
+
+    # --- CORINE land cover
+    land_cover_block = inputs.get("land_cover") or {}
+    land_cover = land_cover_block.get("data") or {}
+    land_cover_blocks: list[dict[str, Any]] = []
+    register.append({
+        "title": text["sec_land_cover"],
+        **_provenance(land_cover_block.get("source"), land_cover_block),
+    })
+    if land_cover_block.get("available") and land_cover:
+        class_name = (
+            land_cover.get("class_name_it") if locale == "it"
+            else land_cover.get("class_name_en")
+        ) or land_cover.get("class_code")
+        land_cover_blocks.append(
+            _kv(
+                [
+                    [text["f_land_cover_class"], str(class_name or "") or None],
+                    [text["f_land_cover_code"], str(land_cover.get("class_code") or "") or None],
+                    [text["f_land_cover_share"], _pct(land_cover.get("class_share_of_parcel_pct"), locale, 1)],
+                    [text["f_land_cover_coverage"], _pct(land_cover.get("coverage_pct"), locale, 1)],
+                ]
+            )
+        )
+        distribution_rows = []
+        for item in (land_cover.get("distribution") or [])[:5]:
+            item_name = (
+                item.get("class_name_it") if locale == "it" else item.get("class_name_en")
+            ) or item.get("class_code")
+            label = f"{item.get('class_code') or ''} · {item_name or ''}".strip(" ·")
+            distribution_rows.append(
+                [
+                    label,
+                    _fmt(item.get("area_sqm"), locale, 0, "m²"),
+                    _pct(item.get("share_of_parcel_pct"), locale, 1),
+                ]
+            )
+        if distribution_rows:
+            land_cover_blocks.append(
+                {
+                    "type": "table",
+                    "columns": [
+                        {"title": text["f_land_cover_class"], "align": "left", "width": "1fr"},
+                        {"title": text["f_area"], "align": "right", "width": "28mm"},
+                        {"title": text["f_land_cover_share"], "align": "right", "width": "26mm"},
+                    ],
+                    "rows": distribution_rows,
+                }
+            )
+        land_cover_blocks.append({"type": "note", "text": text["land_cover_note"]})
+    else:
+        reason = land_cover_block.get("reason")
+        message = (
+            text["land_cover_not_built"] if reason == "not_built"
+            else text["land_cover_no_match"] if reason == "no_matching_polygon"
+            else text["unavailable"]
+        )
+        land_cover_blocks.append({"type": "unavailable", "text": message})
+        land_cover_blocks.append({"type": "note", "text": text["land_cover_note"]})
+    sections.append({"id": "land_cover", "title": text["sec_land_cover"], "blocks": land_cover_blocks})
 
     # --- population (census section)
     p_blocks: list[dict[str, Any]] = []
@@ -790,6 +1504,65 @@ def build_dossier(
     else:
         p_blocks.append({"type": "unavailable", "text": text["unavailable"]})
     sections.append({"id": "population", "title": text["sec_population"], "blocks": p_blocks})
+
+    # --- provincial quality-of-life indicators; retain each published reference period
+    quality_of_life = inputs.get("quality_of_life") or {}
+    qol_blocks: list[dict[str, Any]] = []
+    years = quality_of_life.get("years") or []
+    annual_years = [year for year in years if "covid" not in str(year).casefold()]
+    latest_edition = annual_years[-1] if annual_years else None
+    clusters = quality_of_life.get("clusters") or []
+    if latest_edition and clusters:
+        for cluster in clusters:
+            if not isinstance(cluster, dict) or cluster.get("key") == "covid_supplement":
+                continue
+            table_rows = []
+            for indicator in cluster.get("indicators") or []:
+                value = (indicator.get("values") or {}).get(latest_edition)
+                if not isinstance(value, dict) or value.get("value") is None:
+                    continue
+                table_rows.append(
+                    [
+                        str(indicator.get("name") or ""),
+                        _fmt(value.get("value"), locale) or str(value.get("value")),
+                        str(value.get("temporal_reference") or "–"),
+                        str(value.get("unit") or indicator.get("unit") or "–"),
+                    ]
+                )
+            if not table_rows:
+                continue
+            cluster_key = f"qol_cluster_{cluster.get('key')}"
+            cluster_label = text.get(cluster_key) or str(cluster.get("label") or cluster.get("key") or "")
+            qol_blocks.append({"type": "note", "text": f"{cluster_label} · {latest_edition}"})
+            qol_blocks.append(
+                {
+                    "type": "table",
+                    "columns": [
+                        {"title": text["f_qol_indicator"], "align": "left", "width": "1fr"},
+                        {"title": text["f_qol_value"], "align": "right", "width": "22mm"},
+                        {"title": text["f_qol_period"], "align": "left", "width": "30mm"},
+                        {"title": text["f_qol_unit"], "align": "left", "width": "24mm"},
+                    ],
+                    "rows": table_rows,
+                }
+            )
+        if qol_blocks:
+            qol_blocks.append({"type": "note", "text": text["quality_of_life_note"]})
+            register.append(
+                {
+                    "title": text["sec_quality_of_life"],
+                    **_provenance(
+                        quality_of_life.get("source"),
+                        quality_of_life,
+                        spatial_resolution="province (NUTS3)",
+                        match_method="municipality NUTS3 code",
+                        data_vintage=latest_edition,
+                    ),
+                }
+            )
+    if not qol_blocks:
+        qol_blocks.append({"type": "unavailable", "text": text["unavailable"]})
+    sections.append({"id": "quality_of_life", "title": text["sec_quality_of_life"], "blocks": qol_blocks})
 
     # --- income
     income = inputs.get("income") or {}
@@ -837,6 +1610,162 @@ def build_dossier(
         i_blocks.append({"type": "unavailable", "text": text["unavailable"]})
     sections.append({"id": "income", "title": text["sec_income"], "blocks": i_blocks})
 
+    # --- municipality-wide solar aggregates; never frame them as parcel/roof estimates
+    solar = inputs.get("solar") or {}
+    solar_data = solar.get("data") if isinstance(solar.get("data"), dict) else {}
+    s_blocks: list[dict[str, Any]] = []
+    if solar.get("available") is True and solar_data:
+        s_blocks.append(
+            _kv(
+                [
+                    [text["f_pv_high"], _pct(solar_data.get("pv_high_viability_pct"), locale)],
+                    [text["f_pv_medium"], _pct(solar_data.get("pv_medium_viability_pct"), locale)],
+                    [text["f_pv_low"], _pct(solar_data.get("pv_low_viability_pct"), locale)],
+                    [text["f_pv_not_eligible"], _pct(solar_data.get("pv_not_eligible_pct"), locale)],
+                    [text["f_pv_per_resident"], _fmt(solar_data.get("pv_pvout_per_capita_kwh"), locale, 0, "kWh/anno" if locale == "it" else "kWh/year")],
+                    [text["f_pv_buildings"], _fmt(solar_data.get("pv_n_buildings"), locale, 0)],
+                    [text["f_pv_capacity"], _fmt_scaled(solar_data.get("pv_kwp_max_total"), locale, "kWp", "MWp", "GWp")],
+                    [text["f_pv_output_pessimistic"], _fmt_scaled(solar_data.get("pv_pvout_pessimistic_kwh_year_total"), locale, "kWh/anno" if locale == "it" else "kWh/year", "MWh/anno" if locale == "it" else "MWh/year", "GWh/anno" if locale == "it" else "GWh/year")],
+                    [text["f_pv_output_modern"], _fmt_scaled(solar_data.get("pv_pvout_modern_kwh_year_total"), locale, "kWh/anno" if locale == "it" else "kWh/year", "MWh/anno" if locale == "it" else "MWh/year", "GWh/anno" if locale == "it" else "GWh/year")],
+                ]
+            )
+        )
+        s_blocks.append({"type": "note", "text": text["solar_scope_note"]})
+        register.append({"title": text["sec_solar"], **_provenance(solar.get("source"), solar)})
+    else:
+        s_blocks.append({"type": "unavailable", "text": text["unavailable"]})
+        s_blocks.append({"type": "note", "text": text["solar_scope_note"]})
+    sections.append({"id": "solar", "title": text["sec_solar"], "blocks": s_blocks})
+
+    # --- optional user-input PVGIS scenario; never infer capacity from parcel area
+    solar_scenario_result = inputs.get("solar_scenario")
+    if solar_scenario_result is not None:
+        scenario_blocks: list[dict[str, Any]] = []
+        if solar_scenario_result.get("available") is True:
+            scenario = solar_scenario_result.get("scenario") or {}
+            production = solar_scenario_result.get("production") or {}
+            economics = solar_scenario_result.get("economics") or {}
+            scenario_blocks.append(
+                _kv(
+                    [
+                        [text["f_scenario_system"], _fmt(scenario.get("system_kwp"), locale, 1, "kWp")],
+                        [text["f_scenario_yield"], _fmt(production.get("annual_yield_kwh_per_kwp"), locale, 0, "kWh/kWp/year")],
+                        [text["f_scenario_generation"], _fmt(economics.get("first_year_generation_kwh"), locale, 0, "kWh/year")],
+                        [text["f_scenario_capex"], _fmt(economics.get("installation_cost_eur"), locale, 0, "€")],
+                        [text["f_scenario_npv"], _fmt(economics.get("npv_eur"), locale, 0, "€")],
+                        [text["f_scenario_lcoe"], _fmt(economics.get("lcoe_eur_per_kwh"), locale, 3, "€/kWh")],
+                        [text["f_scenario_payback"], _fmt(economics.get("simple_payback_years"), locale, 1, " years") or text["not_reported"]],
+                        [text["f_scenario_discounted_payback"], _fmt(economics.get("discounted_payback_years"), locale, 1, " years") or text["not_reported"]],
+                    ]
+                )
+            )
+            scenario_blocks.append(
+                _kv(
+                    [
+                        [text["f_scenario_tilt"], _fmt(scenario.get("tilt_degrees"), locale, 0, "°")],
+                        [text["f_scenario_aspect"], _fmt(scenario.get("aspect_degrees"), locale, 0, "°")],
+                        [text["f_scenario_losses"], _pct(scenario.get("system_losses_pct"), locale)],
+                        [text["f_scenario_install_cost"], _fmt(scenario.get("installation_cost_eur_per_kwp"), locale, 0, "€/kWp")],
+                        [text["f_scenario_electricity_price"], _fmt(scenario.get("electricity_price_eur_per_kwh"), locale, 3, "€/kWh")],
+                        [text["f_scenario_export_price"], _fmt(scenario.get("export_price_eur_per_kwh"), locale, 3, "€/kWh")],
+                        [text["f_scenario_self_consumption"], _pct(scenario.get("self_consumption_pct"), locale)],
+                        [text["f_scenario_maintenance"], _fmt(scenario.get("annual_maintenance_cost_eur_per_kwp"), locale, 0, "€/kWp/year")],
+                        [text["f_scenario_degradation"], _pct(scenario.get("annual_degradation_pct"), locale, 2)],
+                        [text["f_scenario_discount"], _pct(scenario.get("discount_rate_pct"), locale, 1)],
+                        [text["f_scenario_lifetime"], _fmt(scenario.get("lifetime_years"), locale, 0, " years")],
+                    ]
+                )
+            )
+            cash_flows = economics.get("cash_flows") or []
+            chart = svg.cash_flow_chart_svg(
+                cash_flows,
+                value_format=lambda value: format_number(value, locale, 0),
+            )
+            if chart:
+                files["chart_solar_cash_flow.svg"] = chart.encode()
+                scenario_blocks.append(
+                    {
+                        "type": "image",
+                        "file": "chart_solar_cash_flow.svg",
+                        "caption": text["f_scenario_cash_flow"],
+                    }
+                )
+            if cash_flows:
+                scenario_blocks.append(
+                    {
+                        "type": "table",
+                        "columns": [
+                            {"title": text["f_scenario_year"], "align": "right", "width": "14mm"},
+                            {"title": text["f_scenario_generation_short"], "align": "right", "width": "31mm"},
+                            {"title": text["f_scenario_revenue"], "align": "right", "width": "27mm"},
+                            {"title": text["f_scenario_cash_flow"], "align": "right", "width": "29mm"},
+                            {"title": text["f_scenario_cumulative"], "align": "right", "width": "32mm"},
+                        ],
+                        "rows": [
+                            [
+                                str(row.get("year", "")),
+                                _fmt(row.get("generation_kwh"), locale, 0) or "–",
+                                _fmt(row.get("revenue_eur"), locale, 0, "€") or "–",
+                                _fmt(row.get("cash_flow_eur"), locale, 0, "€") or "–",
+                                _fmt(row.get("cumulative_cash_flow_eur"), locale, 0, "€") or "–",
+                            ]
+                            for row in cash_flows
+                        ],
+                    }
+                )
+            register.append(
+                {
+                    "title": text["sec_solar_scenario"],
+                    **_provenance(
+                        solar_scenario_result.get("source"),
+                        solar_scenario_result,
+                        match_method="parcel geometry centroid",
+                        spatial_resolution="PVGIS location estimate",
+                    ),
+                }
+            )
+        else:
+            reason = solar_scenario_result.get("reason")
+            message_key = {
+                "pvgis_timeout": "solar_scenario_timeout",
+                "parcel_geometry_unavailable": "solar_scenario_geometry",
+                "pvgis_unavailable": "solar_scenario_unavailable",
+            }.get(reason, "unavailable")
+            scenario_blocks.append({"type": "unavailable", "text": text[message_key]})
+        if solar_scenario_result.get("available") is True:
+            scenario_blocks.append({"type": "note", "text": text["solar_scenario_note"]})
+        sections.append(
+            {"id": "solar_scenario", "title": text["sec_solar_scenario"], "blocks": scenario_blocks}
+        )
+
+    # --- annual VIIRS night radiance
+    nightlights = inputs.get("nightlights") or {}
+    n_blocks: list[dict[str, Any]] = []
+    register.append({"title": text["sec_nightlights"], **_provenance(nightlights.get("source"), nightlights)})
+    if nightlights.get("available") and nightlights.get("matched"):
+        method_key = (
+            "nightlights_point_method"
+            if nightlights.get("match_method") == "representative_point_pixel"
+            else "nightlights_mean_method"
+        )
+        n_blocks.append(
+            _kv(
+                [
+                    [text["f_nightlights_radiance"], _fmt(nightlights.get("intensity_nw_cm2_sr"), locale, 4, "nW/(cm² sr)")],
+                    [text["f_nightlights_year"], str(nightlights.get("data_vintage") or "") or None],
+                    [text["f_nightlights_pixels"], _fmt(nightlights.get("valid_pixel_count"), locale, 0)],
+                    [text["f_nightlights_method"], text[method_key]],
+                ]
+            )
+        )
+        n_blocks.append({"type": "note", "text": text["nightlights_note"]})
+    elif nightlights.get("available"):
+        n_blocks.append({"type": "unavailable", "text": text["nightlights_unmatched"]})
+        n_blocks.append({"type": "note", "text": text["nightlights_note"]})
+    else:
+        n_blocks.append({"type": "unavailable", "text": text["unavailable"]})
+    sections.append({"id": "nightlights", "title": text["sec_nightlights"], "blocks": n_blocks})
+
     # --- OMI
     zone = inputs.get("omi_zone") or {}
     o_blocks: list[dict[str, Any]] = []
@@ -844,6 +1773,11 @@ def build_dossier(
         o_blocks.append(
             _kv([[text["f_zone"], f"{zone['zone']}" + (f" · {zone['description']}" if zone.get("description") else "")]])
         )
+        if zone.get("boundary_vintage"):
+            o_blocks.append({
+                "type": "note",
+                "text": text["omi_boundary_note"].format(vintage=zone["boundary_vintage"]),
+            })
         table_rows = []
         range_rows = []
         for q in quotes[:16]:
@@ -905,6 +1839,15 @@ def build_dossier(
             o_blocks.append({"type": "note", "text": text["history_none"]})
         o_blocks.append({"type": "note", "text": text["zone_note"]})
         register.append({"title": text["sec_omi"], **_provenance((inputs.get("omi_quotes") or {}).get("source") or zone.get("source"), inputs.get("omi_quotes"), model_version=(inputs.get("omi_quotes") or {}).get("derived_metrics_model"))})
+        if zone.get("boundary_source"):
+            register.append({
+                "title": text["omi_boundary_title"],
+                **_provenance(zone["boundary_source"], {
+                    "data_vintage": zone.get("boundary_vintage"),
+                    "match_method": zone.get("match_method"),
+                    "spatial_resolution": zone.get("spatial_resolution"),
+                }),
+            })
     else:
         o_blocks.append({"type": "unavailable", "text": text["unavailable"]})
     sections.append({"id": "omi", "title": text["sec_omi"], "blocks": o_blocks})

@@ -1,4 +1,13 @@
-{% extends "base.html" %} {% block content %}
+{% extends "base.html" %}
+
+{% block external_js %}
+{{ super() }}
+<script src="https://unpkg.com/leaflet.glify@3.3.1/dist/glify-browser.js" defer></script>
+<script src="{{ asset_url('color-schemes.js') }}" defer></script>
+<script src="{{ asset_url('webgl-renderer.js') }}" defer></script>
+{% endblock %}
+
+{% block content %}
 
 <!-- ── aecs4u-theme Navbar ──────────────────────────────────────────── -->
 <nav class="navbar-main">
@@ -604,9 +613,10 @@
                 <button onclick="loadAllZones()" id="loadZonesBtn" class="tool-btn-ghost">{{ _('Refresh Zones') }}</button>
               </div>
               <div class="tool-row" style="margin-top:4px">
-                <input type="text" id="zoneSearchInput" class="tool-input" placeholder="{{ _('Search zones...') }}" oninput="applyZoneSearchFilter()" />
+                <input type="text" id="zoneSearchInput" class="tool-input" placeholder="{{ _('Search zones...') }}" aria-label="{{ _('Search zones...') }}" oninput="scheduleZoneSearchFilter()" />
                 <button onclick="clearZoneSearch()" id="zoneSearchClearBtn" class="tool-btn-ghost">{{ _('Clear') }}</button>
               </div>
+              <p class="zone-keyboard-help">{{ _('Shortcuts: arrow keys pan, + and - zoom, [ and ] move between visible zones.') }}</p>
               <p id="zoneSearchNoResults" class="zone-search-no-results" style="display:none">{{ _('No zones match the search.') }}</p>
               <div id="zoneList" class="zone-list">
                 <p class="zone-empty-message">{{ _('No zones saved yet.') }}</p>
@@ -627,6 +637,37 @@
             <button class="tool-panel-close" onclick="closeToolPanel('panelActions')" aria-label="{{ _('Close') }}">&times;</button>
           </div>
           <div class="tool-panel-body">
+            <div class="tool-panel-section">
+              <h5>{{ _('Map rendering') }}</h5>
+              <div class="tool-field">
+                <label for="mapRendererMode">{{ _('Renderer') }}</label>
+                <select id="mapRendererMode" class="tool-select">
+                  <option value="auto">{{ _('Automatic') }}</option>
+                  <option value="webgl">WebGL</option>
+                  <option value="svg">SVG</option>
+                </select>
+              </div>
+              <p id="mapWebGLUnavailable" class="map-renderer-notice" role="status" hidden>
+                {{ _('WebGL is unavailable in this browser. The map will use the SVG fallback.') }}
+              </p>
+              <div class="tool-field">
+                <label class="tool-checkbox-label" for="mapLODEnabled">
+                  <input id="mapLODEnabled" type="checkbox">
+                  {{ _('Simplify geometry at low zoom') }}
+                </label>
+                <small class="map-renderer-help">{{ _('Exports keep the original geometry.') }}</small>
+              </div>
+              <div class="tool-field">
+                <label for="mapColorScheme">{{ _('Parcel color scheme') }}</label>
+                <select id="mapColorScheme" class="tool-select">
+                  <option value="default">{{ _('Default') }}</option>
+                  <option value="foglio">{{ _('Cadastral sheet') }}</option>
+                  <option value="density">{{ _('Parcel density') }}</option>
+                  <option value="propertyType">{{ _('Property type') }}</option>
+                  <option value="temporal">{{ _('Update date') }}</option>
+                </select>
+              </div>
+            </div>
             <div class="tool-panel-section">
               <h5>{{ _('Market Filters') }}</h5>
               <div class="tool-row">
@@ -882,6 +923,7 @@
 </script>
 {% endblock %} {% block app_js %}
 <script src="{{ asset_url('folium-interface.js') }}"></script>
+<script src="{{ asset_url('map-rendering-controls.js') }}"></script>
 <script src="{{ asset_url('parcel-enrichment.js') }}"></script>
 <script src="{{ asset_url('parcel-report.js') }}"></script>
 <script src="{{ asset_url('enrichment-layers.js') }}"></script>

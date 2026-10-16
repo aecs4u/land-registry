@@ -14,8 +14,11 @@ and solar-exposure context.
   host.
 
 ## Dependencies
-- aecs4u/aecs4u-stats#28 (DEM subpackage — must land first)
+- `aecs4u/aecs4u-stats#28` tracks the upstream TINITALY subpackage. The regional importer and query implementation is applied in the sibling working tree, but still needs review, merge, and release before this app can use it.
 
 ## Notes
-See `docs/ZORNADE_GAP_ANALYSIS.md` §2 item 10, §4 Phase 2.3, and §5 (data
-source row "DEM 10m Tinitaly"). Postponed — backlog item, not scheduled.
+The app-side parcel API, lazy panel card, source catalog and Typst dossier
+section are wired locally. Once the upstream package is released, install a
+regional raster store and verify known parcels, no-data parcels, small-parcel
+fallbacks, coverage, and provenance. See `docs/ZORNADE_GAP_ANALYSIS.md` §2
+item 10, §4 Phase 2.3, and §5 (source row "Terrain").

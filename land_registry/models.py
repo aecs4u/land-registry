@@ -48,6 +48,25 @@ from pydantic import BaseModel, ConfigDict, Field as PydanticField, field_valida
 from sqlmodel import Field
 
 
+class SolarEconomicsRequest(BaseModel):
+    """User-supplied inputs for a PVGIS-located financial scenario."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    system_kwp: float = PydanticField(3.0, gt=0, le=1000)
+    tilt_degrees: float = PydanticField(30.0, ge=0, le=90)
+    aspect_degrees: float = PydanticField(0.0, ge=-180, le=180, description="PVGIS azimuth; 0 is south")
+    system_losses_pct: float = PydanticField(14.0, ge=0, le=50)
+    installation_cost_eur_per_kwp: float = PydanticField(1200.0, gt=0, le=10000)
+    electricity_price_eur_per_kwh: float = PydanticField(0.30, ge=0, le=10)
+    export_price_eur_per_kwh: float = PydanticField(0.08, ge=0, le=10)
+    self_consumption_pct: float = PydanticField(40.0, ge=0, le=100)
+    annual_maintenance_cost_eur_per_kwp: float = PydanticField(15.0, ge=0, le=1000)
+    annual_degradation_pct: float = PydanticField(0.5, ge=0, lt=10)
+    discount_rate_pct: float = PydanticField(4.0, ge=0, le=50)
+    lifetime_years: int = PydanticField(25, ge=1, le=50)
+
+
 def _compat_schema(name: str, base: type, **namespace: object) -> type:
     """Expose the pre-0.14 schema name while using the domain model as base."""
 
@@ -131,7 +150,13 @@ class SavedParcelResponse(SavedParcelResponseBase, table=False):
     priority: int | None = None
     tags: list[str] = Field(default_factory=list)
     is_favorite: bool = False
-    active_hazard: dict[str, Any] | None = None
+    active_hazard: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Current DPC bulletin intersection or nearest FIRMS fire detection within 25 km of the parcel geometry; "
+            "includes source timing and match distance when available."
+        ),
+    )
 
 
 class SavedParcelUpdateRequest(SavedParcelUpdateRequestBase, table=False):
@@ -149,16 +174,11 @@ class SavedParcelUpdateRequest(SavedParcelUpdateRequestBase, table=False):
 
     @model_validator(mode="after")
     def require_update_field(self):
-        if (
-            self.parcel_version_id is None
-            and self.dataset_version is None
-            and self.label is None
-            and self.notes is None
-            and self.status is None
-            and self.priority is None
-            and self.tags is None
-            and self.is_favorite is None
-        ):
+        update_fields = {
+            "parcel_version_id", "dataset_version", "label", "notes", "status",
+            "priority", "tags", "is_favorite",
+        }
+        if not self.model_fields_set.intersection(update_fields):
             raise ValueError("at least one saved-parcel field is required")
         return self
 

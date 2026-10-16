@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page_title }} · AECS4U{% endblock %}
+
+{% block extra_css %}
+<style>
+  .data-source-page { max-width: 1040px; margin: 0 auto; padding: 28px 18px 56px; }
+  .data-source-page h1 { margin: 10px 0 8px; }
+  .data-source-lead { max-width: 75ch; color: var(--bs-secondary-color, #667085); }
+  .data-source-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 390px), 1fr)); gap: 14px; margin-top: 22px; }
+  .data-source-card { border: 1px solid var(--bs-border-color, #d0d5dd); border-radius: 12px; padding: 18px; background: var(--bs-body-bg, #fff); }
+  .data-source-card h2 { font-size: 1.1rem; margin: 0 0 12px; }
+  .data-source-card dl { display: grid; grid-template-columns: minmax(115px, .7fr) minmax(0, 1.5fr); gap: 7px 12px; margin: 0; }
+  .data-source-card dt { color: var(--bs-secondary-color, #667085); font-weight: 600; }
+  .data-source-card dd { margin: 0; overflow-wrap: anywhere; }
+  .data-source-card a, .data-source-back { overflow-wrap: anywhere; }
+  .data-source-review { font-size: .92rem; }
+  .data-source-note { margin-top: 24px; padding: 14px 16px; border-left: 4px solid #4b7a9d; background: var(--bs-tertiary-bg, #f2f4f7); }
+  .data-field-catalog { margin-top: 34px; }
+  .data-field-table-wrap { max-width: 100%; overflow-x: auto; border: 1px solid var(--bs-border-color, #d0d5dd); border-radius: 8px; }
+  .data-field-table { border-collapse: collapse; min-width: 880px; width: 100%; }
+  .data-field-table th, .data-field-table td { border-bottom: 1px solid var(--bs-border-color, #d0d5dd); padding: 10px 12px; text-align: left; vertical-align: top; }
+  .data-field-table thead th { background: var(--bs-tertiary-bg, #f2f4f7); }
+  .data-field-table tbody th { white-space: nowrap; }
+  .data-field-table a { overflow-wrap: anywhere; }
+  @media (max-width: 520px) { .data-source-card dl { grid-template-columns: 1fr; gap: 2px; } .data-source-card dd { margin-bottom: 8px; } }
+</style>
+{% endblock %}
+
+{% block content %}
+<main id="main-content" class="data-source-page">
+  <a class="data-source-back" href="/map">← {{ _('Back to the map') }}</a>
+  <h1>{{ page_title }}</h1>
+  <p class="data-source-lead">{{ _('Provider references, citations, attribution text and reuse terms maintained by the application.') }}</p>
+  <p class="data-source-lead">{{ _('A named licence is shown only when the maintained register establishes one. A missing licence means that reuse terms have not been established here.') }}</p>
+
+  <section class="data-source-list" aria-label="{{ _('Data sources') }}">
+    {% for source in sources %}
+    {% set entry = source.entry %}
+    <article class="data-source-card">
+      <h2>{{ entry.display_name }}</h2>
+      <dl>
+        <dt>{{ _('Provider') }}</dt>
+        <dd><a href="{{ entry.provider_url }}" target="_blank" rel="noopener noreferrer">{{ entry.provider_url }}</a></dd>
+        {% if entry.license_name %}
+        <dt>{{ _('Licence') }}</dt><dd>{{ entry.license_name }}</dd>
+        {% else %}
+        <dt>{{ _('Licence') }}</dt><dd>{{ _('No named licence established') }}</dd>
+        {% endif %}
+        <dt>{{ _('Review status') }}</dt><dd class="data-source-review">{{ source.review_status }}</dd>
+        {% if entry.terms_url %}
+        <dt>{{ _('Use terms') }}</dt>
+        <dd><a href="{{ entry.terms_url }}" target="_blank" rel="noopener noreferrer">{{ entry.terms_url }}</a></dd>
+        {% endif %}
+        {% if entry.citation %}<dt>{{ _('Citation') }}</dt><dd>{{ entry.citation }}</dd>{% endif %}
+        {% if entry.attribution_text %}<dt>{{ _('Attribution') }}</dt><dd>{{ entry.attribution_text }}</dd>{% endif %}
+        {% if entry.reuse_terms %}<dt>{{ _('Reuse notes') }}</dt><dd>{{ entry.reuse_terms }}</dd>{% endif %}
+      </dl>
+    </article>
+    {% endfor %}
+  </section>
+
+  <p class="data-source-note">{{ _('This register covers providers with maintained attribution or reuse metadata. Dataset versions and update dates vary by layer; see the selected feature details or parcel dossier for the version reported by the data source. Missing metadata is left unreported rather than inferred.') }}</p>
+
+  <section class="data-field-catalog" aria-labelledby="parcel-api-field-catalog-title">
+    <h2 id="parcel-api-field-catalog-title">{{ _('Parcel API field catalog') }}</h2>
+    <p class="data-source-lead">{{ _('This table documents the methodology, spatial scope, version identifiers and refresh information for each supported parcel API section. A stated unknown cadence means the application has no verified schedule; availability still depends on the requested parcel and mounted source data.') }}</p>
+    <p class="data-source-lead">{{ _('For stable fields, data shapes and source metadata, use the machine-readable catalog:') }} <a href="/api/v2/catalog"><code>GET /api/v2/catalog</code></a></p>
+    <div class="data-field-table-wrap" role="region" aria-label="{{ _('Parcel API field catalog') }}" tabindex="0">
+      <table class="data-field-table">
+        <caption class="visually-hidden">{{ _('Parcel API field catalog') }}</caption>
+        <thead>
+          <tr>
+            <th scope="col">{{ _('API section') }}</th>
+            <th scope="col">{{ _('Fields') }}</th>
+            <th scope="col">{{ _('Provider') }}</th>
+            <th scope="col">{{ _('Method and spatial scope') }}</th>
+            <th scope="col">{{ _('Version and update cadence') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for field in parcel_fields %}
+          <tr>
+            <th scope="row"><code>{{ field.entry.section }}</code></th>
+            <td>{{ field.fields }}</td>
+            <td>
+              {% for source in field.sources %}
+              <a href="{{ source.provider_url }}" target="_blank" rel="noopener noreferrer">{{ source.display_name }}</a>{% if not loop.last %}<br>{% endif %}
+              {% endfor %}
+              {% if field.provider_note %}{% if field.sources %}<br>{% endif %}{{ field.provider_note }}{% endif %}
+            </td>
+            <td>{{ field.method_scope }}</td>
+            <td>{{ field.version_freshness }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main>
+{% endblock %}

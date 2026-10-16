@@ -322,7 +322,11 @@ class AsyncDatabaseConnection:
         allowed = {
             "parcel_version_id", "dataset_version", "label", "notes", "status", "priority", "tags", "is_favorite",
         }
-        updates = [(name, value) for name, value in fields.items() if name in allowed and value is not None]
+        updates = [
+            (name, value)
+            for name, value in fields.items()
+            if name in allowed and (value is not None or name in {"notes", "priority"})
+        ]
         if not updates:
             return False
 

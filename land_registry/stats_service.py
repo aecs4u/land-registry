@@ -22,10 +22,10 @@ of map requests — see ``land_registry.bulletin_store``.
 """
 
 import asyncio
-import logging
-import hashlib
 import csv
+import hashlib
 import json
+import logging
 import math
 import os
 import re
@@ -41,6 +41,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 from xml.etree import ElementTree
+
+from .source_catalog import find_source_catalog_entry
 
 try:
     from dotenv import load_dotenv
@@ -98,6 +100,38 @@ except ImportError:
     def _census_sections_for_comune(*args, **kwargs):
         return None
 
+try:
+    import aecs4u_stats.corine as _corine
+except ImportError:
+    # Older published stats wheels do not yet contain the CORINE subpackage.
+    _corine = None
+
+try:
+    import aecs4u_stats.terrain as _terrain
+except ImportError:
+    # Older published stats wheels do not yet contain TINITALY terrain support.
+    _terrain = None
+
+try:
+    # The store directory lives in the config module; the package root does not
+    # re-export it.
+    from aecs4u_stats.terrain.config import TINITALY_STORE_DIR as _TINITALY_STORE_DIR
+except ImportError:
+    _TINITALY_STORE_DIR = None
+
+try:
+    import aecs4u_stats.buildings as _building_footprints
+except ImportError:
+    # Parcel footprint support is optional until the shared package is released.
+    _building_footprints = None
+
+try:
+    import aecs4u_stats.anncsu as _anncsu
+except ImportError:
+    # Regional ANNCSU access-point support is optional until the shared
+    # package release that includes the geocoded address importer.
+    _anncsu = None
+
 from aecs4u_stats.hazards import (
     active_fires as _active_fires,
     get_comune_hazards,
@@ -105,6 +139,12 @@ from aecs4u_stats.hazards import (
     seismic_zone,
     summarize_hazards,
 )
+try:
+    from aecs4u_stats.hazards import composite_risk_score as _composite_risk_score
+except ImportError:
+    # Keep the public contract available with older wheels. This compatibility
+    # copy follows the shared implementation until the package release lands.
+    from .composite_risk_compat import composite_risk_score as _composite_risk_score
 try:
     from aecs4u_stats.hazards.mps04 import (
         mps04_db_available as _mps04_db_available,
@@ -165,6 +205,7 @@ except ImportError:
         return {"type": "FeatureCollection", "features": []}
 from aecs4u_stats.osm.config import POI_CATEGORIES
 from aecs4u_stats.osm.pois import bbox_from_center, pois_within_radius, resolve_poi_db
+from land_registry.nightlights import get_parcel_nightlights, nightlights_raster_marker, nightlights_store_status
 from shapely.geometry import Point, shape
 from shapely.ops import transform as _transform_geometry, unary_union as _unary_union
 
@@ -182,7 +223,7 @@ _STATUS_PROBE_POLL_SECONDS = 0.02
 
 
 _PARCEL_DETAIL_BLOCKS = (
-    "basic", "cadastral", "address", "addresses", "risk", "subsidence", "terrain",
+    "basic", "cadastral", "address", "addresses", "anncsu_addresses", "risk", "subsidence", "terrain",
     "population", "buildings", "economics", "demographics", "land_cover",
     "land_use", "valuation", "valuation_history", "coastal_erosion",
     "cultural_heritage", "solar", "poi", "nightlights", "opendata", "pvp",
@@ -200,10 +241,14 @@ _PARCEL_BENCHMARKS = {
     },
     "average_income_eur": {
         "label": "Italia, reddito imponibile medio",
-        "value": 23000,
+        # MEF 2022 IRPEF table: imponibile average is 22.81 thousand EUR.
+        # This fallback is only used for tax-year 2022; newer years use the
+        # matching national aggregate when the serving view is available.
+        "value": 22810,
         "unit": "€/contribuente",
         "year": 2022,
         "dataset_version": "MEF_IRPEF_2022",
+        "source_url": "https://www1.finanze.gov.it/finanze/stat_dbNewSerie/public/report_d.php?req_anno=SERI&req_back=SERI&req_classe=01&req_contrib=PFTOT&req_media=si&req_pag=1&req_sub_tema=02&req_tema=01",
     },
 }
 _SOLAR_PROFILE_QUERY = """
@@ -263,6 +308,45 @@ def _income_dataset_version(economics: Optional[Dict[str, Any]]) -> Optional[str
     return f"MEF_IRPEF_{year}" if year else None
 
 
+def _income_benchmark_for_year(
+    year: Any, income_profile: Optional[Dict[str, Any]] = None
+) -> Optional[Dict[str, Any]]:
+    """Return a national mean-income reference from the same tax year only."""
+    year_number = _number(year)
+    if year_number is None or not year_number.is_integer():
+        return None
+    reference_year = int(year_number)
+    profile = income_profile or {}
+    profile_year = _number(profile.get("year"))
+    value = None
+    source_url = None
+    if profile_year is not None and profile_year.is_integer() and int(profile_year) == reference_year:
+        national = (profile.get("income_reference_averages") or {}).get("nation") or {}
+        value = _number(national.get("mean_taxable_income_eur"))
+        if value is None:
+            value = _number(profile.get("benchmark_average_income_eur"))
+        stored = (profile.get("benchmarks") or {}).get("average_income_eur")
+        if value is None and isinstance(stored, dict) and str(stored.get("year")) == str(reference_year):
+            value = _number(stored.get("value"))
+    if value is None:
+        static = _PARCEL_BENCHMARKS["average_income_eur"]
+        if reference_year == static["year"]:
+            value = float(static["value"])
+            source_url = static.get("source_url")
+    if value is None:
+        return None
+    benchmark = {
+        "label": "Italy mean taxable income per taxpayer",
+        "value": round(value, 2),
+        "unit": "€/taxpayer",
+        "year": reference_year,
+        "dataset_version": f"MEF_IRPEF_{reference_year}",
+    }
+    if source_url:
+        benchmark["source_url"] = source_url
+    return benchmark
+
+
 def _parcel_source_release(props: Dict[str, Any]) -> Optional[str]:
     for key in ("source_release", "dataset_version", "SOURCE_RELEASE"):
         if props.get(key):
@@ -283,12 +367,13 @@ def _detail_block(
     benchmarks: Optional[Dict[str, Any]] = None,
     match_method: Optional[str] = None,
     available: Optional[bool] = None,
-    coverage: Optional[Literal["full", "partial", "unavailable"]] = None,
+    coverage: Optional[Literal["full", "partial", "unavailable", "unknown"]] = None,
+    reason: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Return the common block envelope described by the parcel reference."""
     is_available = bool(data) if available is None else bool(available)
     coverage_value = "unavailable" if not is_available else (coverage or "full")
-    return {
+    block = {
         "available": is_available,
         "data": data if is_available else None,
         "source": source,
@@ -306,6 +391,9 @@ def _detail_block(
         "benchmarks": benchmarks or {},
         "license": None,
     }
+    if reason and not is_available:
+        block["reason"] = reason
+    return block
 
 
 def _call_with_hard_timeout(func, timeout, *args, **kwargs):
@@ -1309,6 +1397,7 @@ class _AsyncPostgresSource:
         self._poi_relation_cache: tuple[str | None, float] | None = None
         self._read_model_status_cache: tuple[dict[str, Any], float] | None = None
         self._optional_relations_cache: dict[tuple[str, ...], tuple[bool, float]] = {}
+        self._coastal_store_status_cache: tuple[dict[str, Any], float] | None = None
         self._census_srid_cache: dict[int, int] = {}
         self._quality_of_life_relation_cache: tuple[
             tuple[str, dict[str, str]] | None, float
@@ -1627,6 +1716,36 @@ class _AsyncPostgresSource:
                 ", ".join(key),
             )
         return available
+
+    async def coastal_dynamics_store_status(self) -> dict[str, Any]:
+        """Distinguish an absent or empty snapshot from a usable local store."""
+        now = time.monotonic()
+        cached = self._coastal_store_status_cache
+        if cached is not None and now < cached[1]:
+            return dict(cached[0])
+        if not await self._relations_available(_COASTAL_DYNAMICS_RELATIONS):
+            status = {"available": False, "reason": "not_built"}
+        else:
+            row = await self._fetchrow(
+                """
+                SELECT COUNT(*)::bigint AS feature_count,
+                       MAX(imported_at) AS imported_at,
+                       MAX(source_release) AS source_version
+                FROM spatial.ispra_coastal_dynamics
+                """
+            )
+            feature_count = int(row["feature_count"] or 0) if row else 0
+            imported_at = row["imported_at"] if row else None
+            source_version = row["source_version"] if row else None
+            status = {
+                "available": feature_count > 0,
+                "reason": None if feature_count > 0 else "empty",
+                "feature_count": feature_count,
+                "imported_at": imported_at.isoformat() if imported_at else None,
+                "source_version": source_version or _COASTAL_DYNAMICS_VERSION,
+            }
+        self._coastal_store_status_cache = (dict(status), now + 10)
+        return status
 
     async def _quality_of_life_relation(self) -> Optional[tuple[str, dict[str, str]]]:
         """Find the source view in the quality_of_life schema by its BES columns."""
@@ -2319,6 +2438,15 @@ class _AsyncPostgresSource:
             "source": "aecs4u-stats PostgreSQL via asyncpg",
         }
 
+    async def municipality_solar_profile(self, istat_code: str) -> dict[str, Any] | None:
+        """Read one municipality's PV aggregates and their source release."""
+        if not await self._relations_available(("solar.solar_potential_comuni",)):
+            return None
+        row = await self._fetchrow(_SOLAR_PROFILE_QUERY, (str(istat_code),))
+        if row is None:
+            return None
+        return {key: _postgres_scalar(row[key]) for key in row.keys()}
+
     async def _serving_municipality_by_cadastral_code(
         self, cadastral_code: str
     ) -> Optional[Dict[str, Any]]:
@@ -2558,6 +2686,39 @@ class _AsyncPostgresSource:
         )
         return landslide, flood
 
+    async def coastal_changes_near_geometry(
+        self, geometry: str, *, radius_m: float, limit: int
+    ) -> Optional[list[dict[str, Any]]]:
+        """Read only the locally cached ISPRA lines near one parcel geometry."""
+        if not await self._relations_available(_COASTAL_DYNAMICS_RELATIONS):
+            return None
+        rows = await self._fetch(
+            """
+            WITH input AS (
+                SELECT ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326) AS geom
+            ), parcel AS (
+                SELECT ST_Transform(
+                    CASE WHEN ST_IsValid(geom) THEN geom ELSE ST_MakeValid(geom) END,
+                    6933
+                ) AS geom
+                FROM input
+            )
+            SELECT coast.object_id, coast.cod_istat, coast.change_class,
+                   coast.coast_type, coast.shoreline_length_m,
+                   coast.mean_variation_m, coast.max_variation_m,
+                   coast.severity_index, coast.source_release,
+                   ST_Distance(coast.geom_metric, parcel.geom) AS distance_m
+            FROM spatial.ispra_coastal_dynamics AS coast
+            CROSS JOIN parcel
+            WHERE coast.geom_metric && ST_Expand(parcel.geom, %s)
+              AND ST_DWithin(coast.geom_metric, parcel.geom, %s)
+            ORDER BY distance_m, coast.object_id
+            LIMIT %s
+            """,
+            (geometry, radius_m, radius_m, limit + 1),
+        )
+        return [dict(row) for row in rows]
+
     async def egms_pushdown_ready(self) -> bool:
         """Whether PostGIS predicates on the EGMS foreign table reach the source.
 
@@ -2718,6 +2879,8 @@ class _AsyncPostgresSource:
             "zone": row["codzona"],
             "description": row["zona_descr"],
             "source": "Agenzia delle Entrate OMI zones via aecs4u-stats PostgreSQL",
+            "match_method": "PostGIS ST_Covers",
+            "spatial_resolution": "OMI zone polygon",
         }
 
     async def income_profile_by_cadastral_code(self, cadastral_code: str) -> Optional[Dict[str, Any]]:
@@ -3283,7 +3446,14 @@ class _AsyncPostgresSource:
             "municipality": municipality,
             "municipality_profile": profile,
             "omi": (
-                {"omi_zone_key": zone_match["zone"], "source": zone_match.get("source")}
+                {
+                    "omi_zone_key": zone_match["zone"],
+                    "source": zone_match.get("source"),
+                    "boundary_source": zone_match.get("boundary_source"),
+                    "boundary_vintage": zone_match.get("boundary_vintage"),
+                    "match_method": zone_match.get("match_method"),
+                    "spatial_resolution": zone_match.get("spatial_resolution"),
+                }
                 if zone_match and zone_match.get("matched") else None
             ),
             "postal_code": municipality.get("postal_code"),
@@ -3404,6 +3574,42 @@ async def aget_municipality_by_cadastral_code(cadastral_code: str) -> Optional[D
     return await asyncio.to_thread(get_municipality_by_cadastral_code, cadastral_code, use_postgres=False)
 
 
+async def aget_municipality_solar_potential(istat_code: str) -> dict[str, Any] | None:
+    """Return municipality-wide PV aggregates with their scope and provenance."""
+    code = str(istat_code or "").strip()
+    if not code:
+        return None
+    source = await _get_async_postgres_source()
+    if source is None or time.monotonic() < source._retry_at:
+        return None
+    try:
+        profile = await asyncio.wait_for(source.municipality_solar_profile(code), timeout=8)
+    except Exception:
+        source._retry_at = time.monotonic() + 60
+        logger.warning("Async PostgreSQL municipality solar lookup failed", exc_info=True)
+        return None
+    if not profile:
+        return None
+    data_keys = (
+        "pv_n_buildings", "pv_pvout_pessimistic_kwh_year_total",
+        "pv_pvout_modern_kwh_year_total", "pv_pvout_per_capita_kwh",
+        "pv_kwp_max_total", "pv_high_viability_pct", "pv_medium_viability_pct",
+        "pv_low_viability_pct", "pv_not_eligible_pct",
+    )
+    data = {key: profile[key] for key in data_keys if profile.get(key) is not None}
+    if not data:
+        return None
+    return {
+        "available": True,
+        "data": data,
+        "source": "aecs4u-stats solar.solar_potential_comuni",
+        "dataset_version": profile.get("solar_data_version"),
+        "updated_at": profile.get("solar_updated_at"),
+        "match_method": "cadastral municipality code",
+        "spatial_resolution": "municipality",
+    }
+
+
 async def aget_omi_quotes(comune: str, zona: Optional[str] = None) -> Dict[str, Any]:
     """Async PostgreSQL-first OMI lookup with local fallback."""
     source = await _get_async_postgres_source()
@@ -3516,7 +3722,7 @@ async def aget_income_profile(cadastral_code: str, year: Optional[int] = None) -
                 source.income_profile_by_cadastral_code(cadastral_code), timeout=8
             )
             if result is not None and (year is None or result.get("year") == year):
-                return _income_profile_derived_metrics(result)
+                return _income_profile_with_benchmark(result)
         except Exception:
             source._retry_at = time.monotonic() + 60
             logger.warning("Async PostgreSQL income lookup failed; using local fallback", exc_info=True)
@@ -5466,6 +5672,147 @@ def _external_unavailable(source_name: str) -> Dict[str, Any]:
     return {"records": [], "count": 0, "available": False, "source": source_name}
 
 
+def _opendata_record_provenance(
+    source_result: dict[str, Any], record: dict[str, Any]
+) -> dict[str, Any]:
+    """Describe where a cadastral record was retrieved and what is known about reuse."""
+    retrieval_source = str(source_result.get("source") or "").strip() or None
+    payload = record.get("result") if isinstance(record.get("result"), dict) else {}
+    stored_provenance = record.get("provenance")
+    if not isinstance(stored_provenance, dict):
+        stored_provenance = {}
+
+    origin_label = None
+    for container in (stored_provenance, record, payload):
+        stored_origin = container.get("data_origin")
+        if isinstance(stored_origin, dict):
+            name = stored_origin.get("name") or stored_origin.get("display_name")
+            if isinstance(name, str) and name.strip():
+                origin_label = name.strip()
+        if origin_label:
+            break
+        for key in (
+            "data_provider", "source_provider", "origin_provider", "provider_name",
+            "source_origin_name",
+            "fonte_dati", "sorgente_dati",
+        ):
+            value = container.get(key)
+            if isinstance(value, str) and value.strip():
+                origin_label = value.strip()
+                break
+        if origin_label:
+            break
+
+    retrieval_folded = (retrieval_source or "").casefold()
+    if "opendata" in retrieval_folded:
+        provider_entry = find_source_catalog_entry("OpenAPI Catasto")
+        provider_basis = "configured_opendata_catasto_adapter"
+        origin_entry = find_source_catalog_entry(origin_label) if origin_label else None
+        # OpenAPI's Catasto FAQ names Agenzia delle Entrate as its principal
+        # source. It does not identify the source for each individual result.
+        if origin_entry is None and origin_label is None:
+            origin_entry = find_source_catalog_entry("Agenzia delle Entrate cadastral")
+            origin_label = "Agenzia delle Entrate (principal source stated by OpenAPI)"
+            origin_basis = "provider_stated_principal_source_not_record_specific"
+        else:
+            origin_basis = "record_source_metadata" if origin_entry else "record_source_uncatalogued"
+        reuse_status = "provider_terms_reviewed_reuse_unconfirmed"
+    else:
+        provider_candidate = origin_label
+        if provider_candidate is None and "sister" in retrieval_folded:
+            provider_candidate = "SISTER"
+            provider_basis = "runtime_source_label"
+        else:
+            provider_basis = "record_source_metadata" if provider_candidate else "provider_unidentified"
+        provider_entry = find_source_catalog_entry(provider_candidate)
+        origin_entry = provider_entry
+        origin_basis = provider_basis
+        reuse_status = (
+            "downstream_reuse_unverified" if provider_entry and provider_entry.key == "sister"
+            else "provider_terms_unreviewed" if provider_entry
+            else "unknown"
+        )
+
+    def provider_metadata(entry, label: str | None, basis: str) -> dict:
+        if entry is None:
+            return {
+                "key": None,
+                "name": label,
+                "status": "uncatalogued" if label else "unknown",
+                "basis": basis,
+            }
+        return {
+            "key": entry.key,
+            "name": entry.display_name,
+            "status": "catalogued",
+            "basis": basis,
+            "provider_url": entry.provider_url,
+        }
+
+    reuse_entry = provider_entry
+    if retrieval_folded and "opendata" in retrieval_folded:
+        reuse_entry = find_source_catalog_entry("OpenAPI Catasto")
+    provider_data = provider_metadata(provider_entry, origin_label, provider_basis)
+    origin_data = provider_metadata(origin_entry, origin_label, origin_basis)
+    origin_data["record_specific"] = (
+        origin_basis != "provider_stated_principal_source_not_record_specific"
+        if origin_entry
+        else None
+    )
+    provenance = {
+        "record_id": (
+            record.get("document_id", record.get("id"))
+            or payload.get("document_id", payload.get("id"))
+        ),
+        "endpoint": record.get("endpoint") or payload.get("endpoint"),
+        "retrieval_source": retrieval_source,
+        "recorded_at": (
+            record.get("timestamp") or record.get("created_at")
+            or record.get("query_datetime") or payload.get("timestamp")
+            or payload.get("created_at")
+        ),
+        "query_datetime": record.get("query_datetime") or payload.get("query_datetime"),
+        "match_method": (
+            record.get("match_method") or payload.get("match_method")
+            or source_result.get("match_method")
+        ),
+        "provider": provider_data,
+        "data_origin": origin_data,
+        "reuse": {
+            "status": reuse_status,
+            "license_name": reuse_entry.license_name if reuse_entry else None,
+            "license_basis": reuse_entry.license_basis if reuse_entry else "provider_unidentified",
+            "terms_url": reuse_entry.terms_url if reuse_entry else None,
+            "terms_summary": reuse_entry.reuse_terms if reuse_entry else None,
+            "attribution": (
+                reuse_entry.attribution_text or reuse_entry.citation
+                if reuse_entry else None
+            ),
+        },
+    }
+    return {**stored_provenance, **provenance}
+
+
+def _add_opendata_record_provenance(result: dict[str, Any]) -> dict[str, Any]:
+    """Attach record-level provenance without changing provider-native payloads."""
+    if not isinstance(result, dict):
+        return result
+    records = result.get("records")
+    if not isinstance(records, list):
+        return result
+    normalized = dict(result)
+    normalized["records"] = [
+        {
+            **record,
+            "provenance": _opendata_record_provenance(result, record),
+        }
+        if isinstance(record, dict)
+        else record
+        for record in records
+    ]
+    return normalized
+
+
 def get_opendata_for_parcel(national_reference: str, municipality: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     if municipality is None or not municipality.get("name"):
         # The cadastral code is enough to resolve the municipality from the
@@ -5484,7 +5831,7 @@ def get_opendata_for_parcel(national_reference: str, municipality: Optional[Dict
                 "Sister", sister_postgres.dsn, national_reference, municipality
             )
             if sister_result.get("records"):
-                return sister_result
+                return _add_opendata_record_provenance(sister_result)
             # Keep a successful SISTER no-match result as the diagnostic
             # fallback if the optional OpenData database is unavailable too.
             if not sister_result.get("error"):
@@ -5507,7 +5854,7 @@ def get_opendata_for_parcel(national_reference: str, municipality: Optional[Dict
     # that local exact match so the panel is not delayed by an optional remote
     # PostgreSQL source (which may be configured but unreachable).
     if sister_result.get("records"):
-        return sister_result
+        return _add_opendata_record_provenance(sister_result)
     dsn = _external_postgres_dsn(
         "AECS4U_OPENDATA_POSTGRES_DSN", "OPENDATA_POSTGRES_DSN",
         "OPENDATA_DATABASE_URL", "PROD_DATABASE_URL",
@@ -5519,14 +5866,17 @@ def get_opendata_for_parcel(national_reference: str, municipality: Optional[Dict
             return sister_result
         if sister_postgres_result is not None:
             return sister_postgres_result
-        return sister_result if sister_source is not None and sister_source.available() else _external_unavailable("OpenData PostgreSQL")
+        fallback = sister_result if sister_source is not None and sister_source.available() else _external_unavailable("OpenData PostgreSQL")
+        return _add_opendata_record_provenance(fallback)
     try:
         result = _external_postgres_lookup_isolated("OpenData", dsn, national_reference, municipality)
-        return result if result.get("records") else sister_postgres_result or result
+        selected = result if result.get("records") else sister_postgres_result or result
+        return _add_opendata_record_provenance(selected)
     except Exception as exc:
         source._retry_at = time.monotonic() + 60
         logger.warning("OpenData PostgreSQL parcel lookup failed: %s", exc)
-        return sister_result if sister_result.get("records") else sister_postgres_result or _external_unavailable("OpenData PostgreSQL")
+        fallback = sister_result if sister_result.get("records") else sister_postgres_result or _external_unavailable("OpenData PostgreSQL")
+        return _add_opendata_record_provenance(fallback)
 
 
 def get_pvp_for_parcel(national_reference: str, municipality: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -5767,6 +6117,24 @@ async def _aparcel_enrichment_read_model_status() -> Dict[str, Any]:
 
 def enrichment_status() -> Dict[str, Any]:
     """Availability report for every aecs4u-stats dataset we consume."""
+    terrain_regions_ready = (
+        [
+            code
+            for code in _terrain.REGION_CODES
+            if _terrain.terrain_store_status(code).ready
+        ]
+        if _terrain is not None
+        else []
+    )
+    corine_regions_ready = (
+        [
+            code
+            for code in _corine.REGION_CODES
+            if _corine.corine_db_status(code).ready
+        ]
+        if _corine is not None
+        else []
+    )
     status = {
         "istat_municipalities": {
             "available": istat_db_available() or postgres_stats_available(),
@@ -5779,6 +6147,22 @@ def enrichment_status() -> Dict[str, Any]:
         "census_sections": {
             "available": census_db_available() or postgres_stats_available(),
             "note": "2021 ISTAT census sections; build with python -m aecs4u_stats.census.scripts.import_census_sections --all",
+        },
+        "corine_land_cover": {
+            "available": bool(corine_regions_ready),
+            "regions_ready": corine_regions_ready,
+            "path": str(_corine.CORINE_STORE_DIR) if _corine is not None else None,
+            "source": _CORINE_SOURCE,
+            "note": "CORINE 2018 per-region stores; 25 ha minimum mapping unit and 100 m minimum width",
+        },
+        "tinitaly_terrain": {
+            "available": bool(terrain_regions_ready),
+            "regions_ready": terrain_regions_ready,
+            "path": str(getattr(_terrain, "TINITALY_STORE_DIR", None) or _TINITALY_STORE_DIR)
+            if _terrain is not None and (getattr(_terrain, "TINITALY_STORE_DIR", None) or _TINITALY_STORE_DIR)
+            else None,
+            "source": _TERRAIN_SOURCE,
+            "note": "TINITALY 1.1; 10 m cells, EPSG:32632; regional stores",
         },
         "aecs4u_stats_postgres": {
             "available": postgres_stats_available(),
@@ -5864,6 +6248,18 @@ def enrichment_status() -> Dict[str, Any]:
             "source_version": getattr(_EGMS_CONTRACT, "dataset_version", None),
             "note": "Local 100 m EGMS cells used for parcel intersection summaries",
         },
+        "ispra_coastal_dynamics": {
+            "available": False,
+            "reason": "not_configured",
+            "source": _COASTAL_DYNAMICS_SOURCE,
+            "source_version": _COASTAL_DYNAMICS_VERSION,
+            "note": "Locally cached 2006–2020 shoreline-change segments; refresh with scripts/import_ispra_coastal_dynamics.py",
+        },
+        "viirs_nightlights": {
+            **nightlights_store_status(),
+            "source_version": "VNP46A4.002",
+            "note": "Annual NASA Black Marble raster; build with scripts/import_viirs_nightlights.py after setting LAADS_DAAC_TOKEN",
+        },
         "hazards_idrogeo": {
             "available": True,  # runtime API, no local store
             "note": "ISPRA IdroGEO — live API, requires network access",
@@ -5910,8 +6306,27 @@ async def aenrichment_status() -> Dict[str, Any]:
         ("hazards_mps04", _MPS04_POSTGRES_RELATIONS, False),
         ("hazards_ispra_mosaics", _ISPRA_POSTGRES_RELATIONS, False),
         ("egms_subsidence", _EGMS_POSTGRES_RELATIONS, True),
+        ("ispra_coastal_dynamics", _COASTAL_DYNAMICS_RELATIONS, False),
     ):
-        if status.get(key, {}).get("available") or source is None:
+        if status.get(key, {}).get("available"):
+            continue
+        if source is None:
+            if key == "ispra_coastal_dynamics":
+                status[key] = {"available": False, **status.get(key, {}), "reason": "not_configured"}
+            continue
+        if key == "ispra_coastal_dynamics":
+            try:
+                coast_status = await asyncio.wait_for(
+                    source.coastal_dynamics_store_status(), timeout=6
+                )
+            except Exception:
+                coast_status = {"available": False, "reason": "probe_failed"}
+            status[key] = {
+                **status.get(key, {}),
+                **coast_status,
+                "source": _COASTAL_DYNAMICS_SOURCE,
+                "storage": "aecs4u-stats PostgreSQL",
+            }
             continue
         try:
             provisioned = bool(await asyncio.wait_for(source._relations_available(relations), timeout=6))
@@ -5926,8 +6341,10 @@ async def aenrichment_status() -> Dict[str, Any]:
                 "reason": None,
                 "storage": "aecs4u-stats PostgreSQL",
             }
+        elif key == "ispra_coastal_dynamics":
+            status[key] = {**status.get(key, {}), "reason": "not_built"}
         elif needs_pushdown and status.get(key, {}).get("reason") == "not_built":
-            status[key] = {**status[key], "reason": "postgres_pushdown_not_configured"}
+            status[key] = {**status.get(key, {}), "reason": "postgres_pushdown_not_configured"}
     status["parcel_enrichment_read_model"] = {
         **await _aparcel_enrichment_read_model_status(),
         "source": "aecs4u-stats PostgreSQL serving schema",
@@ -6557,6 +6974,24 @@ def _income_profile_derived_metrics(profile: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _income_profile_with_benchmark(profile: Dict[str, Any]) -> Dict[str, Any]:
+    """Add a year-matched national comparator when the source supports one."""
+    result = _income_profile_derived_metrics(profile)
+    benchmark = _income_benchmark_for_year(result.get("year"), result)
+    benchmarks = dict(result.get("benchmarks") or {})
+    if benchmark is not None:
+        result["benchmark_average_income_eur"] = benchmark["value"]
+        benchmarks["average_income_eur"] = benchmark
+    else:
+        result.pop("benchmark_average_income_eur", None)
+        benchmarks.pop("average_income_eur", None)
+    if benchmarks:
+        result["benchmarks"] = benchmarks
+    else:
+        result.pop("benchmarks", None)
+    return result
+
+
 def _omi_history_trend_deltas(rows: list[dict]) -> list[dict]:
     """Compare the latest sale midpoint with available semester horizons."""
     by_period: dict[int, list[float]] = {}
@@ -6829,7 +7264,16 @@ def get_omi_zone_at_point(province: str, lat: float, lng: float) -> Dict[str, An
         if not zone:
             result["reason"] = "zone_code_unavailable"
             return result
-        result.update({"matched": True, "zone": zone})
+        result.update({
+            "matched": True,
+            "zone": zone,
+            "boundary_source": "OnData mirror of Agenzia delle Entrate OMI zones via aecs4u-stats",
+            "match_method": "point_in_polygon",
+            "spatial_resolution": "OMI zone polygon",
+        })
+        vintage = [str(properties.get(key) or "").strip() for key in ("anno", "semestre")]
+        if all(vintage):
+            result["boundary_vintage"] = "/".join(vintage)
         return result
 
     result["reason"] = "point_outside_zones"
@@ -6852,7 +7296,7 @@ def get_income_profile(
                 cadastral_code,
             )
             if result is not None and (year is None or result.get("year") == year):
-                return _income_profile_derived_metrics(result)
+                return _income_profile_with_benchmark(result)
         except Exception:
             postgres_source._retry_at = time.monotonic() + 60
             logger.warning(
@@ -6862,7 +7306,24 @@ def get_income_profile(
     result = income_by_cadastral_code(cadastral_code, year=year, db_path=_mef_sqlite_path())
     if result is not None and result.get("year") and not result.get("dataset_version"):
         result["dataset_version"] = f"MEF_IRPEF_{result['year']}"
-    return _income_profile_derived_metrics(result) if result is not None else None
+    return _income_profile_with_benchmark(result) if result is not None else None
+
+
+def _composite_risk_fields(seismic: Any, hazards: Any) -> Dict[str, Any]:
+    """Return shared index fields, using the aligned compatibility copy as needed."""
+    composite = _composite_risk_score(seismic, hazards)
+    return {
+        "composite_score": composite.get("score"),
+        "composite_score_version": composite.get("version"),
+        "composite_score_status": composite.get("status"),
+        "composite_score_components": composite.get("components"),
+        "composite_score_missing_components": composite.get("missing_components"),
+        "composite_score_invalid_components": composite.get("invalid_components"),
+        "composite_score_component_count": composite.get("component_count"),
+        "composite_score_component_total": composite.get("component_total"),
+        "composite_score_formula": composite.get("formula"),
+        "composite_score_interpretation": composite.get("interpretation"),
+    }
 
 
 def get_environmental_risks(istat_code: int | str) -> Optional[Dict[str, Any]]:
@@ -6875,14 +7336,13 @@ def get_environmental_risks(istat_code: int | str) -> Optional[Dict[str, Any]]:
     raw_hazards = get_comune_hazards(istat_code)
     hazards = summarize_hazards(raw_hazards) if raw_hazards else None
 
-    if seismic is None and hazards is None:
-        return None
-
-    return {
+    result = {
         "istat_code": istat_code,
         "seismic": seismic,
         "hydrogeological": hazards,
     }
+    result.update(_composite_risk_fields(seismic, hazards))
+    return result
 
 
 _MPS04_BASE: Dict[str, Any] = {
@@ -6902,6 +7362,15 @@ _MPS04_BASE: Dict[str, Any] = {
 _MPS04_POSTGRES_RELATIONS = ("hazards.mps04_points", "hazards.mps04_hazard_curve")
 _ISPRA_POSTGRES_RELATIONS = ("hazards.landslide_hazard", "hazards.flood_hazard")
 _EGMS_POSTGRES_RELATIONS = ("geo_surface_change.egms_subsidenza",)
+_COASTAL_DYNAMICS_RELATIONS = ("spatial.ispra_coastal_dynamics",)
+_COASTAL_DYNAMICS_SOURCE = "ISPRA Dinamica Litoranea 2006-2020"
+_COASTAL_DYNAMICS_SOURCE_URL = (
+    "https://sinacloud.isprambiente.it/arcgisadv/rest/services/coste/"
+    "Assetto_costiero_anno_2020/FeatureServer/1"
+)
+_COASTAL_DYNAMICS_VERSION = "ISPRA_LINEA_COSTA_2020_V2_DYNAMICA_2006_2020"
+_COASTAL_SEARCH_RADIUS_M = 1000.0
+_COASTAL_CANDIDATE_LIMIT = 100
 _POSTGRES_STORAGE_LABEL = "aecs4u-stats PostgreSQL"
 
 
@@ -6971,6 +7440,126 @@ async def aget_parcel_subsidence_intersections(geometry: Dict[str, Any]) -> Dict
         if provisioned:
             return {**result, "reason": "egms_postgres_pushdown_not_configured"}
     return result
+
+
+async def aget_parcel_coastal_erosion(geometry: Dict[str, Any]) -> Dict[str, Any]:
+    """Summarize cached ISPRA shoreline-change segments within one kilometre.
+
+    A missing local snapshot is an unavailable source. A successful query with
+    no nearby mapped line is reported as unknown coverage, never as evidence
+    that the parcel is unaffected by erosion.
+    """
+    base = {
+        "source": _COASTAL_DYNAMICS_SOURCE,
+        "source_url": _COASTAL_DYNAMICS_SOURCE_URL,
+        "license": "Creative Commons Attribution 4.0 International (CC BY 4.0)",
+        "dataset_version": _COASTAL_DYNAMICS_VERSION,
+        "data_vintage": "2006–2020",
+        "spatial_resolution": "ISPRA shoreline segments; 1:5,000 dataset scale",
+        "positional_accuracy_m": 5.0,
+        "classification_threshold_m": 5.0,
+        "search_radius_m": _COASTAL_SEARCH_RADIUS_M,
+        "match_method": "parcel_polygon_distance_to_shoreline_segment",
+    }
+    try:
+        value = geometry.get("geometry") if geometry.get("type") == "Feature" else geometry
+        parcel = shape(value)
+        if parcel.is_empty or parcel.geom_type not in {"Polygon", "MultiPolygon"}:
+            return {**base, "available": False, "reason": "parcel_polygon_unavailable"}
+        if not parcel.is_valid:
+            parcel = parcel.buffer(0)
+        if parcel.is_empty or parcel.area <= 0:
+            return {**base, "available": False, "reason": "parcel_polygon_invalid"}
+        from pyproj import Transformer
+
+        projector = Transformer.from_crs("EPSG:4326", "EPSG:6933", always_xy=True)
+        metric_parcel = _transform_geometry(projector.transform, parcel)
+        if metric_parcel.is_empty or not math.isfinite(metric_parcel.area):
+            return {**base, "available": False, "reason": "parcel_projection_invalid"}
+        geojson = json.dumps(parcel.__geo_interface__, separators=(",", ":"))
+    except Exception:
+        return {**base, "available": False, "reason": "parcel_geometry_invalid"}
+
+    source = await _get_async_postgres_source()
+    if source is None:
+        return {**base, "available": False, "reason": "coastal_store_not_configured"}
+    if time.monotonic() < source._retry_at:
+        return {**base, "available": False, "reason": "coastal_store_temporarily_unavailable"}
+    try:
+        store_status = await asyncio.wait_for(source.coastal_dynamics_store_status(), timeout=6)
+        if not store_status.get("available"):
+            status_reason = store_status.get("reason") or "not_built"
+            return {
+                **base,
+                "available": False,
+                "reason": f"coastal_store_{status_reason}",
+                "feature_count": store_status.get("feature_count", 0),
+            }
+        base = {
+            **base,
+            "dataset_version": store_status.get("source_version") or _COASTAL_DYNAMICS_VERSION,
+            "updated_at": store_status.get("imported_at"),
+            "feature_count": store_status.get("feature_count"),
+        }
+        rows = await asyncio.wait_for(
+            source.coastal_changes_near_geometry(
+                geojson,
+                radius_m=_COASTAL_SEARCH_RADIUS_M,
+                limit=_COASTAL_CANDIDATE_LIMIT,
+            ),
+            timeout=12,
+        )
+    except Exception:
+        source._retry_at = time.monotonic() + 60
+        logger.warning("Local ISPRA coastal-change lookup failed", exc_info=True)
+        return {**base, "available": False, "reason": "coastal_store_query_failed"}
+    if rows is None:
+        return {**base, "available": False, "reason": "coastal_store_not_built"}
+
+    truncated = len(rows) > _COASTAL_CANDIDATE_LIMIT
+    matches = rows[:_COASTAL_CANDIDATE_LIMIT]
+    class_counts: dict[str, int] = {}
+    segments = []
+    for row in matches:
+        classification = str(row.get("change_class") or "Nessuna informazione")
+        class_counts[classification] = class_counts.get(classification, 0) + 1
+        segments.append({
+            "object_id": int(row["object_id"]),
+            "classification": classification,
+            "distance_m": round(float(row["distance_m"]), 1),
+            "coast_type": _postgres_scalar(row.get("coast_type")),
+            "shoreline_length_m": _postgres_scalar(row.get("shoreline_length_m")),
+            "mean_variation_m": _postgres_scalar(row.get("mean_variation_m")),
+            "max_variation_m": _postgres_scalar(row.get("max_variation_m")),
+            "severity_index": _postgres_scalar(row.get("severity_index")),
+            "municipality_istat_code": _postgres_scalar(row.get("cod_istat")),
+        })
+    matched = bool(segments)
+    return {
+        **base,
+        "available": True,
+        "matched": matched,
+        "coverage": "partial" if truncated else ("mapped_segments" if matched else "unknown"),
+        "coverage_status": "partial" if truncated else (
+            "mapped_segments_found" if matched else "no_mapped_segment_within_1km"
+        ),
+        "query_complete": not truncated,
+        "candidate_limit": _COASTAL_CANDIDATE_LIMIT,
+        "segment_count": len(matches),
+        "classification_counts": class_counts,
+        "nearest_segment": segments[0] if segments else None,
+        "segments": segments[:25],
+        "truncated": truncated,
+        "coverage_note": (
+            "The 2006–2020 layer excludes some highly variable coast segments, including parts of the Po Delta "
+            "and Friulian coast. No nearby mapped segment does not establish absence of coastal erosion."
+        ),
+    }
+
+
+async def aget_parcel_nightlights(geometry: Dict[str, Any]) -> Dict[str, Any]:
+    """Sample the locally prepared annual Black Marble raster off the event loop."""
+    return await asyncio.to_thread(get_parcel_nightlights, geometry)
 
 
 async def aget_mps04_pga_at_point(lat: float, lng: float) -> Dict[str, Any]:
@@ -7838,6 +8427,580 @@ def _parcel_centroid(feature: Dict[str, Any]) -> Optional[Dict[str, float]]:
         return None
 
 
+_TERRAIN_SOURCE = "Istituto Nazionale di Geofisica e Vulcanologia — TINITALY 1.1"
+_TERRAIN_PRODUCT_URL = "https://tinitaly.pi.ingv.it/"
+_CORINE_SOURCE = "Copernicus Land Monitoring Service — CORINE Land Cover 2018"
+_CORINE_PRODUCT_URL = "https://land.copernicus.eu/en/products/corine-land-cover/clc2018"
+
+
+def _unavailable_terrain_block(reason: str) -> Dict[str, Any]:
+    block = _detail_block(
+        source=_TERRAIN_SOURCE,
+        dataset_version="TINITALY/1.1",
+        spatial_resolution="10 m raster cell size",
+        spatial_resolution_m=10.0,
+        match_method="zonal_pixel_centres",
+    )
+    block.update({
+        "source_url": _TERRAIN_PRODUCT_URL,
+        "license": "CC BY 4.0",
+        "reason": reason,
+    })
+    return block
+
+
+def _terrain_detail_block(
+    parcel: Dict[str, Any], municipality: Optional[Dict[str, Any]]
+) -> Dict[str, Any]:
+    geometry = parcel.get("geometry")
+    if not geometry:
+        return _unavailable_terrain_block("parcel_geometry_unavailable")
+    if _terrain is None:
+        return _unavailable_terrain_block("not_supported")
+    props = parcel.get("properties") or {}
+    region = (
+        (municipality or {}).get("region")
+        or props.get("region")
+        or props.get("REGIONE")
+        or props.get("region_name")
+    )
+    if not region:
+        return _unavailable_terrain_block("region_unavailable")
+    try:
+        status = _terrain.terrain_store_status(region)
+    except (OSError, ValueError, TypeError):
+        logger.debug("TINITALY region could not be resolved: %s", region, exc_info=True)
+        return _unavailable_terrain_block("region_unavailable")
+    if not status.ready:
+        reason = "not_built" if status.state == "missing" else "store_unavailable"
+        return _unavailable_terrain_block(reason)
+    try:
+        data = _terrain.terrain_for_geometry(geometry, region)
+    except (OSError, ValueError, TypeError):
+        logger.debug("TINITALY terrain query failed for parcel", exc_info=True)
+        return _unavailable_terrain_block("query_failed")
+    if not data:
+        return _unavailable_terrain_block("no_matching_raster")
+    coverage = "full" if data.get("coverage_pct") is None or float(data["coverage_pct"]) >= 99.0 else "partial"
+    block = _detail_block(
+        data,
+        source=_TERRAIN_SOURCE,
+        dataset_version=str(data.get("dataset_version") or "TINITALY/1.1"),
+        match_method=str(data.get("match_method") or "zonal_pixel_centres"),
+        spatial_resolution=str(data.get("spatial_resolution") or "10 m raster cell size"),
+        spatial_resolution_m=10.0,
+        available=True,
+        coverage=coverage,
+    )
+    block.update({
+        "source_url": _TERRAIN_PRODUCT_URL,
+        "license": "CC BY 4.0",
+        "attribution": data.get("attribution"),
+    })
+    return block
+
+
+def get_terrain_for_feature(
+    parcel: Dict[str, Any], municipality: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """Return the TINITALY section envelope for an already resolved parcel."""
+    return _terrain_detail_block(parcel, municipality)
+
+
+def get_parcel_terrain(national_reference: str) -> Optional[Dict[str, Any]]:
+    reference = str(national_reference or "").strip()
+    if not reference:
+        return None
+    parcel = get_parcel_by_reference(reference)
+    if parcel is None:
+        return None
+    props = parcel.get("properties") or {}
+    cadastral_code = str(
+        props.get("municipality_code")
+        or props.get("ADMINISTRATIVEUNIT")
+        or _parcel_reference_parts(reference)[0]
+    ).strip().upper()
+    municipality = get_municipality_by_cadastral_code(cadastral_code)
+    return _terrain_detail_block(parcel, municipality)
+
+
+async def aget_parcel_terrain(
+    national_reference: str, feature_id: Optional[int] = None
+) -> Optional[Dict[str, Any]]:
+    """Async route adapter preserving the selected canonical feature identity."""
+    reference = str(national_reference or "").strip()
+    if not reference:
+        return None
+    if feature_id is not None:
+        try:
+            from land_registry.map_layers import get_map_layer_source
+
+            map_source = get_map_layer_source()
+            if not map_source.available:
+                raise CanonicalParcelLookupError(
+                    "Canonical map source is unavailable for feature-specific lookup"
+                )
+            parcel = await map_source.read_feature_by_reference(
+                "cadastral-parcels", reference, feature_id=feature_id
+            )
+        except CanonicalParcelLookupError:
+            raise
+        except Exception as exc:
+            raise CanonicalParcelLookupError(
+                "Canonical map source failed during feature-specific lookup"
+            ) from exc
+    else:
+        parcel = await asyncio.to_thread(get_parcel_by_reference, reference)
+    if parcel is None:
+        return None
+    props = parcel.get("properties") or {}
+    cadastral_code = str(
+        props.get("municipality_code")
+        or props.get("ADMINISTRATIVEUNIT")
+        or _parcel_reference_parts(reference)[0]
+    ).strip().upper()
+    municipality = await aget_municipality_by_cadastral_code(cadastral_code)
+    return await asyncio.to_thread(_terrain_detail_block, parcel, municipality)
+
+
+def _unavailable_land_cover_block(reason: str) -> Dict[str, Any]:
+    block = _detail_block(
+        source=_CORINE_SOURCE,
+        dataset_version="CLC2018_V2020_20u1",
+        spatial_resolution="25 ha minimum mapping unit; 100 m minimum width",
+        match_method="area_weighted_intersection",
+    )
+    block.update({"source_url": _CORINE_PRODUCT_URL, "reason": reason})
+    return block
+
+
+def _land_cover_detail_block(
+    parcel: Dict[str, Any], municipality: Optional[Dict[str, Any]]
+) -> Dict[str, Any]:
+    geometry = parcel.get("geometry")
+    if not geometry:
+        return _unavailable_land_cover_block("parcel_geometry_unavailable")
+    if _corine is None:
+        return _unavailable_land_cover_block("not_supported")
+    props = parcel.get("properties") or {}
+    region = (
+        (municipality or {}).get("region")
+        or props.get("region")
+        or props.get("REGIONE")
+        or props.get("region_name")
+    )
+    if not region:
+        return _unavailable_land_cover_block("region_unavailable")
+    try:
+        status = _corine.corine_db_status(region)
+    except (OSError, ValueError, TypeError):
+        logger.debug("CORINE region could not be resolved: %s", region, exc_info=True)
+        return _unavailable_land_cover_block("region_unavailable")
+    if not status.ready:
+        reason = "not_built" if status.state == "missing" else "store_unavailable"
+        return _unavailable_land_cover_block(reason)
+    try:
+        data = _corine.land_cover_for_geometry(geometry, region)
+    except (OSError, ValueError, TypeError):
+        logger.debug("CORINE query failed for parcel", exc_info=True)
+        return _unavailable_land_cover_block("query_failed")
+    if not data:
+        return _unavailable_land_cover_block("no_matching_polygon")
+    coverage = "full" if float(data.get("coverage_pct") or 0) >= 99.0 else "partial"
+    block = _detail_block(
+        data,
+        source=_CORINE_SOURCE,
+        dataset_version=str(data.get("dataset_version") or "CLC2018_V2020_20u1"),
+        match_method=str(data.get("match_method") or "area_weighted_intersection"),
+        spatial_resolution=str(data.get("spatial_resolution") or "25 ha minimum mapping unit; 100 m minimum width"),
+        available=True,
+        coverage=coverage,
+    )
+    block.update({
+        "source_url": _CORINE_PRODUCT_URL,
+        "attribution": "Copernicus Land Monitoring Service — CORINE Land Cover 2018; DOI 10.2909/71c95a07-e296-44fc-b22b-415f42acfdf0",
+    })
+    return block
+
+
+def get_land_cover_for_feature(
+    parcel: Dict[str, Any], municipality: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """Return the CORINE section envelope for an already resolved parcel feature."""
+    return _land_cover_detail_block(parcel, municipality)
+
+
+def get_parcel_land_cover(national_reference: str) -> Optional[Dict[str, Any]]:
+    """Return one parcel's CORINE section envelope for the dedicated API route."""
+    reference = str(national_reference or "").strip()
+    if not reference:
+        return None
+    parcel = get_parcel_by_reference(reference)
+    if parcel is None:
+        return None
+    props = parcel.get("properties") or {}
+    cadastral_code = str(
+        props.get("municipality_code")
+        or props.get("ADMINISTRATIVEUNIT")
+        or _parcel_reference_parts(reference)[0]
+    ).strip().upper()
+    municipality = get_municipality_by_cadastral_code(cadastral_code)
+    return _land_cover_detail_block(parcel, municipality)
+
+
+async def aget_parcel_land_cover(
+    national_reference: str, feature_id: Optional[int] = None
+) -> Optional[Dict[str, Any]]:
+    """Async route adapter that can preserve canonical feature identity."""
+    reference = str(national_reference or "").strip()
+    if not reference:
+        return None
+    if feature_id is not None:
+        try:
+            from land_registry.map_layers import get_map_layer_source
+
+            map_source = get_map_layer_source()
+            if not map_source.available:
+                raise CanonicalParcelLookupError(
+                    "Canonical map source is unavailable for feature-specific lookup"
+                )
+            parcel = await map_source.read_feature_by_reference(
+                "cadastral-parcels", reference, feature_id=feature_id
+            )
+        except CanonicalParcelLookupError:
+            raise
+        except Exception as exc:
+            raise CanonicalParcelLookupError(
+                "Canonical map source failed during feature-specific lookup"
+            ) from exc
+    else:
+        parcel = await asyncio.to_thread(get_parcel_by_reference, reference)
+    if parcel is None:
+        return None
+    props = parcel.get("properties") or {}
+    cadastral_code = str(
+        props.get("municipality_code")
+        or props.get("ADMINISTRATIVEUNIT")
+        or _parcel_reference_parts(reference)[0]
+    ).strip().upper()
+    municipality = await aget_municipality_by_cadastral_code(cadastral_code)
+    return await asyncio.to_thread(_land_cover_detail_block, parcel, municipality)
+
+
+_BUILDING_FOOTPRINT_SOURCE = "OpenStreetMap contributors via Geofabrik"
+_BUILDING_FOOTPRINT_URL = "https://download.geofabrik.de/europe/italy.html"
+_OSM_ATTRIBUTION_URL = "https://www.openstreetmap.org/copyright"
+
+
+def _unavailable_building_footprints_block(reason: str) -> Dict[str, Any]:
+    block = _detail_block(
+        source=_BUILDING_FOOTPRINT_SOURCE,
+        dataset_version="OSM regional extract",
+        spatial_resolution="mapped OSM building footprints",
+        match_method="parcel_polygon_intersection",
+    )
+    block.update({
+        "source_url": _BUILDING_FOOTPRINT_URL,
+        "license": "Open Database License (ODbL) 1.0",
+        "terms_url": _OSM_ATTRIBUTION_URL,
+        "attribution": "© OpenStreetMap contributors",
+        "reason": reason,
+    })
+    return block
+
+
+def _building_footprints_detail_block(
+    parcel: Dict[str, Any], municipality: Optional[Dict[str, Any]]
+) -> Dict[str, Any]:
+    geometry = parcel.get("geometry")
+    if not geometry:
+        return _unavailable_building_footprints_block("parcel_geometry_unavailable")
+    if _building_footprints is None:
+        return _unavailable_building_footprints_block("not_supported")
+    props = parcel.get("properties") or {}
+    region = (
+        (municipality or {}).get("region")
+        or props.get("region")
+        or props.get("REGIONE")
+        or props.get("region_name")
+    )
+    if not region:
+        return _unavailable_building_footprints_block("region_unavailable")
+    try:
+        status = _building_footprints.building_db_status(region)
+    except (OSError, ValueError, TypeError):
+        logger.debug("Building-footprint region could not be resolved: %s", region, exc_info=True)
+        return _unavailable_building_footprints_block("region_unavailable")
+    if not status.ready:
+        reason = "not_built" if status.state == "missing" else "store_unavailable"
+        return _unavailable_building_footprints_block(reason)
+    try:
+        data = _building_footprints.building_footprint_for_geometry(geometry, region)
+    except (OSError, ValueError, TypeError):
+        logger.debug("OSM building-footprint query failed for parcel", exc_info=True)
+        return _unavailable_building_footprints_block("query_failed")
+    if not data:
+        return _unavailable_building_footprints_block("no_matching_buildings")
+    block = _detail_block(
+        data,
+        source=_BUILDING_FOOTPRINT_SOURCE,
+        dataset_version=str(data.get("dataset_version") or "OSM regional extract"),
+        updated_at=data.get("updated_at"),
+        match_method=str(data.get("match_method") or "parcel_polygon_intersection"),
+        spatial_resolution="mapped OSM building footprints",
+        available=True,
+        coverage="unknown",
+    )
+    block.update({
+        "source_url": _BUILDING_FOOTPRINT_URL,
+        "license": "Open Database License (ODbL) 1.0",
+        "terms_url": _OSM_ATTRIBUTION_URL,
+        "attribution": "© OpenStreetMap contributors",
+        "coverage_status": "unknown",
+    })
+    return block
+
+
+def get_building_footprints_for_feature(
+    parcel: Dict[str, Any], municipality: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """Return mapped OSM footprint metrics for an already resolved parcel."""
+    return _building_footprints_detail_block(parcel, municipality)
+
+
+async def aget_parcel_building_footprints(
+    national_reference: str, feature_id: Optional[int] = None
+) -> Optional[Dict[str, Any]]:
+    """Async API adapter preserving the canonical selected parcel geometry."""
+    reference = str(national_reference or "").strip()
+    if not reference:
+        return None
+    if feature_id is not None:
+        try:
+            from land_registry.map_layers import get_map_layer_source
+
+            map_source = get_map_layer_source()
+            if not map_source.available:
+                raise CanonicalParcelLookupError(
+                    "Canonical map source is unavailable for feature-specific lookup"
+                )
+            parcel = await map_source.read_feature_by_reference(
+                "cadastral-parcels", reference, feature_id=feature_id
+            )
+        except CanonicalParcelLookupError:
+            raise
+        except Exception as exc:
+            raise CanonicalParcelLookupError(
+                "Canonical map source failed during feature-specific lookup"
+            ) from exc
+    else:
+        parcel = await asyncio.to_thread(get_parcel_by_reference, reference)
+    if parcel is None:
+        return None
+    props = parcel.get("properties") or {}
+    cadastral_code = str(
+        props.get("municipality_code")
+        or props.get("ADMINISTRATIVEUNIT")
+        or _parcel_reference_parts(reference)[0]
+    ).strip().upper()
+    municipality = await aget_municipality_by_cadastral_code(cadastral_code)
+    return await asyncio.to_thread(_building_footprints_detail_block, parcel, municipality)
+
+
+_ANNCSU_SOURCE = "ANNCSU — Agenzia delle Entrate and ISTAT"
+_ANNCSU_OPEN_DATA_URL = "https://www.anncsu.gov.it/it/consultazione-dellarchivio/open-data/"
+_ANNCSU_LICENSE = "CC BY 4.0"
+_ANNCSU_LICENSE_URL = "https://creativecommons.org/licenses/by/4.0/"
+
+
+def _unavailable_anncsu_addresses_block(reason: str) -> Dict[str, Any]:
+    block = _detail_block(
+        source=_ANNCSU_SOURCE,
+        dataset_version="ANNCSU regional monthly extract",
+        spatial_resolution="municipality-submitted civic access coordinates",
+        match_method="point_in_parcel_polygon",
+        coverage="unknown",
+    )
+    block.update({
+        "source_url": _ANNCSU_OPEN_DATA_URL,
+        "license": _ANNCSU_LICENSE,
+        "license_url": _ANNCSU_LICENSE_URL,
+        "attribution": "ANNCSU — Agenzia delle Entrate and ISTAT; CC BY 4.0",
+        "reason": reason,
+    })
+    return block
+
+
+def _anncsu_addresses_detail_block(
+    parcel: Dict[str, Any],
+    municipality: Optional[Dict[str, Any]],
+    cadastral_code: Optional[str] = None,
+) -> Dict[str, Any]:
+    geometry = parcel.get("geometry")
+    if not geometry:
+        return _unavailable_anncsu_addresses_block("parcel_geometry_unavailable")
+    if _anncsu is None or not all(
+        hasattr(_anncsu, name)
+        for name in ("anncsu_region_db_status", "civic_addresses_for_geometry")
+    ):
+        return _unavailable_anncsu_addresses_block("not_supported")
+    props = parcel.get("properties") or {}
+    region = (
+        (municipality or {}).get("region")
+        or props.get("region")
+        or props.get("REGIONE")
+        or props.get("region_name")
+    )
+    if not region:
+        return _unavailable_anncsu_addresses_block("region_unavailable")
+    try:
+        status = _anncsu.anncsu_region_db_status(region)
+    except (OSError, ValueError, TypeError):
+        logger.debug("ANNCSU region could not be resolved: %s", region, exc_info=True)
+        return _unavailable_anncsu_addresses_block("region_unavailable")
+    if not status.get("ready"):
+        reason = "not_built" if status.get("state") == "missing" else "store_unavailable"
+        return _unavailable_anncsu_addresses_block(reason)
+    try:
+        data = _anncsu.civic_addresses_for_geometry(
+            geometry,
+            region,
+            cadastral_code=cadastral_code,
+        )
+    except (OSError, ValueError, TypeError, RuntimeError):
+        logger.debug("ANNCSU civic-address query failed for parcel", exc_info=True)
+        return _unavailable_anncsu_addresses_block("query_failed")
+    if not isinstance(data, dict):
+        return _unavailable_anncsu_addresses_block("query_failed")
+    block = _detail_block(
+        data,
+        source=str(data.get("source") or _ANNCSU_SOURCE),
+        dataset_version=data.get("dataset_version") or "ANNCSU regional monthly extract",
+        updated_at=data.get("updated_at"),
+        match_method=data.get("match_method") or "point_in_parcel_polygon",
+        spatial_resolution=data.get("spatial_resolution") or "municipality-submitted civic access coordinates",
+        available=True,
+        coverage="unknown",
+    )
+    block.update({
+        key: data.get(key)
+        for key in (
+            "source_url", "license", "license_url", "attribution", "coordinate_crs",
+            "region_code", "region_name", "source_vintage", "status", "coverage_status",
+            "municipality_coordinate_coverage_status", "municipality_total_accesses",
+            "municipality_geocoded_accesses", "municipality_coordinate_coverage_pct",
+            "source_last_modified", "source_etag",
+            "candidate_count", "candidate_limit", "candidate_limit_reached", "truncated",
+            "address_count", "shown_count", "coordinate_method_codes",
+        )
+    })
+    return block
+
+
+def get_anncsu_addresses_for_feature(
+    parcel: Dict[str, Any],
+    municipality: Optional[Dict[str, Any]] = None,
+    cadastral_code: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return geocoded ANNCSU addresses spatially covered by a parcel."""
+    code = str(
+        cadastral_code
+        or (parcel.get("properties") or {}).get("municipality_code")
+        or (parcel.get("properties") or {}).get("ADMINISTRATIVEUNIT")
+        or ""
+    ).strip().upper() or None
+    return _anncsu_addresses_detail_block(parcel, municipality, code)
+
+
+async def aget_parcel_anncsu_addresses(
+    national_reference: str, feature_id: Optional[int] = None
+) -> Optional[Dict[str, Any]]:
+    """Resolve the selected parcel and query the local regional ANNCSU store."""
+    reference = str(national_reference or "").strip()
+    if not reference:
+        return None
+    if feature_id is not None:
+        try:
+            from land_registry.map_layers import get_map_layer_source
+
+            map_source = get_map_layer_source()
+            if not map_source.available:
+                raise CanonicalParcelLookupError(
+                    "Canonical map source is unavailable for feature-specific address lookup"
+                )
+            parcel = await map_source.read_feature_by_reference(
+                "cadastral-parcels", reference, feature_id=feature_id
+            )
+        except CanonicalParcelLookupError:
+            raise
+        except Exception as exc:
+            raise CanonicalParcelLookupError(
+                "Canonical map source failed during feature-specific address lookup"
+            ) from exc
+    else:
+        parcel = await asyncio.to_thread(get_parcel_by_reference, reference)
+    if parcel is None:
+        return None
+    props = parcel.get("properties") or {}
+    cadastral_code = str(
+        props.get("municipality_code")
+        or props.get("ADMINISTRATIVEUNIT")
+        or _parcel_reference_parts(reference)[0]
+    ).strip().upper()
+    municipality = await aget_municipality_by_cadastral_code(cadastral_code)
+    return await asyncio.to_thread(
+        _anncsu_addresses_detail_block, parcel, municipality, cadastral_code
+    )
+
+
+def _corine_fingerprint_marker() -> str:
+    if _corine is None:
+        return "not_supported"
+    values = []
+    for region in _corine.REGION_CODES:
+        path = _corine.corine_db_path(region)
+        try:
+            stat = path.stat()
+            values.append(f"{region}:{stat.st_size}:{stat.st_mtime_ns}")
+        except OSError:
+            values.append(f"{region}:-")
+    return ",".join(values)
+
+
+def _terrain_fingerprint_marker() -> str:
+    if _terrain is None:
+        return "not_supported"
+    values = []
+    for region in _terrain.REGION_CODES:
+        directory = _terrain.terrain_region_dir(region)
+        manifest = directory / "manifest.json"
+        vrt = directory / "terrain.vrt"
+        try:
+            manifest_stat = manifest.stat()
+            vrt_stat = vrt.stat()
+            values.append(
+                f"{region}:{manifest_stat.st_size}:{manifest_stat.st_mtime_ns}:"
+                f"{vrt_stat.st_size}:{vrt_stat.st_mtime_ns}"
+            )
+        except OSError:
+            values.append(f"{region}:-")
+    return ",".join(values)
+
+
+def _anncsu_fingerprint_marker() -> str:
+    if _anncsu is None or not hasattr(_anncsu, "anncsu_region_db_path"):
+        return "not_supported"
+    values = []
+    for region in range(1, 21):
+        try:
+            path = _anncsu.anncsu_region_db_path(region)
+            stat = path.stat()
+            values.append(f"{region}:{stat.st_size}:{stat.st_mtime_ns}")
+        except (OSError, TypeError, ValueError):
+            values.append(f"{region}:-")
+    return ",".join(values)
+
+
 def _parcel_enrichment_fingerprint() -> str:
     """Fingerprint source snapshots without reading the large data files."""
     paths = (_istat_sqlite_path(), _census_store_path(), _omi_sqlite_path())
@@ -7878,7 +9041,8 @@ def _parcel_enrichment_fingerprint() -> str:
         hashlib.sha256(value.encode("utf-8")).hexdigest() if value else "-"
         for value in external_dsns
     ]
-    material = "parcel-read-model-v8|" + "|".join(parts) + "|postgres:" + postgres_marker + "|sister:" + sister_marker + "|external:" + "|".join(external_markers)
+    nightlights_marker = nightlights_raster_marker()
+    material = "parcel-read-model-v13|" + "|".join(parts) + "|postgres:" + postgres_marker + "|sister:" + sister_marker + "|external:" + "|".join(external_markers) + "|nightlights:" + nightlights_marker + "|corine:" + _corine_fingerprint_marker() + "|terrain:" + _terrain_fingerprint_marker() + "|anncsu:" + _anncsu_fingerprint_marker()
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
@@ -7972,10 +9136,16 @@ def _build_parcel_enrichment(
     *,
     parcel_override: Any = _MISSING,
     municipality_override: Any = _MISSING,
+    buildings_override: Any = _MISSING,
+    anncsu_addresses_override: Any = _MISSING,
     omi_override: Any = _MISSING,
+    omi_zone_override: Any = _MISSING,
+    nightlights_override: Any = _MISSING,
     income_override: Any = _MISSING,
     opendata_override: Any = _MISSING,
     pvp_override: Any = _MISSING,
+    land_cover_override: Any = _MISSING,
+    terrain_override: Any = _MISSING,
     postgres_context_override: Any = None,
 ) -> Optional[Dict[str, Any]]:
     """Build the stable portion of one parcel's read-optimized profile."""
@@ -8023,11 +9193,22 @@ def _build_parcel_enrichment(
     if postgres_context and postgres_context.get("municipality"):
         municipality = postgres_context["municipality"]
 
-    buildings = get_buildings_for_parcel(
-        national_reference,
-        cadastral_code=cadastral_code,
-        municipality=municipality,
+    buildings = (
+        get_buildings_for_parcel(
+            national_reference,
+            cadastral_code=cadastral_code,
+            municipality=municipality,
+        )
+        if buildings_override is _MISSING
+        else buildings_override
     )
+    anncsu_addresses = (
+        get_anncsu_addresses_for_feature(parcel, municipality, cadastral_code)
+        if anncsu_addresses_override is _MISSING
+        else anncsu_addresses_override
+    )
+    if not isinstance(anncsu_addresses, dict):
+        anncsu_addresses = _unavailable_anncsu_addresses_block("source_unavailable")
     # These are independent source systems. Keep their raw, source-labelled
     # records in the read model so a later panel load does not need to repeat
     # two remote database queries.
@@ -8043,7 +9224,9 @@ def _build_parcel_enrichment(
     )
 
     omi_zone = None
-    if point and municipality and municipality.get("province"):
+    if omi_zone_override is not _MISSING:
+        omi_zone = omi_zone_override
+    elif point and municipality and municipality.get("province"):
         omi_zone = get_omi_zone_at_point(
             municipality["province"], point["lat"], point["lng"]
         )
@@ -8057,6 +9240,11 @@ def _build_parcel_enrichment(
     parcel_dataset_version = _parcel_source_release(props) or "ADE_INSPIRE_CADASTRAL_EXTRACT"
     if postgres_omi and postgres_omi.get("omi_zone_key"):
         omi_zone = {
+            **{
+                key: value
+                for key, value in postgres_omi.items()
+                if key != "omi_zone_key" and value is not None
+            },
             "province": (municipality or {}).get("province_sigla"),
             "point": point,
             "matched": True,
@@ -8100,6 +9288,9 @@ def _build_parcel_enrichment(
             },
             "source_facts": income_profile.get("income_distribution", []),
         }
+    income_benchmark = _income_benchmark_for_year(
+        (economics or {}).get("tax_year"), income_profile
+    )
     municipality_profile = (postgres_context or {}).get("municipality_profile")
     if not isinstance(municipality_profile, dict):
         municipality_profile = ((postgres_context or {}).get("municipality") or {}).get("profile")
@@ -8114,6 +9305,33 @@ def _build_parcel_enrichment(
         for key in solar_data_keys
         if isinstance(municipality_profile, dict) and municipality_profile.get(key) is not None
     }
+    nightlights_result = (
+        get_parcel_nightlights(parcel)
+        if nightlights_override is _MISSING
+        else nightlights_override
+    )
+    nightlights_available = nightlights_result.get("available") is True
+    # The raster module reports its own coverage labels (for example
+    # ``not_built``); the block envelope uses the shared vocabulary.
+    nightlights_coverage = nightlights_result.get("coverage")
+    nightlights_block = _detail_block(
+        nightlights_result if nightlights_available else None,
+        source=nightlights_result.get("source"),
+        dataset_version=nightlights_result.get("dataset_version"),
+        updated_at=nightlights_result.get("updated_at"),
+        model_version=nightlights_result.get("model_version"),
+        spatial_resolution=nightlights_result.get("spatial_resolution"),
+        match_method=nightlights_result.get("match_method"),
+        available=nightlights_available,
+        coverage=nightlights_coverage if nightlights_coverage in {"full", "partial"} else None,
+        reason=nightlights_result.get("reason"),
+    )
+    nightlights_block.update({
+        "source_url": nightlights_result.get("source_url"),
+        "data_vintage": nightlights_result.get("data_vintage") or nightlights_block["data_vintage"],
+        "license": nightlights_result.get("license"),
+        "attribution": nightlights_result.get("attribution"),
+    })
     address_block = _detail_block(
         {
             "addresses": buildings.get("addresses", []),
@@ -8124,10 +9342,21 @@ def _build_parcel_enrichment(
         match_method="cadastral_reference",
         spatial_resolution="SISTER cadastral property record",
         available=bool(buildings.get("addresses")),
+        reason=buildings.get("reason"),
     )
     if address_block["available"]:
         address_block["coverage"] = "partial"
         address_block["coverage_status"] = "partial"
+    land_cover_block = (
+        _land_cover_detail_block(parcel, municipality)
+        if land_cover_override is _MISSING
+        else _unavailable_land_cover_block("not_requested")
+    )
+    terrain_block = (
+        _terrain_detail_block(parcel, municipality)
+        if terrain_override is _MISSING
+        else _unavailable_terrain_block("not_requested")
+    )
     blocks = {
         name: _detail_block()
         for name in _PARCEL_DETAIL_BLOCKS
@@ -8181,10 +9410,9 @@ def _build_parcel_enrichment(
             economics,
             source=(income_profile or {}).get("source") or "MEF/IRPEF via aecs4u-stats PostgreSQL",
             dataset_version=_income_dataset_version(economics),
-            benchmarks={
-                "average_income_eur": _PARCEL_BENCHMARKS["average_income_eur"],
-            },
+            benchmarks={"average_income_eur": income_benchmark} if income_benchmark else {},
             match_method="municipality",
+            reason=(income_profile or {}).get("reason"),
         ),
         "solar": _detail_block(
             solar_data,
@@ -8204,14 +9432,20 @@ def _build_parcel_enrichment(
             match_method="cadastral_reference",
             available=buildings.get("available") is True,
             coverage="partial",
+            reason=buildings.get("reason"),
         ),
         "address": address_block,
+        "anncsu_addresses": anncsu_addresses,
+        "land_cover": land_cover_block,
+        "terrain": terrain_block,
+        "nightlights": nightlights_block,
         "opendata": _detail_block(
             opendata.get("records"),
             source=opendata.get("source"),
             match_method=opendata.get("match_method"),
             available=opendata.get("available") is True,
             coverage="partial",
+            reason=opendata.get("reason"),
         ),
         "pvp": _detail_block(
             pvp.get("records"),
@@ -8219,6 +9453,7 @@ def _build_parcel_enrichment(
             match_method=pvp.get("match_method"),
             available=pvp.get("available") is True,
             coverage="partial",
+            reason=pvp.get("reason"),
         ),
         "valuation": _detail_block(
             {
@@ -8230,7 +9465,9 @@ def _build_parcel_enrichment(
             if postgres_omi else "Agenzia delle Entrate OMI",
             dataset_version=_valuation_dataset_version(omi, postgres_omi),
             model_version="omi-zone-centroid-match-v1",
-            match_method="centroid",
+            spatial_resolution=(omi_zone or {}).get("spatial_resolution"),
+            match_method=(omi_zone or {}).get("match_method") or "centroid",
+            reason=(omi or {}).get("reason"),
             # The data dict is always non-empty, so judge availability by
             # content: a matched zone, at least one quote, or a snapshot.
             available=bool(
@@ -8270,6 +9507,10 @@ def parcel_panel_read_model(payload: Dict[str, Any]) -> Dict[str, Any]:
     source_blocks = payload.get("blocks")
     blocks = source_blocks if isinstance(source_blocks, dict) else {}
     compact_blocks = dict(blocks)
+    # ANNCSU is a dedicated lazy section on the primary map. Do not include its
+    # address list in the initial read-model response; the dedicated endpoint
+    # loads it only when the user opens that card.
+    compact_blocks.pop("anncsu_addresses", None)
     valuation = blocks.get("valuation")
     if isinstance(valuation, dict) and isinstance(valuation.get("data"), dict):
         valuation_data = valuation["data"]
@@ -8392,6 +9633,7 @@ async def aget_parcel_enrichment(
     refresh: bool = False,
     view: str = "full",
     feature_id: Optional[int] = None,
+    requested_blocks: Optional[set[str]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Build parcel enrichment for the async HTTP path.
 
@@ -8399,14 +9641,33 @@ async def aget_parcel_enrichment(
     request then checks the bounded SQLite cache after a PostgreSQL miss; a
     ``full`` request has no SQLite cache fallback. Cold requests rebuild from
     source stores, attempt to persist to PostgreSQL, and persist the compact
-    panel payload to SQLite if PostgreSQL persistence fails. Local cadastral
-    and geospatial work runs off the event loop.
+    panel payload to SQLite if PostgreSQL persistence fails. ``requested_blocks``
+    lets public API callers skip independent provider lookups they did not ask
+    for; a partial rebuild is never saved as a complete read model. Local
+    cadastral and geospatial work runs off the event loop.
     """
     reference = str(national_reference).strip()
     if not reference:
         return None
     if view not in {"full", "panel"}:
         raise ValueError(f"Unsupported parcel enrichment view: {view}")
+    requested = frozenset(requested_blocks) if requested_blocks is not None else None
+
+    def wants(section: str) -> bool:
+        return requested is None or section in requested
+
+    def settle_optional_result(section: str, result: Any) -> tuple[Any, bool]:
+        """Keep a failed optional provider from discarding other requested sections."""
+        if isinstance(result, asyncio.CancelledError):
+            raise result
+        if isinstance(result, Exception):
+            logger.warning(
+                "Async parcel %s section lookup failed (%s)",
+                section,
+                type(result).__name__,
+            )
+            return None, True
+        return result, False
 
     source = await _get_async_postgres_source()
     fingerprint = _parcel_enrichment_fingerprint()
@@ -8483,11 +9744,72 @@ async def aget_parcel_enrichment(
     ).strip().upper()
     point = await asyncio.to_thread(_parcel_centroid, parcel)
     municipality_task = asyncio.create_task(aget_municipality_by_cadastral_code(cadastral_code))
-    omi_task = asyncio.create_task(aget_omi_quotes(cadastral_code))
-    income_task = asyncio.create_task(aget_income_profile(cadastral_code))
-    municipality, omi, income_profile = await asyncio.gather(
-        municipality_task, omi_task, income_task
+    omi_task = (
+        asyncio.create_task(aget_omi_quotes(cadastral_code))
+        if wants("valuation")
+        else None
     )
+    income_task = (
+        asyncio.create_task(aget_income_profile(cadastral_code))
+        if wants("economics")
+        else None
+    )
+    context_tasks = [("municipality", municipality_task)]
+    if omi_task is not None:
+        context_tasks.append(("valuation", omi_task))
+    if income_task is not None:
+        context_tasks.append(("economics", income_task))
+    context_results = await asyncio.gather(
+        *(task for _, task in context_tasks), return_exceptions=True
+    )
+    context_data = {}
+    failed_context_sections = set()
+    for (section, _), result in zip(context_tasks, context_results, strict=True):
+        settled, failed = settle_optional_result(section, result)
+        context_data[section] = settled
+        if failed:
+            failed_context_sections.add(section)
+    municipality = context_data.get("municipality")
+    omi = context_data.get("valuation") or {}
+    income_profile = context_data.get("economics")
+    if "valuation" in failed_context_sections:
+        omi = {"reason": "valuation_lookup_failed"}
+    if "economics" in failed_context_sections:
+        income_profile = {"reason": "economics_lookup_failed"}
+
+    # These lookups do not depend on the spatial municipality context. Start
+    # them now so slow optional SISTER/OpenData/PVP reads overlap its queries.
+    source_municipality = dict(municipality or {})
+    optional_tasks = []
+    if wants("buildings") or wants("address"):
+        optional_tasks.append(("buildings", asyncio.create_task(
+            aget_buildings_for_parcel(
+                reference,
+                cadastral_code=cadastral_code,
+                municipality=source_municipality,
+            )
+        )))
+    if wants("anncsu_addresses") and (view == "full" or requested is not None):
+        optional_tasks.append(("anncsu_addresses", asyncio.create_task(
+            asyncio.to_thread(
+                get_anncsu_addresses_for_feature,
+                parcel,
+                source_municipality,
+                cadastral_code,
+            )
+        )))
+    if wants("opendata"):
+        optional_tasks.append(("opendata", asyncio.create_task(
+            asyncio.to_thread(
+                get_opendata_for_parcel, reference, dict(source_municipality)
+            )
+        )))
+    if wants("pvp"):
+        optional_tasks.append(("pvp", asyncio.create_task(
+            asyncio.to_thread(
+                get_pvp_for_parcel, reference, dict(source_municipality)
+            )
+        )))
 
     postgres_context = None
     if source is not None and time.monotonic() >= source._retry_at:
@@ -8513,21 +9835,49 @@ async def aget_parcel_enrichment(
             source._retry_at = time.monotonic() + 60
             logger.warning("Async PostgreSQL parcel context failed; using local fallback", exc_info=True)
 
-    # OpenData/SISTER and PVP are independent, blocking PostgreSQL adapters.
-    # Run them together after municipality context has been resolved, and keep
-    # both off the event loop. Their synchronous defaults remain available to
-    # callers of _build_parcel_enrichment outside this async request path.
-    opendata_task = asyncio.create_task(
-        asyncio.to_thread(
-            get_opendata_for_parcel, reference, dict(municipality or {})
-        )
+    # Keep independent blocking adapters off the event loop and let their
+    # results join the context query only when the profile is assembled.
+    optional_results = await asyncio.gather(
+        *(task for _, task in optional_tasks), return_exceptions=True
     )
-    pvp_task = asyncio.create_task(
-        asyncio.to_thread(
-            get_pvp_for_parcel, reference, dict(municipality or {})
-        )
+    optional_data = {}
+    failed_optional_sections = set()
+    for (section, _), result in zip(optional_tasks, optional_results, strict=True):
+        settled, failed = settle_optional_result(section, result)
+        optional_data[section] = settled
+        if failed:
+            failed_optional_sections.add(section)
+    requested_optional_sections = {section for section, _ in optional_tasks}
+
+    def optional_reason(section: str) -> str:
+        if section in failed_optional_sections:
+            return f"{section}_lookup_failed"
+        if section in requested_optional_sections:
+            return f"{section}_source_unavailable"
+        return "not_requested"
+
+    buildings = optional_data.get("buildings") or {
+        "buildings": [], "count": 0, "addresses": [], "address_count": 0,
+        "addresses_truncated": False, "available": False, "source": "SISTER PostgreSQL",
+        **({"reason": optional_reason("buildings")} if optional_reason("buildings") != "not_requested" else {}),
+    }
+    anncsu_addresses = optional_data.get("anncsu_addresses") or _unavailable_anncsu_addresses_block(
+        optional_reason("anncsu_addresses")
     )
-    opendata, pvp = await asyncio.gather(opendata_task, pvp_task)
+    opendata = optional_data.get("opendata") or {
+        "records": [], "available": False, "source": "OpenData PostgreSQL",
+        "reason": optional_reason("opendata"),
+    }
+    pvp = optional_data.get("pvp") or {
+        "records": [], "available": False, "source": "PVP modelview PostgreSQL",
+        "reason": optional_reason("pvp"),
+    }
+    omi_zone_override = _MISSING if wants("valuation") else None
+    nightlights_override = (
+        _MISSING
+        if wants("nightlights")
+        else {"available": False, "reason": "not_requested"}
+    )
 
     # Local cadastral/geospatial work is isolated from the event loop. Passing
     # the context override also prevents the legacy synchronous adapter from
@@ -8537,10 +9887,16 @@ async def aget_parcel_enrichment(
         reference,
         parcel_override=parcel,
         municipality_override=municipality,
+        buildings_override=buildings,
+        anncsu_addresses_override=anncsu_addresses,
         omi_override=omi,
+        omi_zone_override=omi_zone_override,
+        nightlights_override=nightlights_override,
         income_override=income_profile,
         opendata_override=opendata,
         pvp_override=pvp,
+        land_cover_override=_MISSING if wants("land_cover") else None,
+        terrain_override=_MISSING if wants("terrain") else None,
         postgres_context_override=postgres_context,
     )
     if payload is None:
@@ -8554,7 +9910,7 @@ async def aget_parcel_enrichment(
         "database": None,
     }
     cached_ok = False
-    if source is not None and time.monotonic() >= source._retry_at:
+    if requested is None and source is not None and time.monotonic() >= source._retry_at:
         try:
             cached_ok = await source.upsert_read_model(cache_key, payload, fingerprint)
         except Exception:
@@ -8570,7 +9926,7 @@ async def aget_parcel_enrichment(
         return payload
 
     panel_payload = parcel_panel_read_model(payload)
-    if not cached_ok:
+    if requested is None and not cached_ok:
         try:
             await asyncio.to_thread(
                 _write_local_panel_read_model,

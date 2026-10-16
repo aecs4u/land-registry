@@ -241,6 +241,9 @@ msgstr "Aggiorna Zone"
 msgid "Search zones..."
 msgstr "Cerca zone..."
 
+msgid "Shortcuts: arrow keys pan, + and - zoom, [ and ] move between visible zones."
+msgstr "Scorciatoie: le frecce spostano la mappa, + e - regolano lo zoom, [ e ] passano tra le zone visibili."
+
 msgid "No zones match the search."
 msgstr "Nessuna zona corrisponde alla ricerca."
 
@@ -288,6 +291,36 @@ msgstr "Zone"
 
 msgid "Actions"
 msgstr "Azioni"
+
+msgid "Map rendering"
+msgstr "Rendering della mappa"
+
+msgid "Renderer"
+msgstr "Renderer"
+
+msgid "Automatic"
+msgstr "Automatico"
+
+msgid "WebGL is unavailable in this browser. The map will use the SVG fallback."
+msgstr "WebGL non è disponibile in questo browser. La mappa userà il rendering SVG."
+
+msgid "Simplify geometry at low zoom"
+msgstr "Semplifica le geometrie con poco zoom"
+
+msgid "Exports keep the original geometry."
+msgstr "Le esportazioni mantengono la geometria originale."
+
+msgid "Parcel color scheme"
+msgstr "Schema colori delle particelle"
+
+msgid "Cadastral sheet"
+msgstr "Foglio catastale"
+
+msgid "Parcel density"
+msgstr "Densità delle particelle"
+
+msgid "Update date"
+msgstr "Data di aggiornamento"
 
 msgid "Map View"
 msgstr "Vista Mappa"
@@ -1736,6 +1769,15 @@ msgstr "Caricamento dei punti di interesse…"
 msgid "Loading fire detections…"
 msgstr "Caricamento dei rilevamenti degli incendi…"
 
+msgid "NASA FIRMS detection"
+msgstr "Rilevamento NASA FIRMS"
+
+msgid "Observed (UTC)"
+msgstr "Osservato (UTC)"
+
+msgid "Fire radiative power"
+msgstr "Potenza radiativa del fuoco"
+
 msgid "Loading weather alerts…"
 msgstr "Caricamento delle allerte meteo…"
 
@@ -1786,6 +1828,12 @@ msgstr "Disponibile · WGS84"
 msgid "Benchmark"
 msgstr "Riferimento"
 
+msgid "Comune OMI median, same type and condition"
+msgstr "Mediana OMI comunale, stessa tipologia e stato"
+
+msgid "Italy mean taxable income per taxpayer"
+msgstr "Reddito imponibile medio nazionale per contribuente"
+
 msgid "This table reports the parcel read model only. Separately loaded sections may contain data even when the corresponding block is not available. Missing data are never shown as zero."
 msgstr "Questa tabella mostra solo i dati del profilo della particella. Le sezioni caricate separatamente possono contenere informazioni anche quando il blocco corrispondente non è disponibile. I dati mancanti non vengono mai indicati come zero."
 
@@ -1806,6 +1854,42 @@ msgstr "Record OpenData {n}"
 
 msgid "OpenData values are shown as recorded by the cadastral source; they may be incomplete."
 msgstr "I valori OpenData sono riportati come registrati dalla fonte catastale e potrebbero essere incompleti."
+
+msgid "not specific to this record"
+msgstr "non riferita al singolo record"
+
+msgid "Recorded at"
+msgstr "Data di registrazione"
+
+msgid "Matching method"
+msgstr "Metodo di corrispondenza"
+
+msgid "Record ID"
+msgstr "ID del record"
+
+msgid "Retrieved from"
+msgstr "Recuperato da"
+
+msgid "Endpoint"
+msgstr "Endpoint"
+
+msgid "Queried at"
+msgstr "Data della richiesta"
+
+msgid "Reuse not confirmed"
+msgstr "Riutilizzo non confermato"
+
+msgid "Downstream reuse unverified"
+msgstr "Riutilizzo a valle non verificato"
+
+msgid "Provider terms not reviewed"
+msgstr "Condizioni del fornitore non esaminate"
+
+msgid "Reuse status unknown"
+msgstr "Stato del riutilizzo sconosciuto"
+
+msgid "Reuse"
+msgstr "Riutilizzo"
 
 msgid "Cadastral class"
 msgstr "Classe catastale"
@@ -1830,6 +1914,51 @@ msgstr "Sezione di censimento 2021"
 
 msgid "Coastal erosion"
 msgstr "Erosione costiera"
+
+msgid "Coastal change (2006–2020)"
+msgstr "Dinamica costiera (2006–2020)"
+
+msgid "Coastal change data are not available on this server."
+msgstr "I dati sulla dinamica costiera non sono disponibili su questo server."
+
+msgid "Erosion"
+msgstr "Erosione"
+
+msgid "Advance"
+msgstr "Avanzamento"
+
+msgid "Stable"
+msgstr "Stabile"
+
+msgid "No information"
+msgstr "Nessuna informazione"
+
+msgid "Segment"
+msgstr "Tratto"
+
+msgid "Nearest mapped segment"
+msgstr "Tratto cartografato più vicino"
+
+msgid "Mapped segment classes within 1 km"
+msgstr "Classi dei tratti cartografati entro 1 km"
+
+msgid "Source positional accuracy"
+msgstr "Accuratezza posizionale della fonte"
+
+msgid "Movement threshold"
+msgstr "Soglia di variazione"
+
+msgid "No mapped shoreline-change segment was found within 1 km. Coverage is unknown."
+msgstr "Non è stato trovato alcun tratto con variazione della linea di costa entro 1 km. La copertura è sconosciuta."
+
+msgid "ISPRA classifies shoreline change observed from 2006 to 2020. This historic layer is not a current erosion forecast. No nearby mapped segment does not establish absence of erosion."
+msgstr "ISPRA classifica le variazioni della linea di costa osservate dal 2006 al 2020. Questo livello storico non è una previsione attuale dell'erosione. L'assenza di tratti cartografati nelle vicinanze non dimostra l'assenza di erosione."
+
+msgid "The 2006–2020 layer excludes some highly variable coast segments, including parts of the Po Delta and Friulian coast. No nearby mapped segment does not establish absence of coastal erosion."
+msgstr "Il livello 2006–2020 esclude alcuni tratti di costa a dinamica molto variabile, comprese parti del delta del Po e della costa friulana. L'assenza di tratti cartografati nelle vicinanze non dimostra l'assenza di erosione costiera."
+
+msgid "The local query reached its candidate limit; this result is partial."
+msgstr "La ricerca locale ha raggiunto il limite di elementi; il risultato è parziale."
 
 msgid "Confidence"
 msgstr "Confidenza"
@@ -1936,6 +2065,84 @@ msgstr "Valore indicativo"
 msgid "Land cover"
 msgstr "Uso del suolo"
 
+msgid "CORINE Land Cover is not installed for this region."
+msgstr "I dati CORINE non sono installati per questa regione."
+
+msgid "No CORINE class is mapped at this parcel."
+msgstr "Nessuna classe CORINE risulta mappata su questa particella."
+
+msgid "Land-cover data are temporarily unavailable."
+msgstr "I dati sulla copertura del suolo sono temporaneamente non disponibili."
+
+msgid "Other mapped classes"
+msgstr "Altre classi mappate"
+
+msgid "Majority class"
+msgstr "Classe prevalente"
+
+msgid "Class code"
+msgstr "Codice della classe"
+
+msgid "Share of parcel"
+msgstr "Quota della particella"
+
+msgid "Mapped coverage"
+msgstr "Copertura cartografata"
+
+msgid "CLC 2018 has a 25 ha minimum mapping unit and a 100 m minimum width; this is broad land-cover context, not a parcel survey or building classification."
+msgstr "CLC 2018 ha un'unità minima di mappatura di 25 ha e una larghezza minima di 100 m; descrive il contesto generale del suolo, non un rilievo della particella né la classificazione di un edificio."
+
+msgid "TINITALY terrain data are not installed for this region."
+msgstr "I dati topografici TINITALY non sono installati per questa regione."
+
+msgid "No valid TINITALY elevation cells were found for this parcel."
+msgstr "Non sono state trovate celle altimetriche TINITALY valide per questa particella."
+
+msgid "Terrain data are temporarily unavailable."
+msgstr "I dati topografici non sono temporaneamente disponibili."
+
+msgid "Minimum elevation"
+msgstr "Quota minima"
+
+msgid "Mean elevation"
+msgstr "Quota media"
+
+msgid "Maximum elevation"
+msgstr "Quota massima"
+
+msgid "Elevation range"
+msgstr "Dislivello"
+
+msgid "Elevation standard deviation"
+msgstr "Deviazione standard della quota"
+
+msgid "Mean slope"
+msgstr "Pendenza media"
+
+msgid "Maximum slope"
+msgstr "Pendenza massima"
+
+msgid "Mean terrain ruggedness (TRI)"
+msgstr "Indice medio di rugosità del terreno (TRI)"
+
+msgid "Predominant aspect"
+msgstr "Esposizione prevalente"
+
+msgid "Mean aspect"
+msgstr "Esposizione media"
+
+msgid "Valid raster samples"
+msgstr "Campioni raster validi"
+
+msgid "Flat"
+msgstr "Pianeggiante"
+
+msgid "A representative point was sampled because no raster cell centre falls inside this parcel."
+msgstr "È stato campionato un punto rappresentativo perché nessun centro di cella raster ricade nella particella."
+
+msgid "TINITALY is a 10 m bare-earth terrain model. It is context, not a parcel survey or engineering assessment."
+msgstr "TINITALY è un modello del terreno a 10 m privo degli edifici. Fornisce contesto generale, non un rilievo della particella né una valutazione ingegneristica."
+
 msgid "Landslide hazard (P4)"
 msgstr "Pericolosità frane (P4)"
 
@@ -2013,6 +2220,48 @@ msgstr "Codice NUTS3"
 
 msgid "Night lights"
 msgstr "Luminosità notturna"
+
+msgid "Coverage unknown"
+msgstr "Copertura sconosciuta"
+
+msgid "Annual VIIRS night-light data are not installed on this server."
+msgstr "I dati annuali VIIRS sulla luminosità notturna non sono installati su questo server."
+
+msgid "Night-light data are temporarily unavailable."
+msgstr "I dati sulla luminosità notturna non sono temporaneamente disponibili."
+
+msgid "No good-quality night-light pixel is available for this parcel."
+msgstr "Per questa particella non è disponibile alcun pixel valido sulla luminosità notturna."
+
+msgid "This location falls outside the imported night-light raster coverage."
+msgstr "Questa posizione è fuori dalla copertura del raster importato sulla luminosità notturna."
+
+msgid "Missing or out-of-coverage data are not treated as zero."
+msgstr "I dati mancanti o fuori copertura non sono considerati pari a zero."
+
+msgid "Representative-point pixel"
+msgstr "Pixel del punto rappresentativo"
+
+msgid "Mean of parcel pixels"
+msgstr "Media dei pixel della particella"
+
+msgid "The parcel is smaller than the raster grid or some pixels were excluded by the quality filter."
+msgstr "La particella è più piccola della griglia raster oppure alcuni pixel sono stati esclusi dal filtro di qualità."
+
+msgid "Annual radiance"
+msgstr "Radiazione annuale"
+
+msgid "Observation year"
+msgstr "Anno di osservazione"
+
+msgid "Good-quality pixels"
+msgstr "Pixel di buona qualità"
+
+msgid "Sampling method"
+msgstr "Metodo di campionamento"
+
+msgid "NASA Black Marble uses a roughly 460 m grid. This annual radiance is a broad-area proxy and may not represent lighting on the parcel or a building."
+msgstr "NASA Black Marble usa una griglia di circa 460 m. Questa radiazione annuale è un indicatore su scala ampia e può non rappresentare l'illuminazione della particella o di un edificio."
 
 msgid "No IRPEF data is available for this municipality."
 msgstr "Nessun dato IRPEF disponibile per questo comune."
@@ -2166,6 +2415,9 @@ msgstr "Zona OMI e tipologia"
 
 msgid "OMI zone detected automatically"
 msgstr "Zona OMI rilevata automaticamente"
+
+msgid "The automatically detected OMI zone uses approximate {vintage} boundary geometry; check the selected zone."
+msgstr "La zona OMI rilevata automaticamente usa confini approssimativi del periodo {vintage}; verificare la zona selezionata."
 
 msgid "Official name"
 msgstr "Denominazione ufficiale"
@@ -2323,8 +2575,26 @@ msgstr "Zona sismica"
 msgid "PGA (10 percent in 50 years)"
 msgstr "PGA (10% in 50 anni)"
 
-msgid "The seismic zone and flood or landslide shares describe the whole municipality. PGA is a parcel-centroid estimate from the nearest INGV MPS04 grid point, not an interpolated or site-specific value."
-msgstr "La zona sismica e le quote di rischio alluvione o frana descrivono l'intero comune. La PGA è una stima nel centroide della particella, ricavata dal punto più vicino della griglia INGV MPS04: non è interpolata né specifica del sito."
+msgid "The seismic zone, composite risk score, and flood or landslide shares describe the whole municipality. PGA is a parcel-centroid estimate from the nearest INGV MPS04 grid point, not an interpolated or site-specific value."
+msgstr "La zona sismica, il punteggio composito di rischio e le quote di rischio alluvione o frana descrivono l'intero comune. La PGA è una stima nel centroide della particella, ricavata dal punto più vicino della griglia INGV MPS04: non è interpolata né specifica del sito."
+
+msgid "Municipal risk {score}/100"
+msgstr "Rischio comunale {score}/100"
+
+msgid "Municipal composite risk score"
+msgstr "Punteggio composito di rischio comunale"
+
+msgid "Risk context"
+msgstr "Contesto di rischio"
+
+msgid "OSM footprints"
+msgstr "Impronte OSM"
+
+msgid "OSM footprint count; mapped coverage may be incomplete."
+msgstr "Conteggio delle impronte OSM; la copertura cartografata può essere incompleta."
+
+msgid "This score describes municipal hazard context, not parcel risk."
+msgstr "Questo indice descrive il contesto comunale di pericolosità, non il rischio della particella."
 
 msgid "PGA source: INGV MPS04 under CC BY 4.0. The estimate uses a 10 percent exceedance probability in 50 years and the nearest native grid point; no interpolation is applied."
 msgstr "Fonte PGA: INGV MPS04 con licenza CC BY 4.0. La stima usa una probabilità di superamento del 10% in 50 anni e il punto più vicino della griglia nativa, senza interpolazione."
@@ -2734,9 +3004,6 @@ msgstr "Fornitore nel catalogo"
 msgid "Provider URL"
 msgstr "Pagina del fornitore"
 
-msgid "Not available"
-msgstr "Non disponibile"
-
 msgid "Not reported by source metadata"
 msgstr "Non indicato nei metadati della fonte"
 
@@ -2775,6 +3042,9 @@ msgstr "Politica ufficiale di riutilizzo verificata; non viene indicata una lice
 
 msgid "Provider product page reviewed"
 msgstr "Pagina prodotto del fornitore verificata"
+
+msgid "Provider guide states an open licence; the named licence is unverified"
+msgstr "La guida del fornitore dichiara una licenza aperta; la licenza specifica non è verificata"
 
 msgid "Upstream package contract; provider terms review pending"
 msgstr "Contratto del pacchetto upstream; verifica delle condizioni del fornitore in sospeso"
@@ -3004,6 +3274,117 @@ msgstr "Il testo della sezione è stato abbreviato per rispettare il limite del 
 msgid "Energy"
 msgstr "Energia"
 
+msgid "PV cash-flow scenario"
+msgstr "Scenario economico fotovoltaico"
+
+msgid "A parcel geometry and reference are required to locate this PVGIS scenario."
+msgstr "Per localizzare questo scenario PVGIS servono la geometria e il riferimento catastale della particella."
+
+msgid "PV system inputs"
+msgstr "Dati dell'impianto fotovoltaico"
+
+msgid "Installed system size (kWp)"
+msgstr "Potenza installata (kWp)"
+
+msgid "Panel tilt (degrees)"
+msgstr "Inclinazione dei pannelli (gradi)"
+
+msgid "Panel aspect (degrees; 0 = south)"
+msgstr "Orientamento dei pannelli (gradi; 0 = sud)"
+
+msgid "System losses (%)"
+msgstr "Perdite dell'impianto (%)"
+
+msgid "Financial assumptions"
+msgstr "Ipotesi economiche"
+
+msgid "Installation cost (€/kWp)"
+msgstr "Costo di installazione (€/kWp)"
+
+msgid "Self-used electricity value (€/kWh)"
+msgstr "Valore dell'elettricità autoconsumata (€/kWh)"
+
+msgid "Export price (€/kWh)"
+msgstr "Prezzo di vendita dell'energia immessa (€/kWh)"
+
+msgid "Self-consumed production (%)"
+msgstr "Produzione autoconsumata (%)"
+
+msgid "Annual maintenance (€/kWp)"
+msgstr "Manutenzione annua (€/kWp)"
+
+msgid "Annual degradation (%)"
+msgstr "Degrado annuo (%)"
+
+msgid "Discount rate (%)"
+msgstr "Tasso di attualizzazione (%)"
+
+msgid "System lifetime (years)"
+msgstr "Durata dell'impianto (anni)"
+
+msgid "Defaults are illustrative. PVGIS uses the parcel centroid for location; you provide system size, tilt, aspect and losses. This does not estimate usable roof area or installation feasibility."
+msgstr "I valori predefiniti sono indicativi. PVGIS usa un impianto di riferimento integrato nell'edificio e il centroide della particella; potenza, inclinazione, orientamento e perdite sono scelti da te. Non vengono stimate la superficie utile del tetto né la fattibilità dell'installazione."
+
+msgid "Inputs changed. Calculate again to update results."
+msgstr "I dati sono cambiati. Ricalcola per aggiornare i risultati."
+
+msgid "Calculate scenario"
+msgstr "Calcola scenario"
+
+msgid "Parcel reference is unavailable."
+msgstr "Il riferimento catastale della particella non è disponibile."
+
+msgid "Calculating PVGIS scenario…"
+msgstr "Calcolo dello scenario PVGIS in corso…"
+
+msgid "PVGIS did not respond in time. Retry the calculation."
+msgstr "PVGIS non ha risposto entro il tempo previsto. Riprova il calcolo."
+
+msgid "PVGIS is temporarily unavailable for this scenario."
+msgstr "PVGIS non è temporaneamente disponibile per questo scenario."
+
+msgid "Solar scenario could not be calculated."
+msgstr "Non è stato possibile calcolare lo scenario fotovoltaico."
+
+msgid "Net present value (NPV)"
+msgstr "Valore attuale netto (VAN)"
+
+msgid "Levelized cost of energy (LCOE)"
+msgstr "Costo livellato dell'energia (LCOE)"
+
+msgid "Simple payback"
+msgstr "Tempo di ritorno semplice"
+
+msgid "Discounted payback"
+msgstr "Tempo di ritorno attualizzato"
+
+msgid "Not reached within system lifetime"
+msgstr "Non raggiunto entro la vita utile dell'impianto"
+
+msgid "Year-one production"
+msgstr "Produzione del primo anno"
+
+msgid "Initial installation cost"
+msgstr "Costo iniziale di installazione"
+
+msgid "PVGIS annual yield"
+msgstr "Produzione annua PVGIS"
+
+msgid "Annual cash-flow table"
+msgstr "Tabella dei flussi di cassa annuali"
+
+msgid "Production"
+msgstr "Produzione"
+
+msgid "Net cash flow"
+msgstr "Flusso di cassa netto"
+
+msgid "Cumulative cash flow"
+msgstr "Flusso di cassa cumulato"
+
+msgid "Scenario only. Self-consumption is a user-supplied annual share, not an hourly load simulation. Excludes taxes, incentives, financing, inverter replacement and site-specific technical constraints."
+msgstr "Scenario indicativo. La quota di autoconsumo annua è fornita dall'utente e non deriva da una simulazione oraria dei consumi. Sono escluse imposte, incentivi, finanziamento, sostituzione dell'inverter e vincoli tecnici specifici del sito."
+
 msgid "Municipal solar potential"
 msgstr "Potenziale solare comunale"
 
@@ -3076,6 +3457,9 @@ msgstr "Già salvata"
 
 msgid "Sign in to load saved parcels"
 msgstr "Accedi per caricare le particelle salvate"
+
+msgid "Sign in to use your shortlist"
+msgstr "Accedi per usare la tua selezione"
 
 msgid "Sign in"
 msgstr "Accedi"
@@ -3185,6 +3569,18 @@ msgstr "Dati degli edifici SISTER"
 msgid "Sales"
 msgstr "Vendite"
 
+msgid "Rents"
+msgstr "Affitti"
+
+msgid "Invalid zone in mapping link"
+msgstr "ID zona non valido nel link della mappa"
+
+msgid "Invalid workflow in mapping link"
+msgstr "Tipo di analisi non valido nel link della mappa"
+
+msgid "Zone #{id} unavailable or not accessible"
+msgstr "Zona #{id} non disponibile o accesso negato"
+
 msgid "Sale period"
 msgstr "Periodo di vendita"
 
@@ -3278,6 +3674,27 @@ msgstr "Tutte"
 msgid "Priority"
 msgstr "Priorità"
 
+msgid "Edit details"
+msgstr "Modifica dettagli"
+
+msgid "Notes"
+msgstr "Note"
+
+msgid "Separate tags with commas"
+msgstr "Separa le etichette con virgole"
+
+msgid "Save changes"
+msgstr "Salva modifiche"
+
+msgid "Review the tags and try again."
+msgstr "Controlla le etichette e riprova."
+
+msgid "Could not update shortlist item"
+msgstr "Impossibile aggiornare la particella nell'elenco"
+
+msgid "Shortlist item updated"
+msgstr "Particella aggiornata nell'elenco"
+
 msgid "5 high"
 msgstr "5 — Alta"
 
@@ -3289,6 +3706,9 @@ msgstr "Non impostata"
 
 msgid "Active hazard only"
 msgstr "Solo con criticità attive"
+
+msgid "FIRMS fire detection {distance} km from parcel"
+msgstr "Rilevamento FIRMS a {distance} km dalla particella"
 
 msgid "No shortlist loaded yet."
 msgstr "Non è ancora stato caricato alcun elenco."
@@ -3313,6 +3733,12 @@ msgstr "Apri analisi"
 
 msgid "Official service access reviewed; data reuse terms pending"
 msgstr "Condizioni ufficiali di accesso al servizio verificate; termini di riutilizzo dei dati da chiarire"
+
+msgid "Official provider terms reviewed; no data licence asserted"
+msgstr "Condizioni ufficiali del fornitore verificate; non viene dichiarata una licenza sui dati"
+
+msgid "Official data-use policy reviewed; no separate licence asserted"
+msgstr "Politica ufficiale sull'uso dei dati verificata; non viene dichiarata una licenza separata"
 
 msgid "Official public-access guide reviewed; reuse licence not stated"
 msgstr "Guida ufficiale all'accesso pubblico verificata; la licenza di riutilizzo non è specificata"
@@ -3495,6 +3921,21 @@ msgstr "Poligono"
 msgid "Circle"
 msgstr "Cerchio"
 
+msgid "Rectangle"
+msgstr "Rettangolo"
+
+msgid "Click two opposite corners to draw a rectangle."
+msgstr "Fai clic su due angoli opposti per disegnare un rettangolo."
+
+msgid "Click the center, then a point on the circle edge."
+msgstr "Fai clic sul centro, poi su un punto del bordo del cerchio."
+
+msgid "Rectangle needs two distinct corners."
+msgstr "Per il rettangolo servono due angoli distinti."
+
+msgid "Circle needs a center and a distinct edge point."
+msgstr "Per il cerchio servono un centro e un punto distinto sul bordo."
+
 msgid "Selected parcels"
 msgstr "Particelle selezionate"
 
@@ -3524,9 +3965,6 @@ msgstr "{n} selezionate; servono dati catastali per esportarne {missing}"
 
 msgid "Remove {reference}"
 msgstr "Rimuovi {reference}"
-
-msgid "Parcel"
-msgstr "Particella"
 
 msgid "Selection is limited to 5,000 parcels. Clear some parcels or draw a smaller area."
 msgstr "La selezione è limitata a 5.000 particelle. Rimuovine alcune o disegna un'area più piccola."
@@ -3714,3 +4152,666 @@ msgstr "Per questa posizione non sono disponibili dati sulla sicurezza a livello
 
 msgid "No province-level quality-of-life indicators are available for this location."
 msgstr "Per questa posizione non sono disponibili indicatori sulla qualità della vita a livello provinciale."
+
+msgid "Add at least three corners to select parcels."
+msgstr "Aggiungi almeno tre vertici per selezionare le particelle."
+
+msgid "Adjacency analysis failed."
+msgstr "Analisi delle particelle adiacenti non riuscita."
+
+msgid "Adjacency analysis is available for cadastral parcels."
+msgstr "L'analisi di adiacenza è disponibile per le particelle catastali."
+
+msgid "Adjacency lookup failed for {reference}."
+msgstr "Ricerca delle particelle adiacenti non riuscita per {reference}."
+
+msgid "Analyzing {n} selected parcel(s)…"
+msgstr "Analisi di {n} particelle selezionate…"
+
+msgid "Attribute"
+msgstr "Attributo"
+
+msgid "Choose an attribute and value first."
+msgstr "Scegli prima un attributo e un valore."
+
+msgid "Choose an attribute and value to filter rows."
+msgstr "Scegli un attributo e un valore per filtrare le righe."
+
+msgid "Choose cadastral parcels in the table to inspect urban classes."
+msgstr "Scegli le particelle catastali nella tabella per esaminare le classi urbane."
+
+msgid "Click near a vertex to select it."
+msgstr "Fai clic vicino a un vertice per selezionarlo."
+
+msgid "Click near a vertex, then click where it should move."
+msgstr "Fai clic vicino a un vertice, poi nel punto in cui spostarlo."
+
+msgid "Click the map to move the highlighted vertex."
+msgstr "Fai clic sulla mappa per spostare il vertice evidenziato."
+
+msgid "Click to add vertices; double-click to finish the drawing."
+msgstr "Fai clic per aggiungere vertici; fai doppio clic per terminare il disegno."
+
+msgid "Drawing edit mode ended."
+msgstr "Modalità di modifica del disegno terminata."
+
+msgid "Drawings could not be loaded."
+msgstr "Impossibile caricare i disegni."
+
+msgid "Drawings could not be saved."
+msgstr "Impossibile salvare i disegni."
+
+msgid "Feature"
+msgstr "Elemento"
+
+msgid "GeoJSON could not be imported."
+msgstr "Impossibile importare il GeoJSON."
+
+msgid "GeoJSON files must be smaller than 25 MB."
+msgstr "I file GeoJSON devono essere più piccoli di 25 MB."
+
+msgid "Imported {n} feature(s)."
+msgstr "Importati {n} elementi."
+
+msgid "Loaded {n} drawing(s)."
+msgstr "Caricati {n} disegni."
+
+msgid "Marker"
+msgstr "Marcatore"
+
+msgid "No adjacent features found."
+msgstr "Nessun elemento adiacente trovato."
+
+msgid "No drawings yet."
+msgstr "Nessun disegno presente."
+
+msgid "No saved drawings found."
+msgstr "Nessun disegno salvato trovato."
+
+msgid "No selected features."
+msgstr "Nessun elemento selezionato."
+
+msgid "Polyline"
+msgstr "Polilinea"
+
+msgid "Saved {n} drawing(s)."
+msgstr "Salvati {n} disegni."
+
+msgid "Select"
+msgstr "Seleziona"
+
+msgid "Select feature"
+msgstr "Seleziona elemento"
+
+msgid "Select parcels in the table to analyze them."
+msgstr "Seleziona le particelle nella tabella per analizzarle."
+
+msgid "Selected features have no cadastral reference."
+msgstr "Gli elementi selezionati non hanno un riferimento catastale."
+
+msgid "Selected {n} matching feature(s) from this page."
+msgstr "Selezionati {n} elementi corrispondenti in questa pagina."
+
+msgid "Selection changed. Run adjacency analysis to refresh the results."
+msgstr "La selezione è cambiata. Avvia di nuovo l'analisi di adiacenza per aggiornare i risultati."
+
+msgid "Selection is limited to 5,000 features."
+msgstr "La selezione è limitata a 5.000 elementi."
+
+msgid "Sign in to load saved drawings."
+msgstr "Accedi per caricare i disegni salvati."
+
+msgid "Sign in to save your drawings."
+msgstr "Accedi per salvare i tuoi disegni."
+
+msgid "Sort by {field}"
+msgstr "Ordina per {field}"
+
+msgid "Urban contour overlay disabled."
+msgstr "Sovrapposizione delle classi urbane disattivata."
+
+msgid "Vertex moved. Click another vertex to continue."
+msgstr "Vertice spostato. Fai clic su un altro vertice per continuare."
+
+msgid "{n} adjacent parcel(s) found using {method}."
+msgstr "Trovate {n} particelle adiacenti con il metodo {method}."
+
+msgid "{n} drawing(s)"
+msgstr "{n} disegni"
+
+msgid "{n} features classified on the current page."
+msgstr "Classificati {n} elementi nella pagina corrente."
+
+msgid "{n} of {total} parcels"
+msgstr "{n} di {total} particelle"
+
+msgid "{n} selected"
+msgstr "{n} selezionati"
+
+msgid "Browse by cadastral hierarchy"
+msgstr "Sfoglia per gerarchia catastale"
+
+msgid "Select a region"
+msgstr "Seleziona una regione"
+
+msgid "Select a province"
+msgstr "Seleziona una provincia"
+
+msgid "Select a municipality"
+msgstr "Seleziona un comune"
+
+msgid "Select a sheet"
+msgstr "Seleziona un foglio"
+
+msgid "Parcel number"
+msgstr "Numero di particella"
+
+msgid "Find parcel"
+msgstr "Trova particella"
+
+msgid "Choose an area to start."
+msgstr "Scegli un'area per iniziare."
+
+msgid "Select a region to continue."
+msgstr "Seleziona una regione per continuare."
+
+msgid "No cadastral areas available."
+msgstr "Nessuna area catastale disponibile."
+
+msgid "Select a province to continue."
+msgstr "Seleziona una provincia per continuare."
+
+msgid "Select a municipality to load sheets."
+msgstr "Seleziona un comune per caricare i fogli."
+
+msgid "Enter a parcel number."
+msgstr "Inserisci il numero di particella."
+
+msgid "Search service unavailable; try again."
+msgstr "Ricerca non disponibile; riprova."
+
+msgid "No result"
+msgstr "Nessun risultato"
+
+msgid "Parcel found"
+msgstr "Particella trovata"
+
+msgid "Choose a matching parcel."
+msgstr "Scegli la particella corrispondente."
+
+msgid "Data sources and reuse"
+msgstr "Fonti dei dati e riutilizzo"
+
+msgid "Provider references, citations, attribution text and reuse terms maintained by the application."
+msgstr "Riferimenti ai fornitori, citazioni, testi di attribuzione e condizioni di riutilizzo mantenuti dall'applicazione."
+
+msgid "A named licence is shown only when the maintained register establishes one. A missing licence means that reuse terms have not been established here."
+msgstr "Una licenza viene indicata solo quando è stata verificata nel registro. Se manca, le condizioni di riutilizzo non sono state accertate qui."
+
+msgid "No named licence established"
+msgstr "Nessuna licenza formale accertata"
+
+msgid "Use terms"
+msgstr "Condizioni di riutilizzo"
+
+msgid "Citation"
+msgstr "Citazione"
+
+msgid "Attribution"
+msgstr "Attribuzione"
+
+msgid "Reuse notes"
+msgstr "Note sul riutilizzo"
+
+msgid "This register covers providers with maintained attribution or reuse metadata. Dataset versions and update dates vary by layer; see the selected feature details or parcel dossier for the version reported by the data source. Missing metadata is left unreported rather than inferred."
+msgstr "Questo registro comprende i fornitori per cui sono mantenuti metadati di attribuzione o riutilizzo. Versioni e date di aggiornamento variano per livello: consulta i dettagli dell'elemento selezionato o la scheda della particella per la versione dichiarata dalla fonte. I metadati mancanti non vengono dedotti."
+
+msgid "Parcel API field catalog"
+msgstr "Catalogo dei campi API delle particelle"
+
+msgid "This table documents the methodology, spatial scope, version identifiers and refresh information for each supported parcel API section. A stated unknown cadence means the application has no verified schedule; availability still depends on the requested parcel and mounted source data."
+msgstr "La tabella documenta metodologia, ambito spaziale, identificativi di versione e informazioni di aggiornamento per ogni sezione API delle particelle supportata. Una cadenza indicata come non nota significa che l'applicazione non dispone di una pianificazione verificata; la disponibilità dipende comunque dalla particella richiesta e dai dati installati."
+
+msgid "For stable fields, data shapes and source metadata, use the machine-readable catalog:"
+msgstr "Per i campi stabili, le strutture dei dati e i metadati delle fonti, consulta il catalogo leggibile automaticamente:"
+
+msgid "API section"
+msgstr "Sezione API"
+
+msgid "Fields"
+msgstr "Campi"
+
+msgid "Method and spatial scope"
+msgstr "Metodo e ambito spaziale"
+
+msgid "Version and update cadence"
+msgstr "Versione e cadenza di aggiornamento"
+
+msgid "Canonical parcel identity and source properties."
+msgstr "Identificativo catastale canonico e proprietà restituite dalla fonte."
+
+msgid "Cadastral parcel polygon."
+msgstr "Poligono della particella catastale."
+
+msgid "Comune code, sheet, urban section and postal code when available."
+msgstr "Codice catastale del comune, foglio, sezione urbana e CAP, se disponibili."
+
+msgid "Residents, households, dwellings and census counts."
+msgstr "Residenti, famiglie, abitazioni e conteggi censuari."
+
+msgid "Age and sex, education, employment, foreign-resident share, vacancy and household size."
+msgstr "Età e sesso, istruzione, occupazione, quota di residenti stranieri, abitazioni vuote e dimensione media familiare."
+
+msgid "Tax year, taxpayers, average taxable income and income brackets."
+msgstr "Anno d'imposta, contribuenti, reddito imponibile medio e classi di reddito."
+
+msgid "SISTER cadastral property records; this is not a physical-footprint count."
+msgstr "Record catastali SISTER; non rappresentano un conteggio delle impronte fisiche degli edifici."
+
+msgid "Up to ten distinct SISTER address strings; addresses are not geocoded."
+msgstr "Fino a dieci indirizzi SISTER distinti; gli indirizzi non sono geocodificati."
+
+msgid "Available cadastral document records."
+msgstr "Documenti catastali disponibili."
+
+msgid "Public-auction records matched to the parcel."
+msgstr "Record di aste pubbliche associati alla particella."
+
+msgid "Municipality-wide solar aggregates; not a parcel roof estimate."
+msgstr "Aggregati solari riferiti all'intero comune; non sono una stima per il tetto della particella."
+
+msgid "OMI zone, quotations and available PostgreSQL snapshot."
+msgstr "Zona OMI, quotazioni e snapshot PostgreSQL disponibile."
+
+msgid "DPC municipal seismic class, ISPRA parcel hazards and EGMS subsidence; no composite score or coastal section."
+msgstr "Classificazione sismica comunale DPC, pericolosità ISPRA intersecate con la particella e subsidenza EGMS; senza punteggio composito o sezione costiera."
+
+msgid "Stable feature ID lookup against the canonical cadastral map source."
+msgstr "Ricerca tramite ID stabile della geometria nella fonte catastale canonica della mappa."
+
+msgid "Stable feature ID lookup; geometry is returned in EPSG:4326."
+msgstr "Ricerca tramite ID stabile; geometria restituita in EPSG:4326."
+
+msgid "National cadastral reference match; parcel and municipality context."
+msgstr "Corrispondenza tramite riferimento catastale nazionale; dati della particella e del comune."
+
+msgid "Parcel centroid matched to the containing 2021 ISTAT census section."
+msgstr "Il centroide della particella viene associato alla sezione di censimento ISTAT 2021 che lo contiene."
+
+msgid "Parcel centroid matched to the containing 2021 ISTAT census section; some ratios are derived from census counts."
+msgstr "Il centroide della particella viene associato alla sezione di censimento ISTAT 2021 che lo contiene; alcuni rapporti sono calcolati dai conteggi censuari."
+
+msgid "Cadastral municipality crosswalk to municipality-level tax-return aggregates."
+msgstr "Associazione del codice catastale comunale con gli aggregati comunali delle dichiarazioni dei redditi."
+
+msgid "Cadastral-reference match to available SISTER property records; coverage is source/store dependent."
+msgstr "Corrispondenza del riferimento catastale con i record SISTER disponibili; la copertura dipende dalla fonte e dall'archivio installato."
+
+msgid "Exact cadastral-reference match; partial and dependent on cached property records."
+msgstr "Corrispondenza esatta del riferimento catastale; copertura parziale e dipendente dai record catastali in cache."
+
+msgid "Cadastral-reference lookup with municipality and province context; results depend on configured stores."
+msgstr "Ricerca tramite riferimento catastale con contesto di comune e provincia; i risultati dipendono dagli archivi configurati."
+
+msgid "Parcel reference and municipality crosswalk against the PVP model view."
+msgstr "Riferimento della particella e associazione del comune nella vista dati PVP."
+
+msgid "Cadastral municipality match; spatial resolution is the municipality."
+msgstr "Associazione del codice catastale comunale; risoluzione spaziale a livello di comune."
+
+msgid "Parcel centroid matched to an OMI zone when boundaries are installed; quote scope is the selected zone/municipality."
+msgstr "Il centroide viene associato a una zona OMI quando i relativi confini sono installati; le quotazioni si riferiscono alla zona o al comune selezionato."
+
+msgid "DPC municipality lookup, ISPRA polygon intersection and area-weighted overlap of 100 m EGMS cells; component scopes remain distinct."
+msgstr "Ricerca comunale DPC, intersezione con i poligoni ISPRA e sovrapposizione pesata per area delle celle EGMS da 100 m; gli ambiti dei componenti restano distinti."
+
+msgid "The source_release value is returned when present; provider refresh cadence is not reported."
+msgstr "Il valore source_release viene restituito quando presente; il fornitore non dichiara la cadenza di aggiornamento."
+
+msgid "The source release is returned when present; provider refresh cadence is not reported."
+msgstr "La versione della fonte viene restituita quando presente; il fornitore non dichiara la cadenza di aggiornamento."
+
+msgid "ISTAT_BASI_TERRITORIALI_2021 snapshot; the next publication cadence is not represented."
+msgstr "Snapshot ISTAT_BASI_TERRITORIALI_2021; la cadenza delle pubblicazioni successive non è indicata."
+
+msgid "MEF_IRPEF_<year> identifies the tax year; data are annual, but application import timing is not reported."
+msgstr "MEF_IRPEF_<year> identifica l'anno d'imposta; i dati sono annuali, ma non è indicata la data di importazione nell'applicazione."
+
+msgid "The block does not currently report a dataset version or refresh schedule."
+msgstr "Il blocco al momento non riporta la versione del dataset né una pianificazione degli aggiornamenti."
+
+msgid "Version and refresh schedule are not reported consistently by the configured sources."
+msgstr "Le fonti configurate non riportano in modo uniforme la versione e la pianificazione degli aggiornamenti."
+
+msgid "Source dataset_version and updated_at are passed through when available; refresh cadence is not asserted."
+msgstr "I campi source dataset_version e updated_at vengono restituiti quando disponibili; non viene dichiarata una cadenza di aggiornamento."
+
+msgid "OMI release or quote semester is returned when available; the application import schedule is not guaranteed."
+msgstr "La release OMI o il semestre delle quotazioni vengono restituiti quando disponibili; la pianificazione d'importazione nell'applicazione non è garantita."
+
+msgid "ISPRA and EGMS versions are component-level; DPC version and refresh timing may be unavailable."
+msgstr "Le versioni ISPRA ed EGMS sono indicate per componente; versione DPC e tempi di aggiornamento potrebbero non essere disponibili."
+
+msgid "The runtime source field identifies SISTER or OpenData PostgreSQL; OpenData provider terms are not yet catalogued."
+msgstr "Il campo source restituito a runtime identifica SISTER o OpenData PostgreSQL; le condizioni del fornitore OpenData non sono ancora catalogate."
+
+msgid "aecs4u-stats municipality profile; original source metadata varies by available record."
+msgstr "Profilo comunale aecs4u-stats; i metadati della fonte originaria variano in base al record disponibile."
+
+msgid "DPC classification is municipality-level; see component metadata for each source. The local DPC vintage may not be reported."
+msgstr "La classificazione DPC è a livello comunale; consulta i metadati di ciascun componente per i dettagli delle fonti. La versione del dato DPC installato localmente potrebbe non essere indicata."
+
+msgid "Open map guide"
+msgstr "Apri la guida della mappa"
+
+msgid "Close map guide"
+msgstr "Chiudi la guida della mappa"
+
+msgid "Map guide"
+msgstr "Guida della mappa"
+
+msgid "Welcome to the cadastral map"
+msgstr "Benvenuto nella mappa catastale"
+
+msgid "A quick guide to finding parcels and exploring map data."
+msgstr "Una breve guida per trovare particelle ed esplorare i dati della mappa."
+
+msgid "Find a place or parcel"
+msgstr "Trova un luogo o una particella"
+
+msgid "Search by municipality or cadastral reference, or browse from region to parcel number."
+msgstr "Cerca per comune o riferimento catastale, oppure sfoglia la gerarchia dalla regione al numero di particella."
+
+msgid "Explore map layers"
+msgstr "Esplora i livelli della mappa"
+
+msgid "Open Layers to turn data overlays on or off. Use Basemap to change the map style."
+msgstr "Apri Livelli per attivare o disattivare le sovrapposizioni dei dati. Usa Mappa di base per cambiare lo stile della mappa."
+
+msgid "Open a parcel workspace"
+msgstr "Apri i dettagli di una particella"
+
+msgid "Zoom in until parcels appear, then select one. Review available data, save it to your shortlist, or share a link."
+msgstr "Ingrandisci fino a visualizzare le particelle, poi selezionane una. Consulta i dati disponibili, salvala nella lista o condividi il link."
+
+msgid "Step {current} of {total}"
+msgstr "Passo {current} di {total}"
+
+msgid "Skip tour"
+msgstr "Salta la guida"
+
+msgid "Previous"
+msgstr "Precedente"
+
+msgid "Finish tour"
+msgstr "Termina la guida"
+
+msgid "Developer API"
+msgstr "API per sviluppatori"
+
+msgid "Developer API keys"
+msgstr "Chiavi API per sviluppatori"
+
+msgid "Loading API keys…"
+msgstr "Caricamento delle chiavi API…"
+
+msgid "Could not load API keys. Try again."
+msgstr "Impossibile caricare le chiavi API. Riprova."
+
+msgid "API keys require the configured PostgreSQL account store."
+msgstr "Le chiavi API richiedono l'archivio account PostgreSQL configurato."
+
+msgid "Could not create the API key."
+msgstr "Impossibile creare la chiave API."
+
+msgid "You already have the maximum number of active keys."
+msgstr "Hai già raggiunto il numero massimo di chiavi attive."
+
+msgid "Could not revoke the API key."
+msgstr "Impossibile revocare la chiave API."
+
+msgid "API key revoked."
+msgstr "Chiave API revocata."
+
+msgid "Your session has ended. Sign in again."
+msgstr "La sessione è terminata. Accedi di nuovo."
+
+msgid "API key created. Copy and store it now; it will not be shown again."
+msgstr "Chiave API creata. Copiala e conservala ora: non verrà mostrata di nuovo."
+
+msgid "API key copied."
+msgstr "Chiave API copiata."
+
+msgid "Copy failed. Select and copy the key manually."
+msgstr "Copia non riuscita. Seleziona e copia la chiave manualmente."
+
+msgid "No API keys yet."
+msgstr "Non hai ancora chiavi API."
+
+msgid "Created"
+msgstr "Creata"
+
+msgid "Last used"
+msgstr "Ultimo utilizzo"
+
+msgid "Never"
+msgstr "Mai"
+
+msgid "Active key"
+msgstr "Chiave attiva"
+
+msgid "Revoked key"
+msgstr "Chiave revocata"
+
+msgid "Revoke"
+msgstr "Revoca"
+
+msgid "requests per hour"
+msgstr "richieste all'ora"
+
+msgid "Each active key can make up to"
+msgstr "Ogni chiave attiva può effettuare fino a"
+
+msgid "requests per hour."
+msgstr "richieste all'ora."
+
+msgid "You can keep up to"
+msgstr "Puoi mantenere fino a"
+
+msgid "active keys."
+msgstr "chiavi attive."
+
+msgid "Create a key for read-only parcel API access. The secret is shown only once."
+msgstr "Crea una chiave per l'accesso in sola lettura all'API delle particelle. Il segreto viene mostrato una sola volta."
+
+msgid "View the API schema"
+msgstr "Visualizza lo schema API"
+
+msgid "Key name"
+msgstr "Nome della chiave"
+
+msgid "For example: QGIS workstation"
+msgstr "Per esempio: postazione QGIS"
+
+msgid "Create API key"
+msgstr "Crea chiave API"
+
+msgid "Copy key"
+msgstr "Copia chiave"
+
+msgid "Building footprint coverage"
+msgstr "Copertura delle impronte degli edifici"
+
+msgid "OSM building footprints are not installed for this region."
+msgstr "Le impronte degli edifici OSM non sono installate per questa regione."
+
+msgid "Building-footprint data are temporarily unavailable."
+msgstr "I dati sulle impronte degli edifici non sono temporaneamente disponibili."
+
+msgid "Mapped OSM buildings"
+msgstr "Edifici OSM mappati"
+
+msgid "Footprint area inside parcel"
+msgstr "Superficie delle impronte nella particella"
+
+msgid "Parcel area covered by footprints"
+msgstr "Superficie della particella coperta dalle impronte"
+
+msgid "OpenStreetMap building footprints are community mapped; coverage may be incomplete. Areas are clipped to the parcel, and overlapping polygons are counted once."
+msgstr "Le impronte degli edifici OpenStreetMap sono mappate dalla comunità e la copertura può essere incompleta. Le aree sono tagliate sul confine della particella e i poligoni sovrapposti sono conteggiati una sola volta."
+
+msgid "Civic addresses (ANNCSU)"
+msgstr "Numeri civici (ANNCSU)"
+
+msgid "ANNCSU address points are not installed for this region."
+msgstr "I punti indirizzo ANNCSU non sono installati per questa regione."
+
+msgid "ANNCSU civic-address data are temporarily unavailable."
+msgstr "I dati ANNCSU sui numeri civici non sono temporaneamente disponibili."
+
+msgid "Civic address"
+msgstr "Numero civico"
+
+msgid "Civic address {n}"
+msgstr "Numero civico {n}"
+
+msgid "Civic address match"
+msgstr "Corrispondenza numero civico"
+
+msgid "No geocoded ANNCSU point matched this parcel."
+msgstr "Nessun punto ANNCSU georeferenziato corrisponde a questa particella."
+
+msgid "No address point is available for this parcel."
+msgstr "Nessun punto indirizzo è disponibile per questa particella."
+
+msgid "Municipality coordinate coverage"
+msgstr "Copertura coordinate nel comune"
+
+msgid "Municipal coordinate coverage is nearly complete"
+msgstr "Copertura coordinate quasi completa nel comune"
+
+msgid "Municipal coordinate coverage is partial"
+msgstr "Copertura coordinate parziale nel comune"
+
+msgid "Municipal coordinate coverage is unknown"
+msgstr "Copertura coordinate non nota nel comune"
+
+msgid "Coordinate method {n}"
+msgstr "Metodo coordinate {n}"
+
+msgid "ANNCSU points are spatially matched to the parcel. Municipalities may not provide coordinates for every civic address; no geocoded match does not mean the parcel has no address."
+msgstr "I punti ANNCSU sono abbinati spazialmente alla particella. I comuni potrebbero non fornire le coordinate di tutti i numeri civici; l'assenza di corrispondenze georeferenziate non significa che la particella sia priva di indirizzo."
+
+msgid "The spatial search reached a result limit; the returned list may be incomplete."
+msgstr "La ricerca spaziale ha raggiunto il limite dei risultati; l'elenco potrebbe essere incompleto."
+
+msgid "Field survey, estimated accuracy < 5 m"
+msgstr "Rilievo sul campo, accuratezza stimata < 5 m"
+
+msgid "Field survey, estimated accuracy ≥ 5 m"
+msgstr "Rilievo sul campo, accuratezza stimata ≥ 5 m"
+
+msgid "Indirect mapping, estimated accuracy < 5 m"
+msgstr "Derivazione indiretta, accuratezza stimata < 5 m"
+
+msgid "Indirect mapping, estimated accuracy ≥ 5 m"
+msgstr "Derivazione indiretta, accuratezza stimata ≥ 5 m"
+
+msgid "Indirect mapping via Portale per i Comuni"
+msgstr "Derivazione indiretta tramite Portale per i Comuni"
+
+msgid "Protection constraints"
+msgstr "Vincoli paesaggistici e culturali"
+
+msgid "The selected parcel has no canonical feature identifier."
+msgstr "La particella selezionata non ha un identificativo catastale canonico."
+
+msgid "Protection source tables are not available on this server."
+msgstr "Le tabelle dei vincoli non sono disponibili su questo server."
+
+msgid "The full parcel is covered by this source."
+msgstr "La copertura di questa fonte include l'intera particella."
+
+msgid "Coverage is not confirmed; no matching record does not mean no protection."
+msgstr "La copertura non è verificata; l'assenza di corrispondenze non esclude un vincolo."
+
+msgid "Landscape constraints"
+msgstr "Vincoli paesaggistici"
+
+msgid "Cultural heritage protections"
+msgstr "Vincoli sui beni culturali"
+
+msgid "Open source record"
+msgstr "Apri la scheda della fonte"
+
+msgid "Point record; area overlap is not applicable."
+msgstr "Record puntuale; la percentuale di sovrapposizione areale non si applica."
+
+msgid "Area overlap is unavailable because the source geometry is invalid."
+msgstr "La sovrapposizione areale non è disponibile perché la geometria della fonte non è valida."
+
+msgid "Protection type"
+msgstr "Tipo di vincolo"
+
+msgid "Legal category"
+msgstr "Categoria normativa"
+
+msgid "Act or decree"
+msgstr "Atto o decreto"
+
+msgid "Parcel overlap"
+msgstr "Sovrapposizione con la particella"
+
+msgid "Source record"
+msgstr "Scheda della fonte"
+
+msgid "Catalogue record; not a binding constraint."
+msgstr "Record di catalogo; non costituisce un vincolo cogente."
+
+msgid "Landscape source coverage"
+msgstr "Copertura della fonte paesaggistica"
+
+msgid "Cultural heritage source coverage"
+msgstr "Copertura della fonte sui beni culturali"
+
+msgid "No intersecting source records were returned. Check the coverage status above before interpreting this as no constraint."
+msgstr "Nessun record della fonte interseca la particella. Verificare la copertura prima di interpretare il risultato come assenza di vincoli."
+
+msgid "More than 100 source records intersect this parcel; the list is truncated."
+msgstr "Più di 100 record intersecano la particella; l'elenco è incompleto."
+
+msgid "Source data, not a legal certificate; confirm with the competent Soprintendenza."
+msgstr "Dati di fonte, non un certificato legale; verificare con la Soprintendenza competente."
+
+msgid "Score method and components"
+msgstr "Metodo e componenti dell'indice"
+
+msgid "Equal-weight average of available components."
+msgstr "Media a pesi uguali delle componenti disponibili."
+
+msgid "Index version"
+msgstr "Versione dell'indice"
+
+msgid "Available components"
+msgstr "Componenti disponibili"
+
+msgid "DPC seismic zone component"
+msgstr "Componente della zona sismica DPC"
+
+msgid "Municipal landslide P3+P4 area component"
+msgstr "Componente comunale delle aree franose P3+P4"
+
+msgid "Municipal flood P3 area component"
+msgstr "Componente comunale delle aree alluvionali P3"
+
+msgid "Excluded components: {items}"
+msgstr "Componenti escluse: {items}"
+
+msgid "Municipality-level context only; not a parcel risk estimate or probability."
+msgstr "Solo contesto a livello comunale; non è una stima o probabilità di rischio della particella."
+
+msgid "Arithmetic mean of available component scores with equal weights; seismic zone anchors 100/66.67/33.33/0 for zones 1/2/3/4; landslide P3+P4 and flood P3 area percentages are used directly."
+msgstr "Media aritmetica a pesi uguali delle componenti disponibili; i valori di riferimento delle zone sismiche 1/2/3/4 sono 100/66,67/33,33/0; si usano direttamente le percentuali delle aree franose P3+P4 e alluvionali P3."
+
+msgid "Heuristic municipality-level hazard context index; not a probability, expected loss, parcel risk estimate, or engineering assessment."
+msgstr "Indice euristico di pericolosità a livello comunale; non è una probabilità, una perdita attesa, una stima del rischio della particella o una valutazione ingegneristica."

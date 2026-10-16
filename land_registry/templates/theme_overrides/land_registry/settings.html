@@ -1,8 +1,7 @@
 {% extends "account/settings.html" %}
-{# Land Registry settings. Every control here is backed by
-   /api/v1/user/preferences or by a real account action; the theme's demo tabs
-   (notifications, 2FA, appearance cards, API keys, billing) have no backing
-   in this app and are emptied rather than shown as dead controls. #}
+{# Land Registry settings. Preference controls use /api/v1/user/preferences,
+   and developer keys use the Clerk-account API-key routes. Theme demo tabs
+   without a backing account feature remain hidden. #}
 
 {% block dashboard_header %}
 {{ super() }}
@@ -27,6 +26,7 @@
         <nav class="nav flex-column settings-nav" aria-label="{{ _('Settings sections') }}">
             <a class="nav-link active" href="#general" data-bs-toggle="tab"><i class="fas fa-language me-2"></i>{{ _('Language') }}</a>
             <a class="nav-link" href="#map-preferences" data-bs-toggle="tab"><i class="fas fa-map me-2"></i>{{ _('Map') }}</a>
+            <a class="nav-link" href="#developer-api" data-bs-toggle="tab"><i class="fas fa-key me-2"></i>{{ _('Developer API') }}</a>
             <a class="nav-link" href="#privacy" data-bs-toggle="tab"><i class="fas fa-user-shield me-2"></i>{{ _('Privacy & data') }}</a>
             <a class="nav-link" href="#security" data-bs-toggle="tab"><i class="fas fa-shield-alt me-2"></i>{{ _('Sign-in & security') }}</a>
             <hr class="my-1">
@@ -111,6 +111,67 @@
 {% endblock %}
 
 {% block settings_extra_tabs %}
+<div class="tab-pane fade" id="developer-api">
+    <section class="card mb-4" id="apiKeySettings"
+        data-loading="{{ _('Loading API keys…') }}"
+        data-load-error="{{ _('Could not load API keys. Try again.') }}"
+        data-unavailable="{{ _('API keys require the configured PostgreSQL account store.') }}"
+        data-create-error="{{ _('Could not create the API key.') }}"
+        data-max-error="{{ _('You already have the maximum number of active keys.') }}"
+        data-revoke-error="{{ _('Could not revoke the API key.') }}"
+        data-revoke-success="{{ _('API key revoked.') }}"
+        data-signed-out="{{ _('Your session has ended. Sign in again.') }}"
+        data-created="{{ _('API key created. Copy and store it now; it will not be shown again.') }}"
+        data-copied="{{ _('API key copied.') }}"
+        data-copy-error="{{ _('Copy failed. Select and copy the key manually.') }}"
+        data-no-keys="{{ _('No API keys yet.') }}"
+        data-created-label="{{ _('Created') }}"
+        data-last-used-label="{{ _('Last used') }}"
+        data-never-used="{{ _('Never') }}"
+        data-limit-label="{{ _('requests per hour') }}"
+        data-active-label="{{ _('Active key') }}"
+        data-revoked-label="{{ _('Revoked key') }}"
+        data-revoke-label="{{ _('Revoke') }}"
+        data-limit="{{ api_key_requests_per_hour }}"
+        data-max-active="{{ api_key_max_active }}">
+        <div class="card-header">
+            <h5 class="card-title mb-0">{{ _('Developer API keys') }}</h5>
+        </div>
+        <div class="card-body">
+            <p>{{ _('Create a key for read-only parcel API access. The secret is shown only once.') }} <code>parcels:read</code></p>
+            <p class="text-muted small">
+                {{ _('Each active key can make up to') }} {{ "{:,}".format(api_key_requests_per_hour) }} {{ _('requests per hour.') }}
+                {{ _('You can keep up to') }} {{ api_key_max_active }} {{ _('active keys.') }}
+                <a href="/openapi.json">{{ _('View the API schema') }}</a>.
+            </p>
+            <form id="apiKeyCreateForm" class="row g-2 align-items-end" novalidate>
+                <div class="col-sm-8">
+                    <label class="form-label" for="apiKeyName">{{ _('Key name') }}</label>
+                    <input class="form-control" id="apiKeyName" name="name" required maxlength="80" autocomplete="off" placeholder="{{ _('For example: QGIS workstation') }}">
+                </div>
+                <div class="col-sm-4">
+                    <button type="submit" class="btn btn-primary w-100" id="apiKeyCreateButton">
+                        <i class="fas fa-plus me-2"></i>{{ _('Create API key') }}
+                    </button>
+                </div>
+                <div class="col-12"><span id="apiKeyCreateStatus" class="small" role="status" aria-live="polite"></span></div>
+            </form>
+            <div id="apiKeyCreatedSecret" class="alert alert-warning mt-3" hidden role="status" aria-live="polite">
+                <p class="mb-2" id="apiKeyCreatedMessage"></p>
+                <div class="input-group">
+                    <code class="form-control text-break" id="apiKeySecretValue"></code>
+                    <button class="btn btn-outline-secondary" type="button" id="apiKeyCopyButton">{{ _('Copy key') }}</button>
+                </div>
+                <span id="apiKeyCopyStatus" class="small" role="status" aria-live="polite"></span>
+            </div>
+            <hr>
+            <h6>{{ _('Your keys') }}</h6>
+            <p id="apiKeyListStatus" class="small text-muted" role="status" aria-live="polite"></p>
+            <div id="apiKeyList" class="list-group"></div>
+        </div>
+    </section>
+</div>
+
 <div class="tab-pane fade" id="map-preferences">
     <form class="js-settings-form" novalidate>
         <div class="card mb-4">

@@ -49,6 +49,12 @@ def test_direct_map_resolves_tiles_and_skips_signed_out_user_calls():
     assert (ROOT / "land_registry/static/fonts/OFL.txt").is_file()
 
 
+def test_parcel_number_labels_start_at_zoom_sixteen():
+    label_function = re.search(r"function addParcelLabels\(\)\s*\{(.*?)\n  \}", MAP_SCRIPT, re.S)
+    assert label_function
+    assert re.search(r"\bminzoom:\s*16\b", label_function.group(1))
+
+
 def test_direct_map_uses_catalog_vector_tiles_and_raster_fallback():
     assert "fetch('/api/v1/map/layers')" in SCRIPT
     assert "layer.tile_url" in SCRIPT
@@ -56,6 +62,25 @@ def test_direct_map_uses_catalog_vector_tiles_and_raster_fallback():
     assert "handleLayerFailure" in SCRIPT
     assert "FullscreenControl" in SCRIPT
     assert "map-layer-swatch" in SCRIPT
+
+
+def test_direct_map_has_a_no_preload_cadastral_parcel_finder():
+    for template in (TEMPLATE, THEME_TEMPLATE):
+        for element_id in (
+            "mapParcelFinder", "parcelFinderRegion", "parcelFinderProvince",
+            "parcelFinderMunicipality", "parcelFinderSheet", "parcelFinderParcel",
+            "parcelFinderSubmit", "parcelFinderStatus",
+        ):
+            assert f'id="{element_id}"' in template
+    for path in (
+        "/api/v1/get-regions/",
+        "/api/v1/get-provinces/?regions=",
+        "/api/v1/get-municipalities/?",
+        "/api/v1/enrichment/fogli/",
+        "/api/v1/map/search?query=",
+    ):
+        assert path in SCRIPT
+    assert "setupParcelFinder()" in SCRIPT
 
 
 def test_direct_map_supports_selection_search_url_state_and_enrichment():
@@ -161,6 +186,27 @@ def test_direct_map_is_responsive_and_accessible():
     assert 'role="listbox"' in TEMPLATE
     assert 'aria-pressed="false"' in TEMPLATE
     assert "setAttribute('aria-pressed'" in SCRIPT
+
+
+def test_direct_map_keeps_all_required_drawing_geometry_tools():
+    for template in (TEMPLATE, THEME_TEMPLATE):
+        for shape in ("polygon", "line", "rectangle", "circle", "point"):
+            assert f'data-map-draw="{shape}"' in template
+        for control in (
+            'id="mapEditDrawingButton"', 'id="mapDeleteDrawingButton"',
+            'id="mapImportDrawingsButton"', 'id="mapExportDrawingsButton"',
+            'id="mapSaveDrawingsButton"', 'id="mapLoadDrawingsButton"',
+        ):
+            assert control in template
+
+    for helper in (
+        "workbenchCircleRadiusMeters", "workbenchCircleRing", "workbenchRectangleRing",
+        "addWorkbenchDrawing", "drawingCollection()", "saveWorkbenchDrawings()",
+        "loadWorkbenchDrawings()", "importWorkbenchDrawings(file)",
+    ):
+        assert helper in SCRIPT
+    assert "drawing_shape: 'circle'" in SCRIPT
+    assert "drawing_shape: 'rectangle'" in SCRIPT
 
 
 def test_theme_map_owns_the_viewport_and_primary_accessibility_contract():

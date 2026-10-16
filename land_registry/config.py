@@ -4,6 +4,7 @@ Centralized configuration management using Pydantic BaseSettings
 """
 
 from pydantic_settings import BaseSettings
+from pydantic import Field
 from typing import Optional, List
 import os
 
@@ -67,6 +68,19 @@ class AuthSettings(BaseSettings):
 
     class Config:
         env_prefix = "AUTH_"
+        case_sensitive = False
+        extra = "ignore"
+
+
+class PublicApiSettings(BaseSettings):
+    """Shared defaults for the authenticated, versioned public API."""
+
+    requests_per_hour: int = Field(default=10_000, ge=1)
+    max_active_keys: int = Field(default=5, ge=1)
+
+    class Config:
+        env_prefix = "PUBLIC_API_"
+        env_file = ("../.env", ".env")
         case_sensitive = False
         extra = "ignore"
 
@@ -338,6 +352,7 @@ def get_panel_url(route: str = "") -> str:
 # Global settings instances
 app_settings = AppSettings()
 auth_settings = AuthSettings()
+public_api_settings = PublicApiSettings()
 storage_settings = StorageSettings()  # Primary unified storage config
 s3_settings = S3Settings()  # Legacy - for backward compatibility
 db_settings = DatabaseSettings()

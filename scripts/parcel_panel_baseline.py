@@ -20,7 +20,7 @@ Usage::
         --per-area 5 --output docs/baselines/parcel_panel_baseline.json
 
 Re-run after each phase and compare the JSON files. See
-``docs/PARCEL_PANEL_GAP_ANALYSIS_2026-10.md`` (Phase 0).
+``docs/ZORNADE_GAP_ANALYSIS.md (Appendix A)`` (Phase 0).
 """
 
 from __future__ import annotations

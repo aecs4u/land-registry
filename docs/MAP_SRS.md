@@ -8,8 +8,9 @@
 The first implementation baseline delivers the direct MapLibre shell, catalog-
 driven MVT layers, raster fallback, parcel search/selection/enrichment, URL
 sharing, a server-rendered parcel PDF, authenticated saves, and privacy-
-preserving map diagnostics. Upload and drawing parity remains intentionally
-isolated behind `/map-legacy`.
+preserving map diagnostics. `/map-legacy` retains file uploads and analysis
+workflows not yet migrated. The direct map provides polygon, polyline,
+rectangle, circle and marker drawings with edit, import, export, save and load.
 
 ## 1. Purpose
 
@@ -168,6 +169,16 @@ The improved map shall let a user open the application, navigate to any supporte
 | MAP-FR-038 | URL updates shall be throttled or performed on meaningful map movement events. | Should |
 | MAP-FR-039 | Invalid or unavailable URL parameters shall fail gracefully and leave the user at the nearest valid view. | Must |
 | MAP-FR-040 | Copy Link shall use the Clipboard API with a visible fallback when clipboard access is unavailable. | Should |
+| MAP-FR-063 | Zone-card Sales and Rents actions shall open a restorable mapping-view context containing the selected workflow and zone. | Must |
+
+The mapping workflow URL contract is `?view=mapping&workflow=sales|rents&zone_id=<positive integer>`.
+Zone-card actions set all three parameters. On initial load the compatibility map
+validates the workflow and ID, resolves the authenticated zone record, displays
+its name and workflow, and restores its geometry and map extent. Invalid or
+inaccessible zones show an explicit status. These query parameters provide the
+analytics and QA context; they identify the action type and zone record without
+encoding parcel or account data. QA covers Sales and Rents links, reload
+restoration, malformed parameters, and zones the current user cannot access.
 
 ### 5.7 Drawing and analysis compatibility
 
@@ -352,22 +363,20 @@ Introduced with version 1.2 and delivered. See §13 for the conformance evidence
 - Administrative geometry below the parcel zoom threshold (issue 09) — done.
 - Confidence indicators on modelled values (issue 10) — done.
 - Dataset version identifiers for reproducible reports (issue 11) — done.
-- Parcel PDF dossier: superseded by the Typst dossier at
-  `/api/v1/enrichment/parcel/dossier/{national_reference}`, built entirely
-  server-side with `aecs4u-documents` (see `docs/PARCEL_DOSSIER.md`). It has a
-  cover, summary, thematic sections and the source register described below, and
-  needs no browser snapshot. The ReportLab implementation (`parcel_report.py`,
-  `/parcel/report/{national_reference}`) is deprecated and kept only for
-  existing clients; the notes below describe that legacy behaviour.
-- Legacy server-rendered parcel PDF with a report ID, dataset/model version
-  footer and source register — shipped at
-  `/api/v1/enrichment/parcel/report/{national_reference}`. Static labels follow
-  the request locale. POST export adds all registered panel sections' captured
-  text, state and available provenance to the server parcel model; section text
-  is bounded, and any shortening is marked in the report. GET retains the
-  server-only report fallback. Missing licence/release metadata is stated
-  explicitly. A maintained provider catalog supplies links and licence-review
-  status; report-specific release/version values come from response metadata.
+- Parcel PDF dossier: the Typst dossier at
+  `/api/v1/enrichment/parcel/dossier/{national_reference}` is built from
+  server-side data with `aecs4u-documents` (see `docs/PARCEL_DOSSIER.md`). It
+  has a cover, summary, thematic sections and source register without a browser
+  snapshot. GET builds the baseline report; POST may include a successfully
+  calculated PVGIS scenario's validated assumptions, which the server
+  recalculates before adding the assumptions, economics, cash-flow table and
+  chart. The deprecated ReportLab route under `/parcel/report/` remains for
+  existing clients.
+- The dossier includes a report ID, dataset/model version footer and source
+  register. Static labels follow the request locale. Missing licence/release
+  metadata is stated explicitly. A maintained provider catalog supplies links
+  and licence-review status; report-specific release/version values come from
+  response metadata.
   OSM attribution includes contributor credit, ODbL notice and the full
   copyright URL. The source catalog distinguishes the ODbL-licensed Zornade
   EGMS summary from the underlying Copernicus source, whose open-use conditions
@@ -439,7 +448,7 @@ is required to extend them.
 | ID | Status | Evidence or gap |
 |---|---|---|
 | MAP-FR-031 | Met for currently available enrichment sections | `/map` renders municipality, OMI, income, demographics, POI, and risk information in individual native `<details>` sections, open by default and collapsible from their summaries. The risk section adds parcel-centroid INGV MPS04 PGA using the nearest native-grid point and labels its 10%-in-50-years assumption; source coverage remains host-dependent. |
-| MAP-FR-035 | Met | `/map` posts a bounded snapshot of every registered panel section and combines it with the server parcel read model. The report includes a report ID, version footer and source register, checks reference-keyed enrichment against the selected polygon, follows the request locale, and retains a GET fallback. A maintained provider catalog supplies provider and terms links, reuse terms and review status while report-specific release/version values come from response metadata. OSM attribution includes contributor credit, ODbL notice and the full copyright URL. The catalog records EGMS derivative/source terms, MEF CC BY 3.0, ISPRA PAI/PGRA CC BY-SA 4.0, the INGV MPS04 citation and CC BY 4.0 under its general open-data notice, OMI citation with licence pending, and NASA general guidance without inferring a collection licence; other provider terms and provisioned-data acceptance remain open. |
+| MAP-FR-035 | Met | `/map` downloads the Typst dossier from server-side parcel data. GET builds the baseline report; after a successful Energy-tab calculation, POST sends only validated PV assumptions and the server recomputes the PVGIS scenario before rendering it. The report includes a report ID, version footer and source register and follows the request locale. A maintained provider catalog supplies provider and terms links, reuse terms and review status while report-specific release/version values come from response metadata. OSM attribution includes contributor credit, ODbL notice and the full copyright URL. The catalog records EGMS derivative/source terms, MEF CC BY 3.0, ISPRA PAI/PGRA CC BY-SA 4.0, the INGV MPS04 citation and CC BY 4.0 under its general open-data notice, OMI citation with licence pending, and NASA general guidance without inferring a collection licence; other provider terms, rendered scenario acceptance and provisioned-data acceptance remain open. |
 | MAP-FR-050 | Met | `geo-boundaries` is exposed from the catalog with the `admin-substitute` role, and `map-v2.js` auto-enables it below the parcel threshold while keeping the zoom-in affordance visible. The auto layer is released again above the handoff unless the user explicitly chose it. |
 | MAP-FR-051 | Met | FIRMS detections now render each observation as a relative age in both the parcel panel and live overlay tooltip/popup. FIRMS and DPC bulletin surfaces state the feed refresh/issue time when present and explicitly mark it as not provider-declared when absent. |
 | MAP-FR-052 | Met for current modelled population block | The population block is labelled "Popolazione modellata" and now carries `spatial_resolution`, `dataset_version`, and `model_version` metadata in the parcel read model. `parcel-enrichment.js` and the direct map preview render confidence or resolution chips only when those fields are present. Future modelled blocks should populate the same envelope fields. |

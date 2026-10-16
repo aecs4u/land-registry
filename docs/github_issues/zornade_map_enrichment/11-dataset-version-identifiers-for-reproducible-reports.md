@@ -45,3 +45,20 @@ Current populated blocks:
 
 Blocks with no meaningful upstream version intentionally render the existing
 source line unchanged.
+
+**OMI boundary provenance (2026-10-15):** the automatic zone match now carries
+its boundary source, vintage, match method and spatial resolution separately
+from the quote dataset version. The local OnData mirror reports vintage
+`2018/2`; both parcel panels disclose that this geometry is approximate, and
+the Typst dossier records the mirror and matching metadata in its source
+register. The `/api/v2` catalog documents these optional fields. A PostgreSQL
+zone match reports `PostGIS ST_Covers` and the polygon scope; its vintage stays
+unset when the source does not provide one.
+
+**Dossier provenance follow-up (2026-10-15):** the municipality profile now
+records municipality scope and source without inventing a vintage. The
+quality-of-life section records its latest annual ISTAT BES edition as
+`data_vintage`, plus province/NUTS3 resolution and the municipality NUTS3 match
+method. A live Civitavecchia lookup returned edition `2025` with 90 annual
+indicators; the Typst renderer compiled that data into a PDF. Solar aggregates
+continue to pass through their source version and update time when supplied.

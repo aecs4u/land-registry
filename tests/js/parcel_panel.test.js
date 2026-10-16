@@ -487,10 +487,14 @@ test('municipal solar aggregates carry municipality provenance and are not frame
   assert.equal(section('solar').render(null, makeCtx()).empty, true);
 });
 
-test('risks bind pushes the seismic zone into the stat strip', () => {
+test('risks bind pushes the municipal composite score into the stat strip', () => {
   const stats = {};
-  section('risks').bind({}, { seismic: { zone: 2 } }, makeCtx({ setStat: (key, value) => { stats[key] = value; } }));
-  assert.equal(stats.seismic, 'Zone 2');
+  section('risks').bind({}, { composite_score: 42.5 }, makeCtx({ setStat: (key, value, extra) => { stats[key] = { value, extra }; } }));
+  assert.match(stats['composite-risk'].value, /^42[.,]5\/100$/);
+  assert.equal(stats['composite-risk'].extra.score, 42.5);
+  assert.match(stats['composite-risk'].extra.title, /not parcel risk/);
+  // Out-of-range or absent scores and unresolved municipalities leave the strip alone.
+  section('risks').bind({}, { composite_score: 140 }, makeCtx({ setStat: () => assert.fail('must not set a stat') }));
   section('risks').bind({}, { unresolved: true }, makeCtx({ setStat: () => assert.fail('must not set a stat') }));
 });
 
@@ -744,14 +748,14 @@ test('omi labels snapshot quotes without a declared semester and the placeholder
   assert.doesNotMatch(result.body, /· 0 ·/);
 });
 
-test('risks bind fills the seismic and hazard strip cells with scope in the tooltip', () => {
+test('risks bind fills the hazard strip cell with scope in the tooltip', () => {
   const calls = [];
   const ctx = makeCtx({ setStat: (key, value, extra) => calls.push({ key, value, extra }) });
   section('risks').bind(null, {
     seismic: { zone: 2 },
     hydrogeological: { flood: { area_pct: { P3_high_probability: 6.4 } }, landslide: { area_pct: { P4_very_high: 11.1 } } },
   }, ctx);
-  assert.deepEqual(calls.find((call) => call.key === 'seismic'), { key: 'seismic', value: 'Zone 2', extra: undefined });
+  assert.equal(calls.some((call) => call.key === 'seismic'), false);
   const hazard = calls.find((call) => call.key === 'hazard');
   assert.equal(hazard.extra.level, 'high');
   assert.match(hazard.value, /^High · 11[.,]1%$/);
@@ -760,7 +764,7 @@ test('risks bind fills the seismic and hazard strip cells with scope in the tool
 
   const none = [];
   section('risks').bind(null, { seismic: { zone: 3 } }, makeCtx({ setStat: (key) => none.push(key) }));
-  assert.deepEqual(none, ['seismic']);
+  assert.deepEqual(none, []);
 });
 
 test('coverage gaps are flagged unavailable while real negatives stay plain empty', async () => {

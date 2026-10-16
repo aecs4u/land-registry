@@ -1,7 +1,7 @@
 """Compatibility tests for optional aecs4u-stats features."""
 
 import builtins
-import runpy
+import importlib.util
 from pathlib import Path
 
 from land_registry import stats_service
@@ -26,7 +26,14 @@ def test_missing_census_subpackage_does_not_break_stats_service(monkeypatch) -> 
         return real_import(name, globals, locals, fromlist, level)
 
     monkeypatch.setattr(builtins, "__import__", import_without_census)
-    namespace = runpy.run_path(Path(stats_service.__file__))
+    # Load a second copy under the package namespace so the module's relative
+    # imports resolve (runpy.run_path would execute it without a parent package).
+    spec = importlib.util.spec_from_file_location(
+        "land_registry._stats_service_without_census", Path(stats_service.__file__)
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    namespace = vars(module)
 
     # A legacy wheel may lack the adapter while the shared volume still has a
     # valid census DuckDB. Availability is therefore a property of the

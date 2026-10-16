@@ -249,12 +249,60 @@
       && quotes.every((quote) => !(quote && quote.anno && quote.semestre));
   }
 
-  /** Comparable benchmark across the loaded quotes (median of band midpoints). */
-  function quoteBenchmark(quotes) {
-    const midpoint = median(quotes.map(quoteMidpoint));
+  function omiQuotePeriod(quote) {
+    const year = toNumber(quote && quote.anno);
+    const semester = toNumber(quote && quote.semestre);
+    if (Number.isInteger(year) && year >= 1900 && year <= 9999 && (semester === 1 || semester === 2)) return `${year}-S${semester}`;
+    const match = String((quote && quote.period) || '').trim().match(/^(\d{4})-S([12])$/i);
+    return match ? `${match[1]}-S${match[2]}` : null;
+  }
+
+  function omiQuoteTypeKey(quote) {
+    const code = String((quote && quote.cod_tipologia) ?? '').trim().toUpperCase();
+    if (code && code !== '0') return `code:${code}`;
+    const name = String((quote && quote.tipologia) ?? '').trim().toLocaleLowerCase();
+    return name && name !== '0' ? `name:${name}` : null;
+  }
+
+  /**
+   * Municipal median for the selected quote's type, condition and semester.
+   * The one-argument form remains for legacy callers; the current panel always
+   * supplies the selected quote so unlike categories are never benchmarked.
+   */
+  function quoteBenchmark(quotes, selectedQuote) {
+    if (!selectedQuote) {
+      const midpoint = median(quotes.map(quoteMidpoint));
+      if (midpoint === null) return null;
+      const years = quotes.map((quote) => toNumber(quote.anno)).filter((year) => year !== null);
+      return { label: 'median of the comune quotes', value: midpoint, unit: '€/m²', year: years.length ? Math.max(...years) : null };
+    }
+    const typeKey = omiQuoteTypeKey(selectedQuote);
+    const period = omiQuotePeriod(selectedQuote);
+    if (!typeKey || !period) return null;
+    const condition = String(selectedQuote.stato_conservazione ?? '').trim().toUpperCase();
+    const zones = new Set();
+    const comparable = [];
+    for (const quote of quotes || []) {
+      const zone = String((quote && quote.zona) ?? '').trim().toUpperCase();
+      if (!zone || zones.has(zone)
+        || omiQuoteTypeKey(quote) !== typeKey
+        || String(quote.stato_conservazione ?? '').trim().toUpperCase() !== condition
+        || omiQuotePeriod(quote) !== period) continue;
+      const value = quoteMidpoint(quote);
+      if (value === null) continue;
+      zones.add(zone);
+      comparable.push(value);
+    }
+    if (comparable.length < 2) return null;
+    const midpoint = median(comparable);
     if (midpoint === null) return null;
-    const years = quotes.map((quote) => toNumber(quote.anno)).filter((year) => year !== null);
-    return { label: 'median of the comune quotes', value: midpoint, unit: '€/m²', year: years.length ? Math.max(...years) : null };
+    return {
+      label: 'Comune OMI median, same type and condition',
+      value: midpoint,
+      unit: '€/m²',
+      year: period.replace('-', ' '),
+      comparison_count: comparable.length,
+    };
   }
 
   /**

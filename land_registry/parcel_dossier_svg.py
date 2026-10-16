@@ -355,6 +355,89 @@ def column_chart_svg(
     return _svg(width, height, body)
 
 
+def cash_flow_chart_svg(
+    rows: Sequence[dict[str, Any]],
+    width: float = 520.0,
+    height: float = 220.0,
+    *,
+    annual_label: str = "Annual net cash flow",
+    cumulative_label: str = "Cumulative cash flow",
+    payback_label: str = "Simple payback",
+    value_format: Callable[[float], str] = lambda v: f"{v:g}",
+) -> str | None:
+    """Plot yearly net cash flow and its cumulative break-even path."""
+    usable = []
+    for row in rows:
+        try:
+            year = int(row["year"])
+            annual = float(row["cash_flow_eur"])
+            cumulative = float(row["cumulative_cash_flow_eur"])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            continue
+        if math.isfinite(annual) and math.isfinite(cumulative):
+            usable.append((year, annual, cumulative))
+    if len(usable) < 2:
+        return None
+
+    pad_l, pad_r = 54.0, 12.0
+    plot_w = width - pad_l - pad_r
+    annual_top, annual_h = 21.0, 67.0
+    cumulative_top, cumulative_h = 128.0, 67.0
+    bottom = height - 18.0
+
+    def y_of(value: float, values: list[float], top: float, plot_h: float) -> float:
+        low, high = min(0.0, min(values)), max(0.0, max(values))
+        span = high - low or 1.0
+        return top + plot_h * (high - value) / span
+
+    def x_of(index: int) -> float:
+        return pad_l + plot_w * index / (len(usable) - 1)
+
+    annual_values = [row[1] for row in usable]
+    cumulative_values = [row[2] for row in usable]
+    annual_zero = y_of(0.0, annual_values, annual_top, annual_h)
+    cumulative_zero = y_of(0.0, cumulative_values, cumulative_top, cumulative_h)
+    body = [
+        _text(pad_l, 12, annual_label, size=8.5, fill=_MUTED, weight="700"),
+        _text(pad_l, 119, cumulative_label, size=8.5, fill=_MUTED, weight="700"),
+        f'<line x1="{_num(pad_l)}" y1="{_num(annual_zero)}" x2="{_num(width - pad_r)}" y2="{_num(annual_zero)}" stroke="{_GRID}" stroke-width="0.8"/>',
+        f'<line x1="{_num(pad_l)}" y1="{_num(cumulative_zero)}" x2="{_num(width - pad_r)}" y2="{_num(cumulative_zero)}" stroke="{_GRID}" stroke-width="0.8"/>',
+    ]
+    slot = plot_w / max(1, len(usable) - 1)
+    bar_w = min(slot * 0.62, 15.0)
+    for index, (year, annual, _) in enumerate(usable):
+        x = x_of(index)
+        y = y_of(annual, annual_values, annual_top, annual_h)
+        bar_y = min(y, annual_zero)
+        bar_h = max(abs(annual_zero - y), 1.0)
+        fill = _BAR if annual >= 0 else "#b42318"
+        body.append(
+            f'<rect x="{_num(x - bar_w / 2)}" y="{_num(bar_y)}" width="{_num(bar_w)}" height="{_num(bar_h)}" rx="1" fill="{fill}"/>'
+        )
+        if year == 0 or year == usable[-1][0] or year % 5 == 0:
+            body.append(_text(x, bottom, str(year), size=7.5, fill=_MUTED, anchor="middle"))
+
+    cumulative_points = [
+        (x_of(index), y_of(value, cumulative_values, cumulative_top, cumulative_h))
+        for index, value in enumerate(cumulative_values)
+    ]
+    point_text = " ".join(f"{_num(x)},{_num(y)}" for x, y in cumulative_points)
+    body.append(f'<polyline points="{point_text}" fill="none" stroke="{_BAR}" stroke-width="1.8"/>')
+    for x, y in cumulative_points:
+        body.append(f'<circle cx="{_num(x)}" cy="{_num(y)}" r="1.7" fill="{_BAR}"/>')
+
+    for index, (left, right) in enumerate(zip(usable, usable[1:])):
+        if left[2] < 0 <= right[2] and right[2] > left[2]:
+            fraction = -left[2] / (right[2] - left[2])
+            payback_x = x_of(index) + (x_of(index + 1) - x_of(index)) * fraction
+            body.append(
+                f'<line x1="{_num(payback_x)}" y1="{_num(cumulative_top)}" x2="{_num(payback_x)}" y2="{_num(cumulative_top + cumulative_h)}" stroke="#7f56d9" stroke-width="1" stroke-dasharray="3 2"/>'
+            )
+            body.append(_text(min(payback_x + 4, width - pad_r), cumulative_top + 8, payback_label, size=7, fill="#6941c6"))
+            break
+    return _svg(width, height, body)
+
+
 def band_line_chart_svg(
     points: Sequence[dict[str, Any]],
     width: float,

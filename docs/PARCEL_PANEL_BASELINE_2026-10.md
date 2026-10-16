@@ -10,11 +10,13 @@ The post-migration warm PostgreSQL sample is
 [`baselines/parcel_panel_postgres_warm_2026-10-10.json`](baselines/parcel_panel_postgres_warm_2026-10-10.json).
 The controlled refresh-first sample is
 [`baselines/parcel_panel_controlled_2026-10-10.json`](baselines/parcel_panel_controlled_2026-10-10.json).
+The 2026-10-15 cold-path overlap sample is
+[`baselines/parcel_panel_controlled_2026-10-15.json`](baselines/parcel_panel_controlled_2026-10-15.json).
 Re-run with `python scripts/parcel_panel_baseline.py --output docs/baselines/<name>.json`
 and compare.*
 
 This is the "before" measurement for
-[PARCEL_PANEL_GAP_ANALYSIS_2026-10.md](PARCEL_PANEL_GAP_ANALYSIS_2026-10.md). It
+[ZORNADE_GAP_ANALYSIS.md](ZORNADE_GAP_ANALYSIS.md). It
 describes **this host**. The initial samples predate the cache migration and
 several optional stores remain absent, so they are not production coverage
 numbers. Use the later sample below to distinguish the shared PostgreSQL cache
@@ -223,3 +225,32 @@ show a cold p95 above the preliminary 8.140 s target; repeat on the same
 response shape and source coverage before treating that comparison as an
 acceptance result. Local PostgreSQL credentials and data coverage also differ
 from the likely Neon production target.
+
+## Cold-path overlap sample (2026-10-15)
+
+Captured against a fresh no-reload local server on port 8017 with
+`--view panel --refresh-first`. It resolved the same 20 `(reference, feature
+ID)` pairs, in the same order, as the 2026-10-10 controlled sample. All 40
+details requests returned HTTP 200 through PostgreSQL, with no feature-ID
+mismatches.
+
+| Measure | Result |
+|---|---:|
+| Forced cold builds | 20; median 4.614 s, p95 6.188 s, max 6.833 s |
+| Repeat cache hits | 20; median 0.014 s, p95 0.157 s, max 0.258 s |
+| Available blocks | 8 of 22 on all 20 sampled parcels |
+| Median detail payload | 20,229 bytes |
+| SISTER building-query availability | 20/20; zero cached property rows in this sample |
+| Feature-ID cache mismatches | 0/40 |
+| Duplicate-reference groups | 0 |
+
+The cold path now starts the SISTER building/address query, OpenData lookup,
+and PVP lookup before waiting for the independent spatial-context query. The
+SISTER query uses the async PostgreSQL adapter; a successful empty result is
+reported as available with no cached records, not as proof that no physical
+building exists. The response shape gained this `buildings` availability
+block compared with the 2026-10-10 sample (7 blocks), so the latency difference
+is not a strict same-shape before/after comparison. The parcels, order, view,
+cache policy and data host match; cold p95 is now below the preliminary
+8.140-second target even with the additional block. This remains local-host
+evidence, not production coverage or a guarantee for other store states.

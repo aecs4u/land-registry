@@ -25,14 +25,8 @@
 
   const API = '/api/v1/enrichment';
   const REQUEST_TIMEOUT_MS = 12000;
+  const POST_REQUEST_TIMEOUT_MS = 30000;
   const READ_MODEL_WAIT_MS = 30000;
-  const REPORT_TEXT_LIMIT = 180000;
-  const REPORT_JSON_LIMIT = 220000;
-  const REPORT_METADATA_KEYS = new Set([
-    'source', 'dataset_version', 'data_vintage', 'model_version', 'updated_at',
-    'license', 'licence', 'spatial_resolution', 'spatial_resolution_m', 'match_method',
-    'additional_source', 'additional_model_version', 'additional_license',
-  ]);
   const LAZY_ROOT_MARGIN = '320px 0px';
   const PVP_RECORD_LIMIT = 8;
   const PVP_NEARBY_DEFAULT_RADIUS_KM = 10;
@@ -60,10 +54,11 @@
   // Block names shown in the coverage section, in display order.
   const COVERAGE_BLOCKS = [
     ['basic', 'Parcel identity'], ['cadastral', 'Cadastre and postcode'], ['address', 'Main address'],
+    ['anncsu_addresses', 'Civic addresses (ANNCSU)'],
     ['risk', 'Risks'], ['subsidence', 'Subsidence'], ['terrain', 'Terrain'], ['population', 'Modelled population'],
     ['buildings', 'Buildings'], ['economics', 'Economy'], ['demographics', 'ISTAT demographics'],
     ['land_cover', 'Land cover'], ['valuation', 'OMI valuation'], ['valuation_history', 'OMI history'],
-    ['coastal_erosion', 'Coastal erosion'], ['cultural_heritage', 'Cultural heritage'], ['solar', 'Solar potential'],
+    ['coastal_erosion', 'Coastal change (2006–2020)'], ['cultural_heritage', 'Cultural heritage'], ['solar', 'Solar potential'],
     ['poi', 'Points of interest'], ['nightlights', 'Night lights'], ['opendata', 'Cadastral OpenData'], ['pvp', 'PVP auctions'],
   ];
   const SCHEMA_HEALTH_URL = '/api/v1/map/layers/health';
@@ -116,44 +111,51 @@
   function openDataUnits(block) {
     const data = block && block.data;
     const records = Array.isArray(data) ? data : (Array.isArray(data && data.records) ? data.records : []);
-    const resultObjects = records.map((record) => record && record.result !== undefined ? record.result : record).filter(Boolean);
+    const resultRecords = records.map((record) => ({
+      result: record && record.result !== undefined ? record.result : record,
+      provenance: record && record.provenance,
+    })).filter((entry) => entry.result);
     const candidates = [];
-    const findCollections = (value) => {
+    const findCollections = (value, provenance) => {
       if (Array.isArray(value)) {
-        value.forEach(findCollections);
+        value.forEach((item) => findCollections(item, provenance));
       } else if (value && typeof value === 'object') {
         Object.entries(value).forEach(([key, item]) => {
           if (OPENDATA_UNIT_COLLECTIONS.has(normalizedOpenDataKey(key))) {
-            (Array.isArray(item) ? item : [item]).forEach((candidate) => candidates.push(candidate));
+            (Array.isArray(item) ? item : [item]).forEach((candidate) => candidates.push({ source: candidate, provenance }));
           } else {
-            findCollections(item);
+            findCollections(item, provenance);
           }
         });
       }
     };
-    resultObjects.forEach(findCollections);
-    const sources = candidates.length ? candidates : resultObjects;
+    resultRecords.forEach(({ result, provenance }) => findCollections(result, provenance));
+    const sources = candidates.length
+      ? candidates
+      : resultRecords.map(({ result, provenance }) => ({ source: result, provenance }));
     const fields = Object.fromEntries(Object.entries(OPENDATA_FIELD_KEYS).map(([field, keys]) => [
       field,
       new Set(keys.map(normalizedOpenDataKey)),
     ]));
-    const makeUnit = (source, skipUnitCollections = false) => {
+    const makeUnit = (source, skipUnitCollections = false, provenance = null) => {
       const unit = {};
       Object.entries(fields).forEach(([field, aliases]) => {
         unit[field] = [...new Set(collectOpenDataValues(source, aliases, [], skipUnitCollections).map((value) => value.trim()).filter(Boolean))];
       });
+      if (provenance && typeof provenance === 'object') unit.provenance = provenance;
       return unit;
     };
-    const units = sources.map((source) => makeUnit(source));
+    const units = sources.map(({ source, provenance }) => makeUnit(source, false, provenance));
     if (candidates.length) {
-      resultObjects.forEach((result) => units.push(makeUnit(result, true)));
+      resultRecords.forEach(({ result, provenance }) => units.push(makeUnit(result, true, provenance)));
     }
     const seen = new Set();
     return units.filter((unit) => {
       const key = JSON.stringify(unit);
       if (seen.has(key)) return false;
       seen.add(key);
-      return Object.values(unit).some((values) => values.length);
+      return Object.entries(unit).some(([field, values]) => field !== 'provenance' && values.length)
+        || hasOpenDataProvenance(unit.provenance);
     });
   }
 
@@ -211,7 +213,71 @@
       [tr('Surface'), value('surface')],
       [tr('Address'), value('address')],
     ]);
-    return content ? `<article class="parcel-record"><h4>${esc(tr('Cadastral OpenData'))}</h4>${content}</article>` : '';
+    return content ? `<article class="parcel-record"><h4>${esc(tr('Cadastral OpenData'))}</h4>${content}${openDataProvenanceHtml(unit.provenance, ctx)}</article>` : '';
+  }
+
+  function openDataTimestamp(value) {
+    if (!Core.isPresent(value)) return '';
+    const numeric = typeof value === 'number' ? value : Number.NaN;
+    const normalized = Number.isFinite(numeric)
+      ? new Date(numeric > 1e12 ? numeric : numeric * 1000)
+      : value;
+    return Core.formatDateTime(normalized) || String(value);
+  }
+
+  function hasOpenDataProvenance(provenance) {
+    if (!provenance || typeof provenance !== 'object') return false;
+    const provider = provenance.provider && typeof provenance.provider === 'object' ? provenance.provider : {};
+    const origin = provenance.data_origin && typeof provenance.data_origin === 'object' ? provenance.data_origin : {};
+    const reuse = provenance.reuse && typeof provenance.reuse === 'object' ? provenance.reuse : {};
+    return Boolean(
+      provider.name || origin.name || provenance.record_id != null || provenance.endpoint
+      || provenance.retrieval_source || provenance.recorded_at || provenance.query_datetime
+      || provenance.match_method || reuse.status || reuse.attribution
+    );
+  }
+
+  function openDataProvenanceHtml(provenance, ctx) {
+    if (!hasOpenDataProvenance(provenance)) return '';
+    const provider = provenance.provider && typeof provenance.provider === 'object' ? provenance.provider : {};
+    const origin = provenance.data_origin && typeof provenance.data_origin === 'object' ? provenance.data_origin : {};
+    const reuse = provenance.reuse && typeof provenance.reuse === 'object' ? provenance.reuse : {};
+    const { tr } = ctx;
+    const details = [];
+    if (provider.name) details.push(`${esc(tr('Provider'))}: ${esc(provider.name)}`);
+    if (origin.name) {
+      const notRecordSpecific = origin.record_specific === false
+        ? ` (${esc(tr('not specific to this record'))})`
+        : '';
+      details.push(`${esc(tr('Source'))}: ${esc(origin.name)}${notRecordSpecific}`);
+    }
+    if (provenance.record_id != null) details.push(`${esc(tr('Record ID'))}: ${esc(provenance.record_id)}`);
+    if (provenance.retrieval_source) details.push(`${esc(tr('Retrieved from'))}: ${esc(provenance.retrieval_source)}`);
+    if (provenance.endpoint) {
+      const endpointUrl = Core.safeHttpUrl(provenance.endpoint);
+      const endpoint = endpointUrl
+        ? `<a href="${esc(endpointUrl)}" target="_blank" rel="noopener noreferrer">${esc(provenance.endpoint)}</a>`
+        : esc(provenance.endpoint);
+      details.push(`${esc(tr('Endpoint'))}: ${endpoint}`);
+    }
+    const recordedAt = openDataTimestamp(provenance.recorded_at);
+    if (recordedAt) details.push(`${esc(tr('Recorded at'))}: ${esc(recordedAt)}`);
+    const queriedAt = openDataTimestamp(provenance.query_datetime);
+    if (queriedAt) details.push(`${esc(tr('Queried at'))}: ${esc(queriedAt)}`);
+    if (provenance.match_method) details.push(`${esc(tr('Matching method'))}: ${esc(provenance.match_method)}`);
+    const reuseLabels = {
+      provider_terms_reviewed_reuse_unconfirmed: tr('Reuse not confirmed'),
+      downstream_reuse_unverified: tr('Downstream reuse unverified'),
+      provider_terms_unreviewed: tr('Provider terms not reviewed'),
+      unknown: tr('Reuse status unknown'),
+    };
+    const reuseStatus = reuseLabels[reuse.status] || (reuse.status ? tr('Reuse status unknown') : '');
+    const termsUrl = Core.safeHttpUrl(reuse.terms_url);
+    if (reuseStatus) {
+      details.push(`${esc(tr('Reuse'))}: ${esc(reuseStatus)}${termsUrl ? ` · <a href="${esc(termsUrl)}" target="_blank" rel="noopener noreferrer">${esc(tr('Provider use terms'))}</a>` : ''}`);
+    }
+    if (reuse.attribution) details.push(esc(reuse.attribution));
+    return details.length ? `<p class="parcel-record-provenance">${details.join('<br>')}</p>` : '';
   }
 
   function openDataRecordHtml(unit, index, ctx) {
@@ -226,8 +292,9 @@
     const content = rows(fields.map(([label, field]) => [
       ctx.tr(label), text((unit[field] || []).join(', ')),
     ]));
-    if (!content) return '';
-    return `<article class="parcel-record"><h4>${esc(ctx.tr('OpenData record {n}', { n: index + 1 }))}</h4>${content}</article>`;
+    const provenance = openDataProvenanceHtml(unit.provenance, ctx);
+    if (!content && !provenance) return '';
+    return `<article class="parcel-record"><h4>${esc(ctx.tr('OpenData record {n}', { n: index + 1 }))}</h4>${content}${provenance}</article>`;
   }
 
   function publishNearbyPvpMarkers(points, visible) {
@@ -477,7 +544,11 @@
     if (!benchmark || !Core.isPresent(benchmark.value)) return '';
     const value = formatter ? formatter(benchmark.value) : Core.formatNumber(benchmark.value, 1);
     const label = [tr(benchmark.label || 'Benchmark'), benchmark.year || ''].filter(Boolean).join(' ');
-    return `<small class="parcel-benchmark">${esc(tr('Benchmark'))} ${esc(label)}: <strong>${esc(value)}</strong></small>`;
+    const count = Number(benchmark.comparison_count);
+    const comparisonCount = Number.isInteger(count) && count > 0
+      ? ` · ${tr('{n} comparable zones', { n: count })}`
+      : '';
+    return `<small class="parcel-benchmark">${esc(tr('Benchmark'))} ${esc(label)}${esc(comparisonCount)}: <strong>${esc(value)}</strong></small>`;
   }
 
   function feedRefreshNote(data, tr) {
@@ -505,6 +576,96 @@
     } finally {
       root.clearTimeout(timeoutId);
     }
+  }
+
+  function solarScenarioInput(name, label, value, min, max, step, tr) {
+    const id = `parcel-solar-${name}`;
+    return `<label for="${id}">${esc(tr(label))}<input id="${id}" name="${name}" type="number" value="${value}" min="${min}" max="${max}" step="${step}" required></label>`;
+  }
+
+  function solarEconomicsResultHtml(data, tr) {
+    const economics = data && data.economics;
+    const production = data && data.production;
+    if (!economics || !production) return '';
+    const payback = (value) => value == null
+      ? tr('Not reached within system lifetime')
+      : `${Core.formatNumber(value, 1)} ${tr('years')}`;
+    const resultRows = rows([
+      [tr('Net present value (NPV)'), Core.formatCurrency(economics.npv_eur)],
+      [tr('Levelized cost of energy (LCOE)'), economics.lcoe_eur_per_kwh == null
+        ? null : `${Core.formatNumber(economics.lcoe_eur_per_kwh, 3)} €/kWh`],
+      [tr('Simple payback'), payback(economics.simple_payback_years)],
+      [tr('Discounted payback'), payback(economics.discounted_payback_years)],
+      [tr('Year-one production'), `${Core.formatNumber(economics.first_year_generation_kwh, 0)} kWh`],
+      [tr('Initial installation cost'), Core.formatCurrency(economics.installation_cost_eur)],
+    ]);
+    const cashFlows = Array.isArray(economics.cash_flows) ? economics.cash_flows : [];
+    const cashFlowRows = cashFlows.map((flow) => `<tr>
+      <td>${esc(flow.year)}</td>
+      <td>${esc(Core.formatNumber(flow.generation_kwh, 0))} kWh</td>
+      <td>${esc(Core.formatCurrency(flow.cash_flow_eur))}</td>
+      <td>${esc(Core.formatCurrency(flow.cumulative_cash_flow_eur))}</td>
+    </tr>`).join('');
+    const sourceUrl = Core.safeHttpUrl(production.source_url);
+    const source = sourceUrl
+      ? `<a href="${esc(sourceUrl)}" target="_blank" rel="noopener noreferrer">${esc(production.model || 'PVGIS')}</a>`
+      : esc(production.model || 'PVGIS');
+    const dataPeriod = production.data_period ? ` · ${esc(production.data_period)}` : '';
+    return `<div class="parcel-solar-economics-result">
+      ${resultRows}
+      <p class="parcel-note">${esc(tr('PVGIS annual yield'))}: ${esc(Core.formatNumber(production.annual_yield_kwh_per_kwp, 0))} kWh/kWp/year · ${source}${dataPeriod}</p>
+      <details class="parcel-solar-cashflow"><summary>${esc(tr('Annual cash-flow table'))}</summary>
+        <div class="parcel-solar-cashflow-scroll"><table><thead><tr><th>${esc(tr('Year'))}</th><th>${esc(tr('Production'))}</th><th>${esc(tr('Net cash flow'))}</th><th>${esc(tr('Cumulative cash flow'))}</th></tr></thead><tbody>${cashFlowRows}</tbody></table></div>
+      </details>
+      <p class="parcel-note">${esc(tr('Scenario only. Self-consumption is a user-supplied annual share, not an hourly load simulation. Excludes taxes, incentives, financing, inverter replacement and site-specific technical constraints.'))}</p>
+    </div>`;
+  }
+
+  function bindSolarEconomics(el, ctx) {
+    const form = el.querySelector('.parcel-solar-scenario-form');
+    const status = el.querySelector('.parcel-solar-scenario-status');
+    const output = el.querySelector('.parcel-solar-scenario-output');
+    if (!form || !status || !output) return;
+    form.addEventListener('input', () => {
+      delete form.dataset.reportScenario;
+      output.innerHTML = '';
+      status.textContent = ctx.tr('Inputs changed. Calculate again to update results.');
+    });
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (!ctx.reference) {
+        status.textContent = ctx.tr('Parcel reference is unavailable.');
+        return;
+      }
+      const controls = Array.from(form.querySelectorAll('input, [type="submit"]'));
+      controls.forEach((control) => { control.disabled = true; });
+      delete form.dataset.reportScenario;
+      status.textContent = ctx.tr('Calculating PVGIS scenario…');
+      output.innerHTML = '';
+      const payload = Object.fromEntries(new FormData(form).entries());
+      Object.keys(payload).forEach((key) => { payload[key] = Number(payload[key]); });
+      const query = new URLSearchParams();
+      if (ctx.featureId != null) query.set('id', String(ctx.featureId));
+      const queryString = query.toString();
+      const url = `${API}/solar-economics/${encodeURIComponent(ctx.reference)}${queryString ? `?${queryString}` : ''}`;
+      const result = await ctx.postJson(url, payload);
+      if (!ctx.isCurrent()) return;
+      controls.forEach((control) => { control.disabled = false; });
+      if (!result.ok) {
+        const message = result.status === 504
+          ? 'PVGIS did not respond in time. Retry the calculation.'
+          : result.status === 503
+            ? 'PVGIS is temporarily unavailable for this scenario.'
+            : 'Solar scenario could not be calculated.';
+        status.textContent = ctx.tr(message);
+        return;
+      }
+      status.textContent = '';
+      form.dataset.reportScenario = JSON.stringify(payload);
+      form.dataset.reportReference = ctx.reference;
+      form.dataset.reportFeatureId = ctx.featureId == null ? '' : String(ctx.featureId);
+      output.innerHTML = solarEconomicsResultHtml(result.data, ctx.tr);
+    });
   }
 
   // ---- Section registry ---------------------------------------------------------
@@ -559,7 +720,7 @@
     },
 
     {
-      id: 'address', tab: 'property', icon: 'location-dot', title: 'Main address', eager: true,
+      id: 'address', tab: 'value', icon: 'location-dot', title: 'Main address', eager: true,
       load: async (ctx) => {
         if (!ctx.reference) return { unresolved: true };
         const result = await ctx.sisterParcelRecords();
@@ -693,7 +854,14 @@
         const quoteList = Array.isArray(data.quotes) ? data.quotes : [];
         const quotes = Core.validOmiQuotes(data, data.zone);
         if (!quoteList.length) return unavailable(tr('No OMI quotes are available for this municipality.'));
-        const meta = { source: data.source, dataset_version: data.dataset_version };
+        const zoneMeta = data.zone && data.zone.matched ? data.zone : null;
+        const meta = {
+          source: [data.source, zoneMeta && (zoneMeta.boundary_source || zoneMeta.source)]
+            .filter(Boolean).join('; '),
+          dataset_version: data.dataset_version,
+          match_method: zoneMeta && zoneMeta.match_method,
+          spatial_resolution: zoneMeta && zoneMeta.spatial_resolution,
+        };
         const allQuotes = omiQuoteTable(quoteList, tr);
         const sisterUnits = data.sister && data.sister.available === true
           ? (Array.isArray(data.sister.valuation_units) ? data.sister.valuation_units : (Array.isArray(data.sister.buildings) ? data.sister.buildings : []))
@@ -715,6 +883,9 @@
           : detected
             ? `<p class="parcel-callout" data-tone="warn">${esc(tr('Zone {zone} was detected but has no quotes available: select and check an alternative.', { zone: detected }))}</p>`
             : `<p class="parcel-callout" data-tone="muted">${esc(tr('The OMI zone was not detected automatically: check the selection.'))}</p>`;
+        const boundaryVintageNote = data.zone && data.zone.boundary_vintage
+          ? note(tr('The automatically detected OMI zone uses approximate {vintage} boundary geometry; check the selected zone.', { vintage: data.zone.boundary_vintage }))
+          : '';
         const selectable = quotes.slice(0, 80);
         const optionHtml = (quote, index) => `<option value="${index}">${esc(`${tr('Zone')} ${Core.omiQuoteLabel(quote, tr)}`)}</option>`;
         // validOmiQuotes puts the detected zone's quotes first, so they form a
@@ -736,7 +907,7 @@
         return {
           badge: quoteList.length,
           meta,
-          body: `${zoneNotice}${quoteOverflowNote}
+          body: `${zoneNotice}${boundaryVintageNote}${quoteOverflowNote}
             <div class="parcel-form">
               <label for="parcelOmiQuote">${esc(tr('OMI zone and property type'))}</label>
               <select id="parcelOmiQuote" class="parcel-input">${options}</select>
@@ -884,6 +1055,44 @@
     },
 
     {
+      id: 'solar_economics', tab: 'energy', icon: 'calculator', title: 'PV cash-flow scenario', lazy: true,
+      load: async (ctx) => ({ available: Boolean(ctx.reference && ctx.centroid) }),
+      render: (data, ctx) => {
+        const { tr } = ctx;
+        if (!data || !data.available) {
+          return unavailable(tr('A parcel geometry and reference are required to locate this PVGIS scenario.'));
+        }
+        const pvInputs = [
+          solarScenarioInput('system_kwp', 'Installed system size (kWp)', 3, 0.1, 1000, 0.1, tr),
+          solarScenarioInput('tilt_degrees', 'Panel tilt (degrees)', 30, 0, 90, 1, tr),
+          solarScenarioInput('aspect_degrees', 'Panel aspect (degrees; 0 = south)', 0, -180, 180, 1, tr),
+          solarScenarioInput('system_losses_pct', 'System losses (%)', 14, 0, 50, 0.1, tr),
+        ].join('');
+        const financialInputs = [
+          solarScenarioInput('installation_cost_eur_per_kwp', 'Installation cost (€/kWp)', 1200, 1, 10000, 1, tr),
+          solarScenarioInput('electricity_price_eur_per_kwh', 'Self-used electricity value (€/kWh)', 0.30, 0, 10, 0.01, tr),
+          solarScenarioInput('export_price_eur_per_kwh', 'Export price (€/kWh)', 0.08, 0, 10, 0.01, tr),
+          solarScenarioInput('self_consumption_pct', 'Self-consumed production (%)', 40, 0, 100, 1, tr),
+          solarScenarioInput('annual_maintenance_cost_eur_per_kwp', 'Annual maintenance (€/kWp)', 15, 0, 1000, 1, tr),
+          solarScenarioInput('annual_degradation_pct', 'Annual degradation (%)', 0.5, 0, 9.9, 0.1, tr),
+          solarScenarioInput('discount_rate_pct', 'Discount rate (%)', 4, 0, 50, 0.1, tr),
+          solarScenarioInput('lifetime_years', 'System lifetime (years)', 25, 1, 50, 1, tr),
+        ].join('');
+        return {
+          body: `<form class="parcel-solar-scenario-form">
+            <fieldset><legend>${esc(tr('PV system inputs'))}</legend><div class="parcel-solar-input-grid">${pvInputs}</div></fieldset>
+            <fieldset><legend>${esc(tr('Financial assumptions'))}</legend><div class="parcel-solar-input-grid">${financialInputs}</div></fieldset>
+            <p class="parcel-note">${esc(tr('Defaults are illustrative. PVGIS uses a building-mounted reference system at the parcel centroid; you provide system size, tilt, aspect and losses. This does not estimate usable roof area or installation feasibility.'))}</p>
+            <button class="parcel-solar-calculate" type="submit">${esc(tr('Calculate scenario'))}</button>
+          </form>
+          <p class="parcel-solar-scenario-status" role="status" aria-live="polite"></p>
+          <div class="parcel-solar-scenario-output" aria-live="polite"></div>`,
+        };
+      },
+      bind: (el, _data, ctx) => bindSolarEconomics(el, ctx),
+    },
+
+    {
       id: 'risks', tab: 'territory', icon: 'triangle-exclamation', title: 'Environmental risks', eager: true,
       load: async (ctx) => {
         const municipality = await ctx.municipality();
@@ -904,7 +1113,11 @@
       render: (data, ctx) => {
         const { tr } = ctx;
         if (data && data.unresolved) return empty(tr('The municipality is not identified, so risks cannot be retrieved.'));
-        if (!data || (!data.seismic && !data.hydrogeological && !data.pga)) return unavailable(tr('No risk data is available for this municipality.'));
+        const rawCompositeScore = Core.toNumber(data && data.composite_score);
+        const compositeScore = rawCompositeScore !== null && rawCompositeScore >= 0 && rawCompositeScore <= 100
+          ? rawCompositeScore
+          : null;
+        if (!data || (!data.seismic && !data.hydrogeological && !data.pga && compositeScore === null)) return unavailable(tr('No risk data is available for this municipality.'));
         const levelLabel = { high: tr('High'), medium: tr('Medium'), low: tr('Low'), unknown: '—' };
         const hydro = data.hydrogeological;
         const pga = data.pga;
@@ -920,7 +1133,50 @@
           : pga && pga.available && !pga.matched
             ? tr('No MPS04 grid point was found within 5 km.')
             : tr('Not available on this server.');
+        const componentLabels = {
+          seismic_zone: tr('DPC seismic zone component'),
+          landslide_p3_p4_area_pct: tr('Municipal landslide P3+P4 area component'),
+          flood_p3_area_pct: tr('Municipal flood P3 area component'),
+        };
+        const scoreComponents = data && data.composite_score_components && typeof data.composite_score_components === 'object'
+          ? Object.entries(data.composite_score_components)
+          : [];
+        const componentRows = scoreComponents.map(([key, value]) => {
+          const score = Core.toNumber(value && value.score);
+          const zone = value && value.zone != null ? ` · ${tr('Zone {n}', { n: value.zone })}` : '';
+          const source = value && value.source ? ` · ${value.source}` : '';
+          return [componentLabels[key] || key, score === null
+            ? text(source || '—')
+            : text(`${Core.formatNumber(score, 1)}/100${zone}${source}`)];
+        });
+        const missingScoreComponents = Array.isArray(data && data.composite_score_missing_components)
+          ? data.composite_score_missing_components
+          : [];
+        const invalidScoreComponents = Array.isArray(data && data.composite_score_invalid_components)
+          ? data.composite_score_invalid_components
+          : [];
+        const excludedScoreComponents = [...new Set([...missingScoreComponents, ...invalidScoreComponents])];
+        const scoreMethod = compositeScore === null
+          ? ''
+          : `<details class="parcel-risk-score-method"><summary>${esc(tr('Score method and components'))}</summary>
+            ${note(tr(data.composite_score_formula || 'Equal-weight average of available components.'))}
+            ${rows([
+              [tr('Index version'), text(data.composite_score_version)],
+              [tr('Available components'), data.composite_score_component_count == null || data.composite_score_component_total == null
+                ? null
+                : `${Core.formatNumber(data.composite_score_component_count, 0)} / ${Core.formatNumber(data.composite_score_component_total, 0)}`],
+              ...componentRows,
+            ])}
+            ${excludedScoreComponents.length
+              ? note(tr('Excluded components: {items}', { items: excludedScoreComponents.map((key) => componentLabels[key] || key).join(', ') }))
+              : ''}
+            ${note(tr(data.composite_score_interpretation || 'Municipality-level context only; not a parcel risk estimate or probability.'))}
+          </details>`;
         return {
+          status: compositeScore === null
+            ? null
+            : tr('Municipal risk {score}/100', { score: Core.formatNumber(compositeScore, 1) }),
+          statusKind: compositeScore === null ? null : 'risk-score',
           meta: {
             source: 'ISPRA IdroGEO / DPC via aecs4u-stats',
             additional_source: 'INGV MPS04 seismic hazard model',
@@ -929,18 +1185,28 @@
             spatial_resolution: 'municipality plus parcel-centroid nearest grid point',
             match_method: 'municipality lookup; MPS04 nearest native grid point',
           },
-          body: `${note(tr('The seismic zone and flood or landslide shares describe the whole municipality. PGA is a parcel-centroid estimate from the nearest INGV MPS04 grid point, not an interpolated or site-specific value.'))}${note(tr('PGA source: INGV MPS04 under CC BY 4.0. The estimate uses a 10 percent exceedance probability in 50 years and the nearest native grid point; no interpolation is applied.'))}${rows([
+          body: `${note(tr('The seismic zone, composite risk score, and flood or landslide shares describe the whole municipality. PGA is a parcel-centroid estimate from the nearest INGV MPS04 grid point, not an interpolated or site-specific value.'))}${note(tr('PGA source: INGV MPS04 under CC BY 4.0. The estimate uses a 10 percent exceedance probability in 50 years and the nearest native grid point; no interpolation is applied.'))}${rows([
+            [tr('Municipal composite risk score'), compositeScore === null
+              ? null
+              : `<meter class="parcel-risk-composite-meter" min="0" max="100" value="${compositeScore}" aria-label="${esc(tr('Municipal composite risk score'))}">${Core.formatNumber(compositeScore, 1)}</meter> <strong>${Core.formatNumber(compositeScore, 1)}/100</strong>`],
             [tr('Seismic zone'), data.seismic ? text(Core.seismicLabel(data.seismic.zone, tr)) : null],
             [tr('PGA (10 percent in 50 years)'), pgaValue],
             [tr('Flood hazard (P3)'), hydro ? share(flood) : null],
             [tr('Landslide hazard (P4)'), hydro ? share(landslide) : null],
-          ])}`,
+          ])}${scoreMethod}`,
         };
       },
-      // The strip shows the seismic zone and the municipal flood/landslide class as soon as they are known.
+      // The strip shows the municipal flood/landslide class and composite score when available.
       bind: (el, data, ctx) => {
         const { tr } = ctx;
-        if (data && data.seismic && Core.isPresent(data.seismic.zone)) ctx.setStat('seismic', tr('Zone {n}', { n: data.seismic.zone }));
+        const compositeScore = Core.toNumber(data && data.composite_score);
+        if (compositeScore !== null && compositeScore >= 0 && compositeScore <= 100) {
+          ctx.setStat('composite-risk', `${Core.formatNumber(compositeScore, 1)}/100`, {
+            score: compositeScore,
+            ariaLabel: tr('Municipal composite risk score'),
+            title: tr('This score describes municipal hazard context, not parcel risk.'),
+          });
+        }
         const hazard = data ? Core.hydroHazardSummary(data.hydrogeological) : null;
         if (!hazard) return;
         const levelLabel = { high: tr('High'), medium: tr('Medium'), low: tr('Low') }[hazard.level];
@@ -987,6 +1253,387 @@
             ...summaryRows(tr('Flood: highest mapped scenario'), data.flood || {}),
           ])}${note(tr('Class areas can overlap and are not additive. These are intersections with the mapped ISPRA polygons. Source polygons: CC BY-SA 4.0.'))}`
             + (data.coverage_complete ? '' : note(tr('The hazard query is partial because its feature limit was reached or some polygon geometries could not be measured.'))),
+        };
+      },
+    },
+
+    {
+      id: 'protection-constraints', tab: 'territory', icon: 'landmark', title: 'Protection constraints', lazy: true,
+      load: async (ctx) => {
+        if (!ctx.reference || ctx.featureId == null) return { unresolved: true };
+        const query = new URLSearchParams({ id: String(ctx.featureId) });
+        const result = await ctx.fetchJson(`${API}/parcel/constraints/${encodeURIComponent(ctx.reference)}?${query}`);
+        if (!result.ok) throw Object.assign(new Error('Protection constraints unavailable'), { status: result.status });
+        return result.data;
+      },
+      render: (data, ctx) => {
+        const { tr } = ctx;
+        if (data && data.unresolved) return empty(tr('The selected parcel has no canonical feature identifier.'));
+        if (!data || data.status !== 'published') {
+          return unavailable(tr('Protection source tables are not available on this server.'));
+        }
+        const coverage = data.coverage || {};
+        const coverageText = (type) => coverage[type] === 'covered'
+          ? tr('The full parcel is covered by this source.')
+          : tr('Coverage is not confirmed; no matching record does not mean no protection.');
+        const typeLabel = (type) => type === 'landscape'
+          ? tr('Landscape constraints')
+          : tr('Cultural heritage protections');
+        const records = (Array.isArray(data.constraints) ? data.constraints : []).map((item) => {
+          const title = item.source_label || item.act_reference || item.category || typeLabel(item.protection_type);
+          const url = Core.safeHttpUrl(item.source_url);
+          const sourceLink = url
+            ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(tr('Open source record'))}</a>`
+            : null;
+          const overlap = item.overlap_ratio == null
+            ? item.geometry_valid === false
+              ? tr('Area overlap is unavailable because the source geometry is invalid.')
+              : tr('Point record; area overlap is not applicable.')
+            : `${Core.formatNumber(Number(item.overlap_ratio) * 100, 1)}%`;
+          return `<article class="parcel-protection-record"><h4>${esc(title)}</h4>${rows([
+            [tr('Protection type'), text(typeLabel(item.protection_type))],
+            [tr('Legal category'), text(item.category)],
+            [tr('Act or decree'), text(item.act_reference)],
+            [tr('Parcel overlap'), text(overlap)],
+            [tr('Source'), text(item.source)],
+            [tr('Source record'), sourceLink],
+          ])}${item.is_binding === false ? note(tr('Catalogue record; not a binding constraint.')) : ''}</article>`;
+        }).join('');
+        const coverageRows = [
+          ['landscape', tr('Landscape source coverage')],
+          ['cultural_heritage', tr('Cultural heritage source coverage')],
+        ].map(([type, label]) => [label, text(coverageText(type))]);
+        const noMatch = records
+          ? ''
+          : note(tr('No intersecting source records were returned. Check the coverage status above before interpreting this as no constraint.'));
+        const truncated = data.truncated
+          ? note(tr('More than 100 source records intersect this parcel; the list is truncated.'))
+          : '';
+        return {
+          meta: { source: data.source, match_method: 'parcel polygon intersection' },
+          body: `${rows(coverageRows)}${records || noMatch}${truncated}${note(tr('Source data, not a legal certificate; confirm with the competent Soprintendenza.'))}`,
+        };
+      },
+    },
+
+    {
+      id: 'terrain', tab: 'territory', icon: 'mountain', title: 'Terrain', lazy: true,
+      load: async (ctx) => {
+        const reference = ctx.reference
+          || ctx.props.national_cadastral_reference
+          || ctx.props.NATIONALCADASTRALREFERENCE;
+        if (!reference) return { unresolved: true };
+        const query = new URLSearchParams();
+        if (ctx.featureId != null) query.set('id', ctx.featureId);
+        const suffix = query.toString() ? `?${query}` : '';
+        const result = await ctx.fetchJson(`${API}/terrain/${encodeURIComponent(reference)}${suffix}`);
+        if (!result.ok) throw Object.assign(new Error('TINITALY terrain data unavailable'), { status: result.status });
+        return result.data;
+      },
+      render: (block, ctx) => {
+        const { tr } = ctx;
+        if (block && block.unresolved) return empty(tr('The parcel identifier is not available.'));
+        const data = block && block.data;
+        const meta = block ? {
+          source: block.source,
+          source_url: block.source_url,
+          dataset_version: block.dataset_version,
+          data_vintage: block.data_vintage,
+          attribution: block.attribution,
+          license: block.license,
+          spatial_resolution: block.spatial_resolution,
+          match_method: block.match_method,
+        } : null;
+        if (!block || block.available !== true || !data) {
+          const message = block && block.reason === 'not_built'
+            ? tr('TINITALY terrain data are not installed for this region.')
+            : block && block.reason === 'no_matching_raster'
+              ? tr('No valid TINITALY elevation cells were found for this parcel.')
+              : tr('Terrain data are temporarily unavailable.');
+          return { ...unavailable(message), meta };
+        }
+        const metres = (value) => value == null ? null : `${Core.formatNumber(value, 1)} m`;
+        const degrees = (value) => value == null ? null : `${Core.formatNumber(value, 1)}°`;
+        const aspect = data.aspect_predominant === 'flat' ? tr('Flat') : data.aspect_predominant;
+        const fallbackNote = data.match_method === 'representative_point_fallback'
+          ? note(tr('A representative point was sampled because no raster cell centre falls inside this parcel.'))
+          : '';
+        return {
+          badge: data.elevation_mean_m == null ? null : `${Core.formatNumber(data.elevation_mean_m, 0)} m`,
+          meta,
+          body: `${rows([
+            [tr('Minimum elevation'), metres(data.elevation_min_m)],
+            [tr('Mean elevation'), metres(data.elevation_mean_m)],
+            [tr('Maximum elevation'), metres(data.elevation_max_m)],
+            [tr('Elevation range'), metres(data.ruggedness_index_m)],
+            [tr('Elevation standard deviation'), metres(data.elevation_std_m)],
+            [tr('Mean slope'), degrees(data.slope_mean_deg)],
+            [tr('Maximum slope'), degrees(data.slope_max_deg)],
+            [tr('Mean terrain ruggedness (TRI)'), metres(data.tri_mean_m)],
+            [tr('Predominant aspect'), aspect],
+            [tr('Mean aspect'), degrees(data.aspect_mean_deg)],
+            [tr('Valid raster samples'), data.sample_count],
+            [tr('Coverage'), data.coverage_pct == null ? null : `${Core.formatNumber(data.coverage_pct, 1)}%`],
+          ])}${fallbackNote}${note(tr('TINITALY is a 10 m bare-earth terrain model. It is context, not a parcel survey or engineering assessment.'))}`,
+        };
+      },
+    },
+
+    {
+      id: 'land-cover', tab: 'territory', icon: 'leaf', title: 'Land cover', lazy: true,
+      load: async (ctx) => {
+        const reference = ctx.reference
+          || ctx.props.national_cadastral_reference
+          || ctx.props.NATIONALCADASTRALREFERENCE;
+        if (!reference) return { unresolved: true };
+        const query = new URLSearchParams();
+        if (ctx.featureId != null) query.set('id', ctx.featureId);
+        const suffix = query.toString() ? `?${query}` : '';
+        const result = await ctx.fetchJson(`${API}/land-cover/${encodeURIComponent(reference)}${suffix}`);
+        if (!result.ok) throw Object.assign(new Error('CORINE data unavailable'), { status: result.status });
+        return result.data;
+      },
+      render: (block, ctx) => {
+        const { tr } = ctx;
+        if (block && block.unresolved) return empty(tr('The parcel identifier is not available.'));
+        const data = block && block.data;
+        const meta = block ? {
+          source: block.source,
+          source_url: block.source_url,
+          dataset_version: block.dataset_version,
+          data_vintage: block.data_vintage,
+          attribution: block.attribution,
+          spatial_resolution: block.spatial_resolution,
+          match_method: block.match_method,
+        } : null;
+        if (!block || block.available !== true || !data) {
+          const message = block && block.reason === 'not_built'
+            ? tr('CORINE Land Cover is not installed for this region.')
+            : block && block.reason === 'no_matching_polygon'
+              ? tr('No CORINE class is mapped at this parcel.')
+              : tr('Land-cover data are temporarily unavailable.');
+          return { ...unavailable(message), meta };
+        }
+        const locale = (root.document && root.document.documentElement.lang || 'it').toLowerCase();
+        const className = (item) => locale.startsWith('it')
+          ? (item.class_name_it || item.class_name_en || item.class_code)
+          : (item.class_name_en || item.class_name_it || item.class_code);
+        const distribution = Array.isArray(data.distribution) ? data.distribution : [];
+        const otherClasses = distribution.length > 1
+          ? `<details class="parcel-land-cover-distribution"><summary>${esc(tr('Other mapped classes'))}</summary><ul>${distribution.slice(1, 6).map((item) => `<li>${esc(item.class_code)} · ${esc(className(item))}: ${Core.formatNumber(item.share_of_parcel_pct, 1)}%</li>`).join('')}</ul></details>`
+          : '';
+        return {
+          badge: data.class_code ? `${data.class_code}` : null,
+          meta,
+          body: `${rows([
+            [tr('Majority class'), className(data)],
+            [tr('Class code'), data.class_code],
+            [tr('Share of parcel'), data.class_share_of_parcel_pct == null ? null : `${Core.formatNumber(data.class_share_of_parcel_pct, 1)}%`],
+            [tr('Mapped coverage'), data.coverage_pct == null ? null : `${Core.formatNumber(data.coverage_pct, 1)}%`],
+          ])}${otherClasses}${note(tr('CLC 2018 has a 25 ha minimum mapping unit and a 100 m minimum width; this is broad land-cover context, not a parcel survey or building classification.'))}`,
+        };
+      },
+    },
+
+    {
+      id: 'building-footprints', tab: 'property', icon: 'building', title: 'Building footprint coverage', lazy: true,
+      load: async (ctx) => {
+        const reference = ctx.reference
+          || ctx.props.national_cadastral_reference
+          || ctx.props.NATIONALCADASTRALREFERENCE;
+        if (!reference) return { unresolved: true };
+        const query = new URLSearchParams();
+        if (ctx.featureId != null) query.set('id', ctx.featureId);
+        const suffix = query.toString() ? `?${query}` : '';
+        const result = await ctx.fetchJson(`${API}/building-footprints/${encodeURIComponent(reference)}${suffix}`);
+        if (!result.ok) throw Object.assign(new Error('OSM building footprints unavailable'), { status: result.status });
+        return result.data;
+      },
+      render: (block, ctx) => {
+        const { tr } = ctx;
+        if (block && block.unresolved) return empty(tr('The parcel identifier is not available.'));
+        const data = block && block.data;
+        const meta = block ? {
+          source: block.source,
+          source_url: block.source_url,
+          dataset_version: block.dataset_version,
+          updated_at: block.updated_at,
+          attribution: block.attribution,
+          license: block.license,
+          terms_url: block.terms_url,
+          spatial_resolution: block.spatial_resolution,
+          match_method: block.match_method,
+        } : null;
+        if (!block || block.available !== true || !data) {
+          const message = block && block.reason === 'not_built'
+            ? tr('OSM building footprints are not installed for this region.')
+            : tr('Building-footprint data are temporarily unavailable.');
+          return { ...unavailable(message), meta };
+        }
+        return {
+          badge: data.building_count == null ? null : `${Core.formatNumber(data.building_count, 0)}`,
+          meta,
+          body: `${rows([
+            [tr('Mapped OSM buildings'), Core.formatNumber(data.building_count, 0)],
+            [tr('Footprint area inside parcel'), `${Core.formatNumber(data.footprint_area_sqm, 1)} m²`],
+            [tr('Parcel area covered by footprints'), `${Core.formatNumber(data.coverage_pct, 2)}%`],
+          ])}${note(tr('OpenStreetMap building footprints are community mapped; coverage may be incomplete. Areas are clipped to the parcel, and overlapping polygons are counted once.'))}`,
+        };
+      },
+      bind: (_el, block, ctx) => {
+        const data = block && block.data;
+        if (block && block.available === true && data && data.building_count != null) {
+          ctx.setStat('buildings', Core.formatNumber(data.building_count, 0), {
+            title: ctx.tr('OSM footprint count; mapped coverage may be incomplete.'),
+          });
+        }
+      },
+    },
+
+    {
+      id: 'anncsu-addresses', tab: 'property', icon: 'location-dot', title: 'Civic addresses (ANNCSU)', lazy: true,
+      load: async (ctx) => {
+        const reference = ctx.reference
+          || ctx.props.national_cadastral_reference
+          || ctx.props.NATIONALCADASTRALREFERENCE;
+        if (!reference) return { unresolved: true };
+        const query = new URLSearchParams();
+        if (ctx.featureId != null) query.set('id', ctx.featureId);
+        const suffix = query.toString() ? `?${query}` : '';
+        const result = await ctx.fetchJson(`${API}/anncsu-addresses/${encodeURIComponent(reference)}${suffix}`);
+        if (!result.ok) throw Object.assign(new Error('ANNCSU civic addresses unavailable'), { status: result.status });
+        return result.data;
+      },
+      render: (block, ctx) => {
+        const { tr } = ctx;
+        if (block && block.unresolved) return empty(tr('The parcel identifier is not available.'));
+        const data = block && block.data;
+        const meta = block ? {
+          source: block.source,
+          source_url: block.source_url,
+          dataset_version: block.dataset_version,
+          updated_at: block.updated_at,
+          attribution: block.attribution,
+          license: block.license,
+          license_url: block.license_url,
+          spatial_resolution: block.spatial_resolution,
+          coordinate_crs: block.coordinate_crs,
+          match_method: block.match_method,
+        } : null;
+        if (!block || block.available !== true || !data) {
+          const message = block && block.reason === 'not_built'
+            ? tr('ANNCSU address points are not installed for this region.')
+            : tr('ANNCSU civic-address data are temporarily unavailable.');
+          return { ...unavailable(message), meta };
+        }
+        const addresses = Array.isArray(data.addresses) ? data.addresses : [];
+        const addressRows = addresses.map((item, index) => [
+          addresses.length === 1 ? tr('Civic address') : tr('Civic address {n}', { n: index + 1 }),
+          item.address,
+        ]);
+        const methodLabels = {
+          '1': tr('Field survey, estimated accuracy < 5 m'),
+          '2': tr('Field survey, estimated accuracy ≥ 5 m'),
+          '3': tr('Indirect mapping, estimated accuracy < 5 m'),
+          '4': tr('Indirect mapping, estimated accuracy ≥ 5 m'),
+          '5': tr('Indirect mapping via Portale per i Comuni'),
+        };
+        if (!addresses.length) {
+          addressRows.push([tr('Civic address match'), data.status === 'no_geocoded_match'
+            ? tr('No geocoded ANNCSU point matched this parcel.')
+            : tr('No address point is available for this parcel.')]);
+        }
+        const rawCoverage = data.municipality_coordinate_coverage_pct;
+        const coverage = rawCoverage == null ? null : Number(rawCoverage);
+        const coverageStatus = ['full', 'partial', 'unknown'].includes(
+          String(data.municipality_coordinate_coverage_status || '').toLowerCase(),
+        )
+          ? String(data.municipality_coordinate_coverage_status).toLowerCase()
+          : (Number.isFinite(coverage) ? (coverage >= 99.99 ? 'full' : 'partial') : 'unknown');
+        const coverageLabels = {
+          full: tr('Municipal coordinate coverage is nearly complete'),
+          partial: tr('Municipal coordinate coverage is partial'),
+          unknown: tr('Municipal coordinate coverage is unknown'),
+        };
+        const coverageValue = Number.isFinite(coverage)
+          ? `${coverageLabels[coverageStatus]} · ${Core.formatNumber(coverage, 2)}%`
+          : coverageLabels[coverageStatus];
+        addressRows.push([tr('Municipality coordinate coverage'), coverageValue]);
+        addresses.forEach((item, index) => {
+          if (item.coordinate_method_label || item.coordinate_method) addressRows.push([
+            tr('Coordinate method {n}', { n: index + 1 }),
+            methodLabels[String(item.coordinate_method)] || item.coordinate_method_label || item.coordinate_method,
+          ]);
+        });
+        const partial = data.status === 'partial' || data.candidate_limit_reached || data.truncated;
+        return {
+          badge: addresses.length ? `${Core.formatNumber(data.address_count ?? addresses.length, 0)}` : null,
+          meta,
+          body: `${rows(addressRows)}${note(tr('ANNCSU points are spatially matched to the parcel. Municipalities may not provide coordinates for every civic address; no geocoded match does not mean the parcel has no address.'))}`
+            + (partial ? note(tr('The spatial search reached a result limit; the returned list may be incomplete.')) : ''),
+        };
+      },
+    },
+
+    {
+      id: 'coastal_erosion', tab: 'territory', icon: 'water', title: 'Coastal change (2006–2020)', lazy: true,
+      load: async (ctx) => {
+        if (!ctx.reference) return { unresolved: true };
+        const query = new URLSearchParams();
+        if (ctx.featureId != null) query.set('id', ctx.featureId);
+        const queryString = query.toString();
+        const suffix = queryString ? `?${queryString}` : '';
+        const result = await ctx.fetchJson(`${API}/parcel/coastal-erosion/${encodeURIComponent(ctx.reference)}${suffix}`);
+        if (!result.ok) throw Object.assign(new Error('ISPRA coastal-change data unavailable'), { status: result.status });
+        return result.data;
+      },
+      render: (data, ctx) => {
+        const { tr } = ctx;
+        if (data && data.unresolved) return empty(tr('The parcel geometry is not available.'));
+        const meta = data ? {
+          source: data.source,
+          source_url: data.source_url,
+          dataset_version: data.dataset_version,
+          data_vintage: data.data_vintage,
+          updated_at: data.updated_at,
+          license: data.license,
+          spatial_resolution: data.spatial_resolution,
+          match_method: data.match_method,
+        } : null;
+        if (!data || !data.available) {
+          return { ...unavailable(tr('Coastal change data are not available on this server.')), meta };
+        }
+        const classLabels = {
+          Erosione: tr('Erosion'),
+          Avanzamento: tr('Advance'),
+          Stabilità: tr('Stable'),
+          'Nessuna informazione': tr('No information'),
+        };
+        const counts = Object.entries(data.classification_counts || {}).map(([name, count]) =>
+          [classLabels[name] || name, count]);
+        const nearest = data.nearest_segment;
+        const segmentRows = Array.isArray(data.segments) ? data.segments.slice(0, 8).map((segment, index) => [
+          `${tr('Segment')} ${index + 1}`,
+          `${classLabels[segment.classification] || segment.classification} · ${Core.formatNumber(segment.distance_m, 1)} m`,
+        ]) : [];
+        const caveat = tr('ISPRA classifies shoreline change observed from 2006 to 2020. This historic layer is not a current erosion forecast. No nearby mapped segment does not establish absence of erosion.');
+        if (!data.matched) {
+          return {
+            meta,
+            body: `${note(tr('No mapped shoreline-change segment was found within 1 km. Coverage is unknown.'))}${note(caveat)}`,
+          };
+        }
+        return {
+          badge: data.segment_count,
+          meta,
+          body: `${rows([
+            [tr('Nearest mapped segment'), nearest ? `${classLabels[nearest.classification] || nearest.classification} · ${Core.formatNumber(nearest.distance_m, 1)} m` : null],
+            [tr('Mapped segment classes within 1 km'), counts.length ? counts.map(([name, count]) => `${text(name)}: ${count}`).join(', ') : null],
+            [tr('Source positional accuracy'), data.positional_accuracy_m != null ? `${Core.formatNumber(data.positional_accuracy_m, 1)} m` : null],
+            [tr('Movement threshold'), data.classification_threshold_m != null ? `${Core.formatNumber(data.classification_threshold_m, 1)} m` : null],
+            ...segmentRows,
+          ])}${note(caveat)}${data.coverage_note ? note(tr(data.coverage_note)) : ''}`
+            + (data.truncated ? note(tr('The local query reached its candidate limit; this result is partial.')) : ''),
         };
       },
     },
@@ -1194,6 +1841,19 @@
         const { tr } = ctx;
         if (!data) return unavailable(tr('No IRPEF data is available for this municipality.'));
         const averages = data.income_reference_averages || {};
+        const storedBenchmark = (data.benchmarks || {}).average_income_eur || {};
+        const nationalAverage = averages.nation && averages.nation.mean_taxable_income_eur;
+        const benchmarkValue = Core.toNumber(
+          storedBenchmark.value ?? data.benchmark_average_income_eur ?? nationalAverage
+        );
+        const benchmarkYear = Core.toNumber(storedBenchmark.year ?? data.year);
+        const incomeBenchmark = benchmarkValue != null && benchmarkYear != null
+          ? {
+            label: storedBenchmark.label || 'Italy mean taxable income per taxpayer',
+            value: benchmarkValue,
+            year: benchmarkYear,
+          }
+          : null;
         const averageValue = (scope, fallback) => {
           const value = averages[scope] && averages[scope].mean_taxable_income_eur;
           const resolved = value == null ? fallback : value;
@@ -1203,6 +1863,7 @@
           const name = averages[scope] && averages[scope].name;
           return name ? `${tr(key)} (${name})` : tr(key);
         };
+        const municipalityAverage = averageValue('municipality', data.mean_taxable_income_eur);
         const averageSeries = [
           { key: 'municipality', label: averageLabel('Municipality average', 'municipality'), fallback: data.mean_taxable_income_eur },
           { key: 'province', label: averageLabel('Province average', 'province') },
@@ -1232,7 +1893,9 @@
           body: `${rows([
             [tr('Taxpayers'), data.taxpayers != null ? Core.formatNumber(data.taxpayers) : null],
             [averageLabel('Municipality average', 'municipality'),
-              averageValue('municipality', data.mean_taxable_income_eur)],
+              municipalityAverage == null
+                ? null
+                : `${municipalityAverage}${benchmarkInline(incomeBenchmark, (value) => `€ ${Core.formatNumber(value)}`, tr)}`],
             [averageLabel('Province average', 'province'), averageValue('province', null)],
             [averageLabel('Region average', 'region'), averageValue('region', null)],
             [averageLabel('National average', 'nation'), averageValue('nation', null)],
@@ -1242,6 +1905,57 @@
           ])}${averageBars}${bars}${inequality.grouped_gini_estimate != null
             ? note(tr('Grouped Gini estimate on a 0–1 scale from eight income brackets. The lowest bracket is represented by €0 and the open-ended top bracket by €150,000; within-bracket inequality is not observed.'))
             : ''}`,
+        };
+      },
+    },
+
+    {
+      id: 'nightlights', tab: 'context', icon: 'moon', title: 'Night lights', lazy: true,
+      load: readModelOrUnavailable,
+      render: (readModel, ctx) => {
+        const { tr } = ctx;
+        const block = (readModel && readModel.blocks && readModel.blocks.nightlights) || null;
+        const data = (block && block.data) || {};
+        const meta = block ? {
+          source: block.source,
+          source_url: block.source_url,
+          dataset_version: block.dataset_version,
+          data_vintage: block.data_vintage,
+          updated_at: block.updated_at,
+          license: block.license,
+          attribution: block.attribution,
+          spatial_resolution: block.spatial_resolution,
+          match_method: data.match_method || block.match_method,
+        } : null;
+        if (!block || block.available !== true) {
+          const message = !block && readModel && readModel.unavailable
+            ? tr('The parcel data profile is temporarily unavailable.')
+            : block && block.reason !== 'not_built'
+              ? tr('Night-light data are temporarily unavailable.')
+              : tr('Annual VIIRS night-light data are not installed on this server.');
+          return { ...unavailable(message), meta };
+        }
+        if (data.matched !== true || data.intensity_nw_cm2_sr == null) {
+          const message = data.reason === 'outside_raster_coverage'
+            ? tr('This location falls outside the imported night-light raster coverage.')
+            : tr('No good-quality night-light pixel is available for this parcel.');
+          const noSample = empty(message);
+          return { ...noSample, meta, body: `${noSample.body}${note(tr('Missing or out-of-coverage data are not treated as zero.'))}` };
+        }
+        const method = data.match_method === 'representative_point_pixel'
+          ? tr('Representative-point pixel') : tr('Mean of parcel pixels');
+        const partialNote = block.coverage === 'partial'
+          ? note(tr('The parcel is smaller than the raster grid or some pixels were excluded by the quality filter.'))
+          : '';
+        return {
+          badge: `${Core.formatNumber(data.intensity_nw_cm2_sr, 2)} nW/(cm² sr)`,
+          meta,
+          body: `${rows([
+            [tr('Annual radiance'), `${Core.formatNumber(data.intensity_nw_cm2_sr, 4)} nW/(cm² sr)`],
+            [tr('Observation year'), data.data_vintage || block.data_vintage],
+            [tr('Good-quality pixels'), Core.formatNumber(data.valid_pixel_count, 0)],
+            [tr('Sampling method'), method],
+          ])}${partialNote}${note(tr('NASA Black Marble uses a roughly 460 m grid. This annual radiance is a broad-area proxy and may not represent lighting on the parcel or a building.'))}`,
         };
       },
     },
@@ -1363,8 +2077,11 @@
               const block = blocks[name] || {};
               const coverage = block.coverage ?? block.coverage_status;
               const partial = block.available === true && coverage === 'partial';
+              const unknownCoverage = block.available === true && coverage === 'unknown';
               const status = block.available !== true
                 ? badge('unknown', tr('Not available'))
+                : unknownCoverage
+                  ? badge('unknown', tr('Coverage unknown'))
                 : partial
                   ? badge('medium', tr('Partial coverage'))
                   : badge('low', tr('Available'));
@@ -1783,14 +2500,14 @@
 
   function bindOmi(el, data, ctx) {
     const { tr } = ctx;
-    const quotes = Core.validOmiQuotes(data, data.zone).slice(0, 80);
+    const allValidQuotes = Core.validOmiQuotes(data, data.zone);
+    const quotes = allValidQuotes.slice(0, 80);
     const select = el.querySelector('#parcelOmiQuote');
     const areaInput = el.querySelector('#parcelOmiArea');
     const quoteRows = el.querySelector('#parcelOmiQuoteRows');
     const estimate = el.querySelector('#parcelOmiEstimate');
     const history = el.querySelector('#parcelOmiHistory');
     if (!select || !areaInput || !quoteRows || !estimate || !history || !quotes.length) return;
-    const benchmark = Core.quoteBenchmark(quotes);
     let estimateTimer = null;
     let estimateToken = 0;
     let historyToken = 0;
@@ -1813,6 +2530,7 @@
 
     function showQuote() {
       const quote = current();
+      const benchmark = Core.quoteBenchmark(allValidQuotes, quote);
       const metrics = quote.derived_metrics || {};
       const yieldPct = Core.toNumber(metrics.gross_rental_yield_pct);
       const percentile = Core.toNumber(metrics.zone_percentile_pct);
@@ -1931,8 +2649,11 @@
     navigationListenersBound: false,
   };
 
-  function stripCell(key, label) {
-    return `<div class="parcel-stat" data-stat="${key}"><span class="parcel-stat-label">${esc(label)}</span><strong class="parcel-stat-value">—</strong></div>`;
+  function stripCell(key, label, options = {}) {
+    const meter = options.meter
+      ? '<meter class="parcel-stat-meter" min="0" max="100" value="0" hidden></meter>'
+      : '';
+    return `<div class="parcel-stat" data-stat="${key}"><span class="parcel-stat-label">${esc(label)}</span><strong class="parcel-stat-value"><span data-stat-text>—</span>${meter}</strong></div>`;
   }
 
   function sectionShell(section, tr) {
@@ -1965,9 +2686,20 @@
         const stat = view.statStrip && view.statStrip.querySelector(`[data-stat="${key}"]`);
         const cell = stat && stat.querySelector('.parcel-stat-value');
         if (!cell) return;
-        cell.textContent = value;
+        const textCell = cell.querySelector('[data-stat-text]') || cell;
+        textCell.textContent = value;
         if (extra && extra.title) stat.title = extra.title;
         if (extra && extra.level) stat.dataset.level = extra.level;
+        const meter = cell.querySelector('meter');
+        if (meter) {
+          const score = extra && Number(extra.score);
+          const hasScore = Number.isFinite(score) && score >= 0 && score <= 100;
+          meter.hidden = !hasScore;
+          if (hasScore) {
+            meter.value = score;
+            meter.setAttribute('aria-label', String(extra.ariaLabel || ''));
+          }
+        }
       },
       fetchJson: async (url) => {
         const request = new AbortController();
@@ -1983,9 +2715,12 @@
         } finally { clearTimeout(timer); }
       },
       postJson: async (url, payload) => {
+        const request = new AbortController();
+        const timer = setTimeout(() => request.abort(), POST_REQUEST_TIMEOUT_MS);
+        controller.signal.addEventListener('abort', () => request.abort(), { once: true });
         try {
           const response = await fetch(url, {
-            method: 'POST', signal: controller.signal,
+            method: 'POST', signal: request.signal,
             headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(payload),
           });
           let data = null;
@@ -1993,7 +2728,7 @@
           return { ok: response.ok, status: response.status, data };
         } catch (_) {
           return { ok: false, status: 0, data: null };
-        }
+        } finally { clearTimeout(timer); }
       },
       memo: (key, factory) => {
         if (!memo.has(key)) memo.set(key, factory());
@@ -2056,6 +2791,8 @@
     if (status) {
       status.textContent = statusText;
       status.hidden = !statusText;
+      if (result.statusKind) status.dataset.kind = result.statusKind;
+      else delete status.dataset.kind;
     }
     if (result.unavailable) el.dataset.coverage = 'unavailable';
     else delete el.dataset.coverage;
@@ -2100,86 +2837,6 @@
     view.pending.set(section.id, task);
     try { await task; }
     finally { if (view.pending.get(section.id) === task) view.pending.delete(section.id); }
-  }
-
-  function reportSectionText(body) {
-    const clone = body.cloneNode(true);
-    clone.querySelectorAll('details').forEach((details) => { details.open = true; });
-    clone.querySelectorAll('svg[aria-label]').forEach((svg) => {
-      svg.replaceWith(root.document.createTextNode(svg.getAttribute('aria-label')));
-    });
-    clone.querySelectorAll('select').forEach((select) => {
-      const selected = [...select.options].filter((option) => option.selected).map((option) => option.textContent.trim()).join(', ');
-      select.replaceWith(root.document.createTextNode(selected));
-    });
-    clone.querySelectorAll('input, textarea').forEach((input) => {
-      input.replaceWith(root.document.createTextNode(input.value || ''));
-    });
-    // innerText preserves the visual row breaks from lists and tables. Render
-    // off-screen so it remains independent from whether the source card is
-    // currently collapsed, without exposing the clone to assistive tech.
-    const host = root.document.createElement('div');
-    host.setAttribute('aria-hidden', 'true');
-    host.style.cssText = 'position:fixed;left:-20000px;top:0;width:800px;pointer-events:none;';
-    host.append(clone);
-    root.document.body.append(host);
-    let renderedText = '';
-    try { renderedText = clone.innerText || clone.textContent || ''; }
-    finally { host.remove(); }
-    return Array.from(renderedText.split(/\n+/).map((line) => line.replace(/[\t\r ]+/g, ' ').trim())
-      .filter(Boolean).join('\n')).slice(0, 18000).join('');
-  }
-
-  async function createReportSnapshot(onProgress) {
-    const ctx = view.ctx;
-    if (!ctx || !ctx.reference) throw new Error('No parcel is selected.');
-    const token = ctx.token;
-    const entries = [...view.sections.values()];
-    for (let offset = 0; offset < entries.length; offset += 4) {
-      if (!ctx.isCurrent()) throw new Error('Parcel selection changed.');
-      const batch = entries.slice(offset, offset + 4);
-      await Promise.all(batch.map(({ section, el }) => loadSection(section, el, ctx)));
-      if (typeof onProgress === 'function') onProgress(Math.min(offset + batch.length, entries.length), entries.length);
-    }
-    if (!ctx.isCurrent() || token !== view.token) throw new Error('Parcel selection changed.');
-    const snapshot = {
-      sections: entries.map(({ section, el }) => ({
-        id: section.id,
-        title: section.title,
-        state: el.dataset.state || 'empty',
-        body: reportSectionText(el.querySelector('.parcel-section-body')),
-        metadata: Object.fromEntries(Object.entries(view.metadata.get(section.id) || {})
-          .filter(([key, value]) => REPORT_METADATA_KEYS.has(key) && ['string', 'number', 'boolean'].includes(typeof value))
-          .slice(0, 10)
-          .map(([key, value]) => [key, String(value).slice(0, 160)])),
-      })),
-    };
-    const jsonSize = () => new root.Blob([JSON.stringify(snapshot)]).size;
-    const bodySize = () => snapshot.sections.reduce((total, section) => total + section.body.length, 0);
-    const notice = ctx.tr('Section text was shortened to fit the PDF request limit.');
-    const marker = `\n${notice}`;
-    const markerLength = Array.from(marker).length;
-    while (bodySize() > REPORT_TEXT_LIMIT || jsonSize() > REPORT_JSON_LIMIT) {
-      const candidates = snapshot.sections.map((section) => ({
-        section,
-        content: section.body.endsWith(marker) ? section.body.slice(0, -marker.length) : section.body,
-      })).filter((item) => item.content.length)
-        .sort((a, b) => new root.Blob([b.content]).size - new root.Blob([a.content]).size);
-      const candidate = candidates[0];
-      if (!candidate) throw new Error('Parcel report snapshot exceeds the size limit.');
-      const { section, content } = candidate;
-      const points = Array.from(content);
-      const averageBytes = new root.Blob([content]).size / Math.max(points.length, 1);
-      const byteExcess = Math.max(0, jsonSize() - REPORT_JSON_LIMIT);
-      const textExcess = Math.max(0, bodySize() - REPORT_TEXT_LIMIT);
-      const sectionCount = Math.max(candidates.length, 1);
-      const removeCount = Math.min(points.length, Math.max(64,
-        Math.ceil(byteExcess / sectionCount / Math.max(averageBytes, 1))
-          + Math.ceil(textExcess / sectionCount) + 32));
-      const keepCount = Math.min(18000 - markerLength, Math.max(0, points.length - removeCount));
-      section.body = `${points.slice(0, keepCount).join('').trimEnd()}${marker}`;
-    }
-    return snapshot;
   }
 
   function disconnectObservers() {
@@ -2396,7 +3053,8 @@
     const area = Core.parcelAreaSqm(made.ctx.props);
     view.statStrip.innerHTML = stripCell('area', area && area.computed ? tr('Area (computed)') : tr('Area'))
       + stripCell('sheet', tr('Sheet')) + stripCell('price', tr('Sale price (OMI)'))
-      + stripCell('hazard', tr('Flood / landslide')) + stripCell('seismic', tr('Seismic zone'));
+      + stripCell('hazard', tr('Flood / landslide')) + stripCell('buildings', tr('OSM footprints'))
+      + stripCell('composite-risk', tr('Risk context'), { meter: true });
     made.ctx.setStat('area', area ? Core.formatArea(area.value) : '—');
     made.ctx.setStat('sheet', String(made.ctx.props.sheet_number ?? made.ctx.props.sheet ?? made.ctx.props.foglio ?? '—'));
     renderNav(tr);
@@ -2437,5 +3095,5 @@
     if (view.statStrip) view.statStrip.innerHTML = '';
   }
 
-  return { mount, show, setReadModel, clear, createReportSnapshot, sections: SECTIONS, tabs: TABS, coverageBlocks: COVERAGE_BLOCKS };
+  return { mount, show, setReadModel, clear, sections: SECTIONS, tabs: TABS, coverageBlocks: COVERAGE_BLOCKS };
 }));

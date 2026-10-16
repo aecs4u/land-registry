@@ -68,6 +68,7 @@ class CadastralFilter:
     bbox: Optional[tuple[float, float, float, float]] = None  # (min_lon, min_lat, max_lon, max_lat)
     point: Optional[tuple[float, float]] = None  # (lon, lat) - find parcels containing point
     intersects_wkt: Optional[str] = None  # WKT geometry to intersect
+    within_wkt: Optional[str] = None  # WKT geometry parcels must be within
 
     # Temporal filters
     date_from: Optional[datetime] = None
@@ -145,30 +146,46 @@ class CadastralFilter:
 
         return " AND ".join(conditions) if conditions else "1=1", params
 
-    def to_spatial_conditions(self) -> tuple[str, list]:
-        """Generate spatial SQL conditions (requires SpatiaLite)."""
+    def to_spatial_conditions(self, use_bounds_rtree: bool = False) -> tuple[str, list]:
+        """Generate indexed envelope candidates for exact WKT filtering in query()."""
         conditions = []
         params = []
 
-        if self.bbox and SPATIALITE_AVAILABLE:
-            # Bounding box query using R-tree index
-            min_lon, min_lat, max_lon, max_lat = self.bbox
-            conditions.append("""
-                id IN (
-                    SELECT id FROM idx_cadastral_parcels_geometry
-                    WHERE minx <= ? AND maxx >= ? AND miny <= ? AND maxy >= ?
-                )
-            """)
+        def add_bbox_candidate(bounds: tuple[float, float, float, float]) -> None:
+            min_lon, min_lat, max_lon, max_lat = bounds
+            if use_bounds_rtree:
+                conditions.append("""
+                    id IN (
+                        SELECT id FROM cadastral_parcels_bounds_rtree
+                        WHERE minx <= ? AND maxx >= ? AND miny <= ? AND maxy >= ?
+                    )
+                """)
+            else:
+                # Bounds columns keep the fallback selective if SQLite was
+                # built without its optional RTree module.
+                conditions.append("min_lon <= ? AND max_lon >= ? AND min_lat <= ? AND max_lat >= ?")
             params.extend([max_lon, min_lon, max_lat, min_lat])
 
-        if self.point and SPATIALITE_AVAILABLE:
-            lon, lat = self.point
-            conditions.append("ST_Contains(geometry, MakePoint(?, ?, 6706))")
-            params.extend([lon, lat])
+        if self.bbox:
+            add_bbox_candidate(self.bbox)
 
-        if self.intersects_wkt and SPATIALITE_AVAILABLE:
-            conditions.append("ST_Intersects(geometry, GeomFromText(?, 6706))")
-            params.append(self.intersects_wkt)
+        if self.point:
+            lon, lat = self.point
+            add_bbox_candidate((lon, lat, lon, lat))
+
+        for geometry_wkt in (self.intersects_wkt, self.within_wkt):
+            if not geometry_wkt:
+                continue
+            try:
+                from shapely import wkt
+
+                query_geom = wkt.loads(geometry_wkt)
+                if query_geom.is_empty or not query_geom.is_valid:
+                    return "0=1", []
+                add_bbox_candidate(query_geom.bounds)
+            except Exception as exc:
+                logger.warning("Invalid spatial filter WKT: %s", exc)
+                return "0=1", []
 
         return " AND ".join(conditions) if conditions else "", params
 
@@ -184,6 +201,7 @@ class CadastralDatabase:
             db_path: Path to SQLite/SpatiaLite database file
         """
         self.db_path = Path(db_path)
+        self._bounds_rtree_available = False
         self._ensure_tables()
 
     @contextmanager
@@ -274,6 +292,66 @@ class CadastralDatabase:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_particella ON cadastral_parcels(particella)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_layer_type ON cadastral_parcels(layer_type)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_begin_lifespan ON cadastral_parcels(begin_lifespan)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_cadastral_bounds_min_lon ON cadastral_parcels(min_lon)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_cadastral_bounds_min_lat ON cadastral_parcels(min_lat)")
+
+            # SQLite's RTree module is independent of SpatiaLite. Index the
+            # stored WKT envelopes so spatial lookups stay selective even
+            # when the optional SpatiaLite geometry column is absent.
+            try:
+                conn.execute(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS cadastral_parcels_bounds_rtree "
+                    "USING rtree(id, minx, maxx, miny, maxy)"
+                )
+                conn.executescript("""
+                    CREATE TRIGGER IF NOT EXISTS cadastral_bounds_rtree_insert
+                    AFTER INSERT ON cadastral_parcels
+                    WHEN NEW.min_lon IS NOT NULL AND NEW.min_lat IS NOT NULL
+                         AND NEW.max_lon IS NOT NULL AND NEW.max_lat IS NOT NULL
+                    BEGIN
+                        INSERT OR REPLACE INTO cadastral_parcels_bounds_rtree
+                        VALUES (NEW.id, NEW.min_lon, NEW.max_lon, NEW.min_lat, NEW.max_lat);
+                    END;
+
+                    CREATE TRIGGER IF NOT EXISTS cadastral_bounds_rtree_update
+                    AFTER UPDATE OF min_lon, min_lat, max_lon, max_lat ON cadastral_parcels
+                    BEGIN
+                        DELETE FROM cadastral_parcels_bounds_rtree WHERE id = OLD.id;
+                        INSERT OR REPLACE INTO cadastral_parcels_bounds_rtree
+                        SELECT NEW.id, NEW.min_lon, NEW.max_lon, NEW.min_lat, NEW.max_lat
+                        WHERE NEW.min_lon IS NOT NULL AND NEW.min_lat IS NOT NULL
+                              AND NEW.max_lon IS NOT NULL AND NEW.max_lat IS NOT NULL;
+                    END;
+
+                    CREATE TRIGGER IF NOT EXISTS cadastral_bounds_rtree_delete
+                    AFTER DELETE ON cadastral_parcels
+                    BEGIN
+                        DELETE FROM cadastral_parcels_bounds_rtree WHERE id = OLD.id;
+                    END;
+                """)
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS cadastral_bounds_rtree_meta "
+                    "(initialized INTEGER PRIMARY KEY CHECK (initialized = 1))"
+                )
+                index_is_initialized = conn.execute(
+                    "SELECT 1 FROM cadastral_bounds_rtree_meta WHERE initialized = 1"
+                ).fetchone()
+                if index_is_initialized is None:
+                    conn.execute("BEGIN")
+                    conn.execute("""
+                        INSERT OR REPLACE INTO cadastral_parcels_bounds_rtree
+                        SELECT id, min_lon, max_lon, min_lat, max_lat
+                        FROM cadastral_parcels
+                        WHERE min_lon IS NOT NULL AND min_lat IS NOT NULL
+                          AND max_lon IS NOT NULL AND max_lat IS NOT NULL
+                    """)
+                    conn.execute(
+                        "INSERT INTO cadastral_bounds_rtree_meta (initialized) VALUES (1)"
+                    )
+                    conn.commit()
+                self._bounds_rtree_available = True
+            except sqlite3.OperationalError as exc:
+                logger.info("SQLite RTree unavailable for cadastral bounds: %s", exc)
 
             # Create spatial index if SpatiaLite is available
             if SPATIALITE_AVAILABLE:
@@ -469,7 +547,9 @@ class CadastralDatabase:
         """
         # Build query
         base_conditions, base_params = filter.to_sql_conditions()
-        spatial_conditions, spatial_params = filter.to_spatial_conditions()
+        spatial_conditions, spatial_params = filter.to_spatial_conditions(
+            use_bounds_rtree=self._bounds_rtree_available
+        )
 
         where_clause = base_conditions
         params = base_params
@@ -477,6 +557,13 @@ class CadastralDatabase:
         if spatial_conditions:
             where_clause = f"({base_conditions}) AND ({spatial_conditions})"
             params.extend(spatial_params)
+
+        python_spatial_filter = any((
+            filter.bbox,
+            filter.point,
+            filter.intersects_wkt,
+            filter.within_wkt,
+        ))
 
         query = f"""
             SELECT
@@ -490,14 +577,52 @@ class CadastralDatabase:
             ORDER BY regione, provincia, comune_code, foglio, particella
         """
 
-        if filter.limit:
+        if filter.limit and not python_spatial_filter:
             query += f" LIMIT {filter.limit}"
-        if filter.offset:
+        if filter.offset and not python_spatial_filter:
             query += f" OFFSET {filter.offset}"
 
         with self._get_connection() as conn:
             cursor = conn.execute(query, params)
             rows = cursor.fetchall()
+
+        if python_spatial_filter:
+            try:
+                from shapely import wkt
+                from shapely.geometry import Point, box
+
+                point_geom = Point(*filter.point) if filter.point else None
+                intersects_geom = wkt.loads(filter.intersects_wkt) if filter.intersects_wkt else None
+                within_geom = wkt.loads(filter.within_wkt) if filter.within_wkt else None
+                bbox_geom = box(*filter.bbox) if filter.bbox else None
+            except Exception as exc:
+                raise RuntimeError("Could not prepare exact spatial filter") from exc
+
+            matched_rows = []
+            for row in rows:
+                geometry_wkt = row["geometry_wkt"]
+                if not geometry_wkt:
+                    continue
+                try:
+                    parcel_geom = wkt.loads(geometry_wkt)
+                    if parcel_geom.is_empty or not parcel_geom.is_valid:
+                        continue
+                    if bbox_geom is not None and not parcel_geom.intersects(bbox_geom):
+                        continue
+                    if point_geom is not None and not parcel_geom.contains(point_geom):
+                        continue
+                    if intersects_geom is not None and not parcel_geom.intersects(intersects_geom):
+                        continue
+                    if within_geom is not None and not parcel_geom.within(within_geom):
+                        continue
+                except Exception as exc:
+                    logger.warning("Skipping cadastral row with invalid geometry: %s", exc)
+                    continue
+                matched_rows.append(row)
+
+            rows = matched_rows[filter.offset:]
+            if filter.limit:
+                rows = rows[:filter.limit]
 
         if as_geojson:
             features = []

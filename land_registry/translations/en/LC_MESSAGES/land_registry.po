@@ -972,3 +972,165 @@ msgstr "Availability is checked against the connected PostgreSQL databases."
 msgid "Loading database list…"
 msgstr "Loading database list…"
 
+msgid "Land cover"
+msgstr "Land cover"
+
+msgid "CORINE Land Cover is not installed for this region."
+msgstr "CORINE Land Cover is not installed for this region."
+
+msgid "No CORINE class is mapped at this parcel."
+msgstr "No CORINE class is mapped at this parcel."
+
+msgid "Land-cover data are temporarily unavailable."
+msgstr "Land-cover data are temporarily unavailable."
+
+msgid "Other mapped classes"
+msgstr "Other mapped classes"
+
+msgid "Majority class"
+msgstr "Majority class"
+
+msgid "Class code"
+msgstr "Class code"
+
+msgid "Share of parcel"
+msgstr "Share of parcel"
+
+msgid "Mapped coverage"
+msgstr "Mapped coverage"
+
+msgid "CLC 2018 has a 25 ha minimum mapping unit and a 100 m minimum width; this is broad land-cover context, not a parcel survey or building classification."
+msgstr "CLC 2018 has a 25 ha minimum mapping unit and a 100 m minimum width; this is broad land-cover context, not a parcel survey or building classification."
+
+msgid "TINITALY terrain data are not installed for this region."
+msgstr "TINITALY terrain data are not installed for this region."
+
+msgid "No valid TINITALY elevation cells were found for this parcel."
+msgstr "No valid TINITALY elevation cells were found for this parcel."
+
+msgid "Terrain data are temporarily unavailable."
+msgstr "Terrain data are temporarily unavailable."
+
+msgid "Minimum elevation"
+msgstr "Minimum elevation"
+
+msgid "Mean elevation"
+msgstr "Mean elevation"
+
+msgid "Maximum elevation"
+msgstr "Maximum elevation"
+
+msgid "Elevation range"
+msgstr "Elevation range"
+
+msgid "Elevation standard deviation"
+msgstr "Elevation standard deviation"
+
+msgid "Mean slope"
+msgstr "Mean slope"
+
+msgid "Maximum slope"
+msgstr "Maximum slope"
+
+msgid "Mean terrain ruggedness (TRI)"
+msgstr "Mean terrain ruggedness (TRI)"
+
+msgid "Predominant aspect"
+msgstr "Predominant aspect"
+
+msgid "Mean aspect"
+msgstr "Mean aspect"
+
+msgid "Valid raster samples"
+msgstr "Valid raster samples"
+
+msgid "Flat"
+msgstr "Flat"
+
+msgid "A representative point was sampled because no raster cell centre falls inside this parcel."
+msgstr "A representative point was sampled because no raster cell centre falls inside this parcel."
+
+msgid "TINITALY is a 10 m bare-earth terrain model. It is context, not a parcel survey or engineering assessment."
+msgstr "TINITALY is a 10 m bare-earth terrain model. It is context, not a parcel survey or engineering assessment."
+
+msgid "Building footprint coverage"
+msgstr "Building footprint coverage"
+
+msgid "OSM building footprints are not installed for this region."
+msgstr "OSM building footprints are not installed for this region."
+
+msgid "Building-footprint data are temporarily unavailable."
+msgstr "Building-footprint data are temporarily unavailable."
+
+msgid "Mapped OSM buildings"
+msgstr "Mapped OSM buildings"
+
+msgid "Footprint area inside parcel"
+msgstr "Footprint area inside parcel"
+
+msgid "Parcel area covered by footprints"
+msgstr "Parcel area covered by footprints"
+
+msgid "OpenStreetMap building footprints are community mapped; coverage may be incomplete. Areas are clipped to the parcel, and overlapping polygons are counted once."
+msgstr "OpenStreetMap building footprints are community mapped; coverage may be incomplete. Areas are clipped to the parcel, and overlapping polygons are counted once."
+
+msgid "Civic addresses (ANNCSU)"
+msgstr "Civic addresses (ANNCSU)"
+
+msgid "ANNCSU address points are not installed for this region."
+msgstr "ANNCSU address points are not installed for this region."
+
+msgid "ANNCSU civic-address data are temporarily unavailable."
+msgstr "ANNCSU civic-address data are temporarily unavailable."
+
+msgid "Civic address"
+msgstr "Civic address"
+
+msgid "Civic address {n}"
+msgstr "Civic address {n}"
+
+msgid "Civic address match"
+msgstr "Civic address match"
+
+msgid "No geocoded ANNCSU point matched this parcel."
+msgstr "No geocoded ANNCSU point matched this parcel."
+
+msgid "No address point is available for this parcel."
+msgstr "No address point is available for this parcel."
+
+msgid "Municipality coordinate coverage"
+msgstr "Municipality coordinate coverage"
+
+msgid "Municipal coordinate coverage is nearly complete"
+msgstr "Municipal coordinate coverage is nearly complete"
+
+msgid "Municipal coordinate coverage is partial"
+msgstr "Municipal coordinate coverage is partial"
+
+msgid "Municipal coordinate coverage is unknown"
+msgstr "Municipal coordinate coverage is unknown"
+
+msgid "Coordinate method {n}"
+msgstr "Coordinate method {n}"
+
+msgid "ANNCSU points are spatially matched to the parcel. Municipalities may not provide coordinates for every civic address; no geocoded match does not mean the parcel has no address."
+msgstr "ANNCSU points are spatially matched to the parcel. Municipalities may not provide coordinates for every civic address; no geocoded match does not mean the parcel has no address."
+
+msgid "The spatial search reached a result limit; the returned list may be incomplete."
+msgstr "The spatial search reached a result limit; the returned list may be incomplete."
+
+msgid "Field survey, estimated accuracy < 5 m"
+msgstr "Field survey, estimated accuracy < 5 m"
+
+msgid "Field survey, estimated accuracy ≥ 5 m"
+msgstr "Field survey, estimated accuracy ≥ 5 m"
+
+msgid "Indirect mapping, estimated accuracy < 5 m"
+msgstr "Indirect mapping, estimated accuracy < 5 m"
+
+msgid "Indirect mapping, estimated accuracy ≥ 5 m"
+msgstr "Indirect mapping, estimated accuracy ≥ 5 m"
+
+msgid "Indirect mapping via Portale per i Comuni"
+msgstr "Indirect mapping via Portale per i Comuni"
+

@@ -83,7 +83,7 @@ The product SHALL provide:
 - user authentication plus guest/incognito access;
 - community reports and validation;
 - XP, levels, badges and leaderboard;
-- public REST API; scoped developer API tokens are an optional future capability;
+- versioned public parcel API with Clerk-account-scoped developer keys;
 - GIS-friendly geometry/data outputs;
 - privacy, provenance and source attribution.
 
@@ -378,17 +378,15 @@ Needs API tokens, scopes, rate-limit visibility and stable resource-oriented end
 9. Status evolves based on consensus/expiry rules.
 10. Contributor receives or loses XP according to outcome.
 
-## J-06 — Generate and use an API key (optional future capability)
+## J-06 — Generate and use a parcel API key
 
-1. The developer API capability is enabled for the deployment.
-2. User authenticates.
-3. User opens API area.
-4. User creates a token.
-5. User selects scopes.
-6. System displays token once or according to security policy.
-7. Token is sent in `x-api-key`.
-8. API returns rate-limit headers.
-9. User can revoke/replace tokens.
+1. User authenticates with a Clerk account.
+2. User opens Developer API in Settings.
+3. User creates a named `parcels:read` key.
+4. System displays the raw secret once.
+5. User sends the secret in `x-api-key` to `/api/v2/parcels/{fid}`.
+6. API returns the key's shared quota headers.
+7. User can review key metadata and revoke the key.
 
 ---
 
@@ -1066,7 +1064,7 @@ Account-only capabilities SHALL include at minimum:
 - notes;
 - tags;
 - PDF/data export;
-- API-token management, if the optional developer API is enabled;
+- API-token management for the versioned parcel API;
 - persistent community identity;
 - XP/badges/leaderboard participation.
 
@@ -1276,48 +1274,49 @@ Leaderboard queries SHOULD be paginated and cached.
 
 # 19. API Token Management
 
-**Status:** Optional future developer-API capability; not currently implemented by this repository.
+**Status:** Parcel API keys and signed-in settings-page controls are implemented.
 
-**Primary package ownership if adopted:** `land-registry` for user token lifecycle; `aecs4u-stats` may validate data-API scopes  
+**Primary package ownership:** `land-registry` owns key lifecycle and shared PostgreSQL quotas; `aecs4u-stats` owns parcel-data queries.
 
-## FR-TOKEN-001 [RECOMMENDED]
-If a public developer API is adopted, authenticated users SHOULD be able to generate personal API tokens.
+## FR-TOKEN-001 [VERIFIED]
+Authenticated users SHALL be able to create personal `parcels:read` API keys through
+`POST /api/v1/user/api-keys`. The secret is returned only in the creation response.
 
-## FR-TOKEN-002 [RECOMMENDED]
-If adopted, a user SHOULD be able to have a configured maximum number of active tokens.
+## FR-TOKEN-002 [VERIFIED]
+The active-key maximum SHALL be configurable with `PUBLIC_API_MAX_ACTIVE_KEYS`
+(default 5).
 
-## FR-TOKEN-003 [RECOMMENDED]
-If adopted, tokens SHOULD support granular scopes.
+## FR-TOKEN-003 [VERIFIED]
+Keys SHALL carry explicit scopes. The currently supported scope is:
 
-Current documented scopes:
-
-- `geocoding:read`
-- `admin_data:read`
 - `parcels:read`
 
-## FR-TOKEN-004 [RECOMMENDED]
-If adopted, clients SHOULD send API tokens via:
+## FR-TOKEN-004 [VERIFIED]
+Clients SHALL send API keys via:
 
 ```http
 x-api-key: <token>
 ```
 
-## FR-TOKEN-005 [RECOMMENDED]
-The health endpoint SHOULD remain unauthenticated.
+## FR-TOKEN-005 [VERIFIED]
+`GET /health` SHALL remain unauthenticated. `/api/v2/parcels/{fid}` SHALL require
+an active API key with the `parcels:read` scope.
 
-## FR-TOKEN-006 [RECOMMENDED]
-If public API quotas are adopted, authenticated API responses SHOULD expose rate-limit headers such as:
+## FR-TOKEN-006 [VERIFIED]
+Authenticated parcel API responses SHALL expose key-quota headers:
 
 - `X-RateLimit-Limit`
 - `X-RateLimit-Remaining`
 - `X-RateLimit-Reset`
 
-## FR-TOKEN-007 [RECOMMENDED]
-If adopted, users SHOULD be able to revoke tokens immediately.
+## FR-TOKEN-007 [VERIFIED]
+Users SHALL be able to revoke their keys immediately through
+`DELETE /api/v1/user/api-keys/{key_id}`.
 
-## FR-TOKEN-008 [RECOMMENDED]
-If adopted, the application SHOULD display token creation date, last-used date and scopes
-without exposing the raw secret after initial creation.
+## FR-TOKEN-008 [VERIFIED]
+`GET /api/v1/user/api-keys` SHALL return key creation time, last-used time,
+scopes, status and prefix without returning the raw secret. The signed-in
+settings page displays this information and provides create/revoke controls.
 
 ---
 
@@ -1329,10 +1328,10 @@ without exposing the raw secret after initial creation.
 The public API SHALL be RESTful, resource-oriented and JSON-based.
 
 ## FR-API-002 [VERIFIED]
-The current repository API SHALL remain under `/api/v1` until a versioned migration is
-approved. Its authoritative route inventory is the FastAPI-generated OpenAPI document
-and the route groups listed in Section 20A. The nine Zornade-style `/api/v2` routes are
-not current `land-registry` endpoints and SHALL be treated as future parity targets only.
+Existing `/api/v1` routes SHALL retain their response contracts. The additive,
+versioned public parcel lookup is served at `/api/v2/parcels/{fid}` and requires
+an API key; its authoritative route inventory is the FastAPI-generated OpenAPI
+document and Section 20A.
 
 ```text
 GET /health
@@ -1345,6 +1344,10 @@ GET /api/v1/enrichment/status
 GET /api/v1/enrichment/parcel/at-point
 GET /api/v1/enrichment/parcels/in-bbox/
 GET /api/v1/enrichment/parcel/by-reference/{national_reference}
+GET /api/v2/parcels/{fid}?include=basic,geometry
+GET /api/v1/user/api-keys
+POST /api/v1/user/api-keys
+DELETE /api/v1/user/api-keys/{key_id}
 ```
 
 ## FR-API-003 [VERIFIED]
@@ -1372,12 +1375,13 @@ The current API SHALL support point and bounding-box parcel lookup through
 `/api/v1/enrichment/parcel/at-point` and `/api/v1/enrichment/parcels/in-bbox/`.
 
 ## FR-API-009 [RECOMMENDED]
-Once the stable parcel identity strategy in Section 9A is implemented, a versioned parcel
-detail endpoint SHOULD accept `parcel_identity_id` and an optional dataset version.
+The current versioned detail endpoint accepts the stable canonical map feature ID as
+`fid`. After the Section 9A identity strategy is provisioned nationally, a versioned
+endpoint SHOULD also accept `parcel_identity_id` and an optional dataset version.
 
-## FR-API-010 [RECOMMENDED]
-Future parcel detail SHOULD support selective payload loading through an `include`
-mechanism, subject to the authoritative contract in Section 20A.
+## FR-API-010 [VERIFIED]
+`GET /api/v2/parcels/{fid}` supports selective payload loading through a comma-separated
+`include` parameter, as defined by the authoritative contract in Section 20A.
 
 Example:
 
@@ -1398,14 +1402,15 @@ API error responses SHALL use a consistent machine-readable envelope:
 }
 ```
 
-## FR-API-012 [RECOMMENDED]
+## FR-API-012 [VERIFIED]
 The application SHALL enforce the rate limits of its configured upstream services and
-storage providers. Per-token public API quotas are a future capability, not a current
-`land-registry` contract.
+storage providers. The public parcel API SHALL enforce a shared per-key UTC-hour quota
+in PostgreSQL, separately from the per-instance IP burst guard.
 
 ## FR-API-013 [RECOMMENDED]
-Any future public API quota SHALL be centrally configurable and documented per account
-tier; reference-product marketing limits SHALL not be hard-coded in this application.
+The default per-key quota SHALL be centrally configurable with
+`PUBLIC_API_REQUESTS_PER_HOUR` (default 10,000). Account-tier-specific quotas remain
+future work; reference-product marketing limits SHALL not be hard-coded.
 
 ## FR-API-014 [RECOMMENDED]
 API responses SHOULD include data-source/version metadata where practical.
@@ -1417,8 +1422,8 @@ document served at `/openapi.json`. CI SHALL export and review the document as a
 artifact whenever a public route or schema changes. Hand-written endpoint lists in this
 SRS and in templates are summaries only.
 
-The contract SHALL cover the existing `/health`, `/api/v1/*`, and
-`/api/v1/enrichment/*` routes. It SHALL define request and response models for new or
+The contract SHALL cover the existing `/health`, `/api/v1/*`, `/api/v1/enrichment/*`,
+`/api/v1/user/api-keys` and `/api/v2/parcels/{fid}` routes. It SHALL define request and response models for new or
 changed routes before implementation; legacy untyped responses SHALL be migrated when
 they are modified rather than silently changing shape.
 
@@ -1427,6 +1432,8 @@ they are modified rather than silently changing shape.
 | Group | Current routes/capability | Authentication | Contract status |
 |---|---|---|---|
 | Health | `/health` | Public | Existing route; stable response model required |
+| Public parcel API | `/api/v2/parcels/{fid}` | `X-API-Key`, `parcels:read` scope | Typed OpenAPI response, selective `include`, source metadata and shared key quota |
+| Developer API-key management | `/api/v1/user/api-keys` | Clerk-authenticated account | Create/list/revoke; secret returned only on creation |
 | Cadastral hierarchy | `/api/v1/get-regions/`, `/get-provinces/`, `/get-municipalities/`, `/get-cadastral-structure/` | Public | Existing route; preserve backward compatibility |
 | Loaded-data search | `/api/v1/search/comuni`, `/api/v1/search/parcels` | Public | Existing route; response is GeoJSON FeatureCollection |
 | Upstream enrichment | `/api/v1/enrichment/status`, `/municipality/*`, `/pois/`, `/omi/*`, `/income/*`, `/risks/*`, `/fires`, `/bulletin`, `/census/*`, `/demographics/*` | Public unless a data provider requires server-side credentials | Existing route family; status contract typed in Phase 0, other payloads typed incrementally |
@@ -1458,15 +1465,12 @@ they are modified rather than silently changing shape.
 ### 20A.3 Authentication contract
 
 The current application SHALL use the existing `aecs4u-auth` Clerk JWT integration for
-authenticated browser/API routes. Public read routes SHALL remain public unless their
-upstream source or deployment policy requires protection. A route that depends on
+authenticated browser routes and developer-key management. Existing `/api/v1` public
+read routes retain their current policy. `/api/v2/parcels/{fid}` SHALL require the
+`X-API-Key` scheme and `parcels:read` scope. A route that depends on Clerk
 authentication but has no configured auth provider SHALL return `503` and SHALL never
-silently treat the caller as authenticated.
-
-The `x-api-key` token scheme, token scopes and per-token rate limits described in
-Sections 19–20 are optional future developer-API capabilities. They SHALL not be
-implemented as a second authentication mechanism until a separate contract version,
-storage model and threat review are approved.
+silently treat the caller as authenticated. Key management and shared quota storage
+use the same PostgreSQL account database.
 
 ### 20A.4 Minimum typed schemas
 
@@ -2946,8 +2950,8 @@ Phase 0 SHALL establish only the foundations needed to implement the MVP safely:
 Existing SQLite, SpatiaLite, PostgreSQL/Neon and upstream regional stores remain valid
 during Phase 0. A migration is in scope only for a specific table/store when its owner,
 parity checks, rollback path and operational benefit are demonstrated. The canonical
-parcel store, community reporting, high-volume national delivery and new developer API
-remain later-phase work.
+parcel store, community reporting, high-volume national delivery and developer API
+capabilities beyond the versioned parcel lookup remain later-phase work.
 
 Phase 0 exits when the current route inventory is captured in OpenAPI, the health and
 foundation contracts pass regression tests, identity generation is deterministic, and
@@ -2975,7 +2979,8 @@ on the existing application and upstream `aecs4u-stats` integration.
 | Remaining enrichment blocks: terrain, buildings, PV, land cover, addresses, constraints, coastal erosion, VIIRS and history; DATA-03, DATA-06–08, DATA-10, DATA-13–19 | Several are absent or only planned upstream | Phase 2 | `aecs4u-stats` + `land-registry` | AC-DATA-004–005 |
 | High-volume delivery: canonical parcel store/vector tiles; FR-MAP-009–014, NFR-PERF-004–007 | Datashader, FGB and MVT/PNG paths exist; no mandatory wholesale replacement | Phase 2, only if measured need is demonstrated | `land-registry` + `aecs4u-stats` | AC-PERF-001–003 |
 | Community reports, photos, validation, XP and leaderboard; FR-COMM-001–010, FR-XP-001–005, FR-LEAD-001–005 | Not implemented; account-only by Section 15.1 | Phase 3 | `land-registry` | AC-COMM-001–004, AC-SEC-004 |
-| Public developer API keys, QGIS workflow and advanced GIS exports; FR-TOKEN-001–008, FR-GIS-001–005 | Not a current repository contract | Optional Phase 3 | `land-registry` + upstream packages | AC-API-001–005, AC-EXPORT-005 |
+| Parcel API keys and scoped v2 lookup; FR-TOKEN-001–008 | Key creation, list, revoke, Clerk account gating and shared hourly quota are implemented; lower account tiers remain open | MVP extension | `land-registry` + `aecs4u-auth` | AC-API-001–007 |
+| QGIS workflow and advanced GIS exports; FR-GIS-001–005 | Not a current repository contract | Optional Phase 3 | `land-registry` + upstream packages | AC-EXPORT-005 |
 
 No phase may claim completion solely because its code path exists. The applicable exit
 criteria, contract tests and source-availability checks SHALL pass for the phase to be
@@ -3086,8 +3091,8 @@ Protected application endpoints SHALL reject a missing or invalid Clerk session 
 `401` (or `503` when authentication is not configured).
 
 ## AC-API-003
-If the optional developer API is adopted, a token without the required scope SHALL not
-access the corresponding data endpoint. This criterion is not a current MVP gate.
+`/api/v2/parcels/{fid}` SHALL reject missing, invalid, revoked or expired keys with
+`401`, and keys without `parcels:read` with `403`.
 
 ## AC-API-004
 The current `/api/v1` parcel/enrichment routes SHALL preserve their documented query
@@ -3096,6 +3101,14 @@ through a versioned contract rather than silently changing these routes.
 
 ## AC-API-005
 Responses SHALL expose rate-limit metadata.
+
+## AC-API-006
+API-key management SHALL return the raw secret only on creation, scope every key to its
+owner, and revoke a key without delay.
+
+## AC-API-007
+Concurrent parcel requests across app instances SHALL consume one atomic per-key UTC-hour
+counter in PostgreSQL and stop at the configured request limit.
 
 ## 39A. Measurable Quality and Operational Acceptance Criteria
 

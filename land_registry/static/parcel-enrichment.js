@@ -19,11 +19,13 @@
             dataset_version: 'ISTAT_POP_2021',
         },
         average_income_eur: {
-            label: 'Italia',
-            value: 23000,
+            label: 'Italia, reddito imponibile medio per contribuente',
+            // MEF 2022 IRPEF table reports €22.81 thousand per taxpayer.
+            value: 22810,
             unit: '€/contribuente',
             year: 2022,
             dataset_version: 'MEF_IRPEF_2022',
+            source_url: 'https://www1.finanze.gov.it/finanze/stat_dbNewSerie/public/report_d.php?req_anno=SERI&req_back=SERI&req_classe=01&req_contrib=PFTOT&req_media=si&req_pag=1&req_sub_tema=02&req_tema=01',
         },
     };
     // A database connection can outlive the browser request when a local
@@ -276,7 +278,9 @@
     function _benchmarkInline(benchmark, formatter = null) {
         if (!benchmark || benchmark.value === null || benchmark.value === undefined || benchmark.value === '') return '';
         const value = formatter ? formatter(benchmark.value) : _formatNumber(benchmark.value, 1);
-        const label = [benchmark.label || 'Benchmark', benchmark.year || ''].filter(Boolean).join(' ');
+        const count = Number(benchmark.comparison_count);
+        const countLabel = Number.isInteger(count) && count > 0 ? ` (${count} zone comparabili)` : '';
+        const label = [benchmark.label || 'Benchmark', benchmark.year || ''].filter(Boolean).join(' ') + countLabel;
         const unit = benchmark.unit && !String(value).includes(String(benchmark.unit)) ? ` ${benchmark.unit}` : '';
         return `<small class="enrichment-benchmark">Benchmark ${_escapeHtml(label)}: <strong>${_escapeHtml(value)}${_escapeHtml(unit)}</strong></small>`;
     }
@@ -512,6 +516,9 @@
             : detectedZone
                 ? `<div class="omi-zone-match is-warning"><i class="fa-solid fa-triangle-exclamation"></i><span>Zona ${_escapeHtml(detectedZone)} rilevata, ma senza quotazioni disponibili: selezionare e verificare un'alternativa.</span></div>`
                 : `<div class="enrichment-empty text-muted">Zona OMI non rilevata automaticamente: verificare la selezione.</div>`;
+        const boundaryVintageNotice = zoneMatch && zoneMatch.boundary_vintage
+            ? `<div class="enrichment-empty text-muted">I confini OMI sono del periodo ${_escapeHtml(zoneMatch.boundary_vintage)} e il match è approssimativo: verificare la zona selezionata.</div>`
+            : '';
         const options = quotes.slice(0, 80).map((quote, index) => {
             const period = quote.anno && quote.semestre ? ` · ${quote.anno} S${quote.semestre}` : '';
             const state = quote.stato_conservazione ? ` · ${quote.stato_conservazione}` : '';
@@ -519,6 +526,7 @@
         }).join('');
         return `
             ${zoneNotice}
+            ${boundaryVintageNotice}
             <div class="omi-controls">
                 <label for="omiQuoteSelect">Zona e tipologia OMI</label>
                 <select id="omiQuoteSelect" class="tool-select">${options}</select>
@@ -579,7 +587,8 @@
     }
 
     function _bindOmiControls(cardBody, data, feature, cadastralCode, renderToken, zoneMatch) {
-        const quotes = _validOmiQuotes(data, zoneMatch).slice(0, 80);
+        const allValidQuotes = _validOmiQuotes(data, zoneMatch);
+        const quotes = allValidQuotes.slice(0, 80);
         const select = cardBody.querySelector('#omiQuoteSelect');
         const areaInput = cardBody.querySelector('#omiEstimateArea');
         const quoteEl = cardBody.querySelector('#omiSelectedQuote');
@@ -593,15 +602,48 @@
             return quotes[Number(select.value)] || quotes[0];
         }
 
-        function quoteBenchmark() {
-            const midpoint = _median(quotes.map((quote) => (Number(quote.prezzo_min) + Number(quote.prezzo_max)) / 2));
-            if (midpoint == null) return null;
-            const years = quotes.map((quote) => Number(quote.anno)).filter(Number.isFinite);
+        function quotePeriod(quote) {
+            const year = quote && quote.anno != null ? Number(quote.anno) : NaN;
+            const semester = Number(quote && quote.semestre);
+            if (Number.isInteger(year) && year >= 1900 && year <= 9999 && (semester === 1 || semester === 2)) return `${year}-S${semester}`;
+            const match = String((quote && quote.period) || '').trim().match(/^(\d{4})-S([12])$/i);
+            return match ? `${match[1]}-S${match[2]}` : null;
+        }
+
+        function quoteTypeKey(quote) {
+            const code = String((quote && quote.cod_tipologia) || '').trim().toUpperCase();
+            if (code && code !== '0') return `code:${code}`;
+            const name = String((quote && quote.tipologia) || '').trim().toLocaleLowerCase();
+            return name && name !== '0' ? `name:${name}` : null;
+        }
+
+        function quoteBenchmark(selected) {
+            const typeKey = quoteTypeKey(selected);
+            const period = quotePeriod(selected);
+            if (!typeKey || !period) return null;
+            const condition = String(selected.stato_conservazione || '').trim().toUpperCase();
+            const zones = new Set();
+            const midpoints = [];
+            allValidQuotes.forEach((quote) => {
+                const zone = String(quote.zona || '').trim().toUpperCase();
+                if (!zone || zones.has(zone)
+                    || quoteTypeKey(quote) !== typeKey
+                    || String(quote.stato_conservazione || '').trim().toUpperCase() !== condition
+                    || quotePeriod(quote) !== period) return;
+                const min = Number(quote.prezzo_min);
+                const max = Number(quote.prezzo_max);
+                if (!Number.isFinite(min) || !Number.isFinite(max) || max < min) return;
+                zones.add(zone);
+                midpoints.push((min + max) / 2);
+            });
+            const midpoint = _median(midpoints);
+            if (midpoints.length < 2 || midpoint == null) return null;
             return {
-                label: 'mediana quotazioni comune',
+                label: 'mediana OMI comunale, stessa tipologia e stato',
                 value: midpoint,
                 unit: '€/m²',
-                year: years.length ? Math.max(...years) : null,
+                year: period.replace('-', ' '),
+                comparison_count: midpoints.length,
             };
         }
 
@@ -630,7 +672,7 @@
         function updateEstimate() {
             const quote = selectedQuote();
             const range = _estimateOmiRange(quote, areaInput.value);
-            const saleBenchmark = quoteBenchmark();
+            const saleBenchmark = quoteBenchmark(quote);
             quoteEl.innerHTML = `
                 <div class="enrichment-row"><span>Compravendita</span><strong>${_formatNumber(quote.prezzo_min)}–${_formatNumber(quote.prezzo_max)} €/m²${_benchmarkInline(saleBenchmark, (value) => `${_formatNumber(value)} €/m²`)}</strong></div>
                 ${quote.locazione_min != null ? `<div class="enrichment-row"><span>Locazione</span><strong>${_formatNumber(quote.locazione_min, 2)}–${_formatNumber(quote.locazione_max, 2)} €/m²/mese</strong></div>` : ''}`;
@@ -660,9 +702,28 @@
     function _renderIncome(data) {
         if (!data) return _emptyState('Nessun dato IRPEF disponibile per questo comune.');
         const averages = data.income_reference_averages || {};
-        const benchmark = data.benchmark_average_income_eur
-            || (data.benchmarks && data.benchmarks.average_income_eur)
-            || PANEL_BENCHMARKS.average_income_eur;
+        const storedBenchmark = (data.benchmarks && data.benchmarks.average_income_eur) || null;
+        const rawYear = storedBenchmark && storedBenchmark.year != null ? storedBenchmark.year : data.year;
+        const year = rawYear == null ? NaN : Number(rawYear);
+        const nationalAverage = averages.nation && averages.nation.mean_taxable_income_eur;
+        const rawBenchmarkValue =
+            storedBenchmark && storedBenchmark.value != null
+                ? storedBenchmark.value
+                : data.benchmark_average_income_eur != null
+                    ? data.benchmark_average_income_eur
+                    : nationalAverage;
+        const benchmarkValue = rawBenchmarkValue == null ? NaN : Number(rawBenchmarkValue);
+        const staticBenchmark = PANEL_BENCHMARKS.average_income_eur;
+        const benchmark = Number.isFinite(benchmarkValue) && Number.isInteger(year)
+            ? {
+                label: 'Italia, reddito imponibile medio per contribuente',
+                value: benchmarkValue,
+                unit: '€/contribuente',
+                year,
+            }
+            : Number.isInteger(year) && year === Number(staticBenchmark.year)
+                ? staticBenchmark
+                : null;
         const averageSeries = [
             { key: 'municipality', label: 'Comune', fallback: data.mean_taxable_income_eur },
             { key: 'province', label: 'Provincia' },
@@ -864,10 +925,17 @@
     }
 
     function _renderRisks(data) {
-        if (!data || (!data.seismic && !data.hydrogeological)) {
+        const rawCompositeScore = data && data.composite_score != null ? Number(data.composite_score) : NaN;
+        const compositeScore = Number.isFinite(rawCompositeScore) && rawCompositeScore >= 0 && rawCompositeScore <= 100
+            ? rawCompositeScore
+            : null;
+        if (!data || (!data.seismic && !data.hydrogeological && compositeScore === null)) {
             return _emptyState('Nessun dato di rischio disponibile per questo comune.');
         }
         let html = '';
+        if (compositeScore !== null) {
+            html += `<div class="enrichment-row"><span>Rischio composito comunale</span><span class="enrichment-risk-score"><meter min="0" max="100" value="${compositeScore}" aria-label="Punteggio di rischio composito comunale">${_formatNumber(compositeScore, 1)}</meter><strong>${_formatNumber(compositeScore, 1)}/100</strong></span></div>`;
+        }
         if (data.seismic) {
             html += `<div class="enrichment-row"><span>Rischio sismico</span><strong>${_seismicLabel(data.seismic.zone)}</strong></div>`;
         }
