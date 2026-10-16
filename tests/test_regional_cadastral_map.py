@@ -67,7 +67,7 @@ def test_tiles_resolve_missing_canonical_relations_to_regional_views_and_cache_t
     assert len(stats.conn.calls) == 1
     assert all("to_regclass" in sql for sql, _ in stats.conn.calls)
     assert "ST_AsMVT" in regional.conn.calls[-1][0]
-    assert "t.municipality_name" in regional.conn.calls[-1][0]
+    assert 't."municipality_name"' in regional.conn.calls[-1][0]
 
 
 @pytest.mark.parametrize("method,args", [

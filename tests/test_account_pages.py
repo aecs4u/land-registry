@@ -64,7 +64,7 @@ def test_preferences_round_trip_keeps_unrelated_stored_keys(client):
             "language": "en",
             "default_basemap": "satellite",
             "start_view": "last",
-            "default_layers": ["cadastral-parcels", "hazard-areas"],
+            "default_layers": ["cadastral-parcels", "flood-hazard"],
             "parcel_labels": False,
         },
     )
@@ -73,7 +73,7 @@ def test_preferences_round_trip_keeps_unrelated_stored_keys(client):
     loaded = test_client.get("/api/v1/user/preferences").json()["preferences"]
     assert loaded["default_basemap"] == "satellite"
     assert loaded["start_view"] == "last"
-    assert loaded["default_layers"] == ["cadastral-parcels", "hazard-areas"]
+    assert loaded["default_layers"] == ["cadastral-parcels", "flood-hazard"]
     assert loaded["parcel_labels"] is False
     assert db.get_user_preferences(USER.id)["owned_by_another_feature"] == 1
 

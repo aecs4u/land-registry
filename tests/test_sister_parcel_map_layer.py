@@ -108,7 +108,10 @@ def test_sister_overlay_template_and_frontend_register_the_switch():
     root = Path(__file__).parents[1] / "land_registry"
     script = (root / "static" / "map-v2.js").read_text(encoding="utf-8")
     assert "function ensureSisterParcelsOverlayLayer" in script
-    assert "/api/v1/map/sister-parcels" in script
+    # The page pages through the canonical parcel feature endpoint; the
+    # dedicated /map/sister-parcels route remains available to API clients.
+    assert "/api/v1/map/layers/cadastral-parcels/features" in script
+    assert "function refreshSisterParcelsOverlay" in script
     for template in (root / "templates" / "map_v2.html", root / "templates" / "theme_overrides" / "map_v2.html"):
         assert 'id="toggleSisterParcels"' in template.read_text(encoding="utf-8")
 

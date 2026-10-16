@@ -21,8 +21,10 @@ def test_estimator_uses_parcel_area_and_selected_sale_range() -> None:
     assert "La particella misura" in PANEL_SOURCE
     assert 'id="omiEstimateArea"' in PANEL_SOURCE
     assert 'id="omiEstimateResult"' in PANEL_SOURCE
-    assert "quoteBenchmark()" in PANEL_SOURCE
-    assert "mediana quotazioni comune" in PANEL_SOURCE
+    assert "function quoteBenchmark(selected)" in PANEL_SOURCE
+    assert "quoteBenchmark(quote)" in PANEL_SOURCE
+    # The benchmark compares like with like: same type, state and semester.
+    assert "mediana OMI comunale, stessa tipologia e stato" in PANEL_SOURCE
     assert "_benchmarkInline(saleBenchmark" in PANEL_SOURCE
     assert "_sourceFootnote(data.source, data)" in PANEL_SOURCE
 

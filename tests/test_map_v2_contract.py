@@ -404,7 +404,11 @@ def test_standalone_and_theme_templates_define_the_same_map_controls():
     # map_v2.html is the fallback. They are kept as separate files, so this
     # guards against one gaining or losing a control the script depends on.
     shell_only = {"themeButton", "sidebar-group-land-registry", "sidebar-group-account"}
-    assert set(_element_ids(TEMPLATE)) ^ set(_element_ids(THEME_TEMPLATE)) == shell_only
+    # Both templates render the shortlist toggle, but each uses its own id for
+    # its chrome (the script binds ``.shortlist-toggle``, not the id).
+    toggle_ids = {"shortlistToggleFallback", "shortlistToggleTheme"}
+    assert set(_element_ids(TEMPLATE)) ^ set(_element_ids(THEME_TEMPLATE)) == shell_only | toggle_ids
+    assert 'class="shortlist-toggle' in TEMPLATE and 'class="shortlist-toggle' in THEME_TEMPLATE
 
 
 def test_map_templates_have_no_duplicate_element_ids():

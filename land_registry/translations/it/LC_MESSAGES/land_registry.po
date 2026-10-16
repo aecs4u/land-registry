@@ -4815,3 +4815,9 @@ msgstr "Media aritmetica a pesi uguali delle componenti disponibili; i valori di
 
 msgid "Heuristic municipality-level hazard context index; not a probability, expected loss, parcel risk estimate, or engineering assessment."
 msgstr "Indice euristico di pericolosità a livello comunale; non è una probabilità, una perdita attesa, una stima del rischio della particella o una valutazione ingegneristica."
+
+msgid "Defaults are illustrative. PVGIS uses a building-mounted reference system at the parcel centroid; you provide system size, tilt, aspect and losses. This does not estimate usable roof area or installation feasibility."
+msgstr "I valori predefiniti sono indicativi. PVGIS usa un impianto di riferimento montato sull'edificio nel centroide della particella; potenza, inclinazione, orientamento e perdite sono indicati dall'utente. Non stima la superficie utile del tetto né la fattibilità dell'installazione."
+
+msgid "Active hazard"
+msgstr "Pericolo attivo"

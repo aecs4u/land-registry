@@ -26,9 +26,10 @@ from pathlib import Path
 SQL_DIR = Path(__file__).parent / "sql"
 
 # Indexes first, ANALYZE-only script last so it sees the new indexes.
+# map-concession-tiles-index.sql is comment-only (the index lives in the source
+# database; statistics come from map-layer-statistics.sql), so it is not run.
 ORDER = (
     "map-reference-indexes.sql",
-    "map-concession-tiles-index.sql",
     "mps04-map-index.sql",
     "omi-period-index.sql",
     "map-layer-statistics.sql",

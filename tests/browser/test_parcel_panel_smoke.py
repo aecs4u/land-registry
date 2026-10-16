@@ -199,8 +199,10 @@ def test_panel_fills_sections_independently_and_survives_a_failing_source(server
         assert page.get_attribute("#parcelReportLink", "aria-disabled") == "false"
         page.wait_for_function("document.querySelector('[data-stat=\"hazard\"] .parcel-stat-value').textContent.startsWith('High')")
         assert page.get_attribute('[data-stat="hazard"]', "data-level") == "high"
-        assert page.locator('[data-stat="buildings"]').count() == 0
-        page.wait_for_function("document.querySelector('[data-stat=\"seismic\"] .parcel-stat-value').textContent.includes('3')")
+        # The strip no longer has a seismic cell; the zone is read in the Risks card.
+        assert page.locator('[data-stat="seismic"]').count() == 0
+        page.wait_for_selector('#parcel-section-risks[data-state="ready"]')
+        assert "Zone 3" in page.inner_text("#parcel-section-risks")
         assert "PGA (10 percent in 50 years)" in page.inner_text("#parcel-section-risks")
         assert "0,123 g" in page.inner_text("#parcel-section-risks")
         assert any("/mps04/pga?" in url for url in requested)

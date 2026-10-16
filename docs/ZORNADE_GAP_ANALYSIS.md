@@ -16,6 +16,46 @@ app.zornade.com (v2.4.0). Status consolidated through 2026-10-16.*
 > has successfully calculated one in the panel. A same-parcel PDF sample
 > comparison remains open because no exported Zornade report was available.
 
+> **2026-10-16 status review.** The matrix below rates 4 ✅, 3 ✅/🟡, 14 🟡 and
+> 1 ❌ of 22 features (July baseline: 4, 1, 9 and 8). The ratings measure what
+> is wired, not what returns data. Checked against parcel `G273_000900.3205` on
+> the review host with the installed `aecs4u-stats` (`0.2.1`, `main` at
+> `1109d6c`):
+>
+> - **Returns data:** ISPRA parcel hazards and MPS04 PGA (both from the shared
+>   PostgreSQL database), the municipal composite risk score (shared helper),
+>   the coastal-change store, OMI zone boundaries, income, census, POIs, PVP.
+> - **Wired, no store provisioned (`not_built`):** terrain, CORINE, OSM building
+>   footprints, ANNCSU addresses, protection constraints, night lights.
+> - **Blocked by one database option:** EGMS parcel subsidence. The cells are in
+>   the database, but the `egms_source` foreign server lacks `extensions=postgis`
+>   (`scripts/sql/map-egms-fdw-pushdown.sql`, not applied), so a point lookup
+>   takes about 39 s and the PostgreSQL path stays off.
+> - **Upstream:** the terrain, CORINE, buildings, ANNCSU-address, composite-risk
+>   and solar-economics code is merged to `aecs4u-stats` `main` and installed
+>   here, but issues #28, #29 and #31–#34 are still open on GitHub; #48
+>   (protection constraints) has not landed.
+> - **Equivalence checks:** the shared solar-economics helper and the app's
+>   compatibility calculation agree on all nine numeric fields and 26 cash-flow
+>   rows for the 5 kWp reference case; the shared and compatibility composite
+>   risk functions agree on seven representative cases, including partial,
+>   missing and invalid inputs.
+> - **Lock file:** `uv.lock` was re-locked on 2026-10-16 for `aecs4u-stats`
+>   only (`5801a5e` → `a1ef4cb`, `main`), which also adds `aecs4u-documents`,
+>   `typst` and `qrcode` that `pyproject.toml` already required. The deploy uses
+>   `uv sync --frozen`, so the old lock would have shipped without them. `a1ef4cb`
+>   is two commits past the installed `1109d6c` (an ISTAT query fallback and a
+>   loader script); the installed venv has not been re-synced.
+> - **Tests:** all 1,371 Python tests pass (the layer-catalog contract tests were
+>   rewritten for the direct-source catalog), the JS suite passes (49) and the
+>   Chromium smoke suite passes (14, 4 skipped).
+>   `tests/test_corrected_s3_storage.py` cannot be collected here because `moto`
+>   is not installed.
+> - **Deferred by decision, not open work:** community features (row 20, SRS
+>   §14), extra estimator inputs (V5), declared price (V10) and the gamified
+>   tour/donation prompts. The same-parcel PDF comparison needs an exported
+>   Zornade report, and the Italian copy needs a native proofread.
+
 > **2026-07-11 update:** most of the "data pipeline" work this document
 > originally scoped for `land_registry/scripts/` has been redirected upstream
 > into the shared `aecs4u-stats` (public-data ETL + query layer) and
@@ -67,23 +107,25 @@ coverage remains the comparison target.
 
 Legend: ✅ have · 🟡 partial (some product surface exists; coverage, release or acceptance gaps remain) · ❌ missing
 
+A 🟡 can mean the card is wired but its store is not provisioned on the review host (`not_built`); the 2026-10-16 status review at the top lists which rows return data today.
+
 | # | Zornade feature | Ours | Gap detail |
 |---|---|---|---|
 | 1 | Nationwide always-on parcel map (zoom-gated vector tiles, labelled polygons) | ✅/🟡 | ✅ The primary MapLibre map uses the allow-listed PostGIS MVT catalog with a raster fallback, loads viewport parcels at z≥16, supports click selection and detail-panel integration, and renders persistent parcel-number labels from z16. Analysis tools now draw polygon, polyline, rectangle, circle and marker GeoJSON, with existing edit/import/export/save/load workflows. Remaining gap: verify production-wide parcel coverage; PMTiles is an alternate delivery path, not a prerequisite for the current MVT implementation. |
-| 2 | Click parcel → detail panel (80+ fields, 17 sections) | 🟡 | The primary MapLibre map opens a sectioned, lazy-loaded panel from canonical parcel selection. It covers cadastral identity, OMI/value, census/demographics, income, SISTER/OpenData, POI, risks, live hazards, auctions, provenance and a locally provisioned coastal-change section. It is not yet equivalent to Zornade's 17 sections: terrain, CORINE and OSM footprints are wired locally but their sibling `aecs4u-stats` packages are unreleased and no regional stores are provisioned; the ANNCSU card is wired but its upstream package remains unreleased and no regional address store is provisioned. Protection constraints now have a schema-gated API, panel section and map layers, but the upstream source tables and regional coverage are not provisioned. The composite-score UI and adapter use an aligned local compatibility calculation when the shared formula package is absent. Target-host coverage and runtime review remain. See Appendix A for the current panel audit. |
+| 2 | Click parcel → detail panel (80+ fields, 17 sections) | 🟡 | The primary MapLibre map opens a sectioned, lazy-loaded panel from canonical parcel selection. It covers cadastral identity, OMI/value, census/demographics, income, SISTER/OpenData, POI, risks, live hazards, auctions, provenance and a locally provisioned coastal-change section. It is not yet equivalent to Zornade's 17 sections: terrain, CORINE and OSM footprints are wired and their `aecs4u-stats` subpackages are merged to `aecs4u-stats` main (commit `1109d6c`) and installed here, but no regional stores are provisioned (each returns `not_built`); the ANNCSU card is wired against the installed upstream importer, but no regional address store is provisioned (`not_built`). Protection constraints now have a schema-gated API, panel section and map layers, but the upstream source tables and regional coverage are not provisioned. The composite-score UI and adapter use the shared `hazards.composite_risk_score` helper, which is now installed (Palermo returns 28.6); the local compatibility copy remains only for older wheels. Target-host coverage and runtime review remain. See Appendix A for the current panel audit. |
 | 3 | URL state / deep links (`?lat&lng&zoom&parcel=`) + share | ✅ | `?lat=&lng=&zoom=` is restored on `GET /map` and updated after map movement. Selected boundary parcels now write `&parcel=<national-reference>`, restore through `/parcel/by-reference/{ref}`, and expose a Copy Link action in the detail panel. |
 | 4 | Hierarchical parcel finder that works without pre-loading | ✅/🟡 | The primary map now offers Regione→Provincia→Comune→Foglio→Particella browsing. It loads the hierarchy on demand and resolves the selected parcel through `/api/v1/map/search` and the per-region `aecs4u-stats` cadastral stores, without requiring a user-loaded GeoDataFrame. Available areas still depend on the hierarchy index and parcel stores provisioned on the host. |
 | 5 | Cadastral base data (particella, foglio, sezione, comune, area) | ✅/🟡 | The canonical map source exposes stable feature IDs and cadastral properties; `/api/v2/parcels/{fid}` returns the basic attributes and optional geometry. Field completeness and national production coverage remain data-provisioning checks. |
 | 6 | OMI quotations (per zone, by type, yields) + 22-semester history + value estimator | 🟡 | ✅ Quotes/history backend and parcel-panel UI are implemented: users select zone/typology/conservation state, enter the relevant commercial m², see an explicitly non-appraisal value range, and inspect up to 24 semesters in a trend chart. ✅ `/omi/at-point` spatially matches the parcel centroid and `POST /omi/estimate` returns a versioned, report-ready server calculation from one exact quote. All 100 cached province boundaries (50,466 polygons) are built under `/data/istat/omi_zones` on this host; a Rome point lookup matched B29. These polygons are a 2018/2 mirror and approximate where boundaries have since changed. Mount the same files on each serving host and verify parcel-level matches there. |
-| 7 | Environmental risks: seismic, flood (PGRA), landslide (PAI/IFFI), subsidence (InSAR), coastal erosion + composite risk score | 🟡 | Parcel hazard polygons and EGMS 100 m subsidence cells are intersected with parcel geometry; DPC seismic classification and nearest-grid MPS04 PGA are separate components. The ISPRA 2006–2020 shoreline-change snapshot is provisioned in the configured stats database: 99,229 features across 664 municipalities; two real Civitavecchia parcels returned mapped segments, and a dense-area query correctly reports partial coverage at the 100-candidate cap. This is historical change, not a current forecast. The primary/legacy panels and v2 risk section calculate the versioned municipal index from existing seismic and hydrogeological inputs, using the shared helper when installed and an aligned app compatibility implementation for older wheels. MPS04, ISPRA hazard mosaics and EGMS stores were absent on the review host. |
+| 7 | Environmental risks: seismic, flood (PGRA), landslide (PAI/IFFI), subsidence (InSAR), coastal erosion + composite risk score | 🟡 | Parcel hazard polygons and EGMS 100 m subsidence cells are intersected with parcel geometry; DPC seismic classification and nearest-grid MPS04 PGA are separate components. The ISPRA 2006–2020 shoreline-change snapshot is provisioned in the configured stats database: 99,229 features across 664 municipalities; two real Civitavecchia parcels returned mapped segments, and a dense-area query correctly reports partial coverage at the 100-candidate cap. This is historical change, not a current forecast. The primary/legacy panels and v2 risk section calculate the versioned municipal index from existing seismic and hydrogeological inputs, using the shared helper when installed and an aligned app compatibility implementation for older wheels. On 2026-10-16 MPS04 PGA and ISPRA hazard polygons are read from the shared PostgreSQL database; EGMS cells are present there too, but lookups wait for `extensions=postgis` on the `egms_source` foreign server (`scripts/sql/map-egms-fdw-pushdown.sql`, not applied). |
 | 8 | Live overlays: satellite fire hotspots (FIRMS), Protezione Civile criticality bulletin | ✅ | FIRMS detections have a marker-layer toggle (`FIRMS_MAP_KEY` required); marker popups show the UTC acquisition time, relative detection age and fire radiative power. DPC bulletin details appear in the parcel panel and its 187 national alert-zone polygons can be toggled on the map with red/orange/yellow/green severity styling, hover labels, detail popups, issue timestamp and legend. |
-| 9 | Solar PV potential per building (PVGIS-SARAH3, cash-flow, NPV, LCOE, payback) | 🟡 | Municipality-level Zornade PV aggregates are consumed by the primary Energy section and map layer and appear in the Typst dossier with their municipal scope, source version and update time. A separate editable scenario now uses PVGIS 5.3/SARAH3 yield at the parcel centroid plus user-supplied capacity, tilt, aspect, losses and financial assumptions; it shows NPV, LCOE, payback and annual cash flows. It does not infer usable roof area or installable capacity. The shared `aecs4u-stats` calculator is used when installed; a compatibility calculation serves older wheels while upstream #31 remains uncommitted. A live PVGIS response was parsed locally on 2026-10-16; provisioned-host behavior and timeout/unavailable states remain open. See issue draft 06. |
-| 10 | Terrain: elevation, slope, aspect, roughness (TINITALY DEM) | 🟡 | The parcel API, lazy Terrain card and Typst dossier section are wired locally. The regional WCS importer and parcel query for issue #28 are applied in the sibling `aecs4u-stats` working tree but remain unreleased; no regional raster store is provisioned, so runtime values are unavailable. |
+| 9 | Solar PV potential per building (PVGIS-SARAH3, cash-flow, NPV, LCOE, payback) | 🟡 | Municipality-level Zornade PV aggregates are consumed by the primary Energy section and map layer and appear in the Typst dossier with their municipal scope, source version and update time. A separate editable scenario now uses PVGIS 5.3/SARAH3 yield at the parcel centroid plus user-supplied capacity, tilt, aspect, losses and financial assumptions; it shows NPV, LCOE, payback and annual cash flows. It does not infer usable roof area or installable capacity. The shared `aecs4u-stats` calculator is used when installed; the installed shared calculator (`aecs4u_stats.pvgis.economics`) is used and a compatibility calculation remains only for older wheels; upstream #31 is still open. A live PVGIS response was parsed locally on 2026-10-16; provisioned-host behavior and timeout/unavailable states remain open. See issue draft 06. |
+| 10 | Terrain: elevation, slope, aspect, roughness (TINITALY DEM) | 🟡 | The parcel API, lazy Terrain card and Typst dossier section are wired locally. The regional WCS importer and parcel query for issue #28 are merged to `aecs4u-stats` main (commit `1109d6c`) and installed here (issue #28 is still open); no regional raster store is provisioned, so runtime values are unavailable. |
 | 11 | Demographics (ISTAT census sections: age, gender, indicators) | ✅ | Parcel-centroid lookup now shows the containing 2021 census section with residents, households, dwellings, buildings, employment, education, foreign-resident share, vacancy and household size. Province-level demographic series are previewed separately with explicit resolution disclosure. |
 | 12 | Economy: MEF/IRPEF income distribution, VIIRS night lights | 🟡 | ✅ IRPEF done: `aecs4u_stats.mef` (comune-level income brackets, mean taxable income) via `/api/v1/enrichment/income/{cadastral_code}` — verified against real 2022 MEF data for Civitavecchia (25.5%/10.8%/26.4%/30.4% brackets, close to Zornade's reference-year figures). The VIIRS VNP46A4 importer applies the provider's 0.1 radiance scale factor and quality mask; raster query, lazy panel section and API v2 catalog entry are implemented. Install the annual local raster to serve values on a host. |
-| 13 | Land cover (CORINE / Urban Atlas) | 🟡 | The CORINE panel card, dedicated API endpoint, catalog entry and dossier section are wired in the local app tree. The reusable `aecs4u_stats.corine` importer/query is applied in the sibling working tree but is not committed or released; no regional store is provisioned, so results are currently unavailable. CLC 2018 is broad context (25 ha minimum mapping unit, 100 m minimum width), not a parcel survey. See Appendix A.5.3 and issue #32. |
-| 14 | Addresses (ANNCSU civic numbers) | 🟡 | Up to 10 de-duplicated SISTER address strings remain in the initial Value tab. A separate lazy ANNCSU card and `/api/v1/enrichment/anncsu-addresses/{reference}` spatially match geocoded access points; the same block is included in the dossier and `/api/v2` catalog. The regional importer/query are implemented in the sibling `aecs4u-stats` working tree but are unreleased, and no regional address store is provisioned. ANNCSU coordinates are present only where supplied by municipalities; match method, source vintage, EPSG:4258 and municipality coordinate coverage are carried through the response. The panel and dossier distinguish complete, partial and unknown municipal coordinate coverage from a parcel no-match. A no-geocoded-match state does not mean no civic address. See issue draft 08 and upstream `aecs4u-stats#33`. |
-| 15 | Buildings (footprint, count, coverage %) | 🟡 | SISTER cadastral building/property records remain a separate source. The app has a lazy OSM footprint card, `/api/v1/enrichment/building-footprints/{reference}` adapter and dossier subsection for intersecting footprint count, area clipped to the parcel and mapped area share. The regional Geofabrik PBF importer and EPSG:3035 DuckDB query are applied in the sibling `aecs4u-stats` working tree but are unreleased; no regional store is provisioned, so runtime values are unavailable. OSM mapping completeness remains unknown. See Appendix A.11 and issue draft 04. |
+| 13 | Land cover (CORINE / Urban Atlas) | 🟡 | The CORINE panel card, dedicated API endpoint, catalog entry and dossier section are wired in the local app tree. The reusable `aecs4u_stats.corine` importer/query is merged to `aecs4u-stats` main (commit `1109d6c`) and installed here; no regional store is provisioned, so results are currently unavailable. CLC 2018 is broad context (25 ha minimum mapping unit, 100 m minimum width), not a parcel survey. See Appendix A.5.3 and issue #32. |
+| 14 | Addresses (ANNCSU civic numbers) | 🟡 | Up to 10 de-duplicated SISTER address strings remain in the initial Value tab. A separate lazy ANNCSU card and `/api/v1/enrichment/anncsu-addresses/{reference}` spatially match geocoded access points; the same block is included in the dossier and `/api/v2` catalog. The regional importer/query are merged to `aecs4u-stats` main (commit `1109d6c`) and installed here, and no regional address store is provisioned. ANNCSU coordinates are present only where supplied by municipalities; match method, source vintage, EPSG:4258 and municipality coordinate coverage are carried through the response. The panel and dossier distinguish complete, partial and unknown municipal coordinate coverage from a parcel no-match. A no-geocoded-match state does not mean no civic address. See issue draft 08 and upstream `aecs4u-stats#33`. |
+| 15 | Buildings (footprint, count, coverage %) | 🟡 | SISTER cadastral building/property records remain a separate source. The app has a lazy OSM footprint card, `/api/v1/enrichment/building-footprints/{reference}` adapter and dossier subsection for intersecting footprint count, area clipped to the parcel and mapped area share. The regional Geofabrik PBF importer and EPSG:3035 DuckDB query are merged to `aecs4u-stats` main (commit `1109d6c`) and installed here; no regional store is provisioned, so runtime values are unavailable. OSM mapping completeness remains unknown. See Appendix A.11 and issue draft 04. |
 | 16 | POI (Foursquare/OSM) & cultural constraints (MiBAC) | 🟡 | The primary panel and map expose category counts and POI overlays when the configured store is available. The constraint endpoint, lazy card and map layers follow the protection contract; upstream source tables and regional coverage remain unavailable. |
 | 17 | Public REST API v2 (`/parcels/{id}?include=…`, API keys, 1K–10K req/h rate limits, data catalog docs) | 🟡 | `/api/v2/parcels/{fid}` exposes cadastral, population, demographic, economic, nightlights, SISTER, ANNCSU, OpenData, PVP, municipality-solar and OMI blocks on request, alongside geometry and risk. ANNCSU returns matched civic points with coordinate method, vintage and municipality coordinate coverage when a regional store is provisioned; none is installed on this host. On a cold read, independent adapters are limited to requested sections; partial builds are not written as complete read models. Optional-provider failures are isolated to their sections with explicit lookup-failed reasons, preserving other requested sections. The parcel response has a typed OpenAPI section envelope, a concrete response example and independent risk-provider degradation. Risk includes DPC municipal classification, INGV MPS04 nearest-grid PGA, ISPRA parcel hazards, EGMS subsidence, optional local-store-backed coastal change and schema-gated protection constraints with explicit per-type coverage. The versioned municipal composite score uses the shared helper when installed and a compatible local implementation on older wheels; it is null when no valid municipal component is available. Upstream #34 release and representative live-comune validation remain pending. Protection data remain unavailable until their upstream table is provisioned, and provider reuse terms remain under review. Night lights report annual VNP46A4 radiance and sampling provenance when the local raster is installed. Clerk-account users can create, list and revoke up to the configured maximum of `parcels:read` keys; secrets are returned once. Each key has an atomic UTC-hour quota stored in PostgreSQL (default 10,000, configurable with `PUBLIC_API_REQUESTS_PER_HOUR`), with limit, remaining and reset headers. `/api/v2/catalog` publishes stable fields and descriptions, data shapes, matching/freshness notes and source reuse metadata. Provider-native record properties vary by release or deployment and are marked dynamic. Matched response sections include a stable `source_key` plus catalogued URL, licence/reuse status and attribution; cadastral fields now carry field-level source, match-method and resolution mappings. OpenData records now expose record-level retrieval, provider, origin, timestamps, matching and reuse metadata. OpenAPI Catasto is identified as the access service and its FAQ names Agenzia delle Entrate as the principal source, not as a source confirmed for each historic record. The OpenAPI contract restricts mass extraction and other uses; record redistribution rights and the applicable account terms remain unverified. |
 | 18 | PDF export of parcel report | 🟡 | Zornade's [public guide](https://zornade.com/blog/salvare-stampare-mappa-catastale-pdf/) describes a free personal-use PDF of the parcel sheet with cadastral, risk, OMI, solar and demographic data; it says the PDF has no legal value. Its exact layout, fields and report provenance are not published, and this audit did not inspect a downloaded sample. land-registry serves a server-built A4 Typst dossier with a locator map, cadastral/location and available enrichment sections, a municipality profile with population history, province-level ISTAT quality-of-life indicators, municipality-scoped solar aggregates, source register, report ID and version metadata. After a successful Energy-tab calculation, POST can also carry the validated PV assumptions; the server recomputes the PVGIS yield and cash flows for an optional scenario section. Both are informational reports, not official cadastral extracts; land-registry also states that its dossier is not a professional appraisal. See Appendix A.5.8 for the comparison and remaining acceptance check; implementation details are in `PARCEL_DOSSIER.md`. |
@@ -257,9 +299,7 @@ get its cadastral data — no file loading step.
    (municipality, POI, OMI, income sections); build the ISTAT/POI/OMI/MEF
    stores in the deploy image or a mounted volume.
 3. Terrain: TINITALY 10 m DEM (INGV) → regional WCS importer and zonal
-   statistics are prepared in the sibling `aecs4u-stats` working tree; consume
-   through the parcel API/card and Typst dossier once the package is released
-   and a regional store is installed. Outputs include elevation min/mean/max,
+   statistics are merged to `aecs4u-stats` main (commit `1109d6c`) and installed here; the parcel API/card and Typst dossier consume them once a regional store is imported. Outputs include elevation min/mean/max,
    slope, aspect, elevation range and Riley TRI.
 4. Land cover: CORINE 2018 vector → majority class per parcel at ingest.
 5. ~~Demographics: ISTAT sezioni di censimento (Basi Territoriali + census data)
@@ -277,8 +317,7 @@ get its cadastral data — no file loading step.
 3. Composite 0–100 risk score + panel badge/meter — the primary and legacy
    panels and v2 risk section consume `composite_score`. The app uses the
    shared `municipal_hazard_index_v1` helper when installed and an aligned
-   compatibility copy for older wheels. The upstream helper remains pending
-   merge/release and representative host verification under `aecs4u-stats#34`.
+   compatibility copy for older wheels. The shared helper is now installed; on 2026-10-16 shared and compatibility outputs were identical on seven representative cases (complete, partial, missing and invalid inputs), and `aecs4u-stats#34` is still open.
 4. Live overlays — backend and core map UI done:
    - ~~NASA FIRMS active fires~~ ✅ `aecs4u_stats.hazards.firms` (needs
      `FIRMS_MAP_KEY`); the direct-map marker popup shows UTC observation time,
@@ -293,9 +332,7 @@ get its cadastral data — no file loading step.
    at the parcel centroid, scales it by user-supplied capacity, and calculates
    cash flow, NPV, LCOE and payback without requiring a footprint or inferring
    roof capacity. The panel can pass its validated assumptions to the Typst
-   dossier, which recalculates the scenario server-side. The local compatibility
-   calculator remains active because the shared economics helper in
-   `aecs4u-stats#31` is unreleased. A live PVGIS response was parsed locally on
+   dossier, which recalculates the scenario server-side. The shared economics helper (`aecs4u-stats#31`) is installed and used; on 2026-10-16 the local compatibility calculator matched it on all nine numeric fields and all 26 annual cash-flow rows for the 5 kWp case, and remains only for older wheels. A live PVGIS response was parsed locally on
    2026-10-16; the verified shared-helper reference case, serving-host timeout
    behavior and rendered scenario PDF remain open.
 2. ~~Economy: MEF/Dip. Finanze IRPEF income brackets~~ ✅ done
@@ -313,15 +350,12 @@ get its cadastral data — no file loading step.
 3. Addresses: the panel keeps the existing capped SISTER strings and now has a
    separate lazy ANNCSU spatial-match card, dedicated parcel endpoint, API v2
    section and dossier section. The upstream regional indirizzario/stradario
-   importer and point-in-parcel query are implemented in the sibling working
-   tree but remain unreleased; no regional address store is provisioned here.
+   importer and point-in-parcel query are merged to `aecs4u-stats` main (commit `1109d6c`) and installed here; no regional address store is provisioned here.
    A no-match remains distinct from a parcel without an address, and municipal
    coordinate coverage and coordinate method are reported when available.
 4. Buildings: SISTER cadastral records are shown separately. The app-side OSM
    footprint endpoint, panel and dossier adapter are wired for parcel count,
-   clipped footprint area and mapped share. Runtime values remain gated on the
-   unreleased upstream query (`aecs4u-stats#29`) and a provisioned regional
-   store; OSM mapping completeness remains unknown.
+   clipped footprint area and mapped share. Runtime values remain gated on a provisioned regional store (the upstream query, `aecs4u-stats#29`, is installed); OSM mapping completeness remains unknown.
 5. POI: ✅ already served by `aecs4u_stats.osm` via `/api/v1/enrichment/pois/`
    (build the store with the Overpass downloader or the `pbf` extra). Cultural
    constraints: MiBAC vincoli (Vincoli in Rete / Carta del Rischio) intersection.
@@ -401,7 +435,7 @@ get its cadastral data — no file loading step.
 | Municipality solar potential | PVGIS-SARAH3-derived Zornade aggregate via `aecs4u-stats` | The primary Energy section and dossier consume municipality-wide values. Zornade's public guide says aggregates are open-licensed but does not name a licence; no formal licence is asserted. Parcel/roof economics remain unavailable pending `aecs4u-stats#31` | 4 |
 | IRPEF income | MEF Dip. Finanze | integrated via **aecs4u-stats** (`aecs4u_stats.mef`) | done |
 | VIIRS night lights | NASA Black Marble VNP46A4 | LAADS DAAC; authorized Earthdata token required for scripted download | 4 |
-| Civic addresses | ANNCSU national/regional indirizzario and stradario | Monthly regional ZIP/CSV downloads; municipality-submitted point coordinates. Official metadata identifies ETRF2000/ETRS89 (EPSG:4258); public consultation terms state CC BY 4.0. Regional importer/query code is implemented in the sibling working tree but unreleased; no address store is provisioned | 4 |
+| Civic addresses | ANNCSU national/regional indirizzario and stradario | Monthly regional ZIP/CSV downloads; municipality-submitted point coordinates. Official metadata identifies ETRF2000/ETRS89 (EPSG:4258); public consultation terms state CC BY 4.0. Regional importer/query code is merged to `aecs4u-stats` main (commit `1109d6c`) and installed here; no address store is provisioned | 4 |
 | POI | OSM via **aecs4u-stats** | integrated | done |
 | Municipalities + population | ISTAT via **aecs4u-stats** | integrated | done |
 | OMI quotes (comune/zone/typology + history) | Agenzia delle Entrate via **aecs4u-stats** | Integrated (`aecs4u_stats.omi`); the 100-province 2018/2 GeoJSON mirror is provisioned under `/data/istat/omi_zones` on the review host, with availability and a representative point match confirmed. Mount it on each serving host; boundaries are approximate where they have changed since 2018/2. | done on review host |
@@ -461,7 +495,7 @@ details and licences for Zornade's blocks are in
 | 0 Alignment and baseline | **Local forced-build/repeat sample verifies 20 PostgreSQL hits (median 15 ms, p95 55 ms); no duplicate-reference collision was sampled. Production role and same-source latency acceptance remain open** | [PARCEL_PANEL_BASELINE_2026-10.md](PARCEL_PANEL_BASELINE_2026-10.md), [baseline script](../scripts/parcel_panel_baseline.py), [read-model SQL migration](../scripts/sql/parcel-enrichment-read-model.sql), [controlled sample](baselines/parcel_panel_controlled_2026-10-10.json); [constraints contract](PROTECTION_CONSTRAINTS_CONTRACT.md) clarified |
 | 1 Primary panel and legacy parity | **Mostly done**. SISTER addresses are included in the read model and shown in the initial Value tab directly below cadastral identity; the separate ANNCSU lazy card is wired to the geocoded regional query. Both stores remain data-dependent, and live coverage is unverified. Header actions and the Italian catalog are in place. A 2026-10-15 local refresh-first sample measured cold-build p95 at 6.188 s, below the 8.140 s preliminary target, with eight available blocks; strict same-shape and production latency acceptance remain open. Independent native proofreading also remains | [panel core](../land_registry/static/parcel-panel-core.js), [section registry](../land_registry/static/parcel-panel.js), map templates, side-sheet styles, browser smoke suite, [latest baseline sample](baselines/parcel_panel_controlled_2026-10-15.json) |
 | 2 Derived metrics | **App implementation and fixture tests done**; Italian-copy review and provisioned MEF/OMI quote-data review remain. The OMI boundary mirror is provisioned on the review host (100 provinces, 2018/2 vintage); deployment and representative coverage checks remain | OMI quote/history and MEF adapters; fixed-fixture metric tests; OMI estimator and income sections; local boundary availability and Rome point lookup |
-| 3 Per-parcel geospatial | **Parcel hazard and EGMS grid-cell intersections implemented; MPS04 point estimate added; ISPRA coastal snapshot provisioned and queried**. The configured stats database contains 99,229 shoreline segments across 664 municipalities. Two real Civitavecchia parcels matched 35 and 67 segments; a dense-area query returned the explicit 100-candidate partial state. MPS04, ISPRA hazard and EGMS stores remain absent on this host. Protection constraints remain gated on `aecs4u-stats#48` | ISPRA and EGMS polygon-intersection routes and panel sections; `/mps04/pga` with nearest-grid provenance and unavailable state; coastal-store readiness, real-parcel lookups and candidate-cap behavior; protection-constraints contract |
+| 3 Per-parcel geospatial | **Parcel hazard and EGMS grid-cell intersections implemented; MPS04 point estimate added; ISPRA coastal snapshot provisioned and queried**. The configured stats database contains 99,229 shoreline segments across 664 municipalities. Two real Civitavecchia parcels matched 35 and 67 segments; a dense-area query returned the explicit 100-candidate partial state. MPS04 and ISPRA hazard polygons are served from the shared PostgreSQL database (2026-10-16); EGMS is blocked only by the missing `extensions=postgis` pushdown. Protection constraints remain gated on `aecs4u-stats#48` | ISPRA and EGMS polygon-intersection routes and panel sections; `/mps04/pga` with nearest-grid provenance and unavailable state; coastal-store readiness, real-parcel lookups and candidate-cap behavior; protection-constraints contract |
 | 4 Energy | **Municipal PV aggregates implemented in the panel and dossier**; parcel-level estimates and economics still wait for a defensible footprint and upstream work in `aecs4u-stats#31` | Energy tab and Typst dossier read the municipality solar block with its spatial scope and available source version |
 | 5 Report/export | **Server-built Typst dossier implemented**; optional recalculated parcel PV scenario included when submitted; Zornade content parity, provider-term and provisioned-data reviews remain | `/parcel/dossier/{reference}` builds the A4 report from server data; GET retains the baseline report, and POST accepts validated PV assumptions only after a successful panel calculation. It includes a report ID/version footer and source register. The ReportLab `/parcel/report/{reference}` endpoints are deprecated; see `PARCEL_DOSSIER.md` and Appendix A.5.8 |
 | 6 Optional | Partially implemented | Public API v2 parcel lookup, Clerk-account API-key lifecycle, settings-page controls, PostgreSQL shared quotas and `/api/v2/catalog` are available; provider-native property schemas, feedback and declared-price overlay remain |
@@ -651,7 +685,7 @@ a dev reload can show the cards as unavailable. Still absent from the installed
 stats package or its configured stores are DEM, CORINE, building footprints,
 protection constraints, and the OMI quote-fact schema (OMI stays the one-row-
 per-zone snapshot). The app now has local calculations for composite risk and
-solar economics; the corresponding shared implementations remain unreleased.
+solar economics; the corresponding shared implementations are now installed from `aecs4u-stats` main and were verified equivalent on 2026-10-16.
 Coastal change has since been provisioned in the configured stats database.
 
 #### A.4.4. State after implementation slices on 2026-10-10
@@ -809,9 +843,7 @@ The eager SISTER Main address section now appears in the initial Value tab,
 directly below cadastral identity. It shows up to ten de-duplicated strings
 matched to the parcel and keeps the cache-coverage and non-geocoded caveat.
 A separate lazy ANNCSU card now spatially matches geocoded civic points and is
-also available through the parcel API and dossier. The upstream importer/query
-is implemented in the sibling working tree, but release and regional data
-provisioning are still needed for field verification; see [issue draft 08](github_issues/zornade_map_enrichment/08-civic-addresses-anncsu.md).
+also available through the parcel API and dossier. The upstream importer/query is merged to `aecs4u-stats` main (commit `1109d6c`) and installed here, but regional data provisioning is still needed for field verification; see [issue draft 08](github_issues/zornade_map_enrichment/08-civic-addresses-anncsu.md).
 
 ### A.5. Feature matrix
 
@@ -861,9 +893,9 @@ incomplete · ❌ missing · — comparison not assessed. "Primary" is `/map`;
 
 | # | Capability | Zornade | Backend | Primary | Legacy | Rating |
 |---|---|---|---|---|---|---|
-| P1 | Building count, footprint, coverage | OSM footprints | App adapter and parcel query are wired; upstream regional importer/query for [`aecs4u-stats#29`](https://github.com/aecs4u/aecs4u-stats/issues/29) remains unreleased and no regional store is provisioned | Separate lazy OSM footprint card reports count, clipped area and mapped share when data are available; SISTER records remain a distinct source | Buildings card (SISTER) | 🟡 App path implemented; source provisioning and completeness remain |
+| P1 | Building count, footprint, coverage | OSM footprints | App adapter and parcel query are wired; upstream regional importer/query for [`aecs4u-stats#29`](https://github.com/aecs4u/aecs4u-stats/issues/29) is installed from `main` and no regional store is provisioned | Separate lazy OSM footprint card reports count, clipped area and mapped share when data are available; SISTER records remain a distinct source | Buildings card (SISTER) | 🟡 App path implemented; source provisioning and completeness remain |
 | P2 | Cadastral building records, categories | No | ✅ SISTER, OpenData | Buildings and a dedicated OpenData card render their respective read-model records; OpenData store readiness is unverified | ✅ | ✅ |
-| P3 | Land cover (CORINE) | Yes | App-side endpoint/query adapter and upstream regional store/importer are present in local working trees; no store is installed (`[aecs4u-stats#32](https://github.com/aecs4u/aecs4u-stats/issues/32)` remains open) | Lazy card shows class, area share, mapped coverage and resolution caveat when data are available | Included when source data match; otherwise explicitly unavailable | 🟡 Consumer path exists; upstream release and per-region import remain |
+| P3 | Land cover (CORINE) | Yes | App-side endpoint/query adapter and upstream regional store/importer are installed; no store is provisioned (`[aecs4u-stats#32](https://github.com/aecs4u/aecs4u-stats/issues/32)` remains open) | Lazy card shows class, area share, mapped coverage and resolution caveat when data are available | Included when source data match; otherwise explicitly unavailable | 🟡 Consumer path exists; upstream release and per-region import remain |
 | P4 | Urban land use | Only in functional urban areas | ❌ | ❌ | ❌ | ❌ Low value |
 | P5 | Addresses | Yes (ANNCSU) | SISTER `visura_properties.address` plus ANNCSU regional indirizzario point-in-parcel query; each source remains distinct | SISTER summary in initial Value tab; separate lazy ANNCSU card, API v1/v2 block and dossier section. No regional ANNCSU store provisioned on this host | ❌ | 🟡 Partial: spatial query is wired, live data coverage not verified |
 
@@ -880,11 +912,11 @@ incomplete · ❌ missing · — comparison not assessed. "Primary" is `/map`;
 
 | # | Capability | Zornade | Backend | Primary | Legacy | Rating |
 |---|---|---|---|---|---|---|
-| T1 | Seismic zone | Zone and PGA | ✅ DPC comune zone + INGV MPS04 nearest native grid | Comune-level zone and parcel-centroid PGA (10% exceedance probability in 50 years); PGA is explicitly a nearest-grid estimate with no interpolation. The MPS04 store is absent on this review host. | ✅ | 🟡 |
+| T1 | Seismic zone | Zone and PGA | ✅ DPC comune zone + INGV MPS04 nearest native grid | Comune-level zone and parcel-centroid PGA (10% exceedance probability in 50 years); PGA is explicitly a nearest-grid estimate with no interpolation. PGA is read from the shared PostgreSQL database (2026-10-16). | ✅ | 🟡 |
 | T2 | Flood and landslide | Per parcel, worst class | ✅ ISPRA national PAI/PGRA polygons; parcel-polygon intersection | Per-parcel intersected area and highest class, plus separately labelled comune shares | ✅ comune level | ✅ |
 | T3 | Subsidence | Per parcel | ✅ `aecs4u_stats.egms`, bounded 100 m grid-cell bbox query | Intersecting cells summarized by area-weighted velocity and acceleration, movement-class area and coverage percentage; partial-query state shown | Layer only | ✅ |
 | T4 | Composite risk score | Ring in header | 🟡 Shared helper preferred; app compatibility copy applies the same versioned equal-weight municipal formula on older wheels. [`aecs4u-stats#34`](https://github.com/aecs4u/aecs4u-stats/issues/34) remains open | 0–100 meter in the six-cell header strip and numeric badge in the Risks section when valid; absent/invalid values leave the other risk components unchanged | Legacy meter when valid; no score row when absent; Typst dossier shows the score and scope note | 🟡 Verify complete and partial real-comune responses and align with the released shared helper |
-| T5 | Terrain (elevation, slope, aspect, roughness) | Yes | 🟡 Regional INGV TINITALY WCS importer and parcel query applied in the sibling working tree (`[aecs4u-stats#28](https://github.com/aecs4u/aecs4u-stats/issues/28)` remains open); unreleased and no region is provisioned | Parcel API, lazy card and Typst dossier are wired locally; values await the upstream package release and regional raster store | ❌ | 🟡 |
+| T5 | Terrain (elevation, slope, aspect, roughness) | Yes | 🟡 Regional INGV TINITALY WCS importer and parcel query merged to `aecs4u-stats` main and installed (`[aecs4u-stats#28](https://github.com/aecs4u/aecs4u-stats/issues/28)` remains open); no region is provisioned | Parcel API, lazy card and Typst dossier are wired locally; values await the upstream package release and regional raster store | ❌ | 🟡 |
 | T6 | Coastal erosion | Within 1 km of coast | Local PostGIS snapshot of ISPRA `Dinamica_Litoranea_2006_2020`; refresh via `scripts/import_ispra_coastal_dynamics.py` after applying its SQL schema | ✅ Lazy panel section; historical class, distance, 5 m threshold and 5 m positional accuracy | ❌ | 🟡 Snapshot provisioned in the configured stats database (99,229 features); real-parcel matches and 100-candidate partial state verified. Target-host coverage remains to review. An unmatched parcel has unknown coverage, not a no-erosion result |
 | T7 | Heritage and landscape constraints | Heritage only | 🟡 App query contract and readiness checks are wired; source tables and regional coverage depend on [`aecs4u-stats#48`](https://github.com/aecs4u/aecs4u-stats/issues/48) | Lazy card lists records and overlap, labels catalogue-only records as non-binding, and preserves unknown coverage; live rows await source data | ❌ | 🟡 Upstream importer/schema and representative coverage remain |
 | T8 | Live fire and criticality bulletin | Map overlay | ✅ | Bulletin and fires sections plus map layers | ✅ cards | ✅ |
@@ -1023,8 +1055,7 @@ changing S9 from 🟡.
   native-grid match and 10%-in-50-years probability. Keep the eager SISTER
   address card distinct from the lazy ANNCSU point-in-parcel card. ANNCSU's
   regional importer/query now preserves source vintage, coordinate method and
-  per-comune coordinate coverage; those upstream changes remain unreleased and
-  no regional store is provisioned on this host.
+  per-comune coordinate coverage; those upstream changes are installed and no regional store is provisioned on this host.
 - New read-model blocks follow one recipe: upstream `aecs4u_stats` subpackage,
   query function, bounded `stats_service` adapter, and an envelope entry in
   `_build_parcel_enrichment`, followed by a panel registry entry. Geometry-heavy
@@ -1099,9 +1130,9 @@ data, including its coverage, version and reuse terms.
 | Main address | Not available | `aecs4u-stats` PostgreSQL `sister.v_sister_property_by_cadastral_parcel.address` | Query the PostgreSQL SISTER view with exact municipality, province, sheet, parcel and section matching; label coverage as partial and non-geocoded. |
 | Risks | Not available | DPC municipal seismic zone; INGV MPS04; ISPRA IdroGEO PAI/PGRA | Keep source scales separate. The shared equal-weight composite formula is prepared locally under `aecs4u-stats#34`; release it and verify complete/partial/unavailable behavior on a provisioned host. |
 | Subsidence | Not available | Copernicus EGMS 100 m grid via `aecs4u_stats.egms` | Verify the provisioned store and parcel-intersection coverage; keep the overlap-weighted summary and partial-coverage state. |
-| Terrain | Not available on this host | INGV TINITALY 1.1, 10 m; importer/query applied in the sibling working tree for `aecs4u-stats#28` | Release the upstream package, import each served region and verify point/polygon results, NoData, coverage and fallback method; app API, panel, source catalog and Typst dossier are already wired. |
+| Terrain | Not available on this host | INGV TINITALY 1.1, 10 m; importer/query merged to `aecs4u-stats` main for `aecs4u-stats#28` | Import each served region and verify point/polygon results, NoData, coverage and fallback method; app API, panel, source catalog and Typst dossier are already wired. |
 | Buildings | Not available | `aecs4u-stats` PostgreSQL `sister.v_sister_property_by_cadastral_parcel` (`category`, `cadastral_class`, consistency and income) | Query the PostgreSQL SISTER view with exact cadastral matching. Keep these records distinct from physical footprints, which remain gated on `aecs4u-stats#29`. |
-| Land cover | Not available | CORINE 2018 official EEA vector service; upstream regional DuckDB store/query now present in the sibling working tree for `aecs4u-stats#32` | Commit/release the upstream subpackage, import each served region, then verify parcel class, area-weighted distribution, coverage, release and no-match behavior on provisioned data. The local app endpoint, panel and dossier already preserve these fields and disclose CLC's coarse resolution. |
+| Land cover | Not available | CORINE 2018 official EEA vector service; upstream regional DuckDB store/query merged to `aecs4u-stats` main for `aecs4u-stats#32` | Import each served region, then verify parcel class, area-weighted distribution, coverage, release and no-match behavior on provisioned data. The local app endpoint, panel and dossier already preserve these fields and disclose CLC's coarse resolution. |
 | OMI history | Partial pending serving-host review | Agenzia delle Entrate OMI via `aecs4u_stats.omi`; 100 province GeoJSON files (50,466 polygons) from the 2018/2 mirror are provisioned under `/data/istat/omi_zones` on the review host | Mount the mirror on each serving host, verify representative parcel-centroid matches and retain the 2018/2 boundary vintage as approximate geometry; validate quote-store semester history and provenance separately. |
 | Coastal erosion | Provisioned in the configured stats database; target-host review remains | ISPRA `Linea di Costa 2020 v2.0`, `Dinamica_Litoranea_2006_2020`; CC BY 4.0 in RNDT metadata; 99,229 features across 664 municipalities | Apply `scripts/sql/ispra-coastal-dynamics.sql` and refresh with `scripts/import_ispra_coastal_dynamics.py --apply` on each target stats database. The configured database returned 35 and 67 segments for two real Civitavecchia parcels; a dense-area query verified explicit partial coverage at the 100-candidate cap. The panel and Typst dossier report the 2006–2020 class, 5 m classification threshold, 5 m source accuracy, source vintage and unknown coverage when no segment matches. |
 | Cultural heritage | Not available | Planned protection-area source/query under `aecs4u-stats#48`; source coverage and reuse terms remain unverified | The app's required-ID endpoint, panel, map layers, dossier and v2 risk component are wired. Complete the upstream inventory and reuse review, provision the tables and coverage polygons, then verify representative parcels. |
@@ -1183,9 +1214,7 @@ sheet and parcel; coverage depends on a cached SISTER property row. Municipality
 census, income, risk and address coverage still need representative
 production-data review.
 
-ANNCSU's regional importer/query and the app's parcel adapter are implemented
-in local working trees, but the upstream package is unreleased and this host
-has no regional indirizzario store. The lazy ANNCSU card, API v1/v2 section and
+ANNCSU's regional importer/query and the app's parcel adapter are merged and installed, but this host has no regional indirizzario store. The lazy ANNCSU card, API v1/v2 section and
 Typst dossier section therefore return an explicit unavailable state here.
 The separate SISTER `visura_properties.address` card remains cache-dependent
 and non-geocoded. Provision representative regional data and verify spatial
@@ -1246,7 +1275,17 @@ acceptance traceability, then lists remaining work in proposed priority order.
 Source-dependent results stay gated until their upstream query is released and
 representative coverage is available.
 
-**Upstream gate check (2026-10-15):** authenticated GitHub CLI rechecked [`#28 DEM`](https://github.com/aecs4u/aecs4u-stats/issues/28), [`#29 building footprints`](https://github.com/aecs4u/aecs4u-stats/issues/29), [`#31 solar economics`](https://github.com/aecs4u/aecs4u-stats/issues/31), [`#32 CORINE`](https://github.com/aecs4u/aecs4u-stats/issues/32), [`#33 civic addresses`](https://github.com/aecs4u/aecs4u-stats/issues/33), [`#34 composite risk`](https://github.com/aecs4u/aecs4u-stats/issues/34), and [`#48 protection constraints`](https://github.com/aecs4u/aecs4u-stats/issues/48); all seven remain open. Issues #28–#34 were last updated 2026-07-13; #48 was last updated 2026-09-27. The local `aecs4u-stats` checkout contains the PVGIS economics calculation, CORINE import/query, TINITALY importer/query, composite-risk helper, building-footprint importer/query and ANNCSU regional address importer/query; these changes have not been committed or released. The app consumers for terrain, CORINE, composite risk, building footprints and civic addresses are wired, but the corresponding upstream packages remain unreleased and no regional stores are provisioned. The ANNCSU query contract is present locally but has not been validated against provisioned civic-address data. The app-side protection contract, endpoint, panel and schema-gated layers are implemented. The latest #48 comment describes an uncommitted SITAP acquisition path covering a selected decree-polygon layer, not a complete Articles 136/157/142 inventory; Vincoli in Rete is discovery-only pending a stable bulk interface and confirmed reuse terms, and Catalogo Generale is not treated as binding data. The upstream issue still lacks the published schema, import, spatial queries and complete source coverage. Do not treat the acquisition work as an available upstream contract or infer that an uncovered parcel has no constraint.
+**Upstream gate check (2026-10-15):** authenticated GitHub CLI rechecked [`#28 DEM`](https://github.com/aecs4u/aecs4u-stats/issues/28), [`#29 building footprints`](https://github.com/aecs4u/aecs4u-stats/issues/29), [`#31 solar economics`](https://github.com/aecs4u/aecs4u-stats/issues/31), [`#32 CORINE`](https://github.com/aecs4u/aecs4u-stats/issues/32), [`#33 civic addresses`](https://github.com/aecs4u/aecs4u-stats/issues/33), [`#34 composite risk`](https://github.com/aecs4u/aecs4u-stats/issues/34), and [`#48 protection constraints`](https://github.com/aecs4u/aecs4u-stats/issues/48); all seven remain open. Issues #28–#34 were last updated 2026-07-13; #48 was last updated 2026-09-27. The local `aecs4u-stats` checkout contains the PVGIS economics calculation, CORINE import/query, TINITALY importer/query, composite-risk helper, building-footprint importer/query and ANNCSU regional address importer/query; these changes had not yet been committed when this check was made (see the 2026-10-16 recheck below). The app consumers for terrain, CORINE, composite risk, building footprints and civic addresses are wired, but no regional stores are provisioned. The ANNCSU query contract is present locally but has not been validated against provisioned civic-address data. The app-side protection contract, endpoint, panel and schema-gated layers are implemented. The latest #48 comment describes an uncommitted SITAP acquisition path covering a selected decree-polygon layer, not a complete Articles 136/157/142 inventory; Vincoli in Rete is discovery-only pending a stable bulk interface and confirmed reuse terms, and Catalogo Generale is not treated as binding data. The upstream issue still lacks the published schema, import, spatial queries and complete source coverage. Do not treat the acquisition work as an available upstream contract or infer that an uncovered parcel has no constraint.
+
+**Upstream recheck (2026-10-16):** the importers described above are committed
+in `aecs4u-stats` (`1109d6c`, "Add spatial data enrichment importers", included
+in `main` at `a1ef4cb`) and installed in this environment. GitHub issues #28,
+#29, #31, #32, #33, #34 and #48 are all still open, so none of them is closed by
+the merge. With the package present, terrain, CORINE, footprints and ANNCSU
+addresses now return `not_built` (no regional store) instead of
+`not_supported`, and the composite score is computed by the shared helper.
+Provisioning regional stores downloads large public datasets (TINITALY WCS,
+CORINE, Geofabrik PBF, ANNCSU extracts) and has not been done.
 
 **Coastal-erosion source selection (2026-10-10):** ISPRA's national `Linea di
 Costa 2020 v2.0` dataset exposes the `Dinamica_Litoranea_2006_2020` line layer.
@@ -1289,9 +1328,7 @@ store per ISTAT region; polygon queries choose the majority class by
 intersection area and report mapped coverage. Product release
 `CLC2018_V2020_20u1` has a 25 ha minimum mapping unit and 100 m minimum width,
 so parcel results are coarse context. The app-side endpoint, panel card,
-source catalog and dossier section are wired, and the upstream package is
-applied in the sibling working tree but not committed/released. No regional
-store is installed. Next, commit/release the upstream changes tracked by
+source catalog and dossier section are wired, and the upstream package is merged to `aecs4u-stats` main and installed. No regional store is provisioned. Next, import regional data for the changes tracked by
 [`aecs4u-stats#32`](https://github.com/aecs4u/aecs4u-stats/issues/32), provision
 the regions served, and verify representative parcel coverage before marking
 the feature complete.
@@ -1300,12 +1337,12 @@ the feature complete.
 |---|---|---|---|
 | 1 | Protection constraints (landscape, heritage) | App route, lazy panel and schema-gated map layers wired to proposed contract; source tables depend on `aecs4u-stats#48` | Publish upstream schema/import/query, provision source and coverage tables, then verify required-ID lookups, overlap ratios, catalog gating and unknown/covered states on representative parcels |
 | 2 | Per-parcel flood and landslide | ISPRA PAI/PGRA polygons available through `hazards.ispra_mosaics` | App-side polygon intersections now report affected area and highest class; verify dataset coverage and candidate-cap behavior on provisioned data |
-| 3 | Addresses | SISTER `visura_properties.address` links to cadastral municipality/sheet/parcel; the sibling `aecs4u-stats` working tree now has the regional indirizzario/stradario importer and point-in-polygon query, still unreleased and without a provisioned regional store | App endpoint, lazy panel card, API v2 section and dossier section are wired. Provision a regional store and verify known parcel matches, source vintage, coordinate method and municipal coordinate coverage before treating the result as field-verified; a missing point match remains distinct from missing address data |
+| 3 | Addresses | SISTER `visura_properties.address` links to cadastral municipality/sheet/parcel; `aecs4u-stats` main now has the regional indirizzario/stradario importer and point-in-polygon query (installed here), without a provisioned regional store | App endpoint, lazy panel card, API v2 section and dossier section are wired. Provision a regional store and verify known parcel matches, source vintage, coordinate method and municipal coordinate coverage before treating the result as field-verified; a missing point match remains distinct from missing address data |
 | 4 | Subsidence per parcel | `egms` provides a classified 100 m grid-cell bbox query; layer already served | Implemented: exact parcel intersections, area-weighted velocity and acceleration, movement-class areas, covered-area percentage and a 5,000-candidate partial state |
-| 5 | Terrain | Upstream importer/query applied in the sibling working tree; `aecs4u-stats#28` remains open and no regional store is provisioned | Release the TINITALY regional DEM subpackage, import served regions, then verify parcel and point values, missing-data behavior and provenance; API, panel and dossier integration are wired locally |
-| 6 | Land cover | App endpoint/panel/dossier are wired locally; upstream `aecs4u-stats#32` store/import query is applied in the sibling working tree but unreleased; no regional data is provisioned | Commit/release upstream package, import regional CLC stores, then verify class distribution and coverage on representative parcels |
+| 5 | Terrain | Upstream importer/query merged to `aecs4u-stats` main; `aecs4u-stats#28` remains open and no regional store is provisioned | Import served regions, then verify parcel and point values, missing-data behavior and provenance; API, panel and dossier integration are wired locally |
+| 6 | Land cover | App endpoint/panel/dossier are wired locally; upstream `aecs4u-stats#32` store/import query is merged to `aecs4u-stats` main; no regional data is provisioned | Import regional CLC stores, then verify class distribution and coverage on representative parcels |
 | 7 | Building footprints (OSM) | No parcel query; `aecs4u-stats#29` open | Coverage and count; keep SISTER as the cadastral source and label the two clearly |
-| 8 | Composite risk score | Shared `municipal_hazard_index_v1` helper is preferred; an aligned app compatibility implementation serves older wheels. `aecs4u-stats#34` is still open and unreleased | Merge/release the upstream helper, check complete and partial real-comune responses, then retain the shared score/version/components through each consumer |
+| 8 | Composite risk score | Shared `municipal_hazard_index_v1` helper is preferred; an aligned app compatibility implementation serves older wheels. `aecs4u-stats#34` is still open; the shared helper is installed and matched the compatibility copy on seven representative cases (2026-10-16) | Check complete and partial real-comune responses on the serving host, then retain the shared score/version/components through each consumer |
 | 9 | Night lights | NASA Black Marble VNP46A4.002 | `scripts/import_viirs_nightlights.py` downloads the four Italy tiles with an authorized LAADS token or builds from local HDF5; read-model, panel, API v2 section and source catalog are implemented. Provision the raster on serving hosts and verify representative urban/rural coverage. |
 | 10 | Coastal erosion | ISPRA 2006–2020 snapshot provisioned in the configured stats database: 99,229 features across 664 municipalities; real-parcel matches and candidate-cap partial state verified | Apply the schema and refresh on each target stats database; retain the no-match/partial semantics and verify serving-host coverage |
 
@@ -1384,9 +1421,7 @@ to `/api/v1/enrichment/solar-economics/{reference}`. PVGIS 5.3/SARAH3 supplies
 the long-term yield at the parcel centroid for a 1 kWp reference system; the
 user's capacity scales it. The panel shows NPV, LCOE, simple and discounted
 payback, first-year production and annual cash flows. Defaults are illustrative.
-The released shared stats calculator will be used when present; an app
-compatibility calculation covers older wheels while upstream #31 remains
-uncommitted. JRC describes PVGIS 6 as beta and under development, so this
+The shared stats calculator is used when present (it is installed here); an app compatibility calculation covers older wheels. Upstream #31 remains open. JRC describes PVGIS 6 as beta and under development, so this
 implementation retains the documented PVGIS 5.3 API; revisit that choice when
 PVGIS 6 stabilizes.
 
@@ -1394,9 +1429,7 @@ PVGIS 6 stabilizes.
 
 - The app compatibility calculation now matches the 5 kWp reference case in
   the sibling `aecs4u-stats` source checkout exactly, including all annual cash
-  flows. The shared helper remains unreleased and absent from the shared venv's
-  0.2.1 wheel; confirm the same case against the installed release after #31
-  lands. The live PVGIS response parser was also checked on 2026-10-16 (Rome
+  flows. The shared helper is now installed (`aecs4u-stats` main, `1109d6c`); on 2026-10-16 the shared and compatibility results were identical for this case (nine numeric fields, 26 annual cash-flow rows). The live PVGIS response parser was also checked on 2026-10-16 (Rome
   sample, 1,425.2 kWh/kWp/year and twelve monthly rows). Shared-venv tests now
   verify distinct timeout/unavailable responses and compile a scenario dossier
   containing the cash-flow chart, table and provenance. Provisioned-host
@@ -1926,6 +1959,43 @@ times remain explicitly unavailable. The implementation uses the existing
 NASA FIRMS layer and its map toggle; no provider data was available for a live
 feed check in this review.
 
+**Panel follow-ups (2026-10-16):**
+
+- The OMI estimator no longer prefills the parcel's land area as the commercial
+  surface (a 1,283 m² villa plot was priced as 1,283 m² of dwelling). The
+  surface starts empty with a land-area hint; the selector is grouped into the
+  detected zone and other zones, condition codes and the placeholder type `0`
+  are labelled, and income-bracket keys (`le_0`, `0_10k`, `over_120k`) are shown
+  as ranges.
+- The local OMI quotes come from `zornade.zornade_zone_omi`, one prevalent
+  typology per zone with no semester, because the `geo.geo_identifier`,
+  `spatial.market_zone` and `facts.market_quote_fact` relations are absent. For
+  zone E5 the snapshot shows "Villas" at 770–1100 €/m², while Zornade's current
+  semester lists villas at 1550–2300 and 770–1100 for economic apartments. The
+  panel now says the semester is undeclared; the band itself needs the
+  quote-fact schema.
+- Cards whose source cannot answer (`unavailable`) start collapsed with "Not
+  available" in the header; real negatives (no concession, no fire) stay open.
+  The municipal solar card starts collapsed with its high-viability share in
+  the header and scales totals to MWh/GWh.
+- Quality of life leads with up to eight curated indicators (newest value, year
+  and unit) and keeps the full year tables behind a filter. Country-level safety
+  and quality-of-life fallbacks are no longer shown as parcel context. The
+  source is labelled "ISTAT BES", but several indicators (for example ICityRank
+  and Ecosistema urbano) come from other publishers; check the label upstream.
+- Locale: the map catalogue now follows `?lang=` and the theme's `language`
+  cookie as well as `lang`. Before, the header picker changed the chrome while
+  the panel stayed in the Accept-Language locale. A `?lang=` choice is stored in
+  both cookies and the app's own pickers write both.
+- `enrichment_status()` read `_terrain.TINITALY_STORE_DIR`, which the installed
+  package does not re-export; it is now imported from `terrain.config`. The
+  status loop also tolerates a missing dataset key, and the night-lights block
+  uses the shared envelope and coverage vocabulary.
+- The status endpoint reports `istat_safety`, `istat_bes`, `istat_demographic`
+  and `hazards_seismic` as unavailable because it probes the file stores, while
+  the panel serves those datasets from PostgreSQL. Treat those four flags as
+  unreliable until the probes read the database.
+
 ### A.12. Zornade backend calls seen while opening a parcel (Observed)
 
 Hostnames and paths only; no tokens or payloads recorded.
@@ -1950,9 +2020,9 @@ Hostnames and paths only; no tokens or payloads recorded.
 | Valutazione, OMI | `valuation` | `aecs4u_stats.omi` | Primary selector, estimate, yield and percentile ✅ |
 | Storico OMI | `valuation_history` | `/omi/history` | Primary chart and versioned trend rows ✅ |
 | Edifici | `buildings`, `building_footprints` | SISTER cadastral records and OSM regional building polygons | SISTER property records stay distinct from the OSM footprint count, clipped area and mapped parcel share; the app consumer is wired, while the upstream `aecs4u-stats#29` release and regional store remain pending |
-| Suolo | `land_cover`, `land_use` | CORINE 2018 (`aecs4u_stats.corine` upstream pending) | The app exposes the CORINE class distribution and coverage through its API, panel and dossier; regional import is unavailable until upstream release and provisioning. `land_use` remains unimplemented |
+| Suolo | `land_cover`, `land_use` | CORINE 2018 (`aecs4u_stats.corine`, installed) | The app exposes the CORINE class distribution and coverage through its API, panel and dossier; regional import is unavailable until upstream release and provisioning. `land_use` remains unimplemented |
 | Fotovoltaico | `solar` | `solar.solar_potential_comuni`, `serving.municipality_profile` | Municipality-wide aggregates in the Energy tab; no parcel/roof estimate ✅ |
-| Terreno | `terrain` | INGV TINITALY 1.1 (`aecs4u_stats.terrain` upstream pending) | Parcel API, lazy panel card and dossier are wired; the importer/query is unreleased and no regional raster store is provisioned |
+| Terreno | `terrain` | INGV TINITALY 1.1 (`aecs4u_stats.terrain`, installed) | Parcel API, lazy panel card and dossier are wired; the importer/query is installed and no regional raster store is provisioned |
 | Rischi | `risk`, `subsidence`, `coastal_erosion`, `protection_constraints` | ISPRA polygon mosaics, ISPRA coastal dynamics, IdroGEO, EGMS, and schema-gated protection sources | Parcel hazard and EGMS cell intersections; local coastal snapshot is provisioned in the configured stats DB (99,229 features), with real-parcel matches and explicit candidate-cap partial coverage; protection API, panel, map layers, dossier and v2 risk component are wired, but upstream source tables and full coverage remain pending; target-host review remains |
 | Vincoli | `cultural_heritage` | `spatial.protection_area` (upstream pending) | Required-ID API, lazy panel section and schema-gated map layer are wired; records and complete coverage await upstream stores |
 | Economia | `economics`, `nightlights` | MEF, NASA Black Marble VIIRS VNP46A4 | Income, grouped Gini and price-to-income ✅; night-light importer, parcel query, panel and API catalog implemented; local annual raster provisioning remains |

@@ -76,10 +76,7 @@ async def test_buildings_route_normalizes_section_prefixed_reference(monkeypatch
         captured["lookup_code"] = code
         return {"name": "Roma", "province": "Roma"}
 
-    async def inline_to_thread(function, *args, **kwargs):
-        return function(*args, **kwargs)
-
-    def buildings_lookup(reference, *, cadastral_code, municipality):
+    async def buildings_lookup(reference, *, cadastral_code, municipality):
         captured.update(
             reference=reference,
             cadastral_code=cadastral_code,
@@ -94,10 +91,9 @@ async def test_buildings_route_normalizes_section_prefixed_reference(monkeypatch
     )
     monkeypatch.setattr(
         enrichment_module.stats_service,
-        "get_buildings_for_parcel",
+        "aget_buildings_for_parcel",
         buildings_lookup,
     )
-    monkeypatch.setattr(enrichment_module.asyncio, "to_thread", inline_to_thread)
 
     result = await enrichment_module.get_parcel_buildings("H501A048600.D")
 

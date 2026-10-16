@@ -412,9 +412,12 @@ class TestLoadCadastralFileEndpoint:
             "ContentLength": len(b"fake gpkg content")
         }
 
-        with patch("land_registry.routers.api.boto3.client", return_value=mock_s3):
-            with patch("land_registry.routers.api.gpd.read_file", return_value=mock_gdf):
-                response = client.get(f"/api/v1/load-cadastral-files/{self.FILE_PATH}")
+        # This test covers the S3 branch; development hosts auto-detect local
+        # cadastral data, so force the setting rather than inherit it.
+        with patch("land_registry.routers.api.cadastral_settings.use_local_files", False):
+            with patch("land_registry.routers.api.boto3.client", return_value=mock_s3):
+                with patch("land_registry.routers.api.gpd.read_file", return_value=mock_gdf):
+                    response = client.get(f"/api/v1/load-cadastral-files/{self.FILE_PATH}")
 
         assert response.status_code == 200
         data = response.json()

@@ -16,25 +16,27 @@ API_SOURCE = Path(__file__).parents[1] / "land_registry" / "routers" / "api.py"
 FRONTEND_SOURCE = Path(__file__).parents[1] / "land_registry" / "static" / "enrichment-layers.js"
 
 
-def test_catalog_covers_every_canonical_spatial_relation():
+def test_catalog_covers_every_allow_listed_spatial_relation():
+    # The catalog reads prepared source relations directly (views for the
+    # administrative levels, foreign tables for the hazard, EGMS, OMI and solar
+    # sources) instead of the former canonical ``facts``/``serving`` relations.
     tables = {layer.table for layer in MAP_LAYERS}
     assert {
-        "geo.geo_boundary",
+        "istat.v_comuni_map",
         "spatial.cadastral_parcel",
         "spatial.cadastral_sheet",
-        "spatial.cadastral_urban_section",
-        "spatial.market_zone",
+        "sezioni_urbane.sezioni_urbane",
+        "zornade.zornade_zone_omi",
         "cap_subcomunali.cap_subcomunali",
-        "spatial.hazard_area",
-        "facts.poi",
-        "facts.hazard_measurement",
-        "facts.raster_coverage",
-        "hazards_mps04.mps04_points",
-        "census_sections.sections",
-        "serving.municipality_profile",
-        "serving.market_zone_snapshot",
+        "hazards.flood_hazard",
+        "hazards.landslide_hazard",
+        "hazards.mps04_points",
+        "hazards.v_seismic_classification_map",
+        "geo_surface_change.egms_subsidenza",
+        "census.sections",
+        "spatial.protection_area",
+        "solar.solar_potential_comuni",
         "agenziademanio.concessions",
-        "solar.potential_by_municipality",
     } == tables
 
 
@@ -47,7 +49,6 @@ def test_catalog_ids_are_safe_and_have_feature_ids():
     assert get_map_layer("urban-sections").coverage == "unknown"
     assert get_map_layer("maritime-concessions").id_column == "row_id"
     assert get_map_layer("geo-boundaries").role == "admin-substitute"
-    assert get_map_layer("municipality-profiles").role == "admin-substitute"
     assert get_map_layer("geo-boundaries").public()["role"] == "admin-substitute"
 
 
@@ -104,9 +105,14 @@ def test_boundary_tile_joins_unit_name_and_type():
 
     asyncio.run(source.read_mvt("geo-boundaries", 10, 550, 380))
 
-    assert "geo.geo_unit AS u ON u.id = t.geo_unit_id" in connection.sql
-    assert "u.canonical_name AS canonical_name" in connection.sql
-    assert "u.unit_type AS unit_type" in connection.sql
+    # One union over the region, province and municipality views; each branch
+    # names its own level, so no join to a unit table is needed.
+    for view in ("istat.v_regioni_map", "istat.v_province_map", "istat.v_comuni_map"):
+        assert view in connection.sql
+    for level in ("region", "province", "municipality"):
+        assert f"'{level}'::text AS unit_type" in connection.sql
+    assert "name AS canonical_name" in connection.sql
+    assert "geo.geo_unit" not in connection.sql
 
 
 def test_exact_reference_search_returns_feature_ids_and_uses_plain_index_columns():
@@ -130,7 +136,7 @@ def test_geojson_page_uses_offset_and_stable_feature_order():
 
     asyncio.run(source.read_geojson("census-sections", (12, 41, 13, 42), 100, offset=200))
 
-    assert "ORDER BY t.sez21_id" in connection.sql
+    assert 'ORDER BY t."sez21_id"' in connection.sql
     assert "LIMIT $9 OFFSET $10" in connection.sql
     assert connection.params[-2:] == (100, 200)
 
@@ -143,8 +149,8 @@ def test_mvt_query_is_allowlisted_and_attribute_bearing():
     source = PostgresMapLayerSource(_ConnectionSource(connection))
 
     assert asyncio.run(source.read_mvt("market-zones", 12, 2100, 1500)) == b"mvt"
-    assert "spatial.market_zone" in connection.sql
-    assert "omi_zone_key" in connection.sql
+    assert "zornade.zornade_zone_omi" in connection.sql
+    assert '"codzona"' in connection.sql
     assert "ST_AsMVT" in connection.sql
     assert "%s" not in connection.sql and "$2::text" in connection.sql
     # Clip and simplify before transforming; no exact intersect on huge polygons.
@@ -357,11 +363,13 @@ async def test_adjacent_parcels_endpoint_returns_feature_collection():
     source.read_adjacent_features = AsyncMock(return_value=features)
 
     with patch.object(enrichment_module, "get_map_layer_source", return_value=source):
-        result = await enrichment_module.get_adjacent_parcels("C773_002800.29", limit=25)
+        result = await enrichment_module.get_adjacent_parcels(
+            "C773_002800.29", limit=25, method="intersects", id=None
+        )
 
     assert result == {"type": "FeatureCollection", "features": features}
     source.read_adjacent_features.assert_awaited_once_with(
-        "cadastral-parcels", "C773_002800.29", limit=25, feature_id=None
+        "cadastral-parcels", "C773_002800.29", limit=25, feature_id=None, method="intersects"
     )
 
 
@@ -380,8 +388,8 @@ def test_municipality_search_returns_compact_profiles_with_centroids():
     assert "ST_Y(ST_Centroid" in connection.sql
     # Substring name match first ($1), ISTAT prefix ($2), then the exact and
     # prefix ranking terms; binding the bare query to $1 made "Rom" find nothing.
-    assert "COALESCE(NULLIF(t.canonical_name, ''), u.canonical_name) ILIKE $1" in connection.sql
-    assert "LEFT JOIN geo.geo_unit AS u ON u.id = t.geo_unit_id" in connection.sql
+    assert "t.name ILIKE $1" in connection.sql and "t.pro_com::text ILIKE $2" in connection.sql
+    assert "FROM istat.v_comuni_map AS t" in connection.sql
     assert connection.params == ("%Roma%", "Roma%", "Roma", "Roma%", 20)
 
 
@@ -472,17 +480,13 @@ def test_adjacent_lookup_resolves_target_by_primary_key_when_known():
     assert connection.params == (42, "C773_002800.29", "C773_002800.29", 25)
 
 
-def test_only_boundaries_resolve_names_through_the_geo_unit_join():
-    # Municipality profiles carry canonical_name on their own row; dropping it
-    # made search results and profile tiles show bare ISTAT codes.
-    profiles = PostgresMapLayerSource._source_columns(get_map_layer("municipality-profiles"))
-    assert "t.canonical_name" in profiles
-    assert "u.canonical_name" not in profiles
-
+def test_boundary_layer_carries_its_own_names_without_a_unit_join():
+    # The administrative views expose the name and level on each row; dropping
+    # them made search results and boundary tiles show bare ISTAT codes.
     boundaries = PostgresMapLayerSource._source_columns(get_map_layer("geo-boundaries"))
-    assert "u.canonical_name AS canonical_name" in boundaries
-    assert "u.unit_type AS unit_type" in boundaries
-    assert "t.canonical_name" not in boundaries
+    assert 't."canonical_name"' in boundaries
+    assert 't."unit_type"' in boundaries
+    assert "geo.geo_unit" not in boundaries and "u.canonical_name" not in boundaries
 
 
 def test_municipality_search_selects_a_resolved_name():
@@ -491,7 +495,7 @@ def test_municipality_search_selects_a_resolved_name():
 
     asyncio.run(source.search_municipalities("Roma", 5))
 
-    assert "COALESCE(NULLIF(t.canonical_name, ''), u.canonical_name) AS canonical_name" in connection.sql
+    assert "t.name AS canonical_name" in connection.sql
 
 
 @pytest.mark.asyncio
@@ -530,7 +534,7 @@ async def test_search_pool_is_warmed_ahead_of_first_query():
 def test_catalog_carries_presentation_fields_for_the_layers_card():
     from land_registry.map_layers import MAP_LAYERS, map_layer_catalog
 
-    groups = {"administrative", "cadastral", "market", "risk", "demographics", "territory"}
+    groups = {"administrative", "cadastral", "market", "risk", "demographics", "territory", "energy"}
     catalog = map_layer_catalog()
     assert {layer["group"] for layer in catalog} <= groups
     for layer in catalog:
@@ -561,14 +565,16 @@ def test_census_sections_use_a_catalog_colour_ramp():
     assert get_map_layer("geo-boundaries").public()["color_ramp"] is None
 
 
-def test_hazard_and_market_snapshot_layers_are_data_driven():
-    hazard = get_map_layer("hazard-areas")
-    match = hazard.public()["color_match"]
-    assert match["property"] == "hazard_type" and match["property"] in hazard.properties
-    assert any(case["contains"] == "flood" for case in match["cases"])
-    snapshots = get_map_layer("market-zone-snapshots")
-    assert snapshots.public()["color_ramp"]["property"] == "quote_count"
-    assert "quote_count" in snapshots.properties
+def test_seismic_and_solar_layers_are_data_driven():
+    seismic = get_map_layer("seismic-classification")
+    match = seismic.public()["color_match"]
+    assert match["property"] == "zone_label" and match["property"] in seismic.properties
+    assert any(case["contains"] == "zone 1" for case in match["cases"])
+    solar = get_map_layer("solar-potential")
+    ramp = solar.public()["color_ramp"]
+    assert ramp["property"] == "high_viability_pct" and "high_viability_pct" in solar.properties
+    values = [stop["value"] for stop in ramp["stops"]]
+    assert values == sorted(values)
     assert get_map_layer("postal-zones").public()["color_match"] is None
 
 

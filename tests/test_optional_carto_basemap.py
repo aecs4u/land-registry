@@ -109,8 +109,13 @@ def test_client_side_providers_are_gated_on_the_flag() -> None:
     ).read_text(encoding="utf-8")
 
     assert "window.cartoEnabled" in template
-    assert "if (window.cartoEnabled && window.cartoApiKey)" in map_js
+    assert "window.cartoEnabled && window.cartoApiKey" in map_js
     # Providers are created only after the server-side feature flag and key
     # have been injected; no undefined Carto layers reach a control.
     assert "'⚪ CartoDB Light': mapProviders['⚪ CartoDB Light']," not in map_js
-    assert "mapProviders['⚪ CartoDB Light'] = L.tileLayer" in map_js
+    # The provider list now comes from the shared workbench, which receives the
+    # injected flag and key and adds Carto engines only when both are set.
+    workbench = (static / "map-workbench.js").read_text(encoding="utf-8")
+    assert "basemapEngines(window.cartoEnabled, window.cartoApiKey)" in map_js
+    assert "function basemapEngines(cartoEnabled = false, cartoApiKey = '')" in workbench
+    assert "if (cartoEnabled && cartoApiKey)" in workbench
