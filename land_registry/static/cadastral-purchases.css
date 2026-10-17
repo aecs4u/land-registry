@@ -9,3 +9,10 @@
 #purchaseNotice[data-error="true"] { color: #b42318; }
 #purchaseQuote { margin: 16px 0; padding: 12px; border: 1px solid var(--direct-map-border); border-radius: 8px; }
 @media (max-width: 420px) { .purchase-fields { grid-template-columns: 1fr; } }
+
+/* The dialog title outranks the section headings inside it (the theme's heading
+ * scale made "My purchases" larger than the title). */
+.cadastral-purchase-dialog h2 { margin: 0; font-size: 1.25rem; }
+.cadastral-purchase-dialog h3 { margin: 0; font-size: 1rem; }
+.cadastral-purchase-dialog .map-card-heading { align-items: center; }
+.cadastral-purchase-dialog > p { margin: 8px 0; }

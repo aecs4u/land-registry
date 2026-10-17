@@ -3,15 +3,15 @@
 Add parcel-scale annual nighttime radiance from NASA Black Marble, with an
 explicit quality filter, source vintage and coarse-grid sampling disclosure.
 
-**Implementation status (2026-10-16):** the app has a plan-only/token-aware
+**Implementation status (2026-10-17):** the app has a plan-only/token-aware
 Italy-tile importer that applies the `0.1` radiance scale factor, a
 quality-filtered local GeoTIFF query, read-model block, lazy parcel-panel
 section, `/api/v2` `nightlights` section and source catalog entry. No annual
 raster is provisioned on the current host, so live parcel values and national
-coverage have not been verified. The installed
-`aecs4u_stats` package has no reusable Black Marble module; the current
-importer/query should move upstream before another application consumes it.
-The query now rejects rasters whose tags do not prove the expected product,
+coverage have not been verified. The `aecs4u-stats` working tree now has a
+reusable `nightlights` module and `aecs4u-stats-nightlights-import` entry
+point; the package has not been released, so this app retains its compatibility
+copy. The query rejects rasters whose tags do not prove the expected product,
 version, observation year, import time, physical units, applied scale and QA
 policy.
 

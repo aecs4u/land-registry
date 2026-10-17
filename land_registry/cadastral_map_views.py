@@ -99,3 +99,27 @@ def view_branch(table: str) -> str:
         f"municipality_code, municipality_name, inspire_localid, geom{parcel_flags} "
         f"FROM public.\"{table}\""
     )
+
+
+def legacy_sheet_branch(regional_tables: list[str] | tuple[str, ...]) -> str:
+    """Expose migrated sheet rows only when canonical regional tables lack them."""
+    tables = tuple(regional_tables)
+    if not tables or any(not REGIONAL_TABLE.fullmatch(table) or not table.endswith("__fogli") for table in tables):
+        raise ValueError("Legacy sheet fallback requires validated regional sheet tables")
+    identity = identity_sql("cadastral-sheets", "legacy.national_reference")
+    missing = "\n          AND ".join(
+        f"NOT EXISTS (SELECT 1 FROM public.\"{table}\" current "
+        "WHERE current.national_zoning_reference = legacy.national_reference)"
+        for table in tables
+    )
+    return (
+        f"SELECT {identity} AS id, legacy.national_reference AS sheet_reference, "
+        "NULL::bigint AS municipality_id, legacy.level, legacy.level_name, "
+        "legacy.area_sqm, 'cadastral-map-sqlite'::text AS source_release, "
+        "legacy.regione AS region, legacy.provincia AS province, "
+        "legacy.comune_code AS municipality_code, legacy.comune_name AS municipality_name, "
+        "legacy.inspire_id AS inspire_localid, legacy.geom "
+        "FROM cadastral_legacy.map_source AS legacy "
+        "WHERE legacy.layer_type = 'map' AND legacy.national_reference IS NOT NULL "
+        f"AND {missing}"
+    )

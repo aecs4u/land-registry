@@ -421,6 +421,10 @@ security = HTTPBearer()
 
 
 SALES_BBOX_DEFAULT_LIMIT = 20000
+# How long one request waits for the shared national snapshot to finish loading
+# (a cold start reads ~700k rows). Past this the client gets 503 + Retry-After
+# and polls, instead of holding a connection open for minutes.
+SALES_LOAD_WAIT_SECONDS = float(os.getenv("MAP_SALES_LOAD_WAIT_SECONDS", "12"))
 
 
 def _parse_sales_bbox(value: Optional[str]) -> Optional[tuple[float, float, float, float]]:
@@ -465,9 +469,19 @@ async def get_sales_map_points(
     if min_price is not None and max_price is not None and min_price > max_price:
         raise HTTPException(status_code=400, detail="min_price must not exceed max_price")
     try:
-        payload = await get_pvp_sales_store().map_points(
-            period=period, categories=categories, min_price=min_price, max_price=max_price,
-            wait=True, refresh=refresh, bbox=bbox, limit=limit,
+        payload = await asyncio.wait_for(
+            get_pvp_sales_store().map_points(
+                period=period, categories=categories, min_price=min_price, max_price=max_price,
+                wait=True, refresh=refresh, bbox=bbox, limit=limit,
+            ),
+            timeout=SALES_LOAD_WAIT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        # The load keeps running in the store's shielded task; the next poll
+        # finds it finished.
+        raise HTTPException(
+            status_code=503, detail="Sales data is loading",
+            headers={"Retry-After": "10", "Cache-Control": "no-store"},
         )
     except Exception as exc:
         logger.warning("PVP sales map points failed: %s", exc)
@@ -4798,6 +4812,9 @@ async def get_map_layer_features(
     north: float = Query(..., ge=-90, le=90),
     limit: int = Query(2000, ge=1, le=5000),
     offset: int = Query(0, ge=0, le=1_000_000),
+    flag: Optional[Literal["is_auction_sale"]] = Query(
+        None, description="Only features whose boolean flag column is true (filtered in the database)."
+    ),
 ):
     """Return a bounded, paginated WGS84 GeoJSON viewport for one canonical layer."""
     try:
@@ -4815,7 +4832,9 @@ async def get_map_layer_features(
     if not source.available:
         raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable")
     page_size = min(limit, layer.max_features)
-    payload = await source.read_geojson(layer.id, (west, south, east, north), min(page_size + 1, layer.max_features + 1), offset)
+    payload = await source.read_geojson(
+        layer.id, (west, south, east, north), min(page_size + 1, layer.max_features + 1), offset, flag=flag
+    )
     features = payload.get("features", [])
     payload["truncated"] = len(features) > page_size
     payload["features"] = features[:page_size]

@@ -2572,6 +2572,13 @@ class _AsyncPostgresSource:
             """,
             (cadastral_code.strip().upper(), cadastral_code.strip().upper()),
         )
+        if not rows:
+            # The quote tables exist but hold nothing for this municipality (for
+            # example while they are being loaded): the published zone snapshot
+            # still carries current quotes, so use it rather than showing none.
+            snapshot = await self._zornade_omi_quotes_by_cadastral_code(cadastral_code)
+            if snapshot:
+                return snapshot
         quotes = []
         for row in rows:
             period = str(row["period"] or "")

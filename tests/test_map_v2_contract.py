@@ -560,3 +560,77 @@ def test_direct_map_exposes_favourites_on_saved_parcels():
         assert f'id="{token}"' in TEMPLATE
     for token in ("toggleFavorite", "is_favorite", "data-shortlist-favorite", "favoritesOnly"):
         assert token in SCRIPT, token
+
+
+def test_audit_2026_10_17_sheet_layout_and_overlap_rules():
+    """Layout rules the audit found missing; each protects a measured failure."""
+    # H1: compact chrome and a guaranteed scrolling area on short or narrow viewports.
+    assert "@media (max-height: 820px), (max-width: 1024px)" in STYLES
+    assert ".parcel-sheet .parcel-detail-content { min-height: 140px; }" in STYLES
+    # H2: the action column and bar are hidden while the sheet is open on a phone.
+    assert re.search(r"max-width: 700px\) \{\s*\.direct-map-shell:has\(\.parcel-sheet:not\(\[hidden\]\)\) \.map-utility-stack", STYLES)
+    # H4: panels stop above the attribution line.
+    assert "--map-attribution-clearance" in STYLES
+    assert ".map-layers-card { max-height: calc(100% - 70px - var(--map-attribution-clearance)); }" in STYLES
+    # M4/M5: the table and the basemap popover sit beside the sheet, not under it.
+    assert ".map-table-card { right: calc(65px + var(--parcel-sheet-width) + 12px); }" in STYLES
+    assert ".map-basemap-popover { right: calc(100% + 24px + var(--parcel-sheet-width)); }" in STYLES
+    # M1: unloaded sections show a placeholder rather than a bare heading.
+    assert '.parcel-section[data-state="idle"] .parcel-section-body::before' in STYLES
+    # L1: coarse pointers get 40-44 px targets.
+    assert "@media (pointer: coarse), (max-width: 700px)" in STYLES
+
+
+def test_audit_2026_10_17_auction_layers_do_not_download_everything():
+    # The highlight asks the database for flagged parcels instead of paging every parcel.
+    assert "flag: 'is_auction_sale'" in MAP_SCRIPT
+    assert 'flag: Optional[Literal["is_auction_sale"]]' in API
+    assert "flag=flag" in API
+    # A progress bar that never completes was left behind when MapLibre did not
+    # report the clustered source as loaded.
+    assert "SALE_MARKER_SETTLE_MS" in MAP_SCRIPT
+    # The server answers 503 + Retry-After while the national snapshot loads.
+    assert "AUCTION_LOAD_RETRIES" in MAP_SCRIPT and "SALES_LOAD_WAIT_SECONDS" in API
+
+
+def test_audit_2026_10_17_focus_search_and_labels():
+    # aria-disabled keeps keyboard focus on a busy action; `disabled` drops it.
+    assert "function setActionUnavailable(button, unavailable)" in MAP_SCRIPT
+    assert "$('parcelSaveButton').disabled" not in MAP_SCRIPT
+    # The guide hands focus back instead of leaving it on <body>.
+    assert "returnFocusTo" in MAP_SCRIPT
+    # A search timeout is reported, not left on "Searching…".
+    assert "Search is taking too long. Try again." in MAP_SCRIPT
+    # Escape closes the layers panel.
+    assert "Escape closes the layers panel" in MAP_SCRIPT
+    # Numbers and MapLibre controls follow the page language.
+    assert "numberLocale()" in MAP_SCRIPT and "locale: maplibreLocale()" in MAP_SCRIPT
+    assert "toLocaleString('it-IT'" not in MAP_SCRIPT
+    # Operator wording is not shown to visitors.
+    assert "administrative boundaries are not configured" not in MAP_SCRIPT
+
+
+def test_audit_2026_10_17_public_pages():
+    landing = (ROOT / "land_registry/templates/landing.html").read_text(encoding="utf-8")
+    register = (ROOT / "land_registry/templates/theme_overrides/auth/register.html").read_text(encoding="utf-8")
+    auth_css = (ROOT / "land_registry/static/css/auth.css").read_text(encoding="utf-8")
+    assert "get_cadastral_stats" not in MAIN[MAIN.index("async def landing_page"):MAIN.index("@app.get(\"/cadastral-data\"")]
+    assert '<meta name="description"' in landing and "<main" in landing
+    # Validation messages stay hidden until the form was validated.
+    assert re.search(r"\.invalid-feedback \{\s*display: none;", auth_css)
+    assert "data-password-strength-label" in register
+    # The Folium page template's own viewport meta must not reach the page.
+    assert 'folium_map_html = re.sub(r\'<meta\\s+name="viewport"' in MAIN
+    assert "@app.exception_handler(404)" in MAIN
+
+
+def test_sparse_layers_explain_an_empty_view_instead_of_looking_broken():
+    """Urban sections exist for ~520 municipalities; elsewhere the layer is legitimately empty."""
+    assert "layer.sparse && state.map" in MAP_SCRIPT
+    assert "Nothing in this view: this layer only covers part of Italy." in MAP_SCRIPT
+    # The hint refreshes once tiles settle (inside the guarded idle handler), not on every idle.
+    idle = MAP_SCRIPT[MAP_SCRIPT.index("state.map.on('idle'"):]
+    idle = idle[:idle.index("});") + 3]
+    assert "updateLayerBadges()" in idle and "if (!state.tilesLoading) return;" in idle
+    # Popups no longer print the serving database as if it were the data provider.
+    assert "layer.source || 'Source not available'" not in MAP_SCRIPT

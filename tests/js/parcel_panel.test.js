@@ -804,3 +804,66 @@ test('municipal solar card starts collapsed, leads with shares and scales large 
   assert.match(result.body, /2[.,]794[.,]2 GWh\/year|2\.?794,2 GWh\/year/);
   assert.ok(result.body.indexOf('High viability') < result.body.indexOf('Estimated maximum PV capacity'));
 });
+
+// ---- Audit 2026-10-17 ------------------------------------------------------
+
+test('friendlySource keeps names people can read and moves identifiers aside', () => {
+  const split = Core.friendlySource('veneto__particelle');
+  assert.equal(split.label, 'Agenzia delle Entrate cadastral parcels');
+  assert.deepEqual(split.technical, ['veneto__particelle']);
+
+  assert.equal(
+    Core.friendlySource('aecs4u-stats PostgreSQL sister.v_sister_property_by_cadastral_parcel.address').label,
+    'SISTER property register',
+  );
+  assert.equal(Core.friendlySource('ISPRA IdroGEO / DPC via aecs4u-stats').label, 'ISPRA IdroGEO / DPC');
+  assert.equal(
+    Core.friendlySource('Agenzia delle Entrate OMI via aecs4u-stats PostgreSQL via asyncpg').label,
+    'Agenzia delle Entrate OMI',
+  );
+  assert.equal(
+    Core.friendlySource('OMI snapshot via aecs4u-stats PostgreSQL; OMI zones via aecs4u-stats PostgreSQL').label,
+    'OMI snapshot; OMI zones',
+  );
+  // Real names and dataset versions with dots or dashes are left alone.
+  assert.equal(Core.friendlySource('NASA Black Marble VIIRS VNP46A4 · VNP46A4.002').label, 'NASA Black Marble VIIRS VNP46A4 · VNP46A4.002');
+  assert.equal(Core.friendlySource(null).label, '');
+});
+
+test('blockMetadataHtml puts technical identifiers behind a disclosure', () => {
+  const html = Core.blockMetadataHtml({
+    source: 'veneto__particelle', dataset_version: 'veneto__particelle', match_method: 'parcel_reference',
+  }, tr);
+  const visible = html.replace(/<details[\s\S]*<\/details>/, '');
+  assert.doesNotMatch(visible, /veneto__particelle|parcel_reference/);
+  assert.match(visible, /Source: Agenzia delle Entrate cadastral parcels/);
+  assert.match(html, /<details class="parcel-technical"><summary>Technical details<\/summary>/);
+  assert.match(html, /Match: parcel_reference/);
+});
+
+test('publicDomainKind recognises road and water parcels only', () => {
+  assert.equal(Core.publicDomainKind({ parcel: 'STRADA297' }), 'road');
+  assert.equal(Core.publicDomainKind({ parcel: 'strada' }), 'road');
+  assert.equal(Core.publicDomainKind({ parcel: 'FERROVIA2' }), 'road');
+  assert.equal(Core.publicDomainKind({ parcel: 'ACQUA12' }), 'water');
+  assert.equal(Core.publicDomainKind({ parcel_number: 'FIUME' }), 'water');
+  assert.equal(Core.publicDomainKind({ parcel: '246' }), null);
+  assert.equal(Core.publicDomainKind({ parcel: '246/A' }), null);
+  assert.equal(Core.publicDomainKind({}), null);
+  assert.equal(Core.publicDomainKind(null), null);
+});
+
+test('number formatting follows the page language', () => {
+  const previous = global.document;
+  try {
+    global.document = { documentElement: { lang: 'en' } };
+    assert.equal(Core.formatNumber(2500), '2,500');
+    assert.equal(Core.formatNumber(7.5, 1), '7.5');
+    assert.equal(Core.formatArea(388.3), '388.3 m²');
+    global.document = { documentElement: { lang: 'it' } };
+    assert.equal(Core.formatNumber(7.5, 1), '7,5');
+    assert.equal(Core.formatArea(388.3), '388,3 m²');
+  } finally {
+    if (previous === undefined) delete global.document; else global.document = previous;
+  }
+});

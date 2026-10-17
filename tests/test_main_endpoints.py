@@ -112,29 +112,36 @@ class TestRootRedirect:
 
 
 class TestLandingPage:
-    @patch("land_registry.main.get_cadastral_stats")
-    def test_returns_html_with_stats(self, mock_stats, following_client):
-        mock_stats.return_value = {
-            "total_regions": 5,
-            "total_provinces": 20,
-            "total_municipalities": 1000,
-            "total_files": 3000,
-        }
-        response = following_client.get("/landing")
+    def test_returns_html_without_scanning_the_cadastral_tree(self, following_client):
+        """The page used to count cadastral files, a 26 s directory scan on a cold cache."""
+        with patch("land_registry.main.get_cadastral_stats") as mock_stats:
+            response = following_client.get("/landing")
         assert response.status_code == 200
         assert "text/html" in response.headers["content-type"]
+        mock_stats.assert_not_called()
 
-    @patch("land_registry.main.get_cadastral_stats")
-    def test_stats_are_used(self, mock_stats, following_client):
-        mock_stats.return_value = {
-            "total_regions": 7,
-            "total_provinces": 33,
-            "total_municipalities": 7904,
-            "total_files": 15000,
-        }
-        response = following_client.get("/landing")
-        assert response.status_code == 200
-        assert "7,904" in response.text or "7904" in response.text
+    def test_describes_the_current_product_and_is_navigable(self, following_client):
+        html = following_client.get("/landing").text
+        assert '<main id="main-content">' in html
+        assert '<meta name="description"' in html
+        assert "<h2 class=\"section-title\"" in html
+        for stale in ("Leaflet Map", "Folium Map Generation", "SpatiaLite", "GeoDataFrame", "stat-card"):
+            assert stale not in html, stale
+        assert 'href="/map"' in html and 'href="/data-sources"' in html
+
+
+class TestNotFoundPage:
+    def test_browsers_get_a_styled_page(self, client):
+        response = client.get("/no-such-page", headers={"accept": "text/html,application/xhtml+xml"})
+        assert response.status_code == 404
+        assert "text/html" in response.headers["content-type"]
+        assert "<h1>" in response.text and 'href="/map"' in response.text
+
+    def test_api_and_json_clients_keep_the_json_body(self, client):
+        assert client.get("/no-such-page").json() == {"detail": "Not Found"}
+        api = client.get("/api/v1/no-such-endpoint", headers={"accept": "text/html"})
+        assert api.status_code == 404
+        assert api.headers["content-type"].startswith("application/json")
 
 
 # ---------------------------------------------------------------------------

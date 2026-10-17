@@ -72,6 +72,32 @@
     },
   };
 
+  // Numbers follow the page language (English: 2,500.5; Italian: 2.500,5).
+  const numberLocale = () => (String(document.documentElement.lang || '').toLowerCase().startsWith('en') ? 'en-GB' : 'it-IT');
+
+  // MapLibre's own control labels (zoom, fullscreen, attribution) follow the page language.
+  const MAPLIBRE_LOCALE_IT = {
+    'AttributionControl.ToggleAttribution': 'Mostra o nascondi le attribuzioni',
+    'AttributionControl.MapFeedback': 'Segnala un problema della mappa',
+    'FullscreenControl.Enter': 'Attiva lo schermo intero',
+    'FullscreenControl.Exit': 'Esci dallo schermo intero',
+    'GeolocateControl.FindMyLocation': 'Trova la mia posizione',
+    'GeolocateControl.LocationNotAvailable': 'Posizione non disponibile',
+    'LogoControl.Title': 'Logo MapLibre',
+    'NavigationControl.ResetBearing': 'Riporta il nord in alto',
+    'NavigationControl.ZoomIn': 'Ingrandisci',
+    'NavigationControl.ZoomOut': 'Riduci',
+    'ScaleControl.Feet': 'ft',
+    'ScaleControl.Meters': 'm',
+    'ScaleControl.Kilometers': 'km',
+    'ScaleControl.Miles': 'mi',
+    'ScaleControl.NauticalMiles': 'nm',
+    'ScrollZoomBlocker.CtrlMessage': 'Usa Ctrl + scorrimento per ingrandire la mappa',
+    'ScrollZoomBlocker.CmdMessage': 'Usa ⌘ + scorrimento per ingrandire la mappa',
+    'TouchPanBlocker.Message': 'Usa due dita per spostare la mappa',
+  };
+  const maplibreLocale = () => (numberLocale() === 'it-IT' ? MAPLIBRE_LOCALE_IT : undefined);
+
   const $ = (id) => document.getElementById(id);
   // Server-rendered strings (window._i18n) win; the English literal is the fallback.
   const tr = (key, values) => {
@@ -90,6 +116,7 @@
     const next = $('mapWelcomeNext');
     const finish = $('mapWelcomeFinish');
     let current = 0;
+    let returnFocusTo = null;
     const markSeen = () => {
       try { window.localStorage.setItem(WELCOME_TOUR_KEY, '1'); } catch (_) { /* storage may be disabled */ }
     };
@@ -102,6 +129,10 @@
     };
     const open = () => {
       current = 0;
+      // Closing returns to whatever opened the guide; on first load nothing did, so the search box.
+      const origin = document.activeElement;
+      returnFocusTo = origin && origin !== document.body && origin !== dialog && document.contains(origin)
+        ? origin : ($('mapSearchInput') || opener);
       render();
       if (typeof dialog.showModal === 'function') dialog.showModal();
       else dialog.setAttribute('open', '');
@@ -119,7 +150,10 @@
     previous?.addEventListener('click', () => { current = Math.max(0, current - 1); render(); });
     next?.addEventListener('click', () => { current = Math.min(steps.length - 1, current + 1); render(); });
     finish?.addEventListener('click', close);
-    dialog.addEventListener('close', markSeen);
+    dialog.addEventListener('close', () => {
+      markSeen();
+      if (returnFocusTo && document.contains(returnFocusTo)) returnFocusTo.focus({ preventScroll: true });
+    });
 
     let seen = false;
     try { seen = window.localStorage.getItem(WELCOME_TOUR_KEY) === '1'; } catch (_) { /* storage may be disabled */ }
@@ -227,11 +261,15 @@
       });
       const completed = Math.min(offset + 5000, points.length);
       task.update('Preparing sale markers…', completed / points.length * 100,
-        tr('{n} of {total} records', { n: completed.toLocaleString(), total: points.length.toLocaleString() }));
+        tr('{n} of {total} records', { n: completed.toLocaleString(numberLocale()), total: points.length.toLocaleString(numberLocale()) }));
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
     return task.current() ? features : null;
   }
+
+  const SALE_MARKER_SETTLE_MS = 3000;
+  // The server answers 503 + Retry-After while the national snapshot loads (minutes after a restart).
+  const AUCTION_LOAD_RETRIES = 24; // shared by the sales and auction listing layers
 
   function drawSaleMarkers(sourceId, task, draw) {
     task.update('Drawing sale markers…');
@@ -239,7 +277,9 @@
     // bar until that source reports completion, rather than claiming 100%.
     return new Promise((resolve, reject) => {
       const map = state.map;
+      let settleTimer = null;
       const cleanup = () => {
+        clearTimeout(settleTimer);
         map.off('sourcedata', onData);
         map.off('error', onError);
         task.cleanup = null;
@@ -255,6 +295,9 @@
       task.cleanup = () => { cleanup(); resolve(); };
       map.on('sourcedata', onData);
       map.on('error', onError);
+      // MapLibre does not always report a clustered GeoJSON source as loaded
+      // once its worker has finished; never leave the progress bar hanging.
+      settleTimer = setTimeout(() => { cleanup(); resolve(); }, SALE_MARKER_SETTLE_MS);
       try { draw(); } catch (error) { cleanup(); reject(error); }
     });
   }
@@ -356,7 +399,7 @@
 
   function formatArea(value) {
     const area = Number(value);
-    return Number.isFinite(area) ? `${area.toLocaleString('it-IT', { maximumFractionDigits: 1 })} m²` : '—';
+    return Number.isFinite(area) ? `${area.toLocaleString(numberLocale(), { maximumFractionDigits: 1 })} m²` : '—';
   }
 
   function urlState() {
@@ -533,7 +576,10 @@
     ];
     if (tiles.labels) {
       sources['basemap-labels'] = { type: 'raster', tiles: [tiles.labels.replace('{s}', 'a')], tileSize: 256, maxzoom: tiles.maxzoom };
-      layers.push({ id: 'basemap-labels', type: 'raster', source: 'basemap-labels', maxzoom: rasterCutoff });
+      // Upscaled label text is blurred as soon as it is scaled (2x at z17), unlike the flat base
+      // tiles, so the label raster stops one level past native; parcel numbers (vector) take over.
+      const labelCutoff = Math.min(rasterCutoff, tiles.maxzoom + 1);
+      layers.push({ id: 'basemap-labels', type: 'raster', source: 'basemap-labels', maxzoom: labelCutoff });
     }
     // Symbol layers (parcel numbers) need glyphs; they are self-hosted under
     // /static/fonts (Noto Sans, OFL) so no third-party font host is involved.
@@ -603,7 +649,9 @@
     const freshness = (layer.properties || []).includes('source_release')
       ? tr('Source version shown in feature details')
       : tr('Source date not reported');
-    return `${coverage} · ${freshness} · ${layer.source || 'Source not reported'}`;
+    // The catalog's ``source`` names the serving database (an infrastructure detail), not the
+    // data provider, so it is not part of the line people read; providers are on /data-sources.
+    return `${coverage} · ${freshness}`;
   }
 
   function layerSourceId(layer) { return `source-${layer.id}`; }
@@ -961,7 +1009,7 @@
       writeSelectedLayersUrl();
     });
     // Tiles are capped server-side, so dense areas can omit features; say so.
-    const cap = layer.max_features ? ` · ${tr('Up to {n} features per tile', { n: Number(layer.max_features).toLocaleString('it-IT') })}` : '';
+    const cap = layer.max_features ? ` · ${tr('Up to {n} features per tile', { n: Number(layer.max_features).toLocaleString(numberLocale()) })}` : '';
     row.title = `${layerMetadata(layer)}${cap}`;
     const copy = document.createElement('span');
     copy.innerHTML = `<strong><i class="map-layer-swatch" style="background:${layerColor(layer.id)}"></i>${escapeHtml(tr(layer.title))}</strong><small class="map-layer-meta">${escapeHtml(layerMetadata(layer))}</small>`;
@@ -1044,6 +1092,12 @@
       const hints = [];
       if (state.activeLayers?.has(layer.id)) {
         if (zoom < Number(layer.min_zoom || 0)) hints.push(tr('Zoom in: visible from zoom {n}', { n: layer.min_zoom }));
+        if (layer.sparse && state.map && zoom >= Number(layer.min_zoom || 0) && state.map.areTilesLoaded?.()
+          && !state.map.queryRenderedFeatures({ layers: [`fill-${layer.id}`, `line-${layer.id}`].filter((id) => state.map.getLayer(id)) }).length) {
+          // Not a failure: the layer simply has nothing here. Say why instead of leaving a ticked,
+          // empty layer.
+          hints.push(tr('Nothing in this view: this layer only covers part of Italy.'));
+        }
         if (viewportOutside(bounds, layer.estimated_bounds || layer.coverage_bounds)) {
           hints.push(layer.estimated_bounds
             ? tr('Outside the estimated data extent; coverage may vary.')
@@ -1110,7 +1164,8 @@
   function enableAdministrativeSubstitute() {
     const layer = administrativeSubstituteLayer();
     if (!layer) {
-      mapStatus('Zoom in to see cadastral parcels; administrative boundaries are not configured.', true);
+      // Which boundary layers a deployment configures is an operator concern, not something
+      // to tell visitors; the help note already says to zoom in.
       return;
     }
     if (state.adminSubstituteUserDisabled.has(layer.id)) return;
@@ -1159,13 +1214,9 @@
     updateLayerBadges();
     const note = $('mapHelpNote');
     if (!note) return;
-    if (outsideCoverage) {
-      note.textContent = tr('Outside the estimated data extent; coverage may vary.');
-    } else if (belowParcelZoom && !administrativeSubstituteLayer() && !sourceDown) {
-      note.textContent = tr('Zoom in to see cadastral parcels; administrative boundaries are not configured.');
-    } else {
-      note.textContent = tr('Zoom in to see cadastral parcels');
-    }
+    note.textContent = outsideCoverage
+      ? tr('Outside the estimated data extent; coverage may vary.')
+      : tr('Zoom in to see cadastral parcels');
     note.hidden = panelOpen || (!outsideCoverage && !belowParcelZoom);
   }
 
@@ -1207,7 +1258,7 @@
         // The whole source being down is an outage, not a configuration
         // state; drop the provenance text so the row says only that.
         if (payload.available === false) meta.textContent = tr('Temporarily unavailable');
-        else if (health.available && catalogLayer?.coverage === 'partial') meta.textContent = `Partial coverage · ${catalogLayer.coverage_note || 'some regions'}${metadata}`;
+        else if (health.available && catalogLayer?.coverage === 'partial') meta.textContent = catalogLayer ? layerMetadata(catalogLayer) : tr('Partial coverage');
         else if (health.available) meta.textContent = `Available${metadata}`;
         else if (health.relation_exists === false) meta.textContent = `Not available${metadata}`;
         else meta.textContent = `Needs configuration${metadata}`;
@@ -1449,7 +1500,7 @@
     reportLink.setAttribute('aria-disabled', String(!reference));
     reportLink.tabIndex = reference ? 0 : -1;
     const saved = state.savedReference === reference;
-    $('parcelSaveButton').disabled = saved;
+    setActionUnavailable($('parcelSaveButton'), saved);
     $('parcelSaveButton').textContent = saved ? tr('Saved') : tr('Save parcel');
     syncFavoriteButton();
     $('directParcelPanel').hidden = false;
@@ -1510,7 +1561,7 @@
         if (created.status === 401) throw new Error('Sign in to save favourites');
         if (created.ok) {
           state.savedReference = reference;
-          $('parcelSaveButton').disabled = true;
+          setActionUnavailable($('parcelSaveButton'), true);
           $('parcelSaveButton').textContent = tr('Saved');
           await loadShortlist();
           mapStatus('Added to favourites');
@@ -1534,11 +1585,23 @@
     }
   }
 
+  // ``aria-disabled`` rather than ``disabled``: a disabled button drops keyboard
+  // focus to the document start, so the next Tab begins at the page header.
+  function setActionUnavailable(button, unavailable) {
+    if (!button) return;
+    if (unavailable) button.setAttribute('aria-disabled', 'true');
+    else button.removeAttribute('aria-disabled');
+  }
+
   async function saveParcel() {
     const reference = state.selectedReference;
     if (!reference) return;
     const button = $('parcelSaveButton');
-    button.disabled = true;
+    if (button.getAttribute('aria-disabled') === 'true') return;
+    // Signed-out visitors cannot save; say so without a request that is bound to answer 401.
+    if (!window.landRegistrySignedIn) { mapStatus('Sign in to save parcels', true); return; }
+    setActionUnavailable(button, true);
+    button.setAttribute('aria-busy', 'true');
     button.textContent = tr('Saving…');
     const task = beginMapProgress('save-parcel', 'Saving parcel…');
     try {
@@ -1565,10 +1628,10 @@
       mapStatus('Parcel saved');
       void loadShortlist();
     } catch (error) {
-      button.disabled = false;
+      setActionUnavailable(button, false);
       button.textContent = tr('Save parcel');
       mapStatus(error.message || 'Could not save parcel', true);
-    } finally { task.finish(); }
+    } finally { button.removeAttribute('aria-busy'); task.finish(); }
   }
 
   async function downloadParcelReport(event) {
@@ -1978,7 +2041,7 @@
         : layer.id === 'geo-boundaries' && properties.canonical_name
           ? `${properties.unit_type ? `${properties.unit_type}: ` : ''}${properties.canonical_name}`
           : layer.title;
-      popup.setHTML(`<strong>${escapeHtml(heading)}</strong><table class="parcel-detail-table"><tbody>${rows || '<tr><td>No feature details</td></tr>'}</tbody></table>${relatedSummary}${related}${documentHint}<small>${escapeHtml(layer.source || 'Source not available')}</small>`);
+      popup.setHTML(`<strong>${escapeHtml(heading)}</strong><table class="parcel-detail-table"><tbody>${rows || '<tr><td>No feature details</td></tr>'}</tbody></table>${relatedSummary}${related}${documentHint}<small><a href="/data-sources">${escapeHtml(tr('Data sources'))}</a></small>`);
     };
 
     renderPopup();
@@ -2245,13 +2308,13 @@
     void (async () => {
       try {
         const response = await fetch(url, { signal: controller.signal });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        if (!response.ok) throw Object.assign(new Error(`HTTP ${response.status}`), { status: response.status });
         const payload = await response.json();
         if (requestId === state.parcelFinderRequest) onData(payload);
       } catch (error) {
         if (error.name === 'AbortError' || requestId !== state.parcelFinderRequest) return;
-        onError?.(error);
-        setParcelFinderStatus(tr('Search service unavailable; try again.'), true);
+        // An onError handler that returns true has already explained the failure.
+        if (onError?.(error) !== true) setParcelFinderStatus(tr('Search service unavailable; try again.'), true);
       }
     })();
   }
@@ -2288,7 +2351,15 @@
         'parcelFinderRegion', 'Select a region', regions, (region) => region, (region) => region,
       );
       setParcelFinderStatus(count ? tr('Select a region to continue.') : tr('No cadastral areas available.'), !count);
-    }, () => { state.parcelFinderRegionsLoaded = false; });
+    }, (error) => {
+      state.parcelFinderRegionsLoaded = false;
+      // 404: the cadastral file tree is not provisioned on this server, so retrying cannot help.
+      if (error.status === 404) {
+        setParcelFinderStatus(tr('Browsing by cadastral hierarchy is not available on this server. Use the search box.'), true);
+        return true;
+      }
+      return false;
+    });
   }
 
   function loadParcelFinderProvinces(region) {
@@ -2409,7 +2480,8 @@
     if (normalized.length < 2) { renderSearchResults([]); $('mapSearchStatus').textContent = ''; return; }
     const controller = new AbortController();
     state.searchController = controller;
-    const timeout = setTimeout(() => controller.abort(), 6500);
+    let timedOut = false;
+    const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 6500);
     const task = beginMapProgress('search', 'Searching…');
     $('mapSearchStatus').textContent = 'Searching…';
     try {
@@ -2446,8 +2518,11 @@
       renderSearchResults(results);
       $('mapSearchStatus').textContent = results.length ? '' : (!serviceDown ? (explicit ? 'No result' : (state.sourceHealthDown ? 'Municipality and parcel search is unavailable — press Enter to search places' : 'No municipality or parcel match — press Enter to search places')) : 'Search service unavailable; try again.');
     } catch (error) {
-      if (error.name === 'AbortError') return;
-      if (requestId === state.searchRequest) $('mapSearchStatus').textContent = 'Search unavailable';
+      // A newer search superseding this one is silent; a timeout is not.
+      if (error.name === 'AbortError' && !(timedOut && requestId === state.searchRequest)) return;
+      if (requestId === state.searchRequest) {
+        $('mapSearchStatus').textContent = timedOut ? tr('Search is taking too long. Try again.') : tr('Search unavailable');
+      }
     } finally {
       task.finish();
       clearTimeout(timeout);
@@ -2560,8 +2635,8 @@
     if (status) {
       status.textContent = state.sisterBatch.notice || sisterBatchInstruction() || (count
         ? (ready === count
-          ? tr('{n} parcels selected', { n: count.toLocaleString() })
-          : tr('{n} selected; {missing} need cadastral details before export', { n: count.toLocaleString(), missing: (count - ready).toLocaleString() }))
+          ? tr('{n} parcels selected', { n: count.toLocaleString(numberLocale()) })
+          : tr('{n} selected; {missing} need cadastral details before export', { n: count.toLocaleString(numberLocale()), missing: (count - ready).toLocaleString(numberLocale()) }))
         : tr('No parcels selected'));
     }
     if ($('sisterBatchClearButton')) $('sisterBatchClearButton').disabled = !count && !state.sisterBatch.mode && !state.sisterBatch.busy;
@@ -2661,7 +2736,7 @@
       if (requestId !== state.sisterBatch.requestId) return;
       if (payload.truncated) throw new Error(tr('More than 5,000 parcels match. Draw a smaller area to keep the batch complete.'));
       const added = addSisterBatchFeatures(payload.features || []);
-      renderSisterBatchControls(tr('Added {added} parcels; {total} selected.', { added: added.toLocaleString(), total: state.sisterBatch.features.size.toLocaleString() }));
+      renderSisterBatchControls(tr('Added {added} parcels; {total} selected.', { added: added.toLocaleString(numberLocale()), total: state.sisterBatch.features.size.toLocaleString(numberLocale()) }));
     } catch (error) {
       if (requestId === state.sisterBatch.requestId) renderSisterBatchControls(error.message || tr('Parcel selection is temporarily unavailable.'));
     } finally {
@@ -2827,7 +2902,7 @@
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
-    renderSisterBatchControls(tr('Downloaded {rows} SISTER requests for {parcels} parcels.', { rows: rows.length.toLocaleString(), parcels: state.sisterBatch.features.size.toLocaleString() }));
+    renderSisterBatchControls(tr('Downloaded {rows} SISTER requests for {parcels} parcels.', { rows: rows.length.toLocaleString(numberLocale()), parcels: state.sisterBatch.features.size.toLocaleString(numberLocale()) }));
   }
 
   function fallbackCopy(value) {
@@ -2987,7 +3062,7 @@
 
   function salesValueLabel(value, suffix = '') {
     const numeric = numberValue(value);
-    return numeric === null ? '—' : `${numeric.toLocaleString('it-IT', { maximumFractionDigits: 1 })}${suffix}`;
+    return numeric === null ? '—' : `${numeric.toLocaleString(numberLocale(), { maximumFractionDigits: 1 })}${suffix}`;
   }
 
   function salesPopupHtml(properties) {
@@ -3264,7 +3339,7 @@
       const requestedZoom = state.map.getZoom();
       salesOverlay.loaded = { bbox: requestedBbox, truncated: false, zoom: requestedZoom };
       const response = await fetch(salesRequestUrl(forceRefresh), { credentials: 'same-origin', signal: nextViewportSignal(salesOverlay) });
-      if (response.status === 503 && retryAttempt < 6) {
+      if (response.status === 503 && retryAttempt < AUCTION_LOAD_RETRIES) {
         const retrySeconds = Number(response.headers.get('Retry-After')) || 5;
         task.update('Preparing sales data…', null, tr('Retrying in {n}s', { n: retrySeconds }));
         retryScheduled = true;
@@ -3282,7 +3357,7 @@
       if (categorySelect && Array.isArray(payload.categories)) {
         const selected = categorySelect.value;
         const allTypesLabel = categorySelect.options[0]?.textContent || tr('All types');
-        const options = payload.categories.map((item) => `<option value="${escapeHtml(item.key)}">${escapeHtml(item.label)} (${Number(item.count || 0).toLocaleString()})</option>`).join('');
+        const options = payload.categories.map((item) => `<option value="${escapeHtml(item.key)}">${escapeHtml(item.label)} (${Number(item.count || 0).toLocaleString(numberLocale())})</option>`).join('');
         categorySelect.innerHTML = `<option value="">${escapeHtml(allTypesLabel)}</option>${options}`;
         if ([...categorySelect.options].some((option) => option.value === selected)) categorySelect.value = selected;
       }
@@ -3295,9 +3370,9 @@
       if (token !== salesOverlay.fetchToken || !salesOverlay.active) return;
       salesOverlay.loaded = { bbox: Array.isArray(payload.bbox) ? payload.bbox : requestedBbox, truncated: !!payload.truncated, zoom: requestedZoom };
       const count = collection.features.length;
-      const more = payload.truncated ? ` ${tr('of {n} in view; zoom in for more', { n: Number(payload.matched || count).toLocaleString() })}` : '';
+      const more = payload.truncated ? ` ${tr('of {n} in view; zoom in for more', { n: Number(payload.matched || count).toLocaleString(numberLocale()) })}` : '';
       if ($('salesCount')) $('salesCount').textContent = `(${count}${payload.truncated ? '+' : ''})`;
-      if (status) status.textContent = `${count.toLocaleString()} ${tr('mapped record(s)')}${more} · ${payload.source?.relation || 'PVP view'}`;
+      if (status) status.textContent = `${count.toLocaleString(numberLocale())} ${tr('mapped record(s)')}${more} · ${payload.source?.relation || 'PVP view'}`;
       // Avoid zooming a user out from a parcel or fitting a national set of
       // tens of thousands of points. Small result sets can still be brought
       // into view from the map's initial country-level extent.
@@ -3649,6 +3724,9 @@
       east: String(Math.min(180, bounds.getEast())),
       north: String(Math.min(90, bounds.getNorth())),
       limit: String(pageSize),
+      // Filtered in the database: without it every parcel page in the view is
+      // downloaded (several MB each) only to keep the few auction parcels.
+      flag: 'is_auction_sale',
     });
     const controller = new AbortController();
     auctionParcelsOverlay.controller = controller;
@@ -4233,7 +4311,8 @@
     const reference = state.selectedReference;
     if (!reference) return;
     const button = $('parcelAdjacentButton');
-    if (button) { button.disabled = true; button.textContent = 'Finding…'; }
+    if (button?.getAttribute('aria-disabled') === 'true') return;
+    if (button) { setActionUnavailable(button, true); button.setAttribute('aria-busy', 'true'); button.textContent = tr('Finding…'); }
     mapStatus('Looking for adjacent parcels…');
     const task = beginMapProgress('adjacent-parcels', 'Looking for adjacent parcels…');
     try {
@@ -4251,7 +4330,7 @@
       mapStatus(error.message || 'Adjacency lookup unavailable', true);
     } finally {
       task.finish();
-      if (button) { button.disabled = false; button.textContent = 'Find adjacent parcels'; }
+      if (button) { setActionUnavailable(button, false); button.removeAttribute('aria-busy'); button.textContent = tr('Find adjacent parcels'); }
     }
   }
 
@@ -4331,7 +4410,7 @@
       if (bbox) query.set('bbox', bbox.join(','));
       if (forceRefresh) query.set('refresh', '1');
       const response = await fetch(`/api/v1/sales/map-points?${query}`, { credentials: 'same-origin', signal: nextViewportSignal(auctionOverlay) });
-      if (response.status === 503 && retryAttempt < 6) {
+      if (response.status === 503 && retryAttempt < AUCTION_LOAD_RETRIES) {
         const retrySeconds = Number(response.headers.get('Retry-After')) || 5;
         task.update('Preparing auction data…', null, tr('Retrying in {n}s', { n: retrySeconds }));
         retryScheduled = true;
@@ -4360,10 +4439,10 @@
       await drawSaleMarkers('auction-properties', task, applyAuctionFilter);
       if (token !== auctionOverlay.fetchToken || !auctionOverlay.active) return;
       auctionOverlay.loaded = { bbox: Array.isArray(payload.bbox) ? payload.bbox : bbox, truncated: !!payload.truncated, zoom };
-      const inView = auctionOverlay.points.length.toLocaleString();
+      const inView = auctionOverlay.points.length.toLocaleString(numberLocale());
       if (!viewportRefresh || payload.truncated) {
         mapStatus(payload.truncated
-          ? tr('{n} auction records shown of {total} in view; zoom in for more', { n: inView, total: Number(payload.matched || 0).toLocaleString() })
+          ? tr('{n} auction records shown of {total} in view; zoom in for more', { n: inView, total: Number(payload.matched || 0).toLocaleString(numberLocale()) })
           : `${inView} auction records in view from ${payload.source?.relation || 'PVP view'}`);
       }
     } catch (error) {
@@ -4392,7 +4471,7 @@
     });
     state.map.getSource('auction-properties')?.setData({ type: 'FeatureCollection', features });
     const countElement = $('auctionCount');
-    if (countElement) countElement.textContent = `(${features.length.toLocaleString()})`;
+    if (countElement) countElement.textContent = `(${features.length.toLocaleString(numberLocale())})`;
   }
 
   function toggleAuctionOverlay() {
@@ -4469,7 +4548,7 @@
       { id: 'analysis-selection-point', type: 'circle', paint: { 'circle-color': '#f59e0b', 'circle-radius': 7, 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 } },
     ]);
     const count = $('mapAnalysisSelectionCount');
-    if (count) count.textContent = tr('{n} selected', { n: features.length.toLocaleString() });
+    if (count) count.textContent = tr('{n} selected', { n: features.length.toLocaleString(numberLocale()) });
     const clear = $('mapClearAnalysisSelectionButton');
     if (clear) clear.disabled = features.length === 0;
     renderAdjacencyRows(features, []);
@@ -5556,6 +5635,15 @@
         basemapToggle.focus();
       }
     });
+    // Escape closes the layers panel when focus is in it or on its toggle.
+    document.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      const card = $('mapLayersCard');
+      if (card.hidden || !(card.contains(document.activeElement) || document.activeElement === $('layersToggle'))) return;
+      card.hidden = true;
+      $('layersToggle').setAttribute('aria-expanded', 'false');
+      $('layersToggle').focus();
+    });
     $('layersToggle').addEventListener('click', () => {
       const card = $('mapLayersCard');
       card.hidden = !card.hidden;
@@ -5852,7 +5940,7 @@
     let maplibreError = null;
     if (window.maplibregl) {
       try {
-        state.map = new maplibregl.Map({ container: 'directMap', style: styleForBasemap(basemap), center: initialView.center, zoom: initialView.zoom, maxBounds: ITALY_BOUNDS, minZoom: 5, maxZoom: 22, attributionControl: true });
+        state.map = new maplibregl.Map({ container: 'directMap', style: styleForBasemap(basemap), center: initialView.center, zoom: initialView.zoom, maxBounds: ITALY_BOUNDS, minZoom: 5, maxZoom: 22, attributionControl: true, locale: maplibreLocale() });
       } catch (error) {
         maplibreError = error;
         console.warn('MapLibre unavailable; switching to raster map fallback', error);
@@ -5910,6 +5998,9 @@
       if (!state.tilesLoading) return;
       state.tilesLoading = false;
       mapTasks.get('map-tiles')?.finish();
+      // Sparse layers can only tell "nothing here" from "not drawn yet" once tiles have settled.
+      // updateLayerBadges only rewrites a hint's text, so this does not re-render the map.
+      if (state.activeLayers?.size) updateLayerBadges();
       if (!state.mapReadyAnnounced && !state.tileErrors.size && !restored.invalidView && !restored.parcel) {
         state.mapReadyAnnounced = true;
         mapStatus('Map ready');

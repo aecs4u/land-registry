@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="{{ request.state.lr_locale | default('it') }}">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <title>{{ _('Page not found') }} · {{ _('Land Registry Viewer') }}</title>
+  <link rel="stylesheet" href="{{ asset_url('css/pages/landing.css') }}">
+</head>
+<body>
+  <main id="main-content" class="container" style="padding-top: 5rem; text-align: center;">
+    <h1>{{ _('Page not found') }}</h1>
+    <p style="margin: 1rem auto 2rem;">{{ _('The page you asked for does not exist or has moved.') }}</p>
+    <p><a href="/map" class="btn-primary" style="display:inline-block; padding:.6rem 1.2rem; border-radius:8px; background:#1d4ed8; color:#fff; text-decoration:none;">{{ _('Back to the map') }}</a></p>
+  </main>
+  <script src="{{ asset_url('theme-sync.js') }}"></script>
+</body>
+</html>

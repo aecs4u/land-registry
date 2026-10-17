@@ -62,6 +62,7 @@
     ['poi', 'Points of interest'], ['nightlights', 'Night lights'], ['opendata', 'Cadastral OpenData'], ['pvp', 'PVP auctions'],
   ];
   const SCHEMA_HEALTH_URL = '/api/v1/map/layers/health';
+  const PUBLIC_DOMAIN_HIDDEN = new Set(['omi', 'pvp', 'solar', 'solar_economics']);
 
   const esc = Core.escapeHtml;
 
@@ -317,6 +318,13 @@
   const text = (value) => esc(value);
   const note = (message) => `<p class="parcel-note">${esc(message)}</p>`;
   const empty = (message) => ({ body: note(message), empty: true });
+  /** Model identifiers sit behind a disclosure rather than next to the figures they describe. */
+  function modelVersionDetails(versions, tr) {
+    const list = [...new Set((versions || []).filter(Boolean))];
+    return list.length
+      ? `<details class="parcel-technical"><summary>${esc(tr('Technical details'))}</summary><p>${esc(tr('Model'))}: ${esc(list.join(' · '))}</p></details>`
+      : '';
+  }
   // ``unavailable`` marks a coverage gap (the source cannot answer for this
   // parcel), as opposed to a real negative such as "no active fire". Those
   // cards start collapsed and say so in their header.
@@ -610,10 +618,11 @@
     const source = sourceUrl
       ? `<a href="${esc(sourceUrl)}" target="_blank" rel="noopener noreferrer">${esc(production.model || 'PVGIS')}</a>`
       : esc(production.model || 'PVGIS');
-    const dataPeriod = production.data_period ? ` · ${esc(production.data_period)}` : '';
+    const dataPeriod = production.dataset_version ? ` · ${esc(production.dataset_version)}` : '';
     return `<div class="parcel-solar-economics-result">
       ${resultRows}
-      <p class="parcel-note">${esc(tr('PVGIS annual yield'))}: ${esc(Core.formatNumber(production.annual_yield_kwh_per_kwp, 0))} kWh/kWp/year · ${source}${dataPeriod}</p>
+      <p class="parcel-note">${esc(tr('PVGIS-derived municipal yield'))}: ${esc(Core.formatNumber(production.annual_yield_kwh_per_kwp, 0))} kWh/kWp/year · ${source}${dataPeriod}</p>
+      <p class="parcel-note">${esc(tr('Derived from municipality-wide modern PV output and estimated capacity. It is not parcel or roof production.'))}</p>
       <details class="parcel-solar-cashflow"><summary>${esc(tr('Annual cash-flow table'))}</summary>
         <div class="parcel-solar-cashflow-scroll"><table><thead><tr><th>${esc(tr('Year'))}</th><th>${esc(tr('Production'))}</th><th>${esc(tr('Net cash flow'))}</th><th>${esc(tr('Cumulative cash flow'))}</th></tr></thead><tbody>${cashFlowRows}</tbody></table></div>
       </details>
@@ -640,7 +649,7 @@
       const controls = Array.from(form.querySelectorAll('input, [type="submit"]'));
       controls.forEach((control) => { control.disabled = true; });
       delete form.dataset.reportScenario;
-      status.textContent = ctx.tr('Calculating PVGIS scenario…');
+      status.textContent = ctx.tr('Calculating municipal solar scenario…');
       output.innerHTML = '';
       const payload = Object.fromEntries(new FormData(form).entries());
       Object.keys(payload).forEach((key) => { payload[key] = Number(payload[key]); });
@@ -652,11 +661,9 @@
       if (!ctx.isCurrent()) return;
       controls.forEach((control) => { control.disabled = false; });
       if (!result.ok) {
-        const message = result.status === 504
-          ? 'PVGIS did not respond in time. Retry the calculation.'
-          : result.status === 503
-            ? 'PVGIS is temporarily unavailable for this scenario.'
-            : 'Solar scenario could not be calculated.';
+        const message = result.status === 503
+          ? 'Municipal solar potential is unavailable for this municipality.'
+          : 'Solar scenario could not be calculated.';
         status.textContent = ctx.tr(message);
         return;
       }
@@ -1037,7 +1044,7 @@
         const buildingCount = Core.toNumber(data.pv_n_buildings);
         const highShare = amount('pv_high_viability_pct', '%');
         return {
-          badge: buildingCount === null ? null : Core.formatNumber(buildingCount, 0),
+          badge: buildingCount === null ? null : tr('{n} buildings assessed', { n: Core.formatNumber(buildingCount, 0) }),
           // Municipal aggregates say little about one roof: start collapsed
           // with the headline share in the header.
           collapsed: true,
@@ -1056,17 +1063,14 @@
 
     {
       id: 'solar_economics', tab: 'energy', icon: 'calculator', title: 'PV cash-flow scenario', lazy: true,
-      load: async (ctx) => ({ available: Boolean(ctx.reference && ctx.centroid) }),
+      load: async (ctx) => ({ available: Boolean(ctx.reference) }),
       render: (data, ctx) => {
         const { tr } = ctx;
         if (!data || !data.available) {
-          return unavailable(tr('A parcel geometry and reference are required to locate this PVGIS scenario.'));
+          return unavailable(tr('A parcel reference is required to select its municipal solar potential.'));
         }
         const pvInputs = [
           solarScenarioInput('system_kwp', 'Installed system size (kWp)', 3, 0.1, 1000, 0.1, tr),
-          solarScenarioInput('tilt_degrees', 'Panel tilt (degrees)', 30, 0, 90, 1, tr),
-          solarScenarioInput('aspect_degrees', 'Panel aspect (degrees; 0 = south)', 0, -180, 180, 1, tr),
-          solarScenarioInput('system_losses_pct', 'System losses (%)', 14, 0, 50, 0.1, tr),
         ].join('');
         const financialInputs = [
           solarScenarioInput('installation_cost_eur_per_kwp', 'Installation cost (€/kWp)', 1200, 1, 10000, 1, tr),
@@ -1082,7 +1086,7 @@
           body: `<form class="parcel-solar-scenario-form">
             <fieldset><legend>${esc(tr('PV system inputs'))}</legend><div class="parcel-solar-input-grid">${pvInputs}</div></fieldset>
             <fieldset><legend>${esc(tr('Financial assumptions'))}</legend><div class="parcel-solar-input-grid">${financialInputs}</div></fieldset>
-            <p class="parcel-note">${esc(tr('Defaults are illustrative. PVGIS uses a building-mounted reference system at the parcel centroid; you provide system size, tilt, aspect and losses. This does not estimate usable roof area or installation feasibility.'))}</p>
+            <p class="parcel-note">${esc(tr('The yield uses the PVGIS-derived municipal potential exposed by aecs4u-stats. It is municipal context, not an estimate for this parcel, building or roof. You provide system size and financial assumptions; usable roof area and installation feasibility are not estimated.'))}</p>
             <button class="parcel-solar-calculate" type="submit">${esc(tr('Calculate scenario'))}</button>
           </form>
           <p class="parcel-solar-scenario-status" role="status" aria-live="polite"></p>
@@ -1900,7 +1904,7 @@
             [averageLabel('Region average', 'region'), averageValue('region', null)],
             [averageLabel('National average', 'nation'), averageValue('nation', null)],
             [tr('Estimated income inequality (Gini)'), inequality.grouped_gini_estimate != null
-              ? `${Core.formatNumber(inequality.grouped_gini_estimate, 3)} <small>${esc(inequality.grouped_gini_model_version || '')}</small>`
+              ? `${Core.formatNumber(inequality.grouped_gini_estimate, 3)}`
               : null],
           ])}${averageBars}${bars}${inequality.grouped_gini_estimate != null
             ? note(tr('Grouped Gini estimate on a 0–1 scale from eight income brackets. The lowest bracket is represented by €0 and the open-ended top bracket by €150,000; within-bracket inequality is not observed.'))
@@ -2085,8 +2089,11 @@
                 : partial
                   ? badge('medium', tr('Partial coverage'))
                   : badge('low', tr('Available'));
-              const source = [block.source, block.dataset_version].filter(Boolean).join(' · ');
-              return [tr(label), `${status}${source ? `<small class="parcel-coverage-source">${esc(source)}</small>` : ''}`];
+              // Readable provider name in the row; table and dataset identifiers stay in the tooltip.
+              const friendly = Core.friendlySource([block.source, block.dataset_version].filter(Boolean).join(' · '));
+              const source = friendly.label ? tr(friendly.label) : '';
+              const technical = friendly.technical.length ? ` title="${esc(friendly.technical.join(', '))}"` : '';
+              return [tr(label), `${status}${source ? `<small class="parcel-coverage-source"${technical}>${esc(source)}</small>` : ''}`];
             }))}${note(tr('This table reports the parcel read model only. Separately loaded sections may contain data even when the corresponding block is not available. Missing data are never shown as zero.'))}`;
         return {
           badge: available === null ? undefined : `${available}/${COVERAGE_BLOCKS.length}`,
@@ -2538,16 +2545,17 @@
       const quoteBody = rows([
         [tr('Sale'), `${Core.formatNumber(quote.prezzo_min)}–${Core.formatNumber(quote.prezzo_max)} €/m²${benchmarkInline(benchmark, (value) => `${Core.formatNumber(value)} €/m²`, tr)}`],
         [tr('Rent'), Core.toNumber(quote.locazione_min) !== null ? `${Core.formatNumber(quote.locazione_min, 2)}–${Core.formatNumber(quote.locazione_max, 2)} €/m²/${esc(tr('month'))}` : null],
-        [tr('Gross rental yield'), yieldPct !== null ? `${Core.formatNumber(yieldPct, 2)}% <small>${esc(metrics.gross_rental_yield_model_version || '')}</small>` : null],
+        [tr('Gross rental yield'), yieldPct !== null ? `${Core.formatNumber(yieldPct, 2)}%` : null],
         [tr('Sale-price percentile in comune'), percentile !== null
-          ? `${Core.formatNumber(percentile, 1)}% <small>${esc(metrics.zone_percentile_model_version || '')} · ${esc(tr('{n} comparable zones', { n: comparableZones }))}</small>`
+          ? `${Core.formatNumber(percentile, 1)}% <small>${esc(tr('{n} comparable zones', { n: comparableZones }))}</small>`
           : comparableZones !== null && comparableZones < (metrics.zone_percentile_minimum_comparable_zones || 5)
             ? tr('Not enough comparable zones ({n} found; at least {minimum} needed)', { n: comparableZones, minimum: metrics.zone_percentile_minimum_comparable_zones || 5 })
             : null],
       ]);
       quoteRows.innerHTML = quoteBody + (yieldPct !== null || percentile !== null || comparableZones !== null
         ? note(tr('Gross yield = rent midpoint × 12 ÷ sale midpoint × 100%, before costs and taxes. Percentile uses midranks of sale midpoints for the same OMI type and condition; ties share their middle rank.'))
-        : '');
+        : '')
+        + modelVersionDetails([metrics.gross_rental_yield_model_version, metrics.zone_percentile_model_version], tr);
       ctx.setStat('price', `${Core.formatNumber(quote.prezzo_min)}–${Core.formatNumber(quote.prezzo_max)} €/m²`);
     }
 
@@ -2586,7 +2594,7 @@
             estimate.innerHTML = `<span>${esc(tr('Indicative value'))}</span><strong>${esc(Core.formatCurrency(server.min))} – ${esc(Core.formatCurrency(server.max))}</strong>`
               + `<small>${esc(tr('Calculated and verified by the server'))}${versions ? ` · ${esc(versions)}` : ''}</small>`
               + (priceIncome !== null
-                ? rows([[tr('Price to mean taxable income'), `${Core.formatNumber(priceIncome, 1)} ${esc(tr('years'))} <small>${esc(derived.price_to_income_model_version || '')}${derived.income_year ? ` · ${esc(tr('MEF {year}', { year: derived.income_year }))}` : ''}</small>`]])
+                ? rows([[tr('Price to mean taxable income'), `${Core.formatNumber(priceIncome, 1)} ${esc(tr('years'))} ${derived.income_year ? `<small>${esc(tr('MEF {year}', { year: derived.income_year }))}</small>` : ''}`]])
                   + note(tr('Compares this indicative property value with one mean municipal taxpayer’s annual taxable income; it is not a household affordability measure.'))
                 : '');
           } finally {
@@ -2653,7 +2661,9 @@
     const meter = options.meter
       ? '<meter class="parcel-stat-meter" min="0" max="100" value="0" hidden></meter>'
       : '';
-    return `<div class="parcel-stat" data-stat="${key}"><span class="parcel-stat-label">${esc(label)}</span><strong class="parcel-stat-value"><span data-stat-text>—</span>${meter}</strong></div>`;
+    // Figures that describe a wider area than the parcel say so under the label.
+    const scope = options.scope ? `<span class="parcel-stat-scope">${esc(options.scope)}</span>` : '';
+    return `<div class="parcel-stat" data-stat="${key}"><span class="parcel-stat-label">${esc(label)}</span>${scope}<strong class="parcel-stat-value"><span data-stat-text>—</span>${meter}</strong></div>`;
   }
 
   function sectionShell(section, tr) {
@@ -3001,8 +3011,10 @@
     if (tabId) navigateToTab(tabId);
   }
 
-  function renderNav(tr) {
-    view.nav.innerHTML = TABS.map((tab) => `<button type="button" data-tab="${tab.id}">${esc(tr(tab.title))}</button>`).join('');
+  function renderNav(tr, sections = SECTIONS) {
+    // A tab whose sections were all hidden (energy on a road) would scroll nowhere.
+    const tabs = TABS.filter((tab) => sections.some((section) => section.tab === tab.id));
+    view.nav.innerHTML = tabs.map((tab) => `<button type="button" data-tab="${tab.id}">${esc(tr(tab.title))}</button>`).join('');
     view.nav.querySelectorAll('button').forEach((button) => button.addEventListener('click', () => {
       const reduce = root.matchMedia && root.matchMedia('(prefers-reduced-motion: reduce)').matches;
       navigateToTab(button.dataset.tab, { updateHash: true, pushHash: true, behavior: reduce ? 'auto' : 'smooth' });
@@ -3052,18 +3064,26 @@
     view.ctx = made.ctx;
     const area = Core.parcelAreaSqm(made.ctx.props);
     view.statStrip.innerHTML = stripCell('area', area && area.computed ? tr('Area (computed)') : tr('Area'))
-      + stripCell('sheet', tr('Sheet')) + stripCell('price', tr('Sale price (OMI)'))
-      + stripCell('hazard', tr('Flood / landslide')) + stripCell('buildings', tr('OSM footprints'))
-      + stripCell('composite-risk', tr('Risk context'), { meter: true });
+      + stripCell('sheet', tr('Sheet')) + stripCell('price', tr('Sale price (OMI)'), { scope: tr('OMI zone') })
+      + stripCell('hazard', tr('Flood / landslide'), { scope: tr('Municipality') }) + stripCell('buildings', tr('OSM footprints'))
+      + stripCell('composite-risk', tr('Risk context'), { meter: true, scope: tr('Municipality') });
     made.ctx.setStat('area', area ? Core.formatArea(area.value) : '—');
     made.ctx.setStat('sheet', String(made.ctx.props.sheet_number ?? made.ctx.props.sheet ?? made.ctx.props.foglio ?? '—'));
-    renderNav(tr);
-    view.content.innerHTML = SECTIONS.map((section) => sectionShell(section, tr)).join('');
-    SECTIONS.forEach((section) => {
+    // Roads and waterways are public domain: sale prices, auctions and solar estimates do not apply.
+    const domain = Core.publicDomainKind(made.ctx.props);
+    const sections = domain ? SECTIONS.filter((section) => !PUBLIC_DOMAIN_HIDDEN.has(section.id)) : SECTIONS;
+    renderNav(tr, sections);
+    const domainNote = domain
+      ? `<p class="parcel-note parcel-domain-note" role="note">${esc(domain === 'road'
+        ? tr('Public road parcel: valuation, auction and solar sections do not apply.')
+        : tr('Public water parcel: valuation, auction and solar sections do not apply.'))}</p>`
+      : '';
+    view.content.innerHTML = domainNote + sections.map((section) => sectionShell(section, tr)).join('');
+    sections.forEach((section) => {
       view.sections.set(section.id, { section, el: view.content.querySelector(`#parcel-section-${section.id}`) });
     });
     view.content.scrollTop = 0;
-    setActiveTab(TABS[0].id);
+    setActiveTab(sections[0].tab);
     observeSections(made.ctx);
     restoreTabFromHash();
   }

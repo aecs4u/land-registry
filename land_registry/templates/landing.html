@@ -4,18 +4,18 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{{ _('Land Registry Viewer') }}</title>
+  <meta name="description" content="{{ _('Search Italian municipalities and cadastral parcels on one map, see the data around them and download a parcel dossier.') }}" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="{{ _('Land Registry Viewer') }}" />
+  <meta property="og:description" content="{{ _('Search Italian municipalities and cadastral parcels on one map, see the data around them and download a parcel dossier.') }}" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.0/css/all.min.css">
   <link rel="stylesheet" href="{{ asset_url('css/pages/landing.css') }}">
 </head>
 <body>
 
-  <!-- Same brand + language + dark-mode controls as /map and /cadastral-data,
-       so this doesn't read as a different, unstyled product (design audit
-       finding M5). theme-sync.js applies whatever dark-mode preference was
-       already set elsewhere in the app on load. -->
-  <nav class="landing-nav">
+  <nav class="landing-nav" aria-label="{{ _('Main') }}">
     <a class="brand" href="/">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" height="22" style="margin-right:4px">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" height="22" style="margin-right:4px" aria-hidden="true">
         <rect fill="#1a5490" width="32" height="32" rx="4"/>
         <path fill="#fff" d="M6 8h8v6H6zM16 8h10v6H16zM6 16h10v8H6zM18 16h8v8h-8z"/>
         <path fill="#28a745" d="M7 9h6v4H7zM17 9h8v4h-8zM7 17h8v6H7zM19 17h6v6h-6z"/>
@@ -23,244 +23,73 @@
       {{ _('Land Registry') }}
     </a>
     <div class="nav-actions">
-      <select id="langSelect" aria-label="Language" onchange="changeLang(this.value)" title="{{ _('Language') }}" autocomplete="off">
+      <select id="langSelect" aria-label="{{ _('Language') }}" onchange="changeLang(this.value)" title="{{ _('Language') }}" autocomplete="off">
         <option value="it" {% if request.state.lr_locale == 'it' %}selected{% endif %}>🇮🇹 IT</option>
         <option value="en" {% if request.state.lr_locale == 'en' %}selected{% endif %}>🇬🇧 EN</option>
       </select>
       <button onclick="toggleDarkMode()" id="themeToggleBtn" title="{{ _('Toggle dark mode') }}" aria-label="{{ _('Toggle dark mode') }}">
-        <i class="fas fa-moon" id="themeIcon"></i>
+        <i class="fas fa-moon" id="themeIcon" aria-hidden="true"></i>
       </button>
     </div>
   </nav>
 
-  <!-- Hero -->
-  <header class="hero">
-    <h1>{{ _('Land Registry Viewer') }}</h1>
-    <p>
-      {{ _('Visualize, query, and analyze Italian cadastral data on an interactive map with drawing tools, spatial analysis, and multi-source data loading.') }}
-    </p>
-    <div class="hero-actions">
-      <a href="/map" class="btn-primary">{{ _('Open Map') }}</a>
-      <a href="/cadastral-data" class="btn-secondary">{{ _('Cadastral Browser') }}</a>
+  <main id="main-content">
+    <header class="hero">
+      <h1>{{ _('Land Registry Viewer') }}</h1>
+      <p>
+        {{ _('Search Italian municipalities and cadastral parcels on one map, see the data around them and download a parcel dossier.') }}
+      </p>
+      <div class="hero-actions">
+        <a href="/map" class="btn-primary">{{ _('Open Map') }}</a>
+        <a href="/data-sources" class="btn-secondary">{{ _('Data sources') }}</a>
+      </div>
+    </header>
+
+    <div class="container">
+      <section aria-labelledby="landing-features">
+        <h2 class="section-title" id="landing-features"><i class="icon fa-solid fa-earth-europe" aria-hidden="true"></i> {{ _('What you can do') }}</h2>
+        <div class="feature-grid">
+          <article class="feature-card">
+            <h3>{{ _('Find a parcel') }}</h3>
+            <p>{{ _('Search by municipality or cadastral reference, or browse from region to parcel number.') }}</p>
+          </article>
+          <article class="feature-card">
+            <h3>{{ _('Switch layers on and off') }}</h3>
+            <p>{{ _('Cadastral parcels and sheets, administrative boundaries, OMI market zones, flood and landslide hazard, seismic classification, ground movement and solar potential.') }}</p>
+          </article>
+          <article class="feature-card">
+            <h3>{{ _('Read a parcel') }}</h3>
+            <p>{{ _('Select a parcel to open its sheet: identity, OMI price ranges, hazards, energy, census data and which sources cover it.') }}</p>
+          </article>
+          <article class="feature-card">
+            <h3>{{ _('Follow public auctions') }}</h3>
+            <p>{{ _('Show public-auction listings on the map and filter them by type, price and date.') }}</p>
+          </article>
+          <article class="feature-card">
+            <h3>{{ _('Take it with you') }}</h3>
+            <p>{{ _('Download a PDF dossier, save parcels to a shortlist and copy a link to the exact view.') }}</p>
+          </article>
+          <article class="feature-card">
+            <h3>{{ _('Analyse an area') }}</h3>
+            <p>{{ _('Use the attribute table, adjacency analysis and drawing tools, and import or export GeoJSON.') }}</p>
+          </article>
+        </div>
+      </section>
+
+      <section aria-labelledby="landing-data">
+        <h2 class="section-title" id="landing-data"><i class="icon fa-solid fa-file-lines" aria-hidden="true"></i> {{ _('Where the data comes from') }}</h2>
+        <p>
+          {{ _('Boundaries and valuations come from public Italian sources. Figures that describe a municipality or a valuation zone are labelled as such, and modelled values are estimates, not valuations or surveys.') }}
+          <a href="/data-sources">{{ _('See every source and its terms of reuse.') }}</a>
+        </p>
+      </section>
     </div>
-  </header>
-
-  <!-- Stats -->
-  <div class="stats-bar">
-    <div class="stat-card">
-      <div class="num">{{ total_regions }}</div>
-      <div class="label">{{ _('Regions') }}</div>
-    </div>
-    <div class="stat-card">
-      <div class="num">{{ total_provinces }}</div>
-      <div class="label">{{ _('Provinces') }}</div>
-    </div>
-    <div class="stat-card">
-      <div class="num">{{ total_municipalities }}</div>
-      <div class="label">{{ _('Municipalities') }}</div>
-    </div>
-    <div class="stat-card">
-      <div class="num">{{ total_files }}</div>
-      <div class="label">{{ _('Cadastral Files') }}</div>
-    </div>
-  </div>
-
-  <main class="container">
-
-    <!-- Interactive Mapping -->
-    <section>
-      <div class="section-title"><i class="icon fa-solid fa-earth-europe" aria-hidden="true"></i> {{ _('Interactive Mapping') }}</div>
-      <div class="feature-grid">
-        <div class="feature-card">
-          <h3>{{ _('Leaflet Map') }}</h3>
-          <p>{{ _('Full-screen interactive map with multiple basemap providers, geocoding, minimap, mouse coordinates, and marker clustering.') }}</p>
-        </div>
-        <div class="feature-card">
-          <h3>{{ _('Drawing Tools') }}</h3>
-          <p>{{ _('Create polygons, circles, rectangles, polylines, and markers directly on the map using Leaflet Draw. Save and reload your drawings.') }}</p>
-        </div>
-        <div class="feature-card">
-          <h3>{{ _('Zone Management') }}</h3>
-          <p>{{ _('Save drawn geometries as named zones with descriptions, colors, and tags. Toggle visibility and export as GeoJSON.') }}</p>
-        </div>
-        <div class="feature-card">
-          <h3>{{ _('Folium Map Generation') }}</h3>
-          <p>{{ _('Server-side map rendering via Folium, embedded in the index page with cadastral overlays and multiple layer support.') }}</p>
-        </div>
-      </div>
-    </section>
-
-    <!-- Cadastral Data -->
-    <section>
-      <div class="section-title"><i class="icon fa-solid fa-file-lines" aria-hidden="true"></i> {{ _('Italian Cadastral Data') }}</div>
-      <div class="feature-grid">
-        <div class="feature-card">
-          <h3>{{ _('Hierarchical Browser') }}</h3>
-          <p>{{ _('Navigate the full Italian cadastral hierarchy: Regione → Provincia → Comune → file, with expandable tree views and municipality flags.') }}</p>
-        </div>
-        <div class="feature-card">
-          <h3>{{ _('Advanced Query Engine') }}</h3>
-          <p>{{ _('Filter by Foglio, Particella (single, list, or range), bounding box, point-in-polygon, and date ranges via the cadastral query API.') }}</p>
-        </div>
-        <div class="feature-card">
-          <h3>{{ _('File Availability Cache') }}</h3>
-          <p>{{ _('SQLite-backed cache that tracks which cadastral files exist in S3, with batch checking and configurable TTL.') }}</p>
-        </div>
-        <div class="feature-card">
-          <h3>{{ _('Statistics & Coverage') }}</h3>
-          <p>{{ _('Real-time counts of regions, provinces, municipalities, and files. Cache status and availability metrics.') }}</p>
-        </div>
-      </div>
-    </section>
-
-    <!-- Data Sources -->
-    <section>
-      <div class="section-title"><i class="icon fa-solid fa-boxes-stacked" aria-hidden="true"></i> {{ _('Data Sources') }}</div>
-      <ul class="source-list">
-        <li><span class="bullet"></span> File upload (QPKG / GPKG / SHP / GeoJSON / KML)</li>
-        <li><span class="bullet"></span> AWS S3 bucket (public &amp; private)</li>
-        <li><span class="bullet"></span> SpatiaLite databases (MAP &amp; PLE layers)</li>
-        <li><span class="bullet"></span> FlatGeobuf files (per-region)</li>
-        <li><span class="bullet"></span> Cadastral structure JSON (local or S3)</li>
-        <li><span class="bullet"></span> Example data (ACCIANO, AQ)</li>
-      </ul>
-    </section>
-
-    <!-- Spatial Analysis -->
-    <section>
-      <div class="section-title"><i class="icon fa-solid fa-magnifying-glass-location" aria-hidden="true"></i> {{ _('Spatial Analysis') }}</div>
-      <div class="feature-grid">
-        <div class="feature-card">
-          <h3>{{ _('Adjacency Analysis') }}</h3>
-          <p>{{ _('Select a polygon and find all adjacent parcels using spatial predicates: touches, intersects, or overlaps.') }}</p>
-        </div>
-        <div class="feature-card">
-          <h3>{{ _('Attribute Table') }}</h3>
-          <p>{{ _('View feature properties in paginated tables with server-side search, sort, and column filtering via Panel Tabulator.') }}</p>
-        </div>
-        <div class="feature-card">
-          <h3>{{ _('Session State') }}</h3>
-          <p>{{ _('Current GeoDataFrame persists across requests. Load, combine, filter, and clear layers within a session.') }}</p>
-        </div>
-      </div>
-    </section>
-
-    <!-- Tech Stack -->
-    <section>
-      <div class="section-title"><i class="icon fa-solid fa-gear" aria-hidden="true"></i> {{ _('Tech Stack') }}</div>
-      <div class="tech-grid">
-        <span class="tech-tag">FastAPI</span>
-        <span class="tech-tag">Leaflet.js</span>
-        <span class="tech-tag">Leaflet Draw</span>
-        <span class="tech-tag">Folium</span>
-        <span class="tech-tag">GeoPandas</span>
-        <span class="tech-tag">Shapely</span>
-        <span class="tech-tag">Panel / Tabulator</span>
-        <span class="tech-tag">SpatiaLite</span>
-        <span class="tech-tag">FlatGeobuf</span>
-        <span class="tech-tag">AWS S3</span>
-        <span class="tech-tag">Google Cloud Storage</span>
-        <span class="tech-tag">Clerk Auth</span>
-        <span class="tech-tag">Pydantic</span>
-        <span class="tech-tag">Jinja2</span>
-      </div>
-    </section>
-
-    <!-- Moved below the marketing sections and collapsed by default: a raw
-         30+ route API dump (including infra endpoints like configure-s3)
-         was an abrupt tonal break on an otherwise consumer-facing page, and
-         surfaced more backend detail than an anonymous visitor needs to see
-         (design audit finding M7). Still one click away for anyone who does
-         want it, e.g. an integrator landing here from /docs. -->
-    <details class="api-reference-details">
-      <summary>{{ _('For developers: full API reference') }}</summary>
-      <div class="endpoint-group">
-        <h3>Pages</h3>
-        <ul class="endpoint-list">
-          <li><span class="method method-get">GET</span> <span class="path">/</span> <span class="desc">&mdash; Index with Folium map &amp; Panel tables</span></li>
-          <li><span class="method method-get">GET</span> <span class="path">/map</span> <span class="desc">&mdash; Interactive Leaflet map</span></li>
-          <li><span class="method method-get">GET</span> <span class="path">/cadastral-data</span> <span class="desc">&mdash; Cadastral tree browser</span></li>
-          <li><span class="method method-get">GET</span> <span class="path">/landing</span> <span class="desc">&mdash; This page</span></li>
-        </ul>
-      </div>
-
-      <div class="endpoint-group">
-        <h3>Cadastral Structure</h3>
-        <ul class="endpoint-list">
-          <li><span class="method method-get">GET</span> <span class="path">/api/v1/get-cadastral-structure/</span> <span class="desc">&mdash; Full structure JSON</span></li>
-          <li><span class="method method-get">GET</span> <span class="path">/api/v1/get-regions/</span> <span class="desc">&mdash; List regions</span></li>
-          <li><span class="method method-get">GET</span> <span class="path">/api/v1/get-provinces/</span> <span class="desc">&mdash; Provinces (filter by region)</span></li>
-          <li><span class="method method-get">GET</span> <span class="path">/api/v1/get-municipalities/</span> <span class="desc">&mdash; Municipalities with file counts</span></li>
-          <li><span class="method method-get">GET</span> <span class="path">/api/v1/cadastral/hierarchy</span> <span class="desc">&mdash; Full hierarchy tree</span></li>
-          <li><span class="method method-get">GET</span> <span class="path">/api/v1/cadastral/statistics</span> <span class="desc">&mdash; Coverage metrics</span></li>
-          <li><span class="method method-get">GET</span> <span class="path">/api/v1/cadastral/search/{ref}</span> <span class="desc">&mdash; Search by reference code</span></li>
-        </ul>
-      </div>
-
-      <div class="endpoint-group">
-        <h3>Data Loading</h3>
-        <ul class="endpoint-list">
-          <li><span class="method method-post">POST</span> <span class="path">/api/v1/upload-qpkg/</span> <span class="desc">&mdash; Upload QPKG/GPKG &rarr; GeoJSON</span></li>
-          <li><span class="method method-post">POST</span> <span class="path">/api/v1/load-cadastral-files/</span> <span class="desc">&mdash; Load multiple files from S3</span></li>
-          <li><span class="method method-get">GET</span> <span class="path">/api/v1/load-cadastral-files/{path}</span> <span class="desc">&mdash; Load single file</span></li>
-          <li><span class="method method-post">POST</span> <span class="path">/api/v1/load-spatialite/</span> <span class="desc">&mdash; Query SpatiaLite DB</span></li>
-          <li><span class="method method-get">GET</span> <span class="path">/api/v1/fgb/load/{region}/{type}</span> <span class="desc">&mdash; Load FlatGeobuf</span></li>
-          <li><span class="method method-post">POST</span> <span class="path">/api/v1/load-public-geo-data/</span> <span class="desc">&mdash; Public S3 bucket</span></li>
-          <li><span class="method method-get">GET</span> <span class="path">/api/v1/load-example-geo-data/</span> <span class="desc">&mdash; Example dataset</span></li>
-        </ul>
-      </div>
-
-      <div class="endpoint-group">
-        <h3>Spatial Analysis</h3>
-        <ul class="endpoint-list">
-          <li><span class="method method-post">POST</span> <span class="path">/api/v1/get-adjacent-polygons/</span> <span class="desc">&mdash; Find adjacent parcels</span></li>
-          <li><span class="method method-post">POST</span> <span class="path">/api/v1/cadastral/query</span> <span class="desc">&mdash; Advanced polygon query</span></li>
-          <li><span class="method method-get">GET</span> <span class="path">/api/v1/get-attributes/</span> <span class="desc">&mdash; Feature attributes</span></li>
-        </ul>
-      </div>
-
-      <div class="endpoint-group">
-        <h3>Drawings &amp; Zones</h3>
-        <ul class="endpoint-list">
-          <li><span class="method method-post">POST</span> <span class="path">/api/v1/save-drawn-polygons/</span> <span class="desc">&mdash; Save drawings (auth)</span></li>
-          <li><span class="method method-post">POST</span> <span class="path">/api/v1/save-drawn-polygons-anonymous/</span> <span class="desc">&mdash; Save (rate-limited)</span></li>
-          <li><span class="method method-get">GET</span> <span class="path">/api/v1/load-drawn-polygons</span> <span class="desc">&mdash; Load latest drawings</span></li>
-          <li><span class="method method-get">GET</span> <span class="path">/api/v1/list-drawn-polygons</span> <span class="desc">&mdash; List drawing files</span></li>
-          <li><span class="method method-delete">DEL</span> <span class="path">/api/v1/clear-drawn-polygons</span> <span class="desc">&mdash; Delete all drawings</span></li>
-          <li><span class="method method-post">POST</span> <span class="path">/api/v1/zones/</span> <span class="desc">&mdash; Create zone</span></li>
-          <li><span class="method method-get">GET</span> <span class="path">/api/v1/zones/</span> <span class="desc">&mdash; List zones</span></li>
-          <li><span class="method method-get">GET</span> <span class="path">/api/v1/zones/geojson</span> <span class="desc">&mdash; All zones as GeoJSON</span></li>
-          <li><span class="method method-patch">PATCH</span> <span class="path">/api/v1/zones/{id}</span> <span class="desc">&mdash; Update zone</span></li>
-          <li><span class="method method-delete">DEL</span> <span class="path">/api/v1/zones/{id}</span> <span class="desc">&mdash; Delete zone</span></li>
-        </ul>
-      </div>
-
-      <div class="endpoint-group">
-        <h3>FlatGeobuf</h3>
-        <ul class="endpoint-list">
-          <li><span class="method method-get">GET</span> <span class="path">/api/v1/fgb/regions</span> <span class="desc">&mdash; Available FGB regions</span></li>
-          <li><span class="method method-get">GET</span> <span class="path">/api/v1/fgb/metadata/{region}/{type}</span> <span class="desc">&mdash; File metadata</span></li>
-        </ul>
-      </div>
-
-      <div class="endpoint-group">
-        <h3>Storage &amp; Infrastructure</h3>
-        <ul class="endpoint-list">
-          <li><span class="method method-post">POST</span> <span class="path">/api/v1/configure-s3/</span> <span class="desc">&mdash; Update S3 config</span></li>
-          <li><span class="method method-get">GET</span> <span class="path">/api/v1/s3-status/</span> <span class="desc">&mdash; S3 connection status</span></li>
-          <li><span class="method method-post">POST</span> <span class="path">/api/v1/check-file-availability/</span> <span class="desc">&mdash; Batch file check</span></li>
-          <li><span class="method method-get">GET</span> <span class="path">/api/v1/file-availability-stats/</span> <span class="desc">&mdash; Cache statistics</span></li>
-          <li><span class="method method-get">GET</span> <span class="path">/health</span> <span class="desc">&mdash; Health check (Cloud Run)</span></li>
-        </ul>
-      </div>
-    </details>
-
   </main>
 
   <footer>
     {{ app_name }} v{{ app_version }}
-    &middot; <a href="/health">Health</a>
-    &middot; <a href="/docs">API Docs</a>
+    &middot; <a href="/privacy">{{ _('Privacy') }}</a>
+    &middot; <a href="/docs">{{ _('API documentation') }}</a>
   </footer>
 
   <script src="{{ asset_url('theme-sync.js') }}"></script>

@@ -21,7 +21,12 @@ from urllib.parse import urlsplit, urlunsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from land_registry.cadastral_map_views import REGIONAL_TABLE, identity_sql, view_branch
+from land_registry.cadastral_map_views import (
+    REGIONAL_TABLE,
+    identity_sql,
+    legacy_sheet_branch,
+    view_branch,
+)
 
 
 def _dsn() -> str:
@@ -115,9 +120,31 @@ async def prepare(dsn: str, *, dry_run: bool = False) -> None:
                     print(f"Indexing {table}…", flush=True)
                     await connection.execute(statement)
 
+            if not parcels:
+                reference_index = f"{table}_zoning_reference_idx"
+                reference_index_valid = await connection.fetchval(
+                    "SELECT i.indisvalid FROM pg_index i WHERE i.indexrelid = to_regclass($1)",
+                    f"public.{reference_index}",
+                )
+                if reference_index_valid is False:
+                    raise RuntimeError(f"{reference_index}: invalid previous build; repair it before retrying")
+                if reference_index_valid is None:
+                    statement = (
+                        f'CREATE INDEX CONCURRENTLY "{reference_index}" '
+                        f'ON public."{table}" (national_zoning_reference)'
+                    )
+                    if dry_run:
+                        print(statement + ";", flush=True)
+                    else:
+                        await connection.execute(statement)
+
         statements = ["CREATE SCHEMA IF NOT EXISTS spatial"]
         for suffix, relation in (("__fogli", "cadastral_sheet"), ("__particelle", "cadastral_parcel")):
             branches = [view_branch(table) for table in tables if table.endswith(suffix)]
+            if suffix == "__fogli" and await connection.fetchval(
+                "SELECT to_regclass('cadastral_legacy.map_source') IS NOT NULL"
+            ):
+                branches.append(legacy_sheet_branch(tables))
             statements.append(f"CREATE OR REPLACE VIEW spatial.{relation} AS " + "\nUNION ALL\n".join(branches))
         if dry_run:
             print(";\n".join(statements) + ";")

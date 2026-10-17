@@ -158,8 +158,17 @@ def _period_start_end(period: str, today: date) -> tuple[Optional[date], Optiona
 class PvpSalesStore:
     """Compact, periodically refreshed copy of the geocoded PVP sales."""
 
-    LOAD_STATEMENT_TIMEOUT = "300s"
+    # The national read is one large query. On a busy database it can take minutes,
+    # so the limit is configurable rather than fixed (the fetch allows 30 s more).
+    LOAD_TIMEOUT_SECONDS = max(30, int(float(os.getenv("MAP_SALES_LOAD_TIMEOUT_SECONDS", "300"))))
+    LOAD_STATEMENT_TIMEOUT = f"{LOAD_TIMEOUT_SECONDS}s"
+    # After a failed load, visitors polling for the data must not each start another
+    # multi-minute query: wait this long before trying again.
+    FAILED_LOAD_BACKOFF_SECONDS = float(os.getenv("MAP_SALES_FAILED_LOAD_BACKOFF_SECONDS", "60"))
     DETAIL_STATEMENT_TIMEOUT = "20s"
+    # ``refresh=1`` is reachable by every visitor; a forced national reload
+    # within this window of the last one returns the current copy instead.
+    FORCED_REFRESH_MIN_INTERVAL = float(os.getenv("MAP_SALES_FORCED_REFRESH_MIN_SECONDS", "300"))
 
     def __init__(self, connection_source: Any = None, ttl: float = 3600.0):
         self._connection_source = connection_source
@@ -171,6 +180,7 @@ class PvpSalesStore:
         self._active_relation = SALES_RELATION
         self._source_candidates: Optional[list[tuple[Any, str]]] = None
         self.last_error: Optional[str] = None
+        self._failed_at: Optional[float] = None
 
     def _sources(self) -> list[tuple[Any, str]]:
         if self._source_candidates is not None:
@@ -250,6 +260,10 @@ class PvpSalesStore:
         if fresh:
             return self._snapshot
         if self._task is None or self._task.done():
+            if self._in_failed_load_backoff():
+                if self._snapshot is not None:
+                    return self._snapshot
+                raise RuntimeError(self.last_error or "PVP sales load failed recently")
             self._task = asyncio.ensure_future(self._refresh())
         if self._snapshot is not None:
             return self._snapshot
@@ -258,8 +272,25 @@ class PvpSalesStore:
         await asyncio.shield(self._task)
         return self._snapshot
 
+    def _in_failed_load_backoff(self) -> bool:
+        return (
+            self._failed_at is not None
+            and time.monotonic() - self._failed_at < self.FAILED_LOAD_BACKOFF_SECONDS
+        )
+
     async def refresh(self) -> Optional[dict[str, Any]]:
-        """Force a complete reload after the source view or its data changes."""
+        """Force a complete reload after the source view or its data changes.
+
+        Throttled: a reload requested soon after the last successful one is
+        answered from the copy already in memory, so an anonymous visitor
+        cannot keep the loader (a 300 s national query) permanently busy.
+        """
+        recent = (
+            self._snapshot is not None
+            and time.monotonic() - self._loaded_at < self.FORCED_REFRESH_MIN_INTERVAL
+        )
+        if recent and (self._task is None or self._task.done()):
+            return self._snapshot
         if self._task is None or self._task.done():
             self._loaded_at = 0.0
             self._task = asyncio.ensure_future(self._refresh())
@@ -270,12 +301,14 @@ class PvpSalesStore:
         self._snapshot = snapshot
         self._loaded_at = time.monotonic()
         self.last_error = None
+        self._failed_at = None
 
     async def _refresh(self) -> None:
         try:
             snapshot = await self._load()
         except Exception as exc:  # keep serving the previous copy
             self.last_error = str(exc)
+            self._failed_at = time.monotonic()
             log.warning("PVP sales load from configured views failed: %s", exc)
             if self._snapshot is None:
                 raise
@@ -283,6 +316,7 @@ class PvpSalesStore:
         self._snapshot = snapshot
         self._loaded_at = time.monotonic()
         self.last_error = None
+        self._failed_at = None
 
     async def _columns(self, connection: Any, relation: str = SALES_RELATION) -> set[str]:
         rows = await connection.fetch(_asyncpg_sql("""
@@ -343,7 +377,7 @@ class PvpSalesStore:
                             # default 4 MB. Limit this allowance to the map load.
                             await connection.execute("SET LOCAL work_mem = '64MB'")
                             await connection.execute("SET LOCAL jit = off")
-                        rows = await connection.fetch(sql, timeout=330)
+                        rows = await connection.fetch(sql, timeout=self.LOAD_TIMEOUT_SECONDS + 30)
                         # The sales are usable as soon as they are read. Build and
                         # publish them before the optional parcel refinement below,
                         # whose two queries can add tens of seconds, so a request
@@ -588,31 +622,18 @@ class PvpSalesStore:
             return (i for cell, items in index.items() if lat0 <= cell[0] <= lat1 and lng0 <= cell[1] <= lng1 for i in items)
         return (i for la in range(lat0, lat1 + 1) for lo in range(lng0, lng1 + 1) for i in index.get((la, lo), ()))
 
-    async def map_points(
+    def _select_points(
         self,
-        *,
-        period: str = "upcoming",
-        categories: Optional[set[str]] = None,
-        min_price: Optional[float] = None,
-        max_price: Optional[float] = None,
-        today: Optional[date] = None,
-        wait: bool = False,
-        refresh: bool = False,
-        bbox: Optional[tuple[float, float, float, float]] = None,
-        limit: Optional[int] = None,
-    ) -> Optional[dict[str, Any]]:
-        """Sales points, optionally restricted to a viewport.
-
-        With ``bbox`` (west, south, east, north) only the points inside it are
-        scanned and returned, capped at ``limit`` (nearest to the box centre
-        first) with ``truncated`` set when more matched. Category counts then
-        describe the viewport. Without ``bbox`` the national feed is returned
-        unchanged for existing consumers.
-        """
-        snapshot = await (self.refresh() if refresh else self.snapshot(wait=wait))
-        if snapshot is None:
-            return None
-        start, end = _period_start_end(period, today or date.today())
+        snapshot: dict[str, Any],
+        bbox: Optional[tuple[float, float, float, float]],
+        limit: Optional[int],
+        start: Optional[date],
+        end: Optional[date],
+        categories: Optional[set[str]],
+        min_price: Optional[float],
+        max_price: Optional[float],
+    ) -> tuple[list[list[Any]], Counter, int, bool]:
+        """Filter the in-memory snapshot (synchronous, run via ``asyncio.to_thread``)."""
         selected: list[list[Any]] = []
         category_counts: Counter[str] = Counter()
         points_all, days_all = snapshot["points"], snapshot["days"]
@@ -647,6 +668,38 @@ class PvpSalesStore:
                 key=lambda point: (point[1] - centre_lng) ** 2 + (point[2] - centre_lat) ** 2,
             )
             truncated = True
+        return selected, category_counts, matched, truncated
+
+    async def map_points(
+        self,
+        *,
+        period: str = "upcoming",
+        categories: Optional[set[str]] = None,
+        min_price: Optional[float] = None,
+        max_price: Optional[float] = None,
+        today: Optional[date] = None,
+        wait: bool = False,
+        refresh: bool = False,
+        bbox: Optional[tuple[float, float, float, float]] = None,
+        limit: Optional[int] = None,
+    ) -> Optional[dict[str, Any]]:
+        """Sales points, optionally restricted to a viewport.
+
+        With ``bbox`` (west, south, east, north) only the points inside it are
+        scanned and returned, capped at ``limit`` (nearest to the box centre
+        first) with ``truncated`` set when more matched. Category counts then
+        describe the viewport. Without ``bbox`` the national feed is returned
+        unchanged for existing consumers.
+        """
+        snapshot = await (self.refresh() if refresh else self.snapshot(wait=wait))
+        if snapshot is None:
+            return None
+        start, end = _period_start_end(period, today or date.today())
+        # Scanning the national copy is pure CPU (about 1.5 s for 700k points);
+        # run it in a worker thread so other requests keep being served.
+        selected, category_counts, matched, truncated = await asyncio.to_thread(
+            self._select_points, snapshot, bbox, limit, start, end, categories, min_price, max_price,
+        )
         payload = {
             "source": {
                 "relation": snapshot.get("relation", SALES_RELATION),

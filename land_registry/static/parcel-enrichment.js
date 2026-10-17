@@ -466,7 +466,7 @@
             const available = block.available === true;
             return `<div class="enrichment-row"><span>${_escapeHtml(_detailBlockLabels[name])}</span><strong class="${available ? 'text-success' : 'text-muted'}">${available ? 'Disponibile' : 'Non disponibile'}</strong></div>`;
         }).join('');
-        return `${rows}<div class="enrichment-source">Struttura allineata al catalogo zornade-cadastral-parcel-reference.md; i blocchi non presenti nei dataset locali restano esplicitamente non disponibili.</div>`;
+        return `${rows}<div class="enrichment-source">Struttura allineata al catalogo di ZORNADE_GAP_ANALYSIS.md (Appendice B); i blocchi non presenti nei dataset locali restano esplicitamente non disponibili.</div>`;
     }
 
     function _parcelAreaSqm(feature) {

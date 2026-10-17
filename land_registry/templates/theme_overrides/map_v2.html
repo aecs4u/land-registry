@@ -4,6 +4,10 @@
 
 {% block extra_head %}
 {{ super() }}
+<meta name="description" content="{{ _('Search Italian municipalities and cadastral parcels on one map, see the data around them and download a parcel dossier.') }}" />
+<meta property="og:type" content="website" />
+<meta property="og:title" content="{{ _('Cadastral Map') }} - {{ site_name }}" />
+<meta property="og:description" content="{{ _('Search Italian municipalities and cadastral parcels on one map, see the data around them and download a parcel dossier.') }}" />
 {% if map_fonts_css %}<link rel="stylesheet" href="{{ map_fonts_css }}">{% endif %}
 {% endblock %}
 
@@ -138,7 +142,7 @@
       <button type="button" class="map-round-button btn btn-light" id="streetViewButton" title="{{ _('Open Street View') }}" aria-label="{{ _('Open Street View') }}"><i class="fas fa-street-view" aria-hidden="true"></i></button>
     </div>
 
-    <aside class="map-table-card" id="mapTableCard" aria-label="{{ _('Attribute table') }}" hidden>
+    <section class="map-table-card" id="mapTableCard" aria-label="{{ _('Attribute table') }}" hidden>
       <div class="map-card-heading">
         <div><span class="map-eyebrow">{{ _('Viewport') }}</span><h2>{{ _('Attributes') }}</h2></div>
         <button type="button" class="map-card-close" id="mapTableCloseButton" aria-label="{{ _('Close attribute table') }}">×</button>
@@ -229,9 +233,9 @@
         <div id="mapDrawingStatus" class="map-layer-meta" aria-live="polite">{{ _('No drawings yet.') }}</div>
         <ul id="mapDrawingList" class="map-drawing-list"></ul>
       </section>
-    </aside>
+    </section>
 
-    <aside class="map-layers-card" id="mapLayersCard" aria-label="{{ _('Map layers') }}" hidden>
+    <section class="map-layers-card" id="mapLayersCard" aria-label="{{ _('Map layers') }}" hidden>
       <div class="map-card-heading">
         <h2>{{ _('Layers') }}</h2>
         <button type="button" class="map-card-close" id="layersCloseButton" aria-label="{{ _('Close layers') }}">×</button>
@@ -358,7 +362,7 @@
           <label class="shortlist-hazard-filter"><input type="checkbox" id="auctionActiveOnly"><span>{{ _('Upcoming only') }}</span></label>
         </div>
       </div>
-    </aside>
+    </section>
 
     <div class="map-mobile-action-bar">
       <button type="button" class="layers-toggle btn btn-light" id="layersToggle" aria-controls="mapLayersCard" aria-expanded="false">
@@ -370,7 +374,7 @@
       </button>
     </div>
 
-    <aside class="parcel-shortlist-card" id="parcelShortlistCard" aria-label="{{ _('Parcel shortlist') }}">
+    <section class="parcel-shortlist-card" id="parcelShortlistCard" aria-label="{{ _('Parcel shortlist') }}">
       <div class="map-card-heading">
         <div><span class="map-eyebrow">{{ _('Workspace') }}</span><h2>{{ _('Shortlist') }}</h2></div>
         <div class="map-card-heading-actions">
@@ -387,12 +391,12 @@
         <label class="shortlist-hazard-filter"><input type="checkbox" id="shortlistHazardFilter"><span>{{ _('Active hazard only') }}</span></label>
       </div>
       <div id="shortlistList" class="shortlist-list" role="list"><p class="map-muted">{{ _('No shortlist loaded yet.') }}</p></div>
-    </aside>
+    </section>
 
     <div class="map-status-pill" id="mapStatus" aria-live="polite"></div>
     {% include 'partials/map_task_progress.html' %}
 
-    <aside class="parcel-detail-card parcel-sheet" id="directParcelPanel" aria-labelledby="directParcelTitle" hidden>
+    <section class="parcel-detail-card parcel-sheet" id="directParcelPanel" aria-labelledby="directParcelTitle" hidden>
       <header class="parcel-sheet-header">
         <div class="parcel-sheet-heading">
           <span class="map-eyebrow">{{ _('Selected parcel') }}</span>
@@ -426,7 +430,7 @@
         <a id="legacyAnalysisLink" class="secondary-action btn btn-outline-secondary" href="/map-legacy">{{ _('Open analysis') }}</a>
       </div>
       <div id="parcelAdjacentResults" class="parcel-adjacent-results" aria-live="polite"></div>
-    </aside>
+    </section>
 
     {% include "partials/cadastral_purchases.html" %}
     <div class="map-help-note" id="mapHelpNote">{{ _('Zoom in to see cadastral parcels') }}</div>

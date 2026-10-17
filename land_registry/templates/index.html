@@ -918,6 +918,9 @@
 <script>
   window.geoJsonData = {{ geojson_data | tojson }};
   window.hasData = {{ 'true' if has_data else 'false' }};
+  // False where the local cadastral file tree is not provisioned: the region
+  // selectors then skip /api/v1/get-regions/ instead of logging a 404.
+  window.cadastralStructureAvailable = {{ 'true' if cadastral_structure_available else 'false' }};
   window.cartoEnabled = {{ 'true' if carto_enabled else 'false' }};
   window.cartoApiKey = {{ carto_api_key | tojson }};
 </script>

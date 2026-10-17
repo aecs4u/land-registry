@@ -461,3 +461,90 @@ def test_parcel_refinement_never_mutates_the_published_snapshot():
     assert snapshot["points"] == original and snapshot["spatial_index"] is index
     assert refined["points"][1][1:3] == [12.25, 44.15] and refined["points"][1][6] == 1
     assert refined["days"] is snapshot["days"]
+
+
+def test_forced_refresh_is_throttled_so_visitors_cannot_keep_the_loader_busy(monkeypatch):
+    store = PvpSalesStore(connection_source=object())
+    store._snapshot = PvpSalesStore._build_snapshot([_row(1, 44.0, 12.0, when=datetime(2999, 1, 1))])
+    store._loaded_at = __import__("time").monotonic()
+    calls = []
+
+    async def load():
+        calls.append(1)
+        return store._snapshot
+
+    monkeypatch.setattr(store, "_load", load)
+    first = asyncio.run(store.refresh())
+    assert first is store._snapshot
+    assert calls == []  # loaded moments ago: served from memory
+
+    store._loaded_at = __import__("time").monotonic() - store.FORCED_REFRESH_MIN_INTERVAL - 1
+    asyncio.run(store.refresh())
+    assert calls == [1]  # old enough: a real reload
+
+
+def test_map_points_filtering_runs_off_the_event_loop():
+    """The national scan is CPU-bound; it must not hold the loop for other requests."""
+    import threading
+
+    store = _grid_store()
+    seen = []
+    original = store._select_points
+
+    def spy(*args, **kwargs):
+        seen.append(threading.current_thread() is threading.main_thread())
+        return original(*args, **kwargs)
+
+    store._select_points = spy
+    store._loaded_at = __import__("time").monotonic()
+    asyncio.run(store.map_points(period="all", bbox=(8.5, 40.5, 9.5, 41.5)))
+    assert seen == [False]
+
+
+def test_sales_map_points_answers_503_while_the_snapshot_loads(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import land_registry.pvp_sales as pvp_sales
+    import land_registry.routers.api as api
+    from land_registry.main import app
+
+    store = PvpSalesStore(connection_source=object())
+    never = asyncio.Event()
+
+    async def slow_snapshot(wait=True):
+        await never.wait()
+
+    monkeypatch.setattr(store, "snapshot", slow_snapshot)
+    monkeypatch.setattr(pvp_sales, "_store", store)
+    monkeypatch.setattr(api, "SALES_LOAD_WAIT_SECONDS", 0.05)
+
+    response = TestClient(app).get("/api/v1/sales/map-points?period=all&bbox=8,40,9,41")
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "10"
+    assert response.json()["detail"] == "Sales data is loading"
+
+
+def test_failed_load_backs_off_instead_of_restarting_a_multi_minute_query(monkeypatch):
+    store = PvpSalesStore(connection_source=object())
+    attempts = []
+
+    async def failing_load():
+        attempts.append(1)
+        raise RuntimeError("statement timeout")
+
+    monkeypatch.setattr(store, "_load", failing_load)
+
+    async def scenario():
+        with pytest.raises(RuntimeError):
+            await store.snapshot(wait=True)
+        # A visitor polling right after the failure must not start another load.
+        with pytest.raises(RuntimeError, match="statement timeout"):
+            await store.snapshot(wait=True)
+        assert attempts == [1]
+        # Once the back-off has passed, loading is attempted again.
+        store._failed_at = __import__("time").monotonic() - store.FAILED_LOAD_BACKOFF_SECONDS - 1
+        with pytest.raises(RuntimeError):
+            await store.snapshot(wait=True)
+        assert attempts == [1, 1]
+
+    asyncio.run(scenario())

@@ -1,3 +1,11 @@
+/** Region list, skipped (no failing request) where the cadastral file tree is not provisioned. */
+function fetchCadastralRegions(url) {
+    if (window.cadastralStructureAvailable === false) {
+        return Promise.resolve({ ok: false, status: 404, json: async () => ({}) });
+    }
+    return fetch(url);
+}
+
 // ========================================
 // FOLIUM MAP INTERFACE FUNCTIONS
 // ========================================
@@ -664,6 +672,13 @@ function autoZoomToAllPolygons() {
 
     const bounds = calculateAllLayersBounds(foliumMap);
 
+    // Layers still attaching can yield NaN/Infinity corners (an empty extent);
+    // there is nothing to zoom to in that case, and no reason to interrupt.
+    if (bounds && ![bounds.minLat, bounds.minLng, bounds.maxLat, bounds.maxLng].every(Number.isFinite)) {
+        console.log('[FoliumInterface] Layers have no finite extent yet; not zooming');
+        return;
+    }
+
     if (bounds) {
         const latLngBounds = L.latLngBounds(
             [bounds.minLat, bounds.minLng],
@@ -677,7 +692,11 @@ function autoZoomToAllPolygons() {
             // and this runs on a fixed timer that can race the Folium iframe's
             // layers still attaching. Catch rather than let it go uncaught.
             try {
-                foliumMap.fitBounds(latLngBounds, {
+                // Plain arrays, not ``latLngBounds``: the Folium map runs its own copy of
+                // Leaflet (1.9.3) while this page loads 1.9.4, and a LatLngBounds built by
+                // one copy is not an ``instanceof`` the other, so fitBounds rejects it with
+                // "Bounds are not valid".
+                foliumMap.fitBounds([[bounds.minLat, bounds.minLng], [bounds.maxLat, bounds.maxLng]], {
                     padding: [20, 20],
                     maxZoom: 18
                 });
@@ -1079,7 +1098,7 @@ async function initDatabaseFilters() {
     try {
         // Populate the first selector from the bounded endpoint immediately.
         // Statistics are useful but not required to operate the filters.
-        const regionResponse = await fetch('/api/v1/get-regions/');
+        const regionResponse = await fetchCadastralRegions('/api/v1/get-regions/');
         let regions = regionResponse.ok ? ((await regionResponse.json()).regions || []) : [];
         if (regions.length === 0) {
             const fgbResponse = await fetch('/api/v1/fgb/regions');
@@ -1556,7 +1575,7 @@ async function checkDbStatus() {
         // A health check must not execute a geospatial query. The previous
         // POST opened SpatiaLite/GDAL on every page load and reported a total
         // outage when only the provisioned FlatGeobuf source was available.
-        const response = await fetch('/api/v1/get-regions/');
+        const response = await fetchCadastralRegions('/api/v1/get-regions/');
         const payload = response.ok ? await response.json() : {};
         const regionCount = Array.isArray(payload.regions) ? payload.regions.length : 0;
 
@@ -1589,7 +1608,7 @@ async function loadDbRegions() {
 
     let regions = [];
     try {
-        const response = await fetch('/api/v1/get-regions/');
+        const response = await fetchCadastralRegions('/api/v1/get-regions/');
         if (response.ok) {
             const data = await response.json();
             regions = data.regions || [];

@@ -1,25 +1,19 @@
-"""Parcel-located PVGIS yield and editable cash-flow scenarios.
+"""Municipal PV-potential yield and editable cash-flow scenarios.
 
-PVGIS supplies a long-term annual yield for a 1 kWp reference system at the
-parcel centroid. The user supplies the installed capacity, surface position,
-system losses and all financial assumptions. This module never converts
-parcel area into usable roof area.
+The source data comes from the ``solar.solar_potential_comuni`` foreign table
+exposed by aecs4u-stats. The view stores municipal annual output and estimated
+capacity; their ratio is a municipality-level kWh/kWp yield, not a parcel or
+roof measurement. The user supplies installed capacity and financial inputs.
 
-Use the shared aecs4u-stats economics implementation when it is installed.
-The small compatibility implementation below keeps this app usable with
-older published stats wheels until the shared implementation is released.
+Use the shared aecs4u-stats economics implementation when installed. The small
+compatibility calculation keeps this app usable with older stats wheels.
 """
 
 from __future__ import annotations
 
 import math
-import threading
-import time
-from collections import OrderedDict
 from dataclasses import asdict, dataclass
 from typing import Any
-
-import httpx
 
 try:
     from aecs4u_stats.pvgis.economics import (
@@ -31,26 +25,12 @@ except ImportError:  # published aecs4u-stats wheel predates issue #31
     _shared_calculate_solar_economics = None
 
 
-PVGIS_BASE_URL = "https://re.jrc.ec.europa.eu/api/v5_3/PVcalc"
-PVGIS_MODEL = "PVGIS 5.3 / PVGIS-SARAH3"
-PVGIS_DATA_PERIOD = "2005–2023"
-PVGIS_SOURCE_URL = (
-    "https://joint-research-centre.ec.europa.eu/photovoltaic-geographical-information-system-pvgis/"
-    "using-pvgis-5/api-non-interactive-service_en"
-)
-PVGIS_TIMEOUT = httpx.Timeout(15.0, connect=4.0)
-_CACHE_TTL_SECONDS = 24 * 60 * 60
-_CACHE_MAX_ENTRIES = 512
-_YIELD_CACHE: OrderedDict[tuple[Any, ...], tuple[float, dict[str, Any]]] = OrderedDict()
-_CACHE_LOCK = threading.Lock()
-
-
-class SolarSourceTimeout(RuntimeError):
-    """PVGIS did not respond within the request time budget."""
+PVGIS_MODEL = "PVGIS-derived municipal solar potential"
+PVGIS_SOURCE_URL = "https://re.jrc.ec.europa.eu/pvg_tools/en/"
 
 
 class SolarSourceUnavailable(RuntimeError):
-    """PVGIS returned an error or a response without a usable yield."""
+    """The Stats municipal solar view has no usable yield for this comune."""
 
 
 @dataclass(frozen=True)
@@ -65,111 +45,40 @@ class SolarScenarioAssumptions:
     lifetime_years: int = 25
 
 
-def _yield_cache_key(lat: float, lng: float, tilt: float, aspect: float, loss: float) -> tuple[Any, ...]:
-    # PVGIS radiation data has a coarser spatial resolution than these rounded
-    # inputs. Four decimals keep the request reproducible while avoiding a
-    # separate cache entry for sub-metre coordinate noise.
-    return (round(lat, 4), round(lng, 4), round(tilt, 1), round(aspect, 1), round(loss, 1), PVGIS_MODEL)
-
-
-def _cached_yield(key: tuple[Any, ...]) -> dict[str, Any] | None:
-    now = time.monotonic()
-    with _CACHE_LOCK:
-        cached = _YIELD_CACHE.get(key)
-        if cached is None:
-            return None
-        expires_at, payload = cached
-        if expires_at <= now:
-            _YIELD_CACHE.pop(key, None)
-            return None
-        _YIELD_CACHE.move_to_end(key)
-        return dict(payload)
-
-
-def _store_yield(key: tuple[Any, ...], payload: dict[str, Any]) -> None:
-    with _CACHE_LOCK:
-        _YIELD_CACHE[key] = (time.monotonic() + _CACHE_TTL_SECONDS, dict(payload))
-        _YIELD_CACHE.move_to_end(key)
-        while len(_YIELD_CACHE) > _CACHE_MAX_ENTRIES:
-            _YIELD_CACHE.popitem(last=False)
-
-
-def _monthly_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    outputs = payload.get("outputs")
-    monthly = outputs.get("monthly") if isinstance(outputs, dict) else None
-    if isinstance(monthly, list):
-        rows = monthly
-    elif isinstance(monthly, dict):
-        rows = monthly.get("fixed")
-        if not isinstance(rows, list):
-            rows = next((value for value in monthly.values() if isinstance(value, list)), None)
-    else:
-        rows = None
-    if not isinstance(rows, list) or len(rows) != 12:
-        raise SolarSourceUnavailable("PVGIS did not return twelve monthly production values")
-    return rows
-
-
-async def annual_yield_per_kwp(
-    lat: float,
-    lng: float,
-    tilt_degrees: float,
-    aspect_degrees: float,
-    system_losses_pct: float,
-) -> dict[str, Any]:
-    """Fetch (or reuse) PVGIS long-term yield for a 1 kWp building-mounted system."""
-    key = _yield_cache_key(lat, lng, tilt_degrees, aspect_degrees, system_losses_pct)
-    cached = _cached_yield(key)
-    if cached is not None:
-        return cached
-
-    params = {
-        "lat": key[0],
-        "lon": key[1],
-        "raddatabase": "PVGIS-SARAH3",
-        "peakpower": 1,
-        "loss": key[4],
-        "angle": key[2],
-        "aspect": key[3],
-        "mountingplace": "building",
-        "fixed": 1,
-        "trackingtype": 0,
-        "outputformat": "json",
-    }
+def annual_yield_from_municipal_potential(profile: dict[str, Any] | None) -> dict[str, Any]:
+    """Derive annual kWh/kWp from the Stats-side municipal potential view."""
+    data = profile.get("data") if isinstance(profile, dict) else None
+    if not isinstance(data, dict):
+        raise SolarSourceUnavailable("Municipal solar potential is unavailable")
     try:
-        async with httpx.AsyncClient(timeout=PVGIS_TIMEOUT) as client:
-            response = await client.get(PVGIS_BASE_URL, params=params)
-            response.raise_for_status()
-            payload = response.json()
-    except httpx.TimeoutException as exc:
-        raise SolarSourceTimeout("PVGIS request timed out") from exc
-    except (httpx.HTTPError, ValueError) as exc:
-        raise SolarSourceUnavailable("PVGIS request failed") from exc
-
-    if not isinstance(payload, dict):
-        raise SolarSourceUnavailable("PVGIS returned an invalid response")
-    try:
-        monthly_rows = _monthly_rows(payload)
-        monthly_yield = [float(row["E_m"]) for row in monthly_rows]
+        annual_output = float(data["pv_pvout_modern_kwh_year_total"])
+        estimated_capacity = float(data["pv_kwp_max_total"])
     except (KeyError, TypeError, ValueError, OverflowError) as exc:
-        raise SolarSourceUnavailable("PVGIS returned an invalid production response") from exc
-    if any(not math.isfinite(value) or value < 0 for value in monthly_yield):
-        raise SolarSourceUnavailable("PVGIS returned invalid monthly production values")
+        raise SolarSourceUnavailable("Municipal solar potential has no modern output/capacity pair") from exc
+    if (
+        not math.isfinite(annual_output)
+        or not math.isfinite(estimated_capacity)
+        or annual_output <= 0
+        or estimated_capacity <= 0
+    ):
+        raise SolarSourceUnavailable("Municipal solar potential has an invalid output/capacity pair")
 
-    annual_yield = sum(monthly_yield)
-    if annual_yield <= 0:
-        raise SolarSourceUnavailable("PVGIS returned no annual production")
-    result = {
-        "annual_yield_kwh_per_kwp": annual_yield,
-        "monthly_yield_kwh_per_kwp": monthly_yield,
-        "reference_system_kwp": 1.0,
-        "mounting_place": "building",
+    return {
+        "annual_yield_kwh_per_kwp": annual_output / estimated_capacity,
+        "municipal_output_kwh_year_total": annual_output,
+        "municipal_capacity_kwp_total": estimated_capacity,
         "model": PVGIS_MODEL,
-        "data_period": PVGIS_DATA_PERIOD,
         "source_url": PVGIS_SOURCE_URL,
+        "source": profile.get("source"),
+        "dataset_version": profile.get("dataset_version"),
+        "updated_at": profile.get("updated_at"),
+        "match_method": profile.get("match_method") or "cadastral municipality code",
+        "spatial_resolution": profile.get("spatial_resolution") or "municipality",
+        "yield_method": (
+            "modern municipal annual output divided by estimated municipal capacity; "
+            "derived from the Stats solar potential release"
+        ),
     }
-    _store_yield(key, result)
-    return result
 
 
 def _compat_calculate_solar_economics(

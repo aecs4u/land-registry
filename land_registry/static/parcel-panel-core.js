@@ -14,7 +14,13 @@
 }(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  const LOCALE = 'it-IT';
+  // Numbers and dates follow the page language. Node tests and a missing
+  // document keep the Italian default.
+  const localeTag = () => {
+    const doc = typeof globalThis !== 'undefined' ? globalThis.document : undefined;
+    const lang = doc && doc.documentElement ? String(doc.documentElement.lang || '').toLowerCase() : '';
+    return lang.startsWith('en') ? 'en-GB' : 'it-IT';
+  };
   const identity = (text) => text;
   const interpolate = (text, values) => (values
     ? String(text).replace(/\{(\w+)\}/g, (_, name) => values[name] ?? '')
@@ -42,7 +48,7 @@
 
   function formatNumber(value, maximumFractionDigits = 0) {
     const number = toNumber(value);
-    return number === null ? '—' : number.toLocaleString(LOCALE, { maximumFractionDigits });
+    return number === null ? '—' : number.toLocaleString(localeTag(), { maximumFractionDigits });
   }
 
   /** Format a 0..1 ratio as a percentage. */
@@ -50,19 +56,19 @@
     const number = toNumber(value);
     return number === null
       ? '—'
-      : `${(number * 100).toLocaleString(LOCALE, { maximumFractionDigits })}%`;
+      : `${(number * 100).toLocaleString(localeTag(), { maximumFractionDigits })}%`;
   }
 
   function formatCurrency(value) {
     const number = toNumber(value);
     return number === null
       ? '—'
-      : number.toLocaleString(LOCALE, { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
+      : number.toLocaleString(localeTag(), { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
   }
 
   function formatArea(value) {
     const number = toNumber(value);
-    return number === null ? '—' : `${number.toLocaleString(LOCALE, { maximumFractionDigits: 1 })} m²`;
+    return number === null ? '—' : `${number.toLocaleString(localeTag(), { maximumFractionDigits: 1 })} m²`;
   }
 
   function formatConfidence(value) {
@@ -70,7 +76,7 @@
     const number = Number(value);
     if (!Number.isFinite(number)) return String(value);
     const percent = number <= 1 ? number * 100 : number;
-    return `${percent.toLocaleString(LOCALE, { maximumFractionDigits: 1 })}%`;
+    return `${percent.toLocaleString(localeTag(), { maximumFractionDigits: 1 })}%`;
   }
 
   function parseDateTime(value) {
@@ -82,7 +88,7 @@
   function formatDateTime(value) {
     const date = parseDateTime(value);
     return date
-      ? date.toLocaleString(LOCALE, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+      ? date.toLocaleString(localeTag(), { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
       : '';
   }
 
@@ -229,7 +235,8 @@
   /** Property type of a quote; the snapshot's placeholder ``0`` becomes a label. */
   function omiTypologyLabel(quote, tr) {
     const raw = String((quote && (quote.tipologia || quote.cod_tipologia)) ?? '').trim();
-    return raw && raw !== '0' ? raw : translate(tr, 'Type not specified');
+    // The source labels are English; the catalog carries the Italian OMI names.
+    return raw && raw !== '0' ? translate(tr, raw) : translate(tr, 'Type not specified');
   }
 
   /** One-line description of a quote for selectors: zone · type · condition · period. */
@@ -611,33 +618,92 @@
    * fields). Modelled values are flagged and missing metadata is left out
    * rather than invented.
    */
+  // Identifiers that are meaningful to operators but not to people reading a parcel:
+  // ``veneto__particelle``, ``sister.v_sister_property_by_cadastral_parcel.address``,
+  // ``omi-gross-rental-yield-v1``.
+  const TECHNICAL_TOKEN = /\b[a-z0-9]+__[a-z0-9_]+\b|\b[a-z][a-z0-9]*\.[a-z0-9]*_[a-z0-9_.]*\b|\b[a-z0-9]+(?:_[a-z0-9]+)+\b|\b[a-z0-9]+(?:-[a-z0-9]+)+-v\d+\b/gi;
+  const SOURCE_FALLBACKS = [
+    [/sister/i, 'SISTER property register'],
+    [/modelview|pvp/i, 'PVP public auctions portal'],
+    [/opendata|cadastral_queries/i, 'Agenzia delle Entrate OpenData'],
+    [/particelle|parcel/i, 'Agenzia delle Entrate cadastral parcels'],
+    [/municipality_profile|municipal/i, 'Municipal profile'],
+  ];
+
+  /**
+   * Split a provenance ``source`` into a name people can read and the
+   * technical identifiers that were removed from it.
+   */
+  function friendlySource(source) {
+    const technical = [];
+    if (!isPresent(source)) return { label: '', technical };
+    const parts = String(source).split(';').map((part) => {
+      let text = part
+        .replace(/(?:\s*\bvia\s+(?:aecs4u-stats|asyncpg|PostgreSQL))+(?:\s+PostgreSQL)?/gi, '')
+        .replace(/\baecs4u-stats\s+(?:PostgreSQL\s+)?/gi, '')
+        .replace(/\bPostgreSQL\b\s*/g, '');
+      const original = text;
+      text = text.replace(TECHNICAL_TOKEN, (token) => { technical.push(token); return ''; })
+        .replace(/\s*[·,]\s*(?=[·,]|$)/g, '').replace(/\s{2,}/g, ' ').replace(/^[\s·,]+|[\s·,]+$/g, '');
+      if (!text && original.trim()) {
+        const fallback = SOURCE_FALLBACKS.find(([pattern]) => pattern.test(original));
+        text = fallback ? fallback[1] : 'Reference dataset';
+      }
+      return text;
+    }).filter(Boolean);
+    return { label: [...new Set(parts)].join('; '), technical: [...new Set(technical)] };
+  }
+
   function blockMetadataHtml(block, tr) {
     if (!block) return '';
     const chips = [];
     const confidence = formatConfidence(block.confidence);
     if (confidence) chips.push([translate(tr, 'Confidence'), confidence]);
-    if (block.spatial_resolution) chips.push([translate(tr, 'Resolution'), block.spatial_resolution]);
+    if (block.spatial_resolution) chips.push([translate(tr, 'Resolution'), translate(tr, block.spatial_resolution)]);
     if (toNumber(block.spatial_resolution_m) !== null) chips.push([translate(tr, 'Resolution'), `${formatNumber(block.spatial_resolution_m)} m`]);
     if (block.updated_at) chips.push([translate(tr, 'Last updated'), block.updated_at]);
-    const provenance = [
-      block.dataset_version ? `${translate(tr, 'Dataset')}: ${block.dataset_version}` : '',
-      block.model_version ? `${translate(tr, 'Model')}: ${block.model_version}` : '',
-      block.match_method ? `${translate(tr, 'Match')}: ${block.match_method}` : '',
-    ].filter(Boolean).join(' · ');
+    const source = friendlySource(block.source);
+    // Version strings people can read ("MPS04", "solar-2026") stay in view; database and model
+    // identifiers (``veneto__particelle``, ``omi-gross-rental-yield-v1``) go behind the disclosure.
+    const isTechnical = (value) => { TECHNICAL_TOKEN.lastIndex = 0; return TECHNICAL_TOKEN.test(String(value)); };
+    const provenance = [];
+    const technicalLines = [];
+    [
+      ['Dataset', block.dataset_version], ['Model', block.model_version], ['Match', block.match_method],
+    ].forEach(([label, value]) => {
+      if (!isPresent(value)) return;
+      (isTechnical(value) ? technicalLines : provenance).push(`${translate(tr, label)}: ${label === 'Match' ? translate(tr, value) : value}`);
+    });
+    if (block.source && source.label !== String(block.source)) technicalLines.unshift(`${translate(tr, 'Source')}: ${block.source}`);
     const benchmarks = Object.values(block.benchmarks || {}).filter((benchmark) => benchmark && isPresent(benchmark.value));
-    if (!chips.length && !benchmarks.length && !block.source && !provenance) return '';
+    if (!chips.length && !benchmarks.length && !block.source && !provenance.length && !technicalLines.length) return '';
     const chipHtml = chips.length
       ? `<div class="parcel-block-chips">${chips.map(([label, value]) => `<span><strong>${escapeHtml(label)}</strong> ${escapeHtml(value)}</span>`).join('')}</div>`
       : '';
     const benchmarkHtml = benchmarks.length
       ? `<div class="parcel-block-benchmarks">${benchmarks.map((benchmark) => `<span>${escapeHtml(translate(tr, 'Benchmark'))} ${escapeHtml([benchmark.label || '', benchmark.year || ''].filter(Boolean).join(' '))}: <strong>${escapeHtml(benchmark.value)} ${escapeHtml(benchmark.unit || '')}</strong></span>`).join('')}</div>`
       : '';
-    const sourceHtml = `${block.source ? `${escapeHtml(translate(tr, 'Source'))}: ${escapeHtml(block.source)}` : ''}${block.source && provenance ? '<br>' : ''}${escapeHtml(provenance)}`;
-    return `${chipHtml}${benchmarkHtml}${sourceHtml ? `<p class="parcel-block-provenance">${sourceHtml}</p>` : ''}`;
+    const sourceText = [source.label ? `${translate(tr, 'Source')}: ${translate(tr, source.label)}` : '', ...provenance].filter(Boolean).join(' · ');
+    const sourceHtml = escapeHtml(sourceText);
+    const technicalHtml = technicalLines.length
+      ? `<details class="parcel-technical"><summary>${escapeHtml(translate(tr, 'Technical details'))}</summary><p>${technicalLines.map(escapeHtml).join('<br>')}</p></details>`
+      : '';
+    return `${chipHtml}${benchmarkHtml}${sourceHtml ? `<p class="parcel-block-provenance">${sourceHtml}</p>` : ''}${technicalHtml}`;
+  }
+
+  // Unnumbered public-domain parcels in the cadastral extract (``STRADA297``, ``ACQUA12``).
+  const PUBLIC_DOMAIN_PARCEL = /^(STRADA|STRADE|FERROVIA|ACQUA|ACQUE|FIUME|TORRENTE|CANALE)\d*$/i;
+
+  /** ``'road'`` or ``'water'`` for public-domain parcels; null for ordinary numbered parcels. */
+  function publicDomainKind(props) {
+    const value = props && (props.parcel ?? props.parcel_number ?? props.particella);
+    const match = PUBLIC_DOMAIN_PARCEL.exec(String(value ?? '').trim());
+    if (!match) return null;
+    return /^(STRADA|STRADE|FERROVIA)$/i.test(match[1]) ? 'road' : 'water';
   }
 
   return {
-    escapeHtml, isPresent, toNumber, translate,
+    publicDomainKind, friendlySource, escapeHtml, isPresent, toNumber, translate,
     formatNumber, formatRatio, formatCurrency, formatArea, formatConfidence,
     parseDateTime, formatDateTime, relativeAge, median,
     cadastralCodeOf, parcelAreaSqm, centroidOf, referenceParts,

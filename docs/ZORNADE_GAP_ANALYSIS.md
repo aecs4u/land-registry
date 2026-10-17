@@ -1,73 +1,120 @@
 # Gap Analysis: land-registry vs. Zornade (app.zornade.com)
 
-> **2026-10-15 consolidation note:** the focused audit of the primary `/map` parcel panel is included in
-> [Appendix A](#appendix-a-parcel-panel-feature-and-gap-analysis-october-2026). Its audit findings date from
-> 2026-10-09; implementation status has been updated through 2026-10-15.
-> Appendix A is the current reference for panel findings where they differ from this July whole-product
-> baseline. Sections 1–6 retain the broader product scope and roadmap, with status notes updated where
-> implementation has since been verified.
+*Baseline review 2026-07-10 (live review of app.zornade.com v2.4.0), updated
+2026-07-13, status consolidated through 2026-10-17. This file also contains the
+former `zornade-cadastral-parcel-reference.md` (Appendices B and C).*
 
-*Baseline review: 2026-07-10, updated 2026-07-13, based on a live review of
-app.zornade.com (v2.4.0). Status consolidated through 2026-10-16.*
+## Contents
 
-> **2026-10-16 follow-up:** Appendix A.5.8 compares the publisher-described
-> Zornade parcel-profile PDF with the land-registry Typst dossier. The dossier
-> can now optionally include a server-recomputed PVGIS scenario when the user
-> has successfully calculated one in the panel. A same-parcel PDF sample
-> comparison remains open because no exported Zornade report was available.
-
-> **2026-10-16 status review.** The matrix below rates 4 ✅, 3 ✅/🟡, 14 🟡 and
-> 1 ❌ of 22 features (July baseline: 4, 1, 9 and 8). The ratings measure what
-> is wired, not what returns data. Checked against parcel `G273_000900.3205` on
-> the review host with the installed `aecs4u-stats` (`0.2.1`, `main` at
-> `1109d6c`):
->
-> - **Returns data:** ISPRA parcel hazards and MPS04 PGA (both from the shared
->   PostgreSQL database), the municipal composite risk score (shared helper),
->   the coastal-change store, OMI zone boundaries, income, census, POIs, PVP.
-> - **Wired, no store provisioned (`not_built`):** terrain, CORINE, OSM building
->   footprints, ANNCSU addresses, protection constraints, night lights.
-> - **Blocked by one database option:** EGMS parcel subsidence. The cells are in
->   the database, but the `egms_source` foreign server lacks `extensions=postgis`
->   (`scripts/sql/map-egms-fdw-pushdown.sql`, not applied), so a point lookup
->   takes about 39 s and the PostgreSQL path stays off.
-> - **Upstream:** the terrain, CORINE, buildings, ANNCSU-address, composite-risk
->   and solar-economics code is merged to `aecs4u-stats` `main` and installed
->   here, but issues #28, #29 and #31–#34 are still open on GitHub; #48
->   (protection constraints) has not landed.
-> - **Equivalence checks:** the shared solar-economics helper and the app's
->   compatibility calculation agree on all nine numeric fields and 26 cash-flow
->   rows for the 5 kWp reference case; the shared and compatibility composite
->   risk functions agree on seven representative cases, including partial,
->   missing and invalid inputs.
-> - **Lock file:** `uv.lock` was re-locked on 2026-10-16 for `aecs4u-stats`
->   only (`5801a5e` → `a1ef4cb`, `main`), which also adds `aecs4u-documents`,
->   `typst` and `qrcode` that `pyproject.toml` already required. The deploy uses
->   `uv sync --frozen`, so the old lock would have shipped without them. `a1ef4cb`
->   is two commits past the installed `1109d6c` (an ISTAT query fallback and a
->   loader script); the installed venv has not been re-synced.
-> - **Tests:** all 1,371 Python tests pass (the layer-catalog contract tests were
->   rewritten for the direct-source catalog), the JS suite passes (49) and the
->   Chromium smoke suite passes (14, 4 skipped).
->   `tests/test_corrected_s3_storage.py` cannot be collected here because `moto`
->   is not installed.
-> - **Deferred by decision, not open work:** community features (row 20, SRS
->   §14), extra estimator inputs (V5), declared price (V10) and the gamified
->   tour/donation prompts. The same-parcel PDF comparison needs an exported
->   Zornade report, and the Italian copy needs a native proofread.
-
-> **2026-07-11 update:** most of the "data pipeline" work this document
-> originally scoped for `land_registry/scripts/` has been redirected upstream
-> into the shared `aecs4u-stats` (public-data ETL + query layer) and
-> `aecs4u-domain` (shared SQLModel schema) packages, consumed here via
-> `land_registry/stats_service.py` and `/api/v1/enrichment/*` — see §3 P4 and
-> the status column in §2/§5 for what has landed.
+| Part | Content |
+|---|---|
+| [Status review](#status-review-2026-10-17) | What returns data today, pilot comparison, open work |
+| [§1](#1-project-state-at-the-july-2026-baseline) | Project state at the July 2026 baseline |
+| [§2](#2-feature-gap-matrix) | Feature gap matrix (22 features, current ratings) |
+| [§3](#3-architectural-prerequisites-the-real-gap) | Architectural prerequisites |
+| [§4](#4-development-plan) | Development plan and per-phase status |
+| [§5](#5-data-source-shopping-list) | Data source shopping list |
+| [§6](#6-suggested-sequencing-summary) | Sequencing summary |
+| [Appendix A](#appendix-a-parcel-panel-feature-and-gap-analysis-october-2026) | Parcel panel audit and plan (October 2026) |
+| [Appendix B](#appendix-b-zornade-data-and-api-reference) | Zornade's parcel API and data blocks, with land-registry status per block |
+| [Appendix C](#appendix-c-enrichment-and-database-improvement-backlog) | Enrichment and database improvement backlog, with verified status |
 
 Zornade is the closest public comparable to this project: a free Italian cadastral
 intelligence map (~85M parcels, 7,899 comuni) built on official open data, with a
 per-parcel enrichment panel (~17 data sections), live hazard overlays, and a public
 REST API. This document maps its feature set against ours and defines a phased
 development plan.
+
+## Status review (2026-10-17)
+
+The matrix below rates 4 ✅, 3 ✅/🟡, 14 🟡 and
+1 ❌ of 22 features (July baseline: 4, 1, 9 and 8). The ratings measure what
+is wired, not what returns data. Checked against parcel `G273_000900.3205` on
+the review host with the installed `aecs4u-stats` (`0.2.1`, `main` at
+`b71a743`):
+
+- **Returns data:** ISPRA parcel hazards, MPS04 PGA, EGMS parcel subsidence
+  (all from the shared PostgreSQL database), the municipal composite risk
+  score (shared helper), the coastal-change store, OMI zone boundaries, income,
+  census, POIs and PVP; and, for **Sicilia only** (ISTAT region 19, imported
+  2026-10-16), terrain, CORINE, OSM building footprints and ANNCSU addresses.
+- **PostgreSQL publication:** the R19 address, CORINE and OSM-footprint
+  stores now serve from source-owned PostgreSQL databases. `anncsu` has
+  3,165,306 addresses (2,432,270 geocoded); `corine` has 7,181 polygons; and
+  `buildings` has 1,273,472 footprints. The original SQLite/DuckDB importer
+  artifacts remain on disk, while the installed readers use PostgreSQL by
+  default. Existing source databases for cadastral, census, hazards, EGMS,
+  OMI, solar and other map sources were already PostgreSQL-backed.
+  `istat_boundaries.IT.duckdb` was already represented by the ISTAT boundary
+  tables in PostgreSQL. Every relational database artifact found in
+  `/data/istat` now has a PostgreSQL representation.
+- **Protection constraints:** the SITAP source was already in PostgreSQL. Its
+  current normalized geometry view is linked by FDW, and 8,452 features from
+  release `sitap-20261003-cc0760b0c41f` are now in `spatial.protection_area`.
+  The app exposes both schema-gated layers and returned a SITAP overlap. No
+  completeness geometry is loaded, so parcel coverage remains unknown;
+  cultural-heritage records remain unavailable.
+- **Still not provisioned:** terrain, CORINE, building footprints and ANNCSU
+  for the other 19 regions, plus the VIIRS annual raster. Nightlights and
+  terrain are raster assets, not relational databases.
+- **Pilot check, parcel `G273_000900.3205` (Palermo) against Zornade:**
+
+  | | land-registry | Zornade |
+  |---|---|---|
+  | Elevation | 20 m (19.99–20.37), slope 0.5° | 20 m, slope max 1° |
+  | Land cover | CORINE 112, 100% of the parcel | Discontinuous urban fabric |
+  | Buildings | 3, 122.6 m², 9.56% coverage | 3, 123.0 m², 9.6% |
+  | Ground movement | −0.80 mm/y, "trascurabile", 2 cells | −0.6 mm/y, stable |
+  | PGA (10% in 50 y) | 0.154 g (grid point 958 m away) | 0.149 g |
+  | Civic addresses | no geocoded point in the parcel (honest no-match) | not compared |
+
+- **EGMS pushdown applied 2026-10-16:** `extensions=postgis` was added to the
+  `egms_source` foreign server; a point lookup went from about 39 s to 0.1 s.
+- **Importer fixes:** the installed `aecs4u-stats` commit fixes the five
+  Sicilia-pilot defects (ANNCSU URL, terrain origin import and WCS retries,
+  building provenance placeholders, and pyrosm bounding-box handling). The
+  focused importer regression tests pass. The workaround scripts are retained
+  as historical pilot artifacts and are not used for current reads.
+- **Equivalence checks:** the shared solar-economics helper and the app's
+  compatibility calculation agree on all nine numeric fields and 26 cash-flow
+  rows for the 5 kWp reference case; the shared and compatibility composite
+  risk functions agree on seven representative cases, including partial,
+  missing and invalid inputs.
+- **Lock file:** `uv.lock` now pins `aecs4u-stats` to the same `b71a743`
+  revision installed in the shared environment, so frozen Docker builds use
+  the PostgreSQL-backed readers too.
+- **Validation this update:** 44 focused stats/migration tests passed and Ruff
+  passed. Three additional local CORINE fixture tests could not load the
+  DuckDB `spatial` extension in the shared environment. The selected app test
+  group stalled during asynchronous database teardown and was interrupted;
+  this is not a full-suite pass. PostgreSQL status checks and the app's
+  Palermo-area CORINE/building/ANNCSU adapters returned data, the ANNCSU query
+  reported its 10,000-candidate cap as partial, and the SITAP app query returned
+  a real overlap with both coverage states explicitly unknown.
+- **Deferred by decision, not open work:** community features (row 20, SRS
+  §14), extra estimator inputs (V5), declared price (V10) and the gamified
+  tour/donation prompts. The same-parcel PDF comparison needs an exported
+  Zornade report, and the Italian copy needs a native proofread.
+
+### History of this document
+
+- **2026-07-11:** most of the "data pipeline" work this document originally
+  scoped for `land_registry/scripts/` moved upstream into the shared
+  `aecs4u-stats` (public-data ETL and query layer) and `aecs4u-domain` (shared
+  SQLModel schema) packages, consumed here through
+  `land_registry/stats_service.py` and `/api/v1/enrichment/*`. See §3 P4 and
+  the status columns in §2 and §5.
+- **2026-10-09 to 10-15:** the focused audit of the primary `/map` parcel panel
+  is merged as Appendix A. Its audit findings date from 2026-10-09; its
+  implementation status is current. Appendix A is the reference for panel
+  findings where they differ from the July baseline in §§1–6.
+- **2026-10-16:** Appendix A.5.8 compares the publisher-described Zornade PDF
+  with the Typst dossier, which can now include a server-recomputed PVGIS
+  scenario. A same-parcel PDF comparison stays open until a Zornade export
+  is available.
+- **2026-10-17:** the Zornade data reference (research note of 2026-09-03) and
+  its improvement backlog are merged as Appendices B and C, each annotated with
+  what land-registry implements today.
 
 ---
 
@@ -107,27 +154,27 @@ coverage remains the comparison target.
 
 Legend: ✅ have · 🟡 partial (some product surface exists; coverage, release or acceptance gaps remain) · ❌ missing
 
-A 🟡 can mean the card is wired but its store is not provisioned on the review host (`not_built`); the 2026-10-16 status review at the top lists which rows return data today.
+A 🟡 can mean the card is wired but its store is not provisioned on the review host (`not_built`); the 2026-10-17 status review at the top lists which rows return data today.
 
 | # | Zornade feature | Ours | Gap detail |
 |---|---|---|---|
 | 1 | Nationwide always-on parcel map (zoom-gated vector tiles, labelled polygons) | ✅/🟡 | ✅ The primary MapLibre map uses the allow-listed PostGIS MVT catalog with a raster fallback, loads viewport parcels at z≥16, supports click selection and detail-panel integration, and renders persistent parcel-number labels from z16. Analysis tools now draw polygon, polyline, rectangle, circle and marker GeoJSON, with existing edit/import/export/save/load workflows. Remaining gap: verify production-wide parcel coverage; PMTiles is an alternate delivery path, not a prerequisite for the current MVT implementation. |
-| 2 | Click parcel → detail panel (80+ fields, 17 sections) | 🟡 | The primary MapLibre map opens a sectioned, lazy-loaded panel from canonical parcel selection. It covers cadastral identity, OMI/value, census/demographics, income, SISTER/OpenData, POI, risks, live hazards, auctions, provenance and a locally provisioned coastal-change section. It is not yet equivalent to Zornade's 17 sections: terrain, CORINE and OSM footprints are wired and their `aecs4u-stats` subpackages are merged to `aecs4u-stats` main (commit `1109d6c`) and installed here, but no regional stores are provisioned (each returns `not_built`); the ANNCSU card is wired against the installed upstream importer, but no regional address store is provisioned (`not_built`). Protection constraints now have a schema-gated API, panel section and map layers, but the upstream source tables and regional coverage are not provisioned. The composite-score UI and adapter use the shared `hazards.composite_risk_score` helper, which is now installed (Palermo returns 28.6); the local compatibility copy remains only for older wheels. Target-host coverage and runtime review remain. See Appendix A for the current panel audit. |
+| 2 | Click parcel → detail panel (80+ fields, 17 sections) | 🟡 | The primary MapLibre map opens a sectioned, lazy-loaded panel from canonical parcel selection. Terrain, CORINE, OSM footprints and ANNCSU are provisioned for Sicilia (R19); other regions return `not_built`. The installed readers use source-owned PostgreSQL tables for CORINE, buildings and ANNCSU. ANNCSU finds geocoded points only where municipalities supplied coordinates. SITAP landscape constraints are now imported into canonical PostGIS and the app query returned a real overlap, but `spatial.protection_coverage` has no completeness rows and cultural-heritage records are not loaded. The composite-score UI uses the installed shared helper (Palermo returns 28.6); target-host coverage and runtime review remain. See Appendix A for the current panel audit. |
 | 3 | URL state / deep links (`?lat&lng&zoom&parcel=`) + share | ✅ | `?lat=&lng=&zoom=` is restored on `GET /map` and updated after map movement. Selected boundary parcels now write `&parcel=<national-reference>`, restore through `/parcel/by-reference/{ref}`, and expose a Copy Link action in the detail panel. |
 | 4 | Hierarchical parcel finder that works without pre-loading | ✅/🟡 | The primary map now offers Regione→Provincia→Comune→Foglio→Particella browsing. It loads the hierarchy on demand and resolves the selected parcel through `/api/v1/map/search` and the per-region `aecs4u-stats` cadastral stores, without requiring a user-loaded GeoDataFrame. Available areas still depend on the hierarchy index and parcel stores provisioned on the host. |
 | 5 | Cadastral base data (particella, foglio, sezione, comune, area) | ✅/🟡 | The canonical map source exposes stable feature IDs and cadastral properties; `/api/v2/parcels/{fid}` returns the basic attributes and optional geometry. Field completeness and national production coverage remain data-provisioning checks. |
 | 6 | OMI quotations (per zone, by type, yields) + 22-semester history + value estimator | 🟡 | ✅ Quotes/history backend and parcel-panel UI are implemented: users select zone/typology/conservation state, enter the relevant commercial m², see an explicitly non-appraisal value range, and inspect up to 24 semesters in a trend chart. ✅ `/omi/at-point` spatially matches the parcel centroid and `POST /omi/estimate` returns a versioned, report-ready server calculation from one exact quote. All 100 cached province boundaries (50,466 polygons) are built under `/data/istat/omi_zones` on this host; a Rome point lookup matched B29. These polygons are a 2018/2 mirror and approximate where boundaries have since changed. Mount the same files on each serving host and verify parcel-level matches there. |
-| 7 | Environmental risks: seismic, flood (PGRA), landslide (PAI/IFFI), subsidence (InSAR), coastal erosion + composite risk score | 🟡 | Parcel hazard polygons and EGMS 100 m subsidence cells are intersected with parcel geometry; DPC seismic classification and nearest-grid MPS04 PGA are separate components. The ISPRA 2006–2020 shoreline-change snapshot is provisioned in the configured stats database: 99,229 features across 664 municipalities; two real Civitavecchia parcels returned mapped segments, and a dense-area query correctly reports partial coverage at the 100-candidate cap. This is historical change, not a current forecast. The primary/legacy panels and v2 risk section calculate the versioned municipal index from existing seismic and hydrogeological inputs, using the shared helper when installed and an aligned app compatibility implementation for older wheels. On 2026-10-16 MPS04 PGA and ISPRA hazard polygons are read from the shared PostgreSQL database; EGMS cells are present there too, but lookups wait for `extensions=postgis` on the `egms_source` foreign server (`scripts/sql/map-egms-fdw-pushdown.sql`, not applied). |
+| 7 | Environmental risks: seismic, flood (PGRA), landslide (PAI/IFFI), subsidence (InSAR), coastal erosion + composite risk score | 🟡 | Parcel hazard polygons and EGMS 100 m subsidence cells are intersected with parcel geometry; DPC seismic classification and nearest-grid MPS04 PGA are separate components. The ISPRA 2006–2020 shoreline-change snapshot is provisioned in the configured stats database: 99,229 features across 664 municipalities; two real Civitavecchia parcels returned mapped segments, and a dense-area query correctly reports partial coverage at the 100-candidate cap. This is historical change, not a current forecast. The primary/legacy panels and v2 risk section calculate the versioned municipal index from existing seismic and hydrogeological inputs, using the shared helper when installed and an aligned app compatibility implementation for older wheels. On 2026-10-16 MPS04 PGA and ISPRA hazard polygons are read from the shared PostgreSQL database; EGMS cells are intersected with the parcel from the same database since the `egms_source` pushdown was applied on 2026-10-16 (a point lookup dropped from about 39 s to 0.1 s). |
 | 8 | Live overlays: satellite fire hotspots (FIRMS), Protezione Civile criticality bulletin | ✅ | FIRMS detections have a marker-layer toggle (`FIRMS_MAP_KEY` required); marker popups show the UTC acquisition time, relative detection age and fire radiative power. DPC bulletin details appear in the parcel panel and its 187 national alert-zone polygons can be toggled on the map with red/orange/yellow/green severity styling, hover labels, detail popups, issue timestamp and legend. |
-| 9 | Solar PV potential per building (PVGIS-SARAH3, cash-flow, NPV, LCOE, payback) | 🟡 | Municipality-level Zornade PV aggregates are consumed by the primary Energy section and map layer and appear in the Typst dossier with their municipal scope, source version and update time. A separate editable scenario now uses PVGIS 5.3/SARAH3 yield at the parcel centroid plus user-supplied capacity, tilt, aspect, losses and financial assumptions; it shows NPV, LCOE, payback and annual cash flows. It does not infer usable roof area or installable capacity. The shared `aecs4u-stats` calculator is used when installed; the installed shared calculator (`aecs4u_stats.pvgis.economics`) is used and a compatibility calculation remains only for older wheels; upstream #31 is still open. A live PVGIS response was parsed locally on 2026-10-16; provisioned-host behavior and timeout/unavailable states remain open. See issue draft 06. |
-| 10 | Terrain: elevation, slope, aspect, roughness (TINITALY DEM) | 🟡 | The parcel API, lazy Terrain card and Typst dossier section are wired locally. The regional WCS importer and parcel query for issue #28 are merged to `aecs4u-stats` main (commit `1109d6c`) and installed here (issue #28 is still open); no regional raster store is provisioned, so runtime values are unavailable. |
+| 9 | Solar PV potential per building (PVGIS-SARAH3, cash-flow, NPV, LCOE, payback) | 🟡 | Municipality-level Zornade PV aggregates are consumed by the primary Energy section and map layer and appear in the Typst dossier with their municipal scope, source version and update time. The editable scenario selects PVGIS-derived annual output and estimated capacity from `aecs4u-stats.solar.solar_potential_comuni`, exposed as a foreign table, then scales municipal yield by user-supplied capacity and calculates NPV, LCOE, payback and annual cash flows. The panel labels this as municipal context and does not infer roof area or installable capacity. The released shared economics calculator is used. Provisioned-host behavior and rendered scenario PDF remain open. See issue draft 06. |
+| 10 | Terrain: elevation, slope, aspect, roughness (TINITALY DEM) | 🟡 | The parcel API, lazy Terrain card and Typst dossier section are wired locally. The regional WCS importer and parcel query are installed from `aecs4u-stats` main (`b71a743`); the Sicilia store was imported on 2026-10-16 (elevation, slope and ruggedness verified on one parcel); other regions return `not_built`. |
 | 11 | Demographics (ISTAT census sections: age, gender, indicators) | ✅ | Parcel-centroid lookup now shows the containing 2021 census section with residents, households, dwellings, buildings, employment, education, foreign-resident share, vacancy and household size. Province-level demographic series are previewed separately with explicit resolution disclosure. |
 | 12 | Economy: MEF/IRPEF income distribution, VIIRS night lights | 🟡 | ✅ IRPEF done: `aecs4u_stats.mef` (comune-level income brackets, mean taxable income) via `/api/v1/enrichment/income/{cadastral_code}` — verified against real 2022 MEF data for Civitavecchia (25.5%/10.8%/26.4%/30.4% brackets, close to Zornade's reference-year figures). The VIIRS VNP46A4 importer applies the provider's 0.1 radiance scale factor and quality mask; raster query, lazy panel section and API v2 catalog entry are implemented. Install the annual local raster to serve values on a host. |
-| 13 | Land cover (CORINE / Urban Atlas) | 🟡 | The CORINE panel card, dedicated API endpoint, catalog entry and dossier section are wired in the local app tree. The reusable `aecs4u_stats.corine` importer/query is merged to `aecs4u-stats` main (commit `1109d6c`) and installed here; no regional store is provisioned, so results are currently unavailable. CLC 2018 is broad context (25 ha minimum mapping unit, 100 m minimum width), not a parcel survey. See Appendix A.5.3 and issue #32. |
-| 14 | Addresses (ANNCSU civic numbers) | 🟡 | Up to 10 de-duplicated SISTER address strings remain in the initial Value tab. A separate lazy ANNCSU card and `/api/v1/enrichment/anncsu-addresses/{reference}` spatially match geocoded access points; the same block is included in the dossier and `/api/v2` catalog. The regional importer/query are merged to `aecs4u-stats` main (commit `1109d6c`) and installed here, and no regional address store is provisioned. ANNCSU coordinates are present only where supplied by municipalities; match method, source vintage, EPSG:4258 and municipality coordinate coverage are carried through the response. The panel and dossier distinguish complete, partial and unknown municipal coordinate coverage from a parcel no-match. A no-geocoded-match state does not mean no civic address. See issue draft 08 and upstream `aecs4u-stats#33`. |
-| 15 | Buildings (footprint, count, coverage %) | 🟡 | SISTER cadastral building/property records remain a separate source. The app has a lazy OSM footprint card, `/api/v1/enrichment/building-footprints/{reference}` adapter and dossier subsection for intersecting footprint count, area clipped to the parcel and mapped area share. The regional Geofabrik PBF importer and EPSG:3035 DuckDB query are merged to `aecs4u-stats` main (commit `1109d6c`) and installed here; no regional store is provisioned, so runtime values are unavailable. OSM mapping completeness remains unknown. See Appendix A.11 and issue draft 04. |
-| 16 | POI (Foursquare/OSM) & cultural constraints (MiBAC) | 🟡 | The primary panel and map expose category counts and POI overlays when the configured store is available. The constraint endpoint, lazy card and map layers follow the protection contract; upstream source tables and regional coverage remain unavailable. |
-| 17 | Public REST API v2 (`/parcels/{id}?include=…`, API keys, 1K–10K req/h rate limits, data catalog docs) | 🟡 | `/api/v2/parcels/{fid}` exposes cadastral, population, demographic, economic, nightlights, SISTER, ANNCSU, OpenData, PVP, municipality-solar and OMI blocks on request, alongside geometry and risk. ANNCSU returns matched civic points with coordinate method, vintage and municipality coordinate coverage when a regional store is provisioned; none is installed on this host. On a cold read, independent adapters are limited to requested sections; partial builds are not written as complete read models. Optional-provider failures are isolated to their sections with explicit lookup-failed reasons, preserving other requested sections. The parcel response has a typed OpenAPI section envelope, a concrete response example and independent risk-provider degradation. Risk includes DPC municipal classification, INGV MPS04 nearest-grid PGA, ISPRA parcel hazards, EGMS subsidence, optional local-store-backed coastal change and schema-gated protection constraints with explicit per-type coverage. The versioned municipal composite score uses the shared helper when installed and a compatible local implementation on older wheels; it is null when no valid municipal component is available. Upstream #34 release and representative live-comune validation remain pending. Protection data remain unavailable until their upstream table is provisioned, and provider reuse terms remain under review. Night lights report annual VNP46A4 radiance and sampling provenance when the local raster is installed. Clerk-account users can create, list and revoke up to the configured maximum of `parcels:read` keys; secrets are returned once. Each key has an atomic UTC-hour quota stored in PostgreSQL (default 10,000, configurable with `PUBLIC_API_REQUESTS_PER_HOUR`), with limit, remaining and reset headers. `/api/v2/catalog` publishes stable fields and descriptions, data shapes, matching/freshness notes and source reuse metadata. Provider-native record properties vary by release or deployment and are marked dynamic. Matched response sections include a stable `source_key` plus catalogued URL, licence/reuse status and attribution; cadastral fields now carry field-level source, match-method and resolution mappings. OpenData records now expose record-level retrieval, provider, origin, timestamps, matching and reuse metadata. OpenAPI Catasto is identified as the access service and its FAQ names Agenzia delle Entrate as the principal source, not as a source confirmed for each historic record. The OpenAPI contract restricts mass extraction and other uses; record redistribution rights and the applicable account terms remain unverified. |
+| 13 | Land cover (CORINE / Urban Atlas) | 🟡 | The CORINE panel card, API endpoint, catalog entry and dossier section are wired. The installed reader uses the PostgreSQL `corine` database; `public.r19__corine_clc2018` contains 7,181 EPSG:3035 features and the app adapter returned a ready result for a Palermo-area geometry. Other regions return `not_built`. CLC 2018 is broad context (25 ha minimum mapping unit, 100 m minimum width), not a parcel survey. See Appendix A.5.3 and issue #32. |
+| 14 | Addresses (ANNCSU civic numbers) | 🟡 | A separate lazy ANNCSU card and `/api/v1/enrichment/anncsu-addresses/{reference}` spatially match geocoded access points, with the same block in the dossier and `/api/v2` catalog. The PostgreSQL `anncsu` database contains 3,165,306 Sicilia accesses, 2,432,270 geocoded, with EPSG:4258 points and municipality coverage. The app adapter returned a partial result when its 10,000-candidate cap was reached. Other regions return `not_built`; a known-parcel/source-ID comparison remains open. A no-geocoded-match state does not mean no civic address. See issue draft 08 and upstream `aecs4u-stats#33`. |
+| 15 | Buildings (footprint, count, coverage %) | 🟡 | SISTER cadastral records remain separate. The OSM card, endpoint and dossier report intersecting footprint count, clipped area and mapped area share. The installed PostGIS reader uses `buildings.public.r19__osm_buildings` (1,273,472 EPSG:3035 footprints); the app adapter returned footprint metrics for a Palermo-area geometry. Other regions return `not_built`; OSM mapping completeness remains unknown. See Appendix A.11 and issue draft 04. |
+| 16 | POI (Foursquare/OSM) & cultural constraints (MiBAC) | 🟡 | The primary panel and map expose configured POIs. The protection endpoint, panel and layers are schema-gated; 8,452 SITAP landscape features now load from PostgreSQL and a real parcel overlap was returned. Coverage remains unknown because no completeness geometry exists. Cultural-heritage source records and reuse terms remain unresolved. |
+| 17 | Public REST API v2 (`/parcels/{id}?include=…`, API keys, 1K–10K req/h rate limits, data catalog docs) | 🟡 | `/api/v2/parcels/{fid}` exposes cadastral, population, demographic, economic, nightlights, SISTER, ANNCSU, OpenData, PVP, municipality-solar and OMI blocks on request, alongside geometry and risk. ANNCSU data now exist for Sicilia in PostgreSQL; other regions return `not_built`, and a matched known-parcel access-ID check remains open. Independent adapters are limited to requested sections; partial builds are not written as complete read models. Optional-provider failures are isolated to their sections. Risk includes DPC, MPS04, ISPRA, EGMS, coastal change and schema-gated protection constraints. SITAP is provisioned but coverage remains unknown, and cultural heritage is not loaded. Night lights report VNP46A4 radiance when the local raster is installed. Clerk-account users can create, list and revoke `parcels:read` keys; quotas are stored in PostgreSQL. `/api/v2/catalog` publishes stable fields, source metadata and reuse notes. OpenAPI Catasto is identified as the access service; record redistribution rights and applicable account terms remain unverified. |
 | 18 | PDF export of parcel report | 🟡 | Zornade's [public guide](https://zornade.com/blog/salvare-stampare-mappa-catastale-pdf/) describes a free personal-use PDF of the parcel sheet with cadastral, risk, OMI, solar and demographic data; it says the PDF has no legal value. Its exact layout, fields and report provenance are not published, and this audit did not inspect a downloaded sample. land-registry serves a server-built A4 Typst dossier with a locator map, cadastral/location and available enrichment sections, a municipality profile with population history, province-level ISTAT quality-of-life indicators, municipality-scoped solar aggregates, source register, report ID and version metadata. After a successful Energy-tab calculation, POST can also carry the validated PV assumptions; the server recomputes the PVGIS yield and cash flows for an optional scenario section. Both are informational reports, not official cadastral extracts; land-registry also states that its dossier is not a professional appraisal. See Appendix A.5.8 for the comparison and remaining acceptance check; implementation details are in `PARCEL_DOSSIER.md`. |
 | 19 | Favorites / saved parcels | 🟡 | ✅ The shortlist stores configurable status, priority, notes and tags, with inline per-item editing, status/priority/recency and active-hazard filters, and an `is_favorite` star toggled from the panel header. The FIRMS filter checks distance to parcel geometry within 25 km and shows nearest distance/acquisition time; DPC matches require parcel intersection and show bulletin issue time when available |
 | 20 | Community: profiles, leaderboard, guest contributor mode | ❌ | Clerk auth exists; no community layer |
@@ -328,13 +375,15 @@ get its cadastral data — no file loading step.
 
 ### Phase 4 — Advanced enrichment (~3–4 weeks, independently shippable items)
 1. ~~Solar PV client~~ Municipality PV aggregates appear in the primary Energy
-   section. A separate editable scenario now requests PVGIS 5.3/SARAH3 yield
-   at the parcel centroid, scales it by user-supplied capacity, and calculates
-   cash flow, NPV, LCOE and payback without requiring a footprint or inferring
-   roof capacity. The panel can pass its validated assumptions to the Typst
-   dossier, which recalculates the scenario server-side. The shared economics helper (`aecs4u-stats#31`) is installed and used; on 2026-10-16 the local compatibility calculator matched it on all nine numeric fields and all 26 annual cash-flow rows for the 5 kWp case, and remains only for older wheels. A live PVGIS response was parsed locally on
-   2026-10-16; the verified shared-helper reference case, serving-host timeout
-   behavior and rendered scenario PDF remain open.
+   section. The editable scenario selects PVGIS-derived annual output and
+   estimated capacity from the `aecs4u-stats.solar.solar_potential_comuni`
+   foreign table for the parcel's cadastral municipality. Their ratio supplies
+   municipal yield, which is scaled by user-supplied capacity to calculate
+   cash flow, NPV, LCOE and payback without inferring roof capacity. The panel
+   can pass validated assumptions to the Typst dossier, which recalculates
+   yield and economics server-side from that same view. The released shared
+   helper matches the 5 kWp reference case. Provisioned-host behavior and
+   rendered scenario PDF remain open.
 2. ~~Economy: MEF/Dip. Finanze IRPEF income brackets~~ ✅ done
    (`aecs4u_stats.mef`, see Phase 2/§3 P4). VIIRS Black Marble VNP46A4 now
    has a token-aware annual importer, quality-filtered Italy raster, parcel
@@ -350,7 +399,7 @@ get its cadastral data — no file loading step.
 3. Addresses: the panel keeps the existing capped SISTER strings and now has a
    separate lazy ANNCSU spatial-match card, dedicated parcel endpoint, API v2
    section and dossier section. The upstream regional indirizzario/stradario
-   importer and point-in-parcel query are merged to `aecs4u-stats` main (commit `1109d6c`) and installed here; no regional address store is provisioned here.
+   importer and point-in-parcel query are merged to `aecs4u-stats` main (commit `1109d6c`) and installed here; the Sicilia store was imported on 2026-10-16 and other regions are not provisioned.
    A no-match remains distinct from a parcel without an address, and municipal
    coordinate coverage and coordinate method are reported when available.
 4. Buildings: SISTER cadastral records are shown separately. The app-side OSM
@@ -424,8 +473,8 @@ get its cadastral data — no file loading step.
 |---|---|---|---|
 | Parcels/buildings WFS | Agenzia delle Entrate (INSPIRE) | already have | 0 |
 | OMI quotes + zones | Agenzia delle Entrate OMI | ZIP downloads (importer exists) | 2 |
-| DEM 10m Tinitaly | INGV | free registration | 2 |
-| CORINE 2018 / Urban Atlas | Copernicus | open | 2 |
+| DEM 10m Tinitaly | INGV | public WCS, no registration (`aecs4u_stats.terrain`); Sicilia imported 2026-10-16 (483 MB) with retries for the WCS's intermittent HTTP 500 | 2 |
+| CORINE 2018 / Urban Atlas | Copernicus | open; CORINE via the EEA ArcGIS service (`aecs4u_stats.corine`), Sicilia imported 2026-10-16 (20 MB); Urban Atlas not planned | 2 |
 | Census sections + demographics | ISTAT Basi Territoriali | open | 2 |
 | Seismic classification | Protezione Civile | open CSV | 3 |
 | Flood hazard PGRA | ISPRA | open (WFS/shp) | 3 |
@@ -435,7 +484,7 @@ get its cadastral data — no file loading step.
 | Municipality solar potential | PVGIS-SARAH3-derived Zornade aggregate via `aecs4u-stats` | The primary Energy section and dossier consume municipality-wide values. Zornade's public guide says aggregates are open-licensed but does not name a licence; no formal licence is asserted. Parcel/roof economics remain unavailable pending `aecs4u-stats#31` | 4 |
 | IRPEF income | MEF Dip. Finanze | integrated via **aecs4u-stats** (`aecs4u_stats.mef`) | done |
 | VIIRS night lights | NASA Black Marble VNP46A4 | LAADS DAAC; authorized Earthdata token required for scripted download | 4 |
-| Civic addresses | ANNCSU national/regional indirizzario and stradario | Monthly regional ZIP/CSV downloads; municipality-submitted point coordinates. Official metadata identifies ETRF2000/ETRS89 (EPSG:4258); public consultation terms state CC BY 4.0. Regional importer/query code is merged to `aecs4u-stats` main (commit `1109d6c`) and installed here; no address store is provisioned | 4 |
+| Civic addresses | ANNCSU national/regional indirizzario and stradario | Monthly regional ZIP/CSV downloads; municipality-submitted point coordinates. Official metadata identifies ETRF2000/ETRS89 (EPSG:4258); public consultation terms state CC BY 4.0. Regional importer/query code is merged to `aecs4u-stats` main (commit `1109d6c`) and installed here; the Sicilia store was imported on 2026-10-16, other regions are not provisioned | 4 |
 | POI | OSM via **aecs4u-stats** | integrated | done |
 | Municipalities + population | ISTAT via **aecs4u-stats** | integrated | done |
 | OMI quotes (comune/zone/typology + history) | Agenzia delle Entrate via **aecs4u-stats** | Integrated (`aecs4u_stats.omi`); the 100-province 2018/2 GeoJSON mirror is provisioned under `/data/istat/omi_zones` on the review host, with availability and a representative point match confirmed. Mount it on each serving host; boundaries are approximate where they have changed since 2018/2. | done on review host |
@@ -443,7 +492,11 @@ get its cadastral data — no file loading step.
 | Flood (PGRA) + landslide (PAI/IFFI) indicators | ISPRA IdroGEO via **aecs4u-stats** | integrated, live API (`aecs4u_stats.hazards.idrogeo`) | done |
 | Active fires | NASA FIRMS via **aecs4u-stats** | integrated, live API, needs `FIRMS_MAP_KEY` (`aecs4u_stats.hazards.firms`) | done |
 | Criticality bulletins | DPC open data (GitHub) via **aecs4u-stats** | integrated, live API (`aecs4u_stats.hazards.bulletins`) | done |
-| Cultural constraints | MiBAC Vincoli in Rete | open (scrape/WFS) | 4 |
+| Cultural constraints | MiBAC Vincoli in Rete | open (scrape/WFS); gated on `aecs4u-stats#48` | 4 |
+| Building footprints | OpenStreetMap via Geofabrik regional PBF (`aecs4u_stats.buildings`) | open (ODbL); Sicilia imported 2026-10-16 from the 206 MB `isole` extract (1.27 million footprints) | 4 |
+| Ground motion (EGMS) | Copernicus EGMS L3 summary via `aecs4u-stats` | in the shared PostgreSQL database (8.49 million cells); PostGIS pushdown applied 2026-10-16 | 3 |
+| Seismic hazard (MPS04) | INGV via `aecs4u-stats` | in the shared PostgreSQL database (17,602 points, 1.67 million curve rows) | 3 |
+| Coastal change | ISPRA `Dinamica_Litoranea_2006_2020` | local PostGIS snapshot (99,229 segments); refresh with `scripts/import_ispra_coastal_dynamics.py` | 3 |
 | Auctions | PVP portalevenditepubbliche.it | public listings | 5 |
 
 ## 6. Suggested sequencing summary
@@ -486,7 +539,7 @@ This appendix complements the whole-product baseline in §§1–6 above and
 primary parcel panel against the current code, records the October 2026
 implementation state, and gives a focused development plan. Data-source
 details and licences for Zornade's blocks are in
-[`zornade-cadastral-parcel-reference.md`](zornade-cadastral-parcel-reference.md).
+[Appendix B](#appendix-b-zornade-data-and-api-reference).
 
 ### A.0 Status
 
@@ -495,7 +548,7 @@ details and licences for Zornade's blocks are in
 | 0 Alignment and baseline | **Local forced-build/repeat sample verifies 20 PostgreSQL hits (median 15 ms, p95 55 ms); no duplicate-reference collision was sampled. Production role and same-source latency acceptance remain open** | [PARCEL_PANEL_BASELINE_2026-10.md](PARCEL_PANEL_BASELINE_2026-10.md), [baseline script](../scripts/parcel_panel_baseline.py), [read-model SQL migration](../scripts/sql/parcel-enrichment-read-model.sql), [controlled sample](baselines/parcel_panel_controlled_2026-10-10.json); [constraints contract](PROTECTION_CONSTRAINTS_CONTRACT.md) clarified |
 | 1 Primary panel and legacy parity | **Mostly done**. SISTER addresses are included in the read model and shown in the initial Value tab directly below cadastral identity; the separate ANNCSU lazy card is wired to the geocoded regional query. Both stores remain data-dependent, and live coverage is unverified. Header actions and the Italian catalog are in place. A 2026-10-15 local refresh-first sample measured cold-build p95 at 6.188 s, below the 8.140 s preliminary target, with eight available blocks; strict same-shape and production latency acceptance remain open. Independent native proofreading also remains | [panel core](../land_registry/static/parcel-panel-core.js), [section registry](../land_registry/static/parcel-panel.js), map templates, side-sheet styles, browser smoke suite, [latest baseline sample](baselines/parcel_panel_controlled_2026-10-15.json) |
 | 2 Derived metrics | **App implementation and fixture tests done**; Italian-copy review and provisioned MEF/OMI quote-data review remain. The OMI boundary mirror is provisioned on the review host (100 provinces, 2018/2 vintage); deployment and representative coverage checks remain | OMI quote/history and MEF adapters; fixed-fixture metric tests; OMI estimator and income sections; local boundary availability and Rome point lookup |
-| 3 Per-parcel geospatial | **Parcel hazard and EGMS grid-cell intersections implemented; MPS04 point estimate added; ISPRA coastal snapshot provisioned and queried**. The configured stats database contains 99,229 shoreline segments across 664 municipalities. Two real Civitavecchia parcels matched 35 and 67 segments; a dense-area query returned the explicit 100-candidate partial state. MPS04 and ISPRA hazard polygons are served from the shared PostgreSQL database (2026-10-16); EGMS is blocked only by the missing `extensions=postgis` pushdown. Protection constraints remain gated on `aecs4u-stats#48` | ISPRA and EGMS polygon-intersection routes and panel sections; `/mps04/pga` with nearest-grid provenance and unavailable state; coastal-store readiness, real-parcel lookups and candidate-cap behavior; protection-constraints contract |
+| 3 Per-parcel geospatial | **Parcel hazard and EGMS grid-cell intersections implemented; MPS04 point estimate added; ISPRA coastal snapshot provisioned and queried**. The configured stats database contains 99,229 shoreline segments across 664 municipalities. Two real Civitavecchia parcels matched 35 and 67 segments; a dense-area query returned the explicit 100-candidate partial state. MPS04 and ISPRA hazard polygons are served from the shared PostgreSQL database (2026-10-16); EGMS now works through PostgreSQL after the pushdown was applied on 2026-10-16. Protection constraints remain gated on `aecs4u-stats#48` | ISPRA and EGMS polygon-intersection routes and panel sections; `/mps04/pga` with nearest-grid provenance and unavailable state; coastal-store readiness, real-parcel lookups and candidate-cap behavior; protection-constraints contract |
 | 4 Energy | **Municipal PV aggregates implemented in the panel and dossier**; parcel-level estimates and economics still wait for a defensible footprint and upstream work in `aecs4u-stats#31` | Energy tab and Typst dossier read the municipality solar block with its spatial scope and available source version |
 | 5 Report/export | **Server-built Typst dossier implemented**; optional recalculated parcel PV scenario included when submitted; Zornade content parity, provider-term and provisioned-data reviews remain | `/parcel/dossier/{reference}` builds the A4 report from server data; GET retains the baseline report, and POST accepts validated PV assumptions only after a successful panel calculation. It includes a report ID/version footer and source register. The ReportLab `/parcel/report/{reference}` endpoints are deprecated; see `PARCEL_DOSSIER.md` and Appendix A.5.8 |
 | 6 Optional | Partially implemented | Public API v2 parcel lookup, Clerk-account API-key lifecycle, settings-page controls, PostgreSQL shared quotas and `/api/v2/catalog` are available; provider-native property schemas, feedback and declared-price overlay remain |
@@ -678,8 +731,7 @@ are high). The same intersection code serves both stores. EGMS point lookups
 take about 39 s because the `egms_source` foreign server lacks
 `extensions=postgis`, so the predicate is not pushed down. The EGMS PostgreSQL
 path (`aget_parcel_subsidence_intersections`) therefore stays off until the
-option is set and reports `egms_postgres_pushdown_not_configured`
-(`scripts/sql/map-egms-fdw-pushdown.sql`, not applied). A failed PostgreSQL
+option was set on 2026-10-16 (`scripts/sql/map-egms-fdw-pushdown.sql`, applied); until then it reported `egms_postgres_pushdown_not_configured`. A failed PostgreSQL
 lookup backs off for 60 s and uses the file store, so the first requests after
 a dev reload can show the cards as unavailable. Still absent from the installed
 stats package or its configured stores are DEM, CORINE, building footprints,
@@ -893,11 +945,11 @@ incomplete · ❌ missing · — comparison not assessed. "Primary" is `/map`;
 
 | # | Capability | Zornade | Backend | Primary | Legacy | Rating |
 |---|---|---|---|---|---|---|
-| P1 | Building count, footprint, coverage | OSM footprints | App adapter and parcel query are wired; upstream regional importer/query for [`aecs4u-stats#29`](https://github.com/aecs4u/aecs4u-stats/issues/29) is installed from `main` and no regional store is provisioned | Separate lazy OSM footprint card reports count, clipped area and mapped share when data are available; SISTER records remain a distinct source | Buildings card (SISTER) | 🟡 App path implemented; source provisioning and completeness remain |
+| P1 | Building count, footprint, coverage | OSM footprints | App adapter and parcel query are wired; upstream regional importer/query for [`aecs4u-stats#29`](https://github.com/aecs4u/aecs4u-stats/issues/29) is installed from `main`; only the Sicilia store is provisioned (2026-10-16) | Separate lazy OSM footprint card reports count, clipped area and mapped share when data are available; SISTER records remain a distinct source | Buildings card (SISTER) | 🟡 App path implemented; source provisioning and completeness remain |
 | P2 | Cadastral building records, categories | No | ✅ SISTER, OpenData | Buildings and a dedicated OpenData card render their respective read-model records; OpenData store readiness is unverified | ✅ | ✅ |
-| P3 | Land cover (CORINE) | Yes | App-side endpoint/query adapter and upstream regional store/importer are installed; no store is provisioned (`[aecs4u-stats#32](https://github.com/aecs4u/aecs4u-stats/issues/32)` remains open) | Lazy card shows class, area share, mapped coverage and resolution caveat when data are available | Included when source data match; otherwise explicitly unavailable | 🟡 Consumer path exists; upstream release and per-region import remain |
+| P3 | Land cover (CORINE) | Yes | App-side endpoint/query adapter and upstream regional store/importer are installed; only the Sicilia store is provisioned (`[aecs4u-stats#32](https://github.com/aecs4u/aecs4u-stats/issues/32)` remains open) | Lazy card shows class, area share, mapped coverage and resolution caveat when data are available | Included when source data match; otherwise explicitly unavailable | 🟡 Consumer path exists; upstream release and per-region import remain |
 | P4 | Urban land use | Only in functional urban areas | ❌ | ❌ | ❌ | ❌ Low value |
-| P5 | Addresses | Yes (ANNCSU) | SISTER `visura_properties.address` plus ANNCSU regional indirizzario point-in-parcel query; each source remains distinct | SISTER summary in initial Value tab; separate lazy ANNCSU card, API v1/v2 block and dossier section. No regional ANNCSU store provisioned on this host | ❌ | 🟡 Partial: spatial query is wired, live data coverage not verified |
+| P5 | Addresses | Yes (ANNCSU) | SISTER `visura_properties.address` plus ANNCSU regional indirizzario point-in-parcel query; each source remains distinct | SISTER summary in initial Value tab; separate lazy ANNCSU card, API v1/v2 block and dossier section. Sicilia ANNCSU store provisioned 2026-10-16 (no geocoded point for the sample parcel); other regions are not | ❌ | 🟡 Partial: spatial query is wired, live data coverage not verified |
 
 #### A.5.4. Energy tab
 
@@ -905,7 +957,7 @@ incomplete · ❌ missing · — comparison not assessed. "Primary" is `/map`;
 |---|---|---|---|---|---|---|
 | E1 | Municipal PV aggregates | No | ✅ `mp.pv_*` in context, map layer `solar-potential` | Energy tab shows municipality output/capacity/viability aggregates with available version and update metadata; clearly not parcel or rooftop estimates | No | ✅ |
 | E2 | Per-building yield and viability | Yes | ❌ no per-roof model (OSM roof attributes are mostly absent, per `pv_potential.py`) | ❌ | ❌ | ❌ |
-| E3 | Cash flow, payback, NPV, LCOE | Yes | ✅ PVGIS 5.3/SARAH3 centroid yield with user-supplied system and financial assumptions; shared stats calculator preferred, app compatibility calculation for older wheels | ✅ Editable Energy-tab scenario and annual cash-flow results | ❌ | 🟡 Roof area and installable capacity still need a defensible building-level source; upstream #31 remains open |
+| E3 | Cash flow, payback, NPV, LCOE | Yes | ✅ Yield derived from `aecs4u-stats.solar.solar_potential_comuni` municipal output/capacity; released shared stats calculator with a compatibility path for older wheels | ✅ Editable Energy-tab scenario and annual cash-flow results with municipal scope stated | ❌ | 🟡 Roof area and installable capacity still need a defensible building-level source; provisioned-host/PDF review remains open |
 | E4 | Custom system simulator | Yes | ❌ | ❌ | ❌ | ❌ Later |
 
 #### A.5.5. Territory tab
@@ -916,7 +968,7 @@ incomplete · ❌ missing · — comparison not assessed. "Primary" is `/map`;
 | T2 | Flood and landslide | Per parcel, worst class | ✅ ISPRA national PAI/PGRA polygons; parcel-polygon intersection | Per-parcel intersected area and highest class, plus separately labelled comune shares | ✅ comune level | ✅ |
 | T3 | Subsidence | Per parcel | ✅ `aecs4u_stats.egms`, bounded 100 m grid-cell bbox query | Intersecting cells summarized by area-weighted velocity and acceleration, movement-class area and coverage percentage; partial-query state shown | Layer only | ✅ |
 | T4 | Composite risk score | Ring in header | 🟡 Shared helper preferred; app compatibility copy applies the same versioned equal-weight municipal formula on older wheels. [`aecs4u-stats#34`](https://github.com/aecs4u/aecs4u-stats/issues/34) remains open | 0–100 meter in the six-cell header strip and numeric badge in the Risks section when valid; absent/invalid values leave the other risk components unchanged | Legacy meter when valid; no score row when absent; Typst dossier shows the score and scope note | 🟡 Verify complete and partial real-comune responses and align with the released shared helper |
-| T5 | Terrain (elevation, slope, aspect, roughness) | Yes | 🟡 Regional INGV TINITALY WCS importer and parcel query merged to `aecs4u-stats` main and installed (`[aecs4u-stats#28](https://github.com/aecs4u/aecs4u-stats/issues/28)` remains open); no region is provisioned | Parcel API, lazy card and Typst dossier are wired locally; values await the upstream package release and regional raster store | ❌ | 🟡 |
+| T5 | Terrain (elevation, slope, aspect, roughness) | Yes | 🟡 Regional INGV TINITALY WCS importer and parcel query merged to `aecs4u-stats` main and installed (`[aecs4u-stats#28](https://github.com/aecs4u/aecs4u-stats/issues/28)` remains open); only Sicilia is provisioned | Parcel API, lazy card and Typst dossier are wired locally; values await the upstream package release and regional raster store | ❌ | 🟡 |
 | T6 | Coastal erosion | Within 1 km of coast | Local PostGIS snapshot of ISPRA `Dinamica_Litoranea_2006_2020`; refresh via `scripts/import_ispra_coastal_dynamics.py` after applying its SQL schema | ✅ Lazy panel section; historical class, distance, 5 m threshold and 5 m positional accuracy | ❌ | 🟡 Snapshot provisioned in the configured stats database (99,229 features); real-parcel matches and 100-candidate partial state verified. Target-host coverage remains to review. An unmatched parcel has unknown coverage, not a no-erosion result |
 | T7 | Heritage and landscape constraints | Heritage only | 🟡 App query contract and readiness checks are wired; source tables and regional coverage depend on [`aecs4u-stats#48`](https://github.com/aecs4u/aecs4u-stats/issues/48) | Lazy card lists records and overlap, labels catalogue-only records as non-binding, and preserves unknown coverage; live rows await source data | ❌ | 🟡 Upstream importer/schema and representative coverage remain |
 | T8 | Live fire and criticality bulletin | Map overlay | ✅ | Bulletin and fires sections plus map layers | ✅ cards | ✅ |
@@ -966,7 +1018,7 @@ field-by-field specification is available in the reviewed material.
 | Cadastral identity | The October workspace guide names cadastral identity and area, but does not enumerate identifiers or their format. Foglio, particella, section, source identifier and null/missing behavior have not been checked in an exported sample. | Lists the national cadastral reference, foglio, particella, urban section, cadastral municipality code, area, perimeter, source release and INSPIRE local ID when available. | The stated subject overlaps, but field-level parity is unverified. Compare the same parcel's identifiers, null/missing fields and source release against an actual Zornade PDF before calling the cadastral data equivalent. |
 | Parcel geometry and map | The guide describes the parcel-sheet PDF separately from a map image and official cadastral map extract; it does not establish whether the PDF itself contains a parcel outline or locator map. | Includes a locator diagram showing the parcel outline and neighbouring parcel outlines when geometry is available. The caption describes it as indicative, not a survey. | land-registry's embedded geometry is documented. Zornade's PDF map content and the geometry source/scale need inspection; the separately exported map image must not be treated as part of the PDF without evidence. |
 | Report content | The January guide names cadastral, risk, OMI, solar and demographic information. The October workspace guide says the export mirrors the interface and specifically lists cadastral identity, area, OMI semester comparison, coefficient-based estimate, risks, territorial data, addresses and constraints. Exact fields and whether every interactive section appears are not shown. | Server-built sections for parcel identity/location and locator map; SISTER building records; risks (including parcel hazards, coastal change and protection records when their sources are available); census/population; municipal profile and population history; province-level ISTAT quality-of-life indicators; income; night lights; OMI quotes/history; and municipality-wide solar aggregates. Protection no-match states remain undetermined without full source coverage. Unavailable values are labelled rather than filled with zero. Solar and quality-of-life scope are stated and are not presented as parcel-level estimates. | The published scope overlaps substantially. The land-registry dossier currently documents additional municipality/province context and a separate source register; only matching exported PDFs can establish field-level parity and reveal differences in unavailable data. |
-| PV/energy analysis | The January guide names solar in the parcel PDF. The [October workspace guide](https://zornade.com/blog/schede-immobiliari-salvate-workspace-2026/) describes per-building capacity, annual production, system cost, payback, hourly self-consumption and confidence for the saved-parcel profile, and says the PDF mirrors the interface; it does not explicitly enumerate these fields in the PDF. | The dossier always shows municipality-wide solar aggregates. After a successful Energy-tab calculation, the map download can POST the validated capacity, orientation and financial assumptions; the server recomputes PVGIS yield and economics and adds headline results, assumptions, annual cash flows and a chart. It labels the yield as a centroid location estimate, not a roof assessment. | land-registry now carries a user-input parcel scenario without deriving capacity from parcel area. Zornade's PDF fields and whether its per-building scenario appears still require an exported sample; its described hourly self-consumption is not matched by the annual-share model here. |
+| PV/energy analysis | The January guide names solar in the parcel PDF. The [October workspace guide](https://zornade.com/blog/schede-immobiliari-salvate-workspace-2026/) describes per-building capacity, annual production, system cost, payback, hourly self-consumption and confidence for the saved-parcel profile, and says the PDF mirrors the interface; it does not explicitly enumerate these fields in the PDF. | The dossier always shows municipality-wide solar aggregates. After a successful Energy-tab calculation, the map download can POST validated capacity and financial assumptions; the server recomputes yield from the selected municipality's Stats solar view, recalculates economics and adds headline results, assumptions, annual cash flows and a chart. It labels the yield as municipal context, not a parcel or roof estimate. | land-registry carries a user-input scenario without deriving capacity from parcel area. Zornade's PDF fields and whether its per-building scenario appears still require an exported sample; its described hourly self-consumption is not matched by the annual-share model here. |
 | Layout | The guide distinguishes the parcel-sheet PDF from a separate map image and official cadastral extract; page size, pagination, maps inside the report and section order are not documented. | A4, with cover and locator map, key figures, contents, summary, thematic sections, source register and optional saved-parcel appendix. A rendered sample is about 7–8 pages; page count varies with available data. | land-registry's report structure is documented and a sample is rendered; a visual, page-by-page comparison with Zornade remains open. |
 | Sources and reproducibility | The October workspace guide says the PDF carries its generation date and sources, but does not specify data vintages, source identifiers, licence notes or whether the output preserves an immutable snapshot. | Report ID and available dataset/model versions; source register includes provider, attribution and reuse/licence status. Generated from server-side inputs at request time; no immutable historical snapshot is claimed. | Both descriptions mention sources and a date. land-registry documents version identifiers and licence metadata more explicitly; neither report is claimed to be a reproducible historical snapshot. |
 | Locale and personal data | The cited guides do not specify PDF language or whether saved notes, photos and documents appear in the PDF. The workspace guide says these may exist on a saved parcel, so inclusion needs checking. | Italian and English labels follow the request locale. A signed-in user's saved-parcel status, priority, notes, tags and favourite appear in an optional personal appendix; anonymous reports omit it. | land-registry documents locale and personal appendix behavior. Zornade's user-specific PDF content remains unverified and should be checked before comparing privacy or sharing behavior. |
@@ -1055,7 +1107,7 @@ changing S9 from 🟡.
   native-grid match and 10%-in-50-years probability. Keep the eager SISTER
   address card distinct from the lazy ANNCSU point-in-parcel card. ANNCSU's
   regional importer/query now preserves source vintage, coordinate method and
-  per-comune coordinate coverage; those upstream changes are installed and no regional store is provisioned on this host.
+  per-comune coordinate coverage; those upstream changes are installed; this host has the Sicilia store and no other region.
 - New read-model blocks follow one recipe: upstream `aecs4u_stats` subpackage,
   query function, bounded `stats_service` adapter, and an envelope entry in
   `_build_parcel_enrichment`, followed by a panel registry entry. Geometry-heavy
@@ -1214,8 +1266,7 @@ sheet and parcel; coverage depends on a cached SISTER property row. Municipality
 census, income, risk and address coverage still need representative
 production-data review.
 
-ANNCSU's regional importer/query and the app's parcel adapter are merged and installed, but this host has no regional indirizzario store. The lazy ANNCSU card, API v1/v2 section and
-Typst dossier section therefore return an explicit unavailable state here.
+ANNCSU's regional importer/query and the app's parcel adapter are merged and installed, and this host has the Sicilia indirizzario store (imported 2026-10-16). The lazy ANNCSU card, API v1/v2 section and Typst dossier section return an explicit unavailable state for the other regions.
 The separate SISTER `visura_properties.address` card remains cache-dependent
 and non-geocoded. Provision representative regional data and verify spatial
 matches and coordinate-coverage reporting before closing `aecs4u-stats#33`.
@@ -1275,7 +1326,7 @@ acceptance traceability, then lists remaining work in proposed priority order.
 Source-dependent results stay gated until their upstream query is released and
 representative coverage is available.
 
-**Upstream gate check (2026-10-15):** authenticated GitHub CLI rechecked [`#28 DEM`](https://github.com/aecs4u/aecs4u-stats/issues/28), [`#29 building footprints`](https://github.com/aecs4u/aecs4u-stats/issues/29), [`#31 solar economics`](https://github.com/aecs4u/aecs4u-stats/issues/31), [`#32 CORINE`](https://github.com/aecs4u/aecs4u-stats/issues/32), [`#33 civic addresses`](https://github.com/aecs4u/aecs4u-stats/issues/33), [`#34 composite risk`](https://github.com/aecs4u/aecs4u-stats/issues/34), and [`#48 protection constraints`](https://github.com/aecs4u/aecs4u-stats/issues/48); all seven remain open. Issues #28–#34 were last updated 2026-07-13; #48 was last updated 2026-09-27. The local `aecs4u-stats` checkout contains the PVGIS economics calculation, CORINE import/query, TINITALY importer/query, composite-risk helper, building-footprint importer/query and ANNCSU regional address importer/query; these changes had not yet been committed when this check was made (see the 2026-10-16 recheck below). The app consumers for terrain, CORINE, composite risk, building footprints and civic addresses are wired, but no regional stores are provisioned. The ANNCSU query contract is present locally but has not been validated against provisioned civic-address data. The app-side protection contract, endpoint, panel and schema-gated layers are implemented. The latest #48 comment describes an uncommitted SITAP acquisition path covering a selected decree-polygon layer, not a complete Articles 136/157/142 inventory; Vincoli in Rete is discovery-only pending a stable bulk interface and confirmed reuse terms, and Catalogo Generale is not treated as binding data. The upstream issue still lacks the published schema, import, spatial queries and complete source coverage. Do not treat the acquisition work as an available upstream contract or infer that an uncovered parcel has no constraint.
+**Upstream gate check (2026-10-15):** authenticated GitHub CLI rechecked [`#28 DEM`](https://github.com/aecs4u/aecs4u-stats/issues/28), [`#29 building footprints`](https://github.com/aecs4u/aecs4u-stats/issues/29), [`#31 solar economics`](https://github.com/aecs4u/aecs4u-stats/issues/31), [`#32 CORINE`](https://github.com/aecs4u/aecs4u-stats/issues/32), [`#33 civic addresses`](https://github.com/aecs4u/aecs4u-stats/issues/33), [`#34 composite risk`](https://github.com/aecs4u/aecs4u-stats/issues/34), and [`#48 protection constraints`](https://github.com/aecs4u/aecs4u-stats/issues/48); all seven remain open. Issues #28–#34 were last updated 2026-07-13; #48 was last updated 2026-09-27. The local `aecs4u-stats` checkout contains the PVGIS economics calculation, CORINE import/query, TINITALY importer/query, composite-risk helper, building-footprint importer/query and ANNCSU regional address importer/query; these changes had not yet been committed when this check was made (see the 2026-10-16 recheck below). The app consumers for terrain, CORINE, composite risk, building footprints and civic addresses are wired, but no regional stores were provisioned at that date (Sicilia followed on 2026-10-16). The ANNCSU query contract is present locally but has not been validated against provisioned civic-address data. The app-side protection contract, endpoint, panel and schema-gated layers are implemented. The latest #48 comment describes an uncommitted SITAP acquisition path covering a selected decree-polygon layer, not a complete Articles 136/157/142 inventory; Vincoli in Rete is discovery-only pending a stable bulk interface and confirmed reuse terms, and Catalogo Generale is not treated as binding data. The upstream issue still lacks the published schema, import, spatial queries and complete source coverage. Do not treat the acquisition work as an available upstream contract or infer that an uncovered parcel has no constraint.
 
 **Upstream recheck (2026-10-16):** the importers described above are committed
 in `aecs4u-stats` (`1109d6c`, "Add spatial data enrichment importers", included
@@ -1284,8 +1335,7 @@ in `main` at `a1ef4cb`) and installed in this environment. GitHub issues #28,
 the merge. With the package present, terrain, CORINE, footprints and ANNCSU
 addresses now return `not_built` (no regional store) instead of
 `not_supported`, and the composite score is computed by the shared helper.
-Provisioning regional stores downloads large public datasets (TINITALY WCS,
-CORINE, Geofabrik PBF, ANNCSU extracts) and has not been done.
+Sicilia was provisioned the same day (see the status review at the top); the other 19 regions have not been imported.
 
 **Coastal-erosion source selection (2026-10-10):** ISPRA's national `Linea di
 Costa 2020 v2.0` dataset exposes the `Dinamica_Litoranea_2006_2020` line layer.
@@ -1328,7 +1378,7 @@ store per ISTAT region; polygon queries choose the majority class by
 intersection area and report mapped coverage. Product release
 `CLC2018_V2020_20u1` has a 25 ha minimum mapping unit and 100 m minimum width,
 so parcel results are coarse context. The app-side endpoint, panel card,
-source catalog and dossier section are wired, and the upstream package is merged to `aecs4u-stats` main and installed. No regional store is provisioned. Next, import regional data for the changes tracked by
+source catalog and dossier section are wired, and the upstream package is merged to `aecs4u-stats` main and installed. Only the Sicilia store is provisioned. Next, import the other regions for the changes tracked by
 [`aecs4u-stats#32`](https://github.com/aecs4u/aecs4u-stats/issues/32), provision
 the regions served, and verify representative parcel coverage before marking
 the feature complete.
@@ -1337,10 +1387,10 @@ the feature complete.
 |---|---|---|---|
 | 1 | Protection constraints (landscape, heritage) | App route, lazy panel and schema-gated map layers wired to proposed contract; source tables depend on `aecs4u-stats#48` | Publish upstream schema/import/query, provision source and coverage tables, then verify required-ID lookups, overlap ratios, catalog gating and unknown/covered states on representative parcels |
 | 2 | Per-parcel flood and landslide | ISPRA PAI/PGRA polygons available through `hazards.ispra_mosaics` | App-side polygon intersections now report affected area and highest class; verify dataset coverage and candidate-cap behavior on provisioned data |
-| 3 | Addresses | SISTER `visura_properties.address` links to cadastral municipality/sheet/parcel; `aecs4u-stats` main now has the regional indirizzario/stradario importer and point-in-polygon query (installed here), without a provisioned regional store | App endpoint, lazy panel card, API v2 section and dossier section are wired. Provision a regional store and verify known parcel matches, source vintage, coordinate method and municipal coordinate coverage before treating the result as field-verified; a missing point match remains distinct from missing address data |
+| 3 | Addresses | SISTER `visura_properties.address` links to cadastral municipality/sheet/parcel; `aecs4u-stats` main now has the regional indirizzario/stradario importer and point-in-polygon query (installed here); the Sicilia store is provisioned (2026-10-16) | App endpoint, lazy panel card, API v2 section and dossier section are wired. Provision a regional store and verify known parcel matches, source vintage, coordinate method and municipal coordinate coverage before treating the result as field-verified; a missing point match remains distinct from missing address data |
 | 4 | Subsidence per parcel | `egms` provides a classified 100 m grid-cell bbox query; layer already served | Implemented: exact parcel intersections, area-weighted velocity and acceleration, movement-class areas, covered-area percentage and a 5,000-candidate partial state |
-| 5 | Terrain | Upstream importer/query merged to `aecs4u-stats` main; `aecs4u-stats#28` remains open and no regional store is provisioned | Import served regions, then verify parcel and point values, missing-data behavior and provenance; API, panel and dossier integration are wired locally |
-| 6 | Land cover | App endpoint/panel/dossier are wired locally; upstream `aecs4u-stats#32` store/import query is merged to `aecs4u-stats` main; no regional data is provisioned | Import regional CLC stores, then verify class distribution and coverage on representative parcels |
+| 5 | Terrain | Upstream importer/query merged to `aecs4u-stats` main; `aecs4u-stats#28` remains open and only the Sicilia store is provisioned | Import the other served regions, then verify parcel and point values, missing-data behavior and provenance; API, panel and dossier integration are wired locally |
+| 6 | Land cover | App endpoint/panel/dossier are wired locally; upstream `aecs4u-stats#32` store/import query is merged to `aecs4u-stats` main; only Sicilia is provisioned | Import the other regional CLC stores, then verify class distribution and coverage on representative parcels |
 | 7 | Building footprints (OSM) | No parcel query; `aecs4u-stats#29` open | Coverage and count; keep SISTER as the cadastral source and label the two clearly |
 | 8 | Composite risk score | Shared `municipal_hazard_index_v1` helper is preferred; an aligned app compatibility implementation serves older wheels. `aecs4u-stats#34` is still open; the shared helper is installed and matched the compatibility copy on seven representative cases (2026-10-16) | Check complete and partial real-comune responses on the serving host, then retain the shared score/version/components through each consumer |
 | 9 | Night lights | NASA Black Marble VNP46A4.002 | `scripts/import_viirs_nightlights.py` downloads the four Italy tiles with an authorized LAADS token or builds from local HDF5; read-model, panel, API v2 section and source catalog are implemented. Provision the raster on serving hosts and verify representative urban/rural coverage. |
@@ -1415,29 +1465,27 @@ building, capacity, annual-output and viability figures with the source's data
 version and update date when exposed. The section states that these aggregates
 are not estimates for the selected parcel, building, or roof.
 
-**Editable cash-flow scenario implemented:** the Energy tab exposes capacity,
-tilt, aspect, system losses and financial assumptions, then posts the scenario
-to `/api/v1/enrichment/solar-economics/{reference}`. PVGIS 5.3/SARAH3 supplies
-the long-term yield at the parcel centroid for a 1 kWp reference system; the
-user's capacity scales it. The panel shows NPV, LCOE, simple and discounted
-payback, first-year production and annual cash flows. Defaults are illustrative.
-The shared stats calculator is used when present (it is installed here); an app compatibility calculation covers older wheels. Upstream #31 remains open. JRC describes PVGIS 6 as beta and under development, so this
-implementation retains the documented PVGIS 5.3 API; revisit that choice when
-PVGIS 6 stabilizes.
+**Editable cash-flow scenario implemented:** the Energy tab exposes capacity
+and financial assumptions, then posts the scenario to
+`/api/v1/enrichment/solar-economics/{reference}`. The app resolves the
+parcel's cadastral municipality and reads PVGIS-derived annual output and
+estimated capacity from the `aecs4u-stats`
+`solar.solar_potential_comuni` foreign table. Their ratio supplies municipal
+yield, scaled by user capacity. The panel labels this as municipal context and
+shows NPV, LCOE, simple and discounted payback, first-year production and
+annual cash flows. Defaults are illustrative. The released shared economics
+calculator is used, with a compatibility path for older stats wheels.
 
 **Remaining:**
 
-- The app compatibility calculation now matches the 5 kWp reference case in
-  the sibling `aecs4u-stats` source checkout exactly, including all annual cash
-  flows. The shared helper is now installed (`aecs4u-stats` main, `1109d6c`); on 2026-10-16 the shared and compatibility results were identical for this case (nine numeric fields, 26 annual cash-flow rows). The live PVGIS response parser was also checked on 2026-10-16 (Rome
-  sample, 1,425.2 kWh/kWp/year and twelve monthly rows). Shared-venv tests now
-  verify distinct timeout/unavailable responses and compile a scenario dossier
-  containing the cash-flow chart, table and provenance. Provisioned-host
+- The released shared helper matches the 5 kWp reference case. Focused tests
+  verify use of the municipal Stats view, unavailable data handling and
+  dossier output with cash-flow chart, table and provenance. Provisioned-host
   behavior and PDF rendering remain open (MAP-FR-055, issue 06).
 - Per-roof orientation and tilt are not available from OSM (verified by the
-  `pv_potential.py` design note). The current scenario takes capacity, tilt and
-  aspect from the user; do not infer them from parcel geometry or display
-  per-building viability without a documented roof model.
+  `pv_potential.py` design note). The municipal scenario does not model either
+  parameter; do not infer them from parcel geometry or display per-building
+  viability without a documented roof model.
 - The scenario uses a user-supplied annual self-consumption share. Hourly
   household self-consumption modelling remains out of scope until an hourly
   demand model exists.
@@ -2019,12 +2067,1439 @@ Hostnames and paths only; no tokens or payloads recorded.
 | Indirizzi | `address`, `addresses`, `anncsu_addresses` | SISTER `aecs4u-stats.sister.v_sister_property_by_cadastral_parcel.address`; ANNCSU regional indirizzario for municipality-geocoded points | SISTER values remain a capped cadastral-key match; ANNCSU uses point-in-parcel matching with method, vintage and coordinate-coverage metadata. App integration is present; upstream release and regional store provisioning remain |
 | Valutazione, OMI | `valuation` | `aecs4u_stats.omi` | Primary selector, estimate, yield and percentile ✅ |
 | Storico OMI | `valuation_history` | `/omi/history` | Primary chart and versioned trend rows ✅ |
-| Edifici | `buildings`, `building_footprints` | SISTER cadastral records and OSM regional building polygons | SISTER property records stay distinct from the OSM footprint count, clipped area and mapped parcel share; the app consumer is wired, while the upstream `aecs4u-stats#29` release and regional store remain pending |
-| Suolo | `land_cover`, `land_use` | CORINE 2018 (`aecs4u_stats.corine`, installed) | The app exposes the CORINE class distribution and coverage through its API, panel and dossier; regional import is unavailable until upstream release and provisioning. `land_use` remains unimplemented |
+| Edifici | `buildings`, `building_footprints` | SISTER cadastral records and OSM regional building polygons | SISTER property records stay distinct from the OSM footprint count, clipped area and mapped parcel share; the app consumer is wired, while the Sicilia regional store is provisioned (2026-10-16) and upstream `aecs4u-stats#29` is still open |
+| Suolo | `land_cover`, `land_use` | CORINE 2018 (`aecs4u_stats.corine`, installed) | The app exposes the CORINE class distribution and coverage through its API, panel and dossier; only the Sicilia regional store is imported (2026-10-16). `land_use` remains unimplemented |
 | Fotovoltaico | `solar` | `solar.solar_potential_comuni`, `serving.municipality_profile` | Municipality-wide aggregates in the Energy tab; no parcel/roof estimate ✅ |
-| Terreno | `terrain` | INGV TINITALY 1.1 (`aecs4u_stats.terrain`, installed) | Parcel API, lazy panel card and dossier are wired; the importer/query is installed and no regional raster store is provisioned |
+| Terreno | `terrain` | INGV TINITALY 1.1 (`aecs4u_stats.terrain`, installed) | Parcel API, lazy panel card and dossier are wired; the importer/query is installed and only the Sicilia raster store is provisioned |
 | Rischi | `risk`, `subsidence`, `coastal_erosion`, `protection_constraints` | ISPRA polygon mosaics, ISPRA coastal dynamics, IdroGEO, EGMS, and schema-gated protection sources | Parcel hazard and EGMS cell intersections; local coastal snapshot is provisioned in the configured stats DB (99,229 features), with real-parcel matches and explicit candidate-cap partial coverage; protection API, panel, map layers, dossier and v2 risk component are wired, but upstream source tables and full coverage remain pending; target-host review remains |
 | Vincoli | `cultural_heritage` | `spatial.protection_area` (upstream pending) | Required-ID API, lazy panel section and schema-gated map layer are wired; records and complete coverage await upstream stores |
 | Economia | `economics`, `nightlights` | MEF, NASA Black Marble VIIRS VNP46A4 | Income, grouped Gini and price-to-income ✅; night-light importer, parcel query, panel and API catalog implemented; local annual raster provisioning remains |
 | Demografia, popolazione | `demographics`, `population` | `census`, `sezioni_urbane`, `raster` | Census indicators plus section-scoped sex split and age pyramid ✅ |
 | POI | `poi` | `osm` | Empty block, endpoint ✅ |
+
+---
+
+## Appendix B: Zornade data and API reference
+
+*Research note prepared from the authenticated Zornade web app on 2026-09-03,
+merged here from `zornade-cadastral-parcel-reference.md` on 2026-10-17. No API
+keys, session tokens or authentication URLs are recorded. Each block ends with
+its land-registry status as of 2026-10-17; ratings follow §2 (✅ equivalent,
+🟡 wired but partial or not provisioned everywhere, ❌ not implemented).*
+
+### B.1 Executive summary
+
+
+Zornade exposes a cadastral-parcel detail endpoint that combines the parcel geometry and identity with 20 optional enrichment blocks. The catalog describes roughly 85 million parcels, 7,899 municipalities, and 15+ institutional or public-data sources.
+
+The central endpoint is:
+
+```http
+GET https://api.zornade.com/api/v2/parcels/{id}
+```
+
+`id` may be either the numeric Zornade `fid` or an Agenzia delle Entrate `gml_id`. All API v2 endpoints are GET-only. Parcel requests require an API token in the `x-api-key` header and the `parcels:read` scope.
+
+Use `include=` to request a smaller response, for example:
+
+```http
+GET /api/v2/parcels/12345?include=basic,risk,valuation
+```
+
+The documentation also presents an all-data form with no `include` parameter. For production clients, selective includes are preferable because geometry, historical valuation, POIs, and per-building solar details can make the response large.
+
+### B.2 Include-block index
+
+
+| Include | Main subject | Availability / important limitation | land-registry (2026-10-17) |
+|---|---|---|---|
+| `basic` | Parcel identity, geometry, area, municipality | Core cadastral layer; ~85M parcels | ✅ |
+| `cadastral` | Foglio, urban section, Belfiore code, CAP | CAP is sub-municipal and spatially joined | ✅ |
+| `address` / `addresses` | Civic addresses | Up to 20 intersecting addresses; uneven coverage | 🟡 |
+| `risk` | Seismic, flood, and landslide fields | Risk subfields are sourced from different layers | ✅ |
+| `subsidence` | InSAR ground motion | Spatially uneven PSI coverage | ✅ |
+| `terrain` | Elevation, slope, aspect, ruggedness | 10 m DEM-derived statistics; national coverage | 🟡 |
+| `population` | Dasymetric parcel population estimate | Modelled estimate, not a census count | ✅ |
+| `buildings` | Building count, footprints, residential split | OSM/GBA dependent; footprint may exceed parcel area | 🟡 |
+| `economics` | MEF income, brackets, Gini, affordability | CAP-level aggregation; privacy threshold | ✅ |
+| `demographics` | ISTAT census-section population and composition | Section-level values, not parcel-level observations | ✅ |
+| `land_cover` | CORINE Land Cover level 3 | One centroid-matched class | 🟡 |
+| `land_use` | Urban Atlas urban land use | Only Functional Urban Areas; otherwise `null` | ❌ |
+| `valuation` | Current OMI prices and rents | Zone-level ranges; multiple property types/conditions | ✅ |
+| `valuation_history` | 22-semester OMI history | Rural zones may have code only, no prices | ✅ |
+| `coastal_erosion` | Shoreline change and coastal context | Parcels within 1 km of coast; up to five records | ✅ |
+| `cultural_heritage` | MiC/SIGECweb protected assets | Array of intersecting assets | 🟡 |
+| `solar` | Per-building PV techno-economic model | Buildings ≥25 m² in GBA; modelled output | 🟡 |
+| `poi` | Foursquare places on the parcel | Active places only; geometry intersection | ✅ |
+| `nightlights` | VIIRS/Black Marble radiance | Dasymetric proxy; 2023 composite in catalog | 🟡 |
+
+### B.3 Block reference
+
+Fields, matching rules and caveats per include block, as observed in the Zornade catalog.
+
+#### Core parcel identity: `basic`
+
+Endpoint: `/parcels/{id}?include=basic`
+
+Source and processing:
+
+- Primary source: [Agenzia delle Entrate cadastral cartography WFS](https://www.agenziaentrate.gov.it/portale/web/guest/schede/fabbricatiterreni/consultazione-cartografia-catastale).
+- Coverage: about 85 million parcels and 7,899 municipalities. Bolzano and Trento are supplemented from provincial portals because they are not covered by the AdE WFS.
+- Freshness: WFS snapshot described as continuously updated; the `parcels` table is regenerated on request.
+- Ingestion paginates by municipality with a 16 km buffer, validates geometries with `ST_MakeValid`, and checks expected counts using `wfs_parcel_count`.
+- License stated by the catalog: free reuse subject to AdE conditions.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `fid` | integer | Zornade's internal numeric identifier; stable for a snapshot |
+| `gml_id` | string | AdE GML identifier, in the form `CadastralParcel.IT.AGE.PLA.<comune><foglio><particella>.<lettera>` |
+| `label` | string | Parcel number/letter shown on the cadastral map |
+| `cadastral_reference` | string | Complete cadastral reference (foglio/parcel/sub), when supplied by the WFS |
+| `area_m2` | number | Area in square metres; calculated after transforming to EPSG:3857 and applying `ST_Area` |
+| `centroid` | object `{lat, lng}` | Geometric centroid in WGS84 / EPSG:4326 |
+| `geometry` | GeoJSON Polygon | 2D WGS84 parcel geometry; excluded by default and included through `include=` |
+| `municipality` | object | Contains `code` (Belfiore cadastral code), `name`, `province`, and `region` |
+
+**land-registry status (✅):** Parcel identity, area and geometry come from the canonical map source with stable feature IDs (`/api/v2/parcels/{fid}`, `basic` and `geometry`).
+
+#### Cadastral sheet, section, and CAP: `cadastral`
+
+Endpoint: `/parcels/{id}?include=cadastral`
+
+- Source: AdE for cadastral sheets plus [ISTAT sub-municipal CAP data](https://www.istat.it/it/archivio/156224).
+- Coverage: about 302,000 cadastral sheets and 9,200 Italian sub-municipal CAPs.
+- Freshness: sheet geometries are refreshed with each WFS rebuild; CAP data is listed as ISTAT 2024.
+- Construction: the parcel centroid is tested with `ST_Contains` against `catasto_fogli` and `cap_subcomunali`; the municipality code is read from `parcels.administrativeunit`. The precomputed match is retained in `parcel_catasto`.
+- License stated: CC BY 3.0 IT for ISTAT data.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `foglio` | string | Cadastral sheet number, combined with `sezione_urbana` where present |
+| `sezione_urbana` | string | Administrative urban section, where applicable |
+| `comune_code` | string | Belfiore cadastral municipality code, e.g. `H501` for Rome |
+| `postal_code` | string | Sub-municipal CAP derived from a centroid spatial join |
+
+**land-registry status (✅):** Sheet, urban section, municipality code and postcode are served in the Cadastre card; the urban-section layer is on the map.
+
+#### Addresses: `address` and `addresses`
+
+Endpoint: `/parcels/{id}?include=address` (the catalog also names `addresses` for the complete list)
+
+- Sources: [OpenAddresses](https://openaddresses.io/) and municipal feeds, including major-city feeds.
+- Coverage: about 18.7 million Italian civic addresses, with uneven regional coverage.
+- Freshness: OpenAddresses snapshot 2024; Rome, Milan, Turin, and Naples are supplemented by municipal feeds.
+- `parcel_address` stores a deterministic primary address and a total count. The complete list is resolved at runtime with `ST_Intersects` on `addresses.geom`.
+- Maximum: 20 addresses per call. The catalog warns that some municipal feeds contain exact duplicate civic records.
+- License stated: mixed CC0 / ODbL depending on source.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `address` | object or `null` | Deterministic primary address: `street`, `number`, `exponent`, `locality` |
+| `addresses[]` | array | Up to 20 intersecting addresses; each object has `street`, `number`, `exponent`, and `locality` |
+
+**land-registry status (🟡):** Up to ten SISTER address strings (cache-dependent) plus the ANNCSU point-in-parcel card; the ANNCSU store is imported for Sicilia only. No OSM address source.
+
+#### Risk data: `risk`
+
+The `risk` block groups at least the following three distinct enrichment families.
+
+##### Seismic fields
+
+Endpoint notation in the catalog: `/parcels/{id}?include=risk (seismic_zone, pga)`
+
+- Source: [INGV](http://esse1-gis.mi.ingv.it/).
+- Coverage: 100% of Italy through OPCM 3274/2003 zoning and regional updates.
+- Freshness: MPS04 (INGV 2004) remains the catalog's normative reference; MPS19 is described as being progressively adopted.
+- Construction: centroid-to-polygon `ST_Intersects` against `ingv_zonesismiche`; in transition areas the most recent ordinance polygon wins. Precomputed in `parcel_risk`.
+- License stated: CC BY 4.0.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `seismic_zone` | integer 1–4 | Zone 1 is very high hazard; zone 4 is very low hazard |
+| `pga` | number in g | Peak Ground Acceleration with 10% probability of exceedance in 50 years |
+
+##### Flood fields
+
+- Source: [ISPRA PGRA hydrogeological risk portal](https://idrogeo.isprambiente.it/).
+- Coverage: all seven Italian river-basin districts, PGRA 2021–2027 cycle.
+- Freshness: 2021 plan, with partial 2024 updates.
+- Construction: the centroid level and the full parcel geometry are both considered. The worst intersecting class is selected using `HPH > MPH > LPH`.
+- License stated: CC BY 4.0.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `flood_level` | string or `null` | `HPH` high, `MPH` medium, `LPH` low, or `null`; returned inside `risk` |
+
+##### Landslide fields
+
+- Sources: [ISPRA IFFI](https://www.isprambiente.gov.it/it/progetti/cartella-progetti-in-corso/suolo-e-territorio-1/iffi-inventario-dei-fenomeni-franosi-in-italia) plus the seven district basin authorities.
+- Coverage: 100% Italy; catalog cites about 620,000 mapped landslides.
+- Freshness: district PAI updates and IFFI release 2024.
+- Construction: PAI layers are merged into `ispra_frane`; a lateral join over parcel geometry ranks intersecting levels with `P4 > P3 > P2 > P1 > AA`.
+- License stated: CC BY 4.0.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `landslide_level` | string or `null` | Worst level: `P1`, `P2`, `P3`, `P4`, `AA` (attention area), or `null`; returned inside `risk` |
+
+**land-registry status (✅):** DPC seismic zone and IdroGEO shares (municipal), MPS04 PGA at the parcel centroid, ISPRA PAI/PGRA parcel-polygon intersections and a municipal composite score. The shared helper computes the score; it describes the municipality, not the parcel.
+
+#### Ground motion / subsidence: `subsidence`
+
+Endpoint: `/parcels/{id}?include=subsidence`
+
+- Source: [Copernicus European Ground Motion Service](https://land.copernicus.eu/pan-european/european-ground-motion-service).
+- Coverage: strongest in the Po Valley, Adriatic coast, Rome, Naples, and volcanic areas; uneven over the Apennines and Alps.
+- Freshness: PSI dataset for 2014–2023, processed from Sentinel-1.
+- Construction: PSI points are matched to the parcel centroid. The current catalog explicitly flags `LIMIT 1` as non-deterministic if multiple points qualify; a nearest-point `ORDER BY centroid <-> geom LIMIT 1` with `ST_DWithin` is planned.
+- License stated: Copernicus Data and Information Policy, free reuse.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `velocity_mm_year` | number mm/year | Line-of-sight velocity; negative means lowering/subsidence |
+| `acceleration` | number mm/year² | Change in velocity, used as a stability proxy |
+| `risk_class` | integer 0–4 | 0 stable; 4 severe subsidence |
+| `risk_label` | string | `Stabile`, `Moderata`, `Significativa`, `Severa`, or `Estrema` |
+| `risk_index` | number 0–1 | Normalized composite of velocity and acceleration |
+| `direction` | string | `subsidence`, `uplift`, or `stable` |
+| `trend` | string | `accelerating`, `decelerating`, or `linear` |
+
+**land-registry status (✅):** EGMS 100 m cells intersected with the parcel; area-weighted velocity and acceleration; served from PostgreSQL since the `egms_source` pushdown was applied on 2026-10-16.
+
+#### Terrain: `terrain`
+
+Endpoint: `/parcels/{id}?include=terrain`
+
+- Source: [INGV TINItaly DEM](https://tinitaly.pi.ingv.it/).
+- Coverage: 100% Italy at 10 m horizontal resolution.
+- Freshness: TINItaly DEM v1.1, released 2023; derived rasters use GDAL DEM utilities.
+- Construction: zonal statistics over the parcel for the DEM and derived slope, TRI, and aspect rasters; output is stored in `parcel_terrain`.
+- License stated: CC BY 4.0.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `elevation_min` | number m | Minimum elevation in parcel |
+| `elevation_max` | number m | Maximum elevation |
+| `elevation_mean` | number m | Mean elevation |
+| `elevation_std` | number m | Standard deviation of elevation / terrain heterogeneity |
+| `ruggedness_index` | number m | Elevation range, `max - min` |
+| `slope_mean` | number degrees | Mean slope from derived raster |
+| `slope_max` | number degrees | Maximum slope, 0–90° |
+| `tri_mean` | number m | Mean Terrain Ruggedness Index, after Riley et al. 1999 |
+| `aspect_predominant` | string | `N`, `NE`, `E`, `SE`, `S`, `SW`, `W`, `NW`, or `flat` |
+
+**land-registry status (🟡):** TINITALY zonal statistics (elevation min/mean/max, slope, aspect, TRI) via `aecs4u_stats.terrain`; provisioned for Sicilia only, other regions return `not_built`.
+
+#### Modelled parcel population: `population`
+
+Endpoint: `/parcels/{id}?include=population`
+
+- Sources: [WorldPop](https://www.worldpop.org/) plus OSM building footprints.
+- Coverage: 100% Italy; accuracy is better where OSM/GBA building coverage is high.
+- Freshness: WorldPop 2025, 30 m raster, plus building footprints listed as updated 2026-05.
+- Construction: municipal WorldPop budget, parcel raster statistics, then proportional redistribution by residential footprint:
+
+  `municipality_total × residential_footprint_parcel / residential_footprint_municipality`
+
+- Parcels without buildings receive an estimate of zero. If the municipality has no residential footprint, a total-building-footprint fallback is used.
+- Match to the ISTAT municipality is spatial and centroid-based.
+- Privacy/licensing: CC BY 4.0 for WorldPop and ODbL for OSM.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `estimated` | number | Dasymetric resident estimate for the parcel |
+| `sum` | number | Raw sum of WorldPop pixels within parcel |
+| `pixel_count` | integer | Number of intersected WorldPop pixels |
+| `mean` | number | Mean WorldPop value over intersected pixels |
+| `dasymetric` | number | Dasymetric component of the estimate |
+| `municipality_total` | number | Municipal WorldPop total over ISTAT boundary |
+| `estimation_method` | string | `hybrid`, `raster_only`, or `fallback_legacy` |
+| `estimation_confidence` | number 0–1 | Relative confidence in the estimate |
+| `source` | string | Provenance string such as `worldpop_2025_30m+osm_dasymetric` |
+
+**land-registry status (✅):** Census-section residents, households and density with a modelled-value label. Zornade's dasymetric parcel estimate (WorldPop plus OSM) is not reproduced.
+
+#### Buildings: `buildings`
+
+Endpoint: `/parcels/{id}?include=buildings`
+
+- Sources: [OpenStreetMap](https://www.openstreetmap.org/) and the Geoportale Nazionale GBA building atlas.
+- Coverage: OSM nationwide; GBA is the official Geoportale coverage.
+- Freshness: OSM snapshot 2026-05, listed as monthly; GBA version 2024.
+- Construction: OSM footprints are intersected with the parcel and residential status is inferred from tags such as `building=residential`, `apartments`, or `house`. GBA provides an alternative and validation source. Output is stored in `parcel_buildings`.
+- License stated: ODbL for OSM; official reuse for GBA.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `count` | integer | Total intersecting building footprints |
+| `footprint_m2` | number m² | Total footprint area; may exceed parcel area when buildings are multi-storey |
+| `residential_count` | integer | Footprints classified as residential |
+| `residential_footprint_m2` | number m² | Cumulative residential footprint area |
+| `source` | string | `osm`, `gba`, or `merged` |
+
+**land-registry status (🟡):** SISTER building and unit records plus OSM footprint count, clipped area and coverage (`aecs4u_stats.buildings`); footprints exist for Sicilia only.
+
+#### Economics: `economics`
+
+Endpoint: `/parcels/{id}?include=economics`
+
+- Source: [MEF Department of Finance income-tax declarations](https://www1.finanze.gov.it/finanze/analisi_stat/public/index.php).
+- Coverage: CAPs with declarations; MEF suppresses CAPs with fewer than three declarants.
+- Freshness: the latest MEF release available in Zornade at the time of the dataset refresh.
+- Construction: MEF data is aggregated at CAP level. Gini is computed at runtime from the IRPEF income brackets. Affordability combines the median bracket with the median residential OMI price; parcel-to-CAP matching uses the centroid.
+- License stated: free reuse for open MEF data.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `average_income` | number EUR | Mean taxable income per declarant |
+| `taxpayers` | integer | Number of declarants in the CAP |
+| `total_income` | number EUR | Aggregate income in the CAP |
+| `net_tax` | number EUR | Total net IRPEF in the CAP |
+| `tax_year` | integer | Tax year of the declarations |
+| `gini_index` | number 0–1 | Gini coefficient estimated from IRPEF bracket frequencies |
+| `affordability_index` | number years | Years of mean income needed for a standard apartment at median OMI price |
+| `affordability_apt_size_m2` | number m² | Apartment size used; default is 80 m² |
+| `avg_residential_price_m2` | number EUR/m² | Median residential OMI price for the CAP |
+| `income_brackets` | object | `lte_zero`, `from_0_to_10k`, `from_10k_to_15k`, `from_15k_to_26k`, `from_26k_to_55k`, `from_55k_to_75k`, `from_75k_to_120k`, `over_120k` |
+
+**land-registry status (✅):** MEF/IRPEF comune-level brackets, mean income, grouped-data Gini and price-to-income. CAP-level aggregation is not available.
+
+#### ISTAT micro-demographics: `demographics`
+
+Endpoint: `/parcels/{id}?include=demographics`
+
+- Source: [ISTAT Permanent Census of Population and Housing](https://www.istat.it/it/censimenti/popolazione-e-abitazioni).
+- Coverage: about 756,000 Italian census sections.
+- Freshness: 2021 census edition, released 2023.
+- Construction: `census_sections` contains section-level aggregates. Parcel-to-section matching uses centroid `ST_Contains`.
+- Small counts may be rounded or suppressed for privacy. These values describe the matched census section, not a direct parcel survey.
+- License stated: CC BY 3.0 IT.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `population_total` | integer | Total resident population in the section |
+| `male` / `female` | integer | Gender split |
+| `age_brackets` | object | Five-year classes from `0_4` through `75_plus` |
+| `education` | object | `no_title`, `elementary`, `middle_school`, `high_school`, `university` frequencies |
+| `employed` | integer | Resident employed population |
+| `foreigners` | object | `total`, `eu`, and `non_eu` |
+| `households` | object | `1_member` through `6_plus_members`, plus `total` |
+| `dwellings` | object | `total`, `occupied`, and `vacant` |
+
+**land-registry status (✅):** Census 2021 section indicators with an age and sex pyramid, plus province-level ISTAT indicators.
+
+#### Land cover: `land_cover`
+
+Endpoint: `/parcels/{id}?include=land_cover`
+
+- Source: [Copernicus CORINE Land Cover](https://land.copernicus.eu/pan-european/corine-land-cover), EEA.
+- Coverage: 100% Italy.
+- Freshness: CLC 2018 is the latest confirmed release in the catalog; CLC 2024 is described as pre-release.
+- Construction: `corine_landcover` is loaded from the Copernicus portal and matched to the parcel by centroid `ST_Intersects`; the precomputed match is stored in `parcel_landcover`.
+- License stated: Copernicus Data Policy, free reuse including commercial reuse.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `code` | string | Three-digit CLC level-3 code, e.g. `112` for discontinuous urban fabric |
+| `class` | string | Level-3 class label |
+| `subclass` | string | Subclassification where available |
+| `description` | string | Extended class description |
+
+**land-registry status (🟡):** CORINE 2018 class and area distribution via `aecs4u_stats.corine`; provisioned for Sicilia only.
+
+#### Urban land use: `land_use`
+
+Endpoint: `/parcels/{id}?include=land_use`
+
+- Source: [Copernicus Urban Atlas](https://land.copernicus.eu/local/urban-atlas).
+- Coverage: only European Functional Urban Areas; in Italy, the catalog describes roughly 80 cities above 50,000 inhabitants, including capitals and major centres.
+- Freshness: Urban Atlas 2018, the latest Italian release listed.
+- Parcels outside a covered FUA return `null` for this block by design.
+- License stated: Copernicus Data Policy.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `code` | string | Five-digit Urban Atlas code, e.g. `11100` for continuous urban fabric |
+| `class` | string | Urban Atlas class label |
+| `level1` | string | Macro-category such as urban, industrial, green, agricultural, or water |
+| `level2` | string | Level-2 subcategory |
+
+**land-registry status (❌):** Urban Atlas is not implemented (Functional Urban Areas only; low value).
+
+#### Current OMI valuation: `valuation`
+
+Endpoint: `/parcels/{id}?include=valuation`
+
+- Source: [Agenzia delle Entrate OMI](https://www.agenziaentrate.gov.it/portale/web/guest/schede/fabbricatiterreni/omi/banche-dati/quotazioni-immobiliari).
+- Coverage: about 24,000 OMI zones, excluding some marginal areas.
+- Freshness observed in the catalog: semester 2025-2, compared with 2025-1.
+- Construction: OMI CSV value tables and municipal zone KML polygons are loaded into semester tables. The parcel centroid is joined to the OMI zone. The response returns all rows for the zone, so there may be several property types and conditions.
+- License stated: free reuse for non-commercial purposes under AdE conditions.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `zone` | string | OMI zone code, e.g. `B29` |
+| `zone_description` | string | Descriptive toponym |
+| `fascia` | string | `B` central, `C` semi-central, `D` peripheral, `E` suburban, `R` extra-urban |
+| `microzona` | integer | OMI micro-zone identifier |
+| `municipality` | string | OMI municipality name |
+| `property_type` | string | Residential, office, shop, warehouse, garage, industrial shed, etc. |
+| `condition` | string | `NORMALE`, `OTTIMO`, or `SCADENTE` |
+| `purchase.min_eur_m2` / `purchase.max_eur_m2` | number EUR/m² | Sale-price range |
+| `rental.min_eur_m2` / `rental.max_eur_m2` | number EUR/m²/month | Rental range |
+| `previous_semester` | object | Same type of information for the previous semester, used for trend comparison |
+
+**land-registry status (✅):** OMI zone, quote table, editable estimator, gross yield, zone percentile and price-to-income. Locally the quotes come from a one-row-per-zone snapshot (see C.5).
+
+#### OMI history: `valuation_history`
+
+Endpoint: `/parcels/{id}?include=valuation_history`
+
+- Source: AdE OMI historical archive, 2015/1 through 2025/2.
+- Coverage: WFS parcels with an assigned urban OMI zone. Rural `Rxx` parcels return the zone code but may have no monetary values.
+- Freshness: updated with OMI 2025/2; catalog says the result is precomputed in `parcel_omi_history` for a single-PK lookup.
+- Scope in this release: `Abitazioni civili`, condition `NORMALE`.
+- When OMI zoning changes between semesters, each historical entry preserves the zone active in that semester.
+- License stated: free reuse for non-commercial purposes under AdE conditions.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `zone_current` | string | Current/latest OMI zone |
+| `municipality_code` | string | Municipality code, e.g. `H501` |
+| `property_type` | string | Always `Abitazioni civili` in this release |
+| `condition` | string | Always `NORMALE` in this release |
+| `semesters[]` | array | 22 chronological records from 2015/1 to 2025/2 |
+| `semesters[].semester` | string | `YYYY_S`, e.g. `2024_2` |
+| `semesters[].zone` | string | Zone active during that semester |
+| `semesters[].purchase.{min,max,mid}_eur_m2` | number EUR/m² | Sale range; `mid` is min/max average; `null` for rural zones |
+| `semesters[].rental.{min,max,mid}_eur_m2` | number EUR/m²/month | Rental range; `null` for rural zones |
+| `semesters[].gross_yield_pct` | number % | `(rental_mid × 12) / purchase_mid × 100` |
+| `metrics` | object or `null` | Planned CAGR, volatility, and drawdown analytics; currently `null` |
+| `annotations` | object or `null` | Planned editorial zone-change annotations; currently `null` |
+| `data_version` | string | Historical dataset identifier, e.g. `omi_2015_1..2025_2_v1` |
+
+**land-registry status (✅):** Up to 24 semesters with min-max band and 6-month to 10-year trend deltas.
+
+#### Coastal erosion: `coastal_erosion`
+
+Endpoint: `/parcels/{id}?include=coastal_erosion`
+
+- Source: [ISPRA Information System on Coasts](https://www.isprambiente.gov.it/it/banche-dati/banche-dati-folder/sistema-informativo-coste).
+- Coverage: Italian mainland and major islands, for parcels near the coast.
+- Freshness: ISPRA dataset 2023.
+- Construction: shoreline segments within 1 km of the parcel centroid are selected with `ST_DWithin`, ordered by distance, with a maximum of five records.
+- License stated: CC BY 4.0.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `dynamic` | string | `erosion`, `accretion`, or `stable` |
+| `avg_change_m_year` | number m/year | Mean shoreline change; negative means retreat |
+| `max_change_m_year` | number m/year | Maximum recorded change on the segment |
+| `severity_index` | number 0–1 | Composite severity index |
+| `coast_type` | string | Sandy, rocky, pebbly, or artificial |
+| `lithology` | string | Dominant lithology of the segment |
+| `distance_m` | number m | Distance to the shoreline |
+
+**land-registry status (✅):** ISPRA 2006–2020 shoreline-change snapshot (99,229 segments, 664 municipalities); historical change, not a forecast. An unmatched parcel has unknown coverage, not no erosion.
+
+#### Cultural and landscape heritage: `cultural_heritage`
+
+Endpoint: `/parcels/{id}?include=cultural_heritage`
+
+- Source: [MiC SIGECweb](https://sigecweb.beniculturali.it/), Institute for Cataloguing and Documentation.
+- Coverage: about 230,000 formalized protected assets in Italy.
+- Freshness: SIGECweb 2024.
+- Construction: MiC vector data is loaded into `vincoli_culturali`; parcel geometry is matched against polygon, line, and point assets with `ST_Intersects`.
+- License stated: free reuse for non-commercial purposes.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | string | SIGECweb identifier |
+| `name` | string | Official asset name |
+| `type` | string | Type such as fountain, palace, church, or archaeological area |
+| `class` | string | Cataloguing class |
+| `address` | string | Asset address |
+| `municipality` | string | Municipality containing the asset |
+| `province` | string | Province abbreviation |
+| `catalog_code` | string | Historical MiC catalogue code |
+
+**land-registry status (🟡):** Schema-gated constraint API, panel card and map layers are wired; the source tables wait on `aecs4u-stats#48`.
+
+#### Photovoltaic potential: `solar`
+
+Endpoint: `/parcels/{id}?include=solar`
+
+This is a deterministic Zornade model, not a direct official measurement or an entitlement/engineering assessment.
+
+- Sources: PVGIS-SARAH3 v5.3 from the [JRC PVGIS service](https://re.jrc.ec.europa.eu/pvg_tools/en/), GBA buildings, CORINE 2018, and PNRR LiDAR.
+- Coverage: GBA buildings with footprint at least 25 m² throughout Italy.
+- Freshness: TMY irradiation 2005–2023 with 2020 baseline; CAPEX curve Italy 2025.
+- Methodology version observed: Zornade `v1.1`.
+- Pipeline stages: GBA footprint and CORINE use class; 36-bin LiDAR skyline; 8760-hour PVGIS TMY; `pvlib` physical model; CAPEX/autoconsumption/CES/RID financial model; five-level validation against PVGIS, GSE Atlaimpianti, and Terna.
+- The model uses a deterministic seed of 42. The `data_version`, `methodology_version`, and `updated_at` fields should be retained with any downstream analysis.
+- License stated: PVGIS free reuse; GBA official reuse; Zornade pipeline proprietary.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `n_buildings` | integer | Number of evaluated buildings |
+| `kwp_max_total` | number kWp | Total installable capacity |
+| `pvout_modern_kwh_year_total` | number kWh/year | Modern scenario output: 10% system loss plus 3% soiling |
+| `pvout_pessimistic_kwh_year_total` | number kWh/year | Conservative scenario output with 14% losses |
+| `lcoe_eur_per_kwh_avg` | number EUR/kWh | Capacity-weighted average levelized cost of energy |
+| `npv_20y_eur_total` | number EUR | 20-year NPV at 5% discount, including the stated self-consumption/CES/RID assumptions |
+| `capex_eur_total` | number EUR | Estimated initial investment |
+| `payback_years_simple_avg` | number years | Mean simple payback time |
+| `viability_class_max` | string | `alta`, `media`, `bassa`, or `non_idoneo`; best-building class |
+| `roof_pitch_avg_deg` | number degrees | Footprint-weighted mean roof pitch |
+| `roof_aspect_avg_deg` | number degrees | Mean roof azimuth; 0 north, 180 south |
+| `buildings[]` | array | Per-building fields listed below |
+| `data_version` | string | PVGIS/model/build identifiers |
+| `methodology_version` | string | Current methodology identifier, `v1.1` |
+| `updated_at` | ISO 8601 string | Parcel recalculation timestamp |
+
+Per-building `buildings[]` fields include:
+
+`building_fid`, `roof_shape`, `roof_pitch_deg`, `roof_aspect_deg`, `roof_area_real_m2`, `roof_geometry_regime`, `kwp_max`, `pvout_modern_kwh_year`, `pvout_pessimistic_kwh_year`, `kwh_per_kwp_year_modern`, `kwh_per_kwp_year_pessimistic`, `capex_eur`, `lcoe_eur_per_kwh`, `npv_20y_eur`, `payback_years_simple`, `viability_class`, `bipv_eligible`, `confidence_level`, `shading_data_source`, and `exclusion_reason`.
+
+**land-registry status (🟡):** Municipal PV aggregates plus an editable PVGIS 5.3 cash-flow scenario (NPV, LCOE, payback). No per-roof model; OSM roof geometry is not usable.
+
+#### Points of interest: `poi`
+
+Endpoint: `/parcels/{id}?include=poi`
+
+- Source: [Foursquare Open Source Places](https://opensource.foursquare.com/os-places/).
+- Coverage: about 2.8 million active Italian POIs.
+- Freshness: quarterly Foursquare snapshot.
+- Construction: `fsq_places` excludes records where `date_closed IS NULL` is false, then uses parcel-geometry `ST_Intersects`.
+- License stated: Apache 2.0.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | string | Foursquare venue ID |
+| `name` | string | Commercial or venue name |
+| `categories` | string | Standardized category path, e.g. `[Food > Café]` |
+| `address` | string | POI address |
+| `locality` | string | Locality or neighbourhood |
+| `coordinates` | object `{lat, lng}` | POI coordinates |
+
+**land-registry status (✅):** OSM point-of-interest counts by category within 1 km (Zornade uses Foursquare). Nearest-distance accessibility is not built.
+
+#### Night-time lights: `nightlights`
+
+Endpoint: `/parcels/{id}?include=nightlights`
+
+- Source: [NASA Black Marble VIIRS VNP46A4 Collection 2](https://blackmarble.gsfc.nasa.gov/).
+- Coverage: 100% Italy, but with fallback behavior where buildings or valid VIIRS pixels are missing.
+- Freshness: annual VNP46A4 composite; the catalog names 2023 as the current release year.
+- Construction: municipal VIIRS mean is computed first, then distributed to parcels proportionally by residential OSM footprint. Without OSM buildings the method is uniform; with no valid VIIRS pixels it is `no_ntl`.
+- Native raster resolution is approximately 463 m and NASA already applies stray-light, lunar, and atmospheric corrections.
+- This is a proxy for activity/anthropization, not a direct measure of income or electricity use.
+- License stated: NASA Earth Science Data, free reuse including commercial reuse with citation.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `available` | boolean | Whether a `parcel_nightlights` record exists; if false, other fields are absent |
+| `ntl_parcel` | number nW/cm²/sr | Parcel radiance assigned by residential-footprint dasymetry |
+| `ntl_density` | number `(nW/cm²/sr)/km²` | `ntl_parcel / area_m2 × 1,000,000` |
+| `ntl_class` | string | `dark` <0.5, `dim` 0.5–3, `medium` 3–10, `bright` 10–30, `very_bright` ≥30 |
+| `ntl_share` | number 0–1 | Parcel's share of the municipal VIIRS budget; municipality total is approximately 1 |
+| `ntl_mean_comune` | number nW/cm²/sr | Mean VIIRS radiance of the municipality |
+| `estimation_method` | string | `dasymetric`, `uniform`, or `no_ntl` |
+| `ntl_year` | integer | Composite year, e.g. 2023 |
+| `source` | string | e.g. `viirs_vnp46a4_c2_2023` |
+| `updated_at` | ISO 8601 string | Last parcel refresh timestamp |
+
+**land-registry status (🟡):** VIIRS Black Marble importer, parcel query, panel section and `/api/v2` block are built; the annual raster is not provisioned (`not_built`).
+
+### B.4 API usage and operational reference
+
+
+#### Authentication and scopes
+
+The API documentation says:
+
+- Base URL: `https://api.zornade.com/api/v2`.
+- `GET /health` is unauthenticated; other endpoints require `x-api-key`.
+- Do not send a JWT `Authorization: Bearer ...` header to API v2.
+- Required scope for parcel search, locate, and detail: `parcels:read`.
+- Other listed scopes are `geocoding:read` and `admin_data:read`.
+
+Example shape, with a placeholder only:
+
+```bash
+curl -H "x-api-key: zrn_il_tuo_token" \
+  "https://api.zornade.com/api/v2/parcels/28007851?include=basic,risk,valuation"
+```
+
+#### Related endpoints
+
+| Endpoint | Scope | Purpose |
+|---|---|---|
+| `/health` | none | Service status, version, and available endpoints |
+| `/geocode/search` | `geocoding:read` | Direct text geocoding; up to 50 results |
+| `/geocode/reverse` | `geocoding:read` | Reverse geocoding; radius up to 500 m |
+| `/admin/regions` | `admin_data:read` | Region list |
+| `/admin/provinces` | `admin_data:read` | Provinces, optionally filtered by region |
+| `/admin/municipalities` | `admin_data:read` | Municipalities, filterable by province/region |
+| `/parcels/search` | `parcels:read` | Search by municipality, foglio, label, and section |
+| `/parcels/locate` | `parcels:read` | Point, multipoint, or bounding-box parcel lookup |
+| `/parcels/{id}` | `parcels:read` | Full parcel detail with selective includes |
+
+#### Errors
+
+The documented error body is `{ "error": "...", "message": "..." }`.
+
+| HTTP | Documented meaning / code |
+|---:|---|
+| 400 | Invalid or missing parameters: `INVALID_PARAMS`, `OUT_OF_BOUNDS` |
+| 401 | Missing/invalid key: `API_KEY_REQUIRED`, `INVALID_API_KEY` |
+| 403 | Insufficient scope: `INSUFFICIENT_SCOPE` |
+| 404 | Missing resource: `NOT_FOUND` |
+| 405 | Unsupported method; API is GET-only |
+| 429 | Rate limit exceeded: `RATE_LIMITED` |
+| 502 | Database error: `QUERY_ERROR` |
+
+#### Rate-limit note
+
+The same UI contains inconsistent limits that should be verified before building a high-volume client:
+
+- The API landing and token page advertise 10,000 requests/hour.
+- The response-header documentation says `X-RateLimit-Limit` is 1,000.
+- The live interactive preview showed `X-RateLimit-Remaining: 999`, consistent with a 1,000-request limit for that preview/token.
+
+Treat the response headers as authoritative at runtime and implement backoff for HTTP 429 using `retry_after_seconds` when supplied.
+
+Documented response headers:
+
+- `X-RateLimit-Limit`
+- `X-RateLimit-Remaining`
+- `X-RateLimit-Reset` (Unix timestamp)
+- `Cache-Control`: `public, max-age=3600` for admin data and `no-store` for data responses
+
+#### Recommended client behavior
+
+1. Call `/health` before business requests and record its runtime `version`.
+2. Send only `x-api-key` to API v2.
+3. Use `include=` to reduce payload and latency.
+4. Log HTTP status, `error`, `message`, and rate-limit headers.
+5. Retry 429 responses progressively and honor `retry_after_seconds`.
+6. Store `data_version`, `methodology_version`, and source/freshness fields alongside analytical results.
+7. Treat modelled, section-level, CAP-level, and centroid-matched data as contextual enrichment rather than cadastral/legal certification.
+
+### B.5 Observed parcel example in the web app
+
+
+The authenticated workspace contained one saved parcel, which was useful for checking how the data is presented in practice:
+
+- Label: parcel `114`; Zornade FID `66482638`.
+- Location: Caccamo, Palermo, Sicily; cadastral sheet `40`; CAP `90012`.
+- Area: `1,535 m²`; land cover: non-irrigated arable land / agricultural surface.
+- Terrain: elevation `340–344 m`, mean slope `7.7°`, predominant exposure `SE`, ruggedness `4.2 m`.
+- Risk: seismic zone `2`, PGA `0.150g`; the UI summarized overall risk as high.
+- Population: displayed estimate `0.00`, confidence `32%`; this illustrates that modelled parcel population can be zero even when the municipality has residents.
+- Economics: mean income `€15,141`, tax year `2023`, Gini `0.416`, affordability `1.92`, OMI residential price about `€364/m²`.
+- OMI: current rural zone `R2`; economic ranges were shown for economic residences, villas, and warehouses, plus a 22-semester historical chart.
+- Alerts: the UI displayed a NASA FIRMS fire hotspot 954 m from the parcel and two pending community contributions (abandoned building and cadastral-boundary discrepancy).
+
+This example is a UI snapshot, not a guarantee that every parcel will contain every block. Missing coverage, privacy suppression, out-of-FUA status, rural OMI zones, and source-specific matching rules can all produce `null`, empty arrays, or fallback method labels.
+
+### B.6 Main caveats for future use
+
+
+1. **A parcel response mixes authoritative geometry with modelled and contextual data.** AdE geometry and identifiers should be separated from estimates such as population, affordability, solar economics, and night lights.
+2. **Spatial matching is not uniform.** Some blocks use the centroid, some use full-geometry intersection, some use raster zonal statistics, and some use a nearby feature search.
+3. **Coverage claims are not the same as completeness.** OSM addresses/buildings, Urban Atlas, InSAR, coastal data, and POIs have uneven or conditional coverage.
+4. **Time metadata matters.** The catalog combines different vintages, including OMI 2025/2, ISTAT 2021, CORINE 2018, EGMS 2014–2023, VIIRS 2023, and various 2024–2026 snapshots.
+5. **Privacy suppression applies.** MEF suppresses small CAPs, and ISTAT can round or hide small counts.
+6. **Historical OMI analytics are incomplete in the current release.** `metrics` and `annotations` are documented as currently `null`.
+7. **Solar output is an estimate.** It depends on assumptions about roof geometry, shading, losses, CAPEX, discounting, self-consumption, CES, and RID.
+8. **Validate limits and schemas at runtime.** The catalog reports API version 2.4.0 and conflicting request quotas; capture `/health`, headers, and data-version fields when running jobs.
+
+---
+
+## Appendix C: Enrichment and database improvement backlog
+
+*Ideas from the 2026-09-03 research note, merged on 2026-10-17. Each part opens
+with a status note checked against the repository and the local stats database
+on 2026-10-17; the original text follows unchanged apart from heading levels.*
+
+### C.1 Further enrichment opportunities
+
+> **Status (2026-10-17): none started.** A repository-wide search finds no code,
+> schema or document for imperviousness, Natura 2000, riparian zones, contaminated
+> land, historic wildfire exposure, climate scenarios, tree cover, hydrology, GTFS
+> accessibility, commuting flows, air quality and noise, historical earthquakes,
+> tsunami hazard or municipal planning zones. Adjacent work that does exist: live
+> FIRMS hotspots and the DPC bulletin (live, not historic), ISPRA coastal change,
+> and the schema-gated landscape and heritage protection layers (`aecs4u-stats#48`),
+> which only partly overlap the protected-area item. The effort since September
+> went into closing the gaps in §2 and Appendix A instead.
+
+
+The current catalog is already strong on cadastral geometry, market context, terrain, and hazards. The largest remaining opportunities are environmental constraints, climate exposure, accessibility, and explicit data-quality/provenance. The recommendations below are ranked by expected user value, national scalability, and implementation feasibility.
+
+#### Priority 1: high-value additions with national or near-national coverage
+
+| Opportunity | Candidate parcel fields | Source and current evidence | Suggested matching / caveat |
+|---|---|---|---|
+| **Imperviousness and land-consumption change** | `impervious_density_pct`, `built_up_present`, `impervious_change_2021_2024`, `impervious_change_class`, `impervious_confidence` | [Copernicus HRL Imperviousness](https://land.copernicus.eu/en/products/high-resolution-layer-imperviousness) now provides 2024 density and built-up layers at 10 m/100 m, plus change products. | Raster zonal mean, max, percentile, and change area over the parcel. This fills the gap between broad CORINE classes and the building layer; retain raster vintage and confidence. |
+| **Protected areas and Natura 2000** | `protected_area_intersects`, `protected_area_name`, `site_code`, `designation`, `distance_to_protected_area_m`, `natura2000_type` | [EEA Natura 2000 data](https://www.eea.europa.eu/en/datahub/datahubitem-view/6fc8ad2d-195d-40f4-bdec-576e7d1268e4?activeAccordion=1095295) has a downloadable end-2024 vector release. | Full-geometry intersection and nearest-boundary distance. Do not collapse a site boundary into a generic “protected = yes”: designation and overlap percentage matter for planning. |
+| **Riparian and waterway context** | `riparian_zone_intersects`, `riparian_class`, `distance_to_river_m`, `riparian_change_2012_2018` | [Copernicus Riparian Zones](https://land.copernicus.eu/en/products/riparian-zones/rz-land-cover-land-use-2018) is a vector product with land-cover/use classes for buffered rivers. | Nearest river/riparian polygon plus overlap. It complements flood hazard by describing ecological and land-use proximity, not just inundation. Coverage is limited to mapped selected rivers. |
+| **Contaminated land and remediation status** | `contaminated_site_intersects`, `site_name`, `site_type`, `remediation_stage`, `competent_authority`, `sin_flag`, `orphan_site_flag`, `distance_m` | ISPRA's [MOSAICO contaminated-sites database](https://www.isprambiente.gov.it/it/banche-dati/banche-dati-folder/suolo-e-territorio/siti-contaminati) supports consultation/download of procedure type, authority, parties, and progress; ISPRA also publishes SIN information. | Spatial join against site perimeters, with nearest-site distance and status. Treat “near a contaminated site” as a screening flag, not a health or legal conclusion; regional completeness and access levels vary. |
+| **Historic wildfire exposure** | `burned_area_intersects_1y/5y`, `fire_count_5y`, `last_burn_year`, `burned_area_m2`, `aib_susceptibility`, `distance_to_burn_scar_m` | The [National Civil Protection wildfire bulletin](https://rischi.protezionecivile.gov.it/it/approfondimento/bollettino-di-previsione-nazionale-incendi-boschivi/) publishes daily susceptibility levels, while regional AIB plans contain burned areas and recent-fire cartography. [Copernicus EMS](https://emergency.copernicus.eu/data/) also exposes EFFIS wildfire data. | Maintain two products: historical burned scars and current forecast/susceptibility. The national bulletin is province-scale, so do not present it as a precise parcel forecast. |
+| **Climate stress and future scenarios** | `heatwave_days`, `hot_days_30/35/40c`, `high_utci_days`, `drought_magnitude`, `max_5day_precip_mm`, `soil_moisture`, scenario/year fields | The [Copernicus Climate Data Store climate indicators](https://cds.climate.copernicus.eu/datasets/sis-ecde-climate-indicators) covers heat, drought, precipitation, soil moisture, river discharge, and future projections. | Assign grid-cell values by centroid or area-weighted raster statistics, with historical baseline and scenario metadata. Keep reanalysis/observation values separate from projections; licensing differs across datasets. |
+
+These six blocks would materially improve due diligence: they answer whether a parcel is changing, environmentally constrained, exposed to contamination/fire/climate stress, or located near protected and riparian systems.
+
+#### Priority 2: strong differentiators for investment and planning
+
+##### Vegetation, tree cover, and ecosystem condition
+
+The existing CORINE layer is useful but coarse and dated. Copernicus' [High Resolution Layer Tree Cover and Forests](https://land.copernicus.eu/en/products/high-resolution-layer-forests-and-tree-cover?tab=technical_summary) offers tree-cover density, dominant leaf type, forest type, and change layers at 10 m for recent reference years. The 2024 HR-VLCC release is now available through the Copernicus Data Space.
+
+Recommended fields:
+
+- `tree_cover_density_mean_pct` and `tree_cover_density_max_pct`;
+- `dominant_leaf_type` and `forest_type`;
+- `tree_cover_gain_loss_class` over the latest available change period;
+- `green_surface_pct` and `vegetation_confidence`.
+
+Use zonal statistics rather than a single centroid class. This would support heat mitigation, agricultural screening, biodiversity context, and a better explanation of why a parcel is classified as “agricultural” or “urban”.
+
+##### Water resources and hydrological context
+
+ISPRA's [BIGBANG hydrological model](https://www.isprambiente.gov.it/pre_meteo/idro/BIGBANG_ISPRA.html) produces national monthly 1 km estimates of precipitation, actual evapotranspiration, surface runoff, aquifer recharge, and storage. ISPRA's water reporting also covers ecological/chemical status of surface waters and chemical/quantitative status of groundwater.
+
+Recommended fields:
+
+- `hydrographic_district`, `river_basin`, and nearest named water body;
+- `distance_to_surface_water_m` and `waterbody_type`;
+- `mean_annual_runoff_mm`, `aquifer_recharge_mm`, and `soil_water_storage`;
+- `groundwater_status` and `surface_water_status` where a reporting body is available;
+- `water_stress_or_drought_class` with reference month/year.
+
+The 1 km hydrology grid is contextual rather than parcel-precise. The product should expose resolution and aggregation method so users do not mistake it for a local drainage or groundwater survey.
+
+##### Accessibility and mobility
+
+The [MIT National Access Point](https://nap.mit.gov.it/) publishes regional GTFS datasets and national transport datasets covering local transit, rail, maritime transport, airports, cycleways, parking, and taxis. This is a high-value complement to POIs because a POI count does not say whether a parcel is reachable.
+
+Recommended fields:
+
+- `nearest_transit_stop_distance_m` and `nearest_rail_station_distance_m`;
+- `transit_routes_within_500m`, service span, and weekday departures;
+- `distance_to_motorway_junction_m`, `distance_to_primary_road_m`, and road-network travel time;
+- `walk_time_to_services` for schools, healthcare, food, and daily retail;
+- `accessibility_index` with a clearly documented travel mode and timestamp.
+
+Use network distances and scheduled service frequency, not straight-line distance alone. GTFS snapshots need a `feed_valid_from/to` field and should never be treated as permanent infrastructure availability.
+
+##### Daytime population and commuting flows
+
+The [ISTAT census release](https://www.istat.it/statistiche-per-temi/censimenti/popolazione-e-abitazioni/risultati/) includes 2021 commuting matrices and newer 2023 section-level population, housing, and vehicle variables. This can distinguish a residential parcel from a workday activity area—something night lights and resident estimates cannot do reliably.
+
+Potential derived indicators:
+
+- `inbound_commuters`, `outbound_commuters`, and `commuting_balance` at municipality or urban-zone level;
+- `daytime_activity_index` and `residential_vs_employment_area`;
+- vehicle ownership per household, where privacy thresholds allow;
+- updated 2023 section-level housing and population indicators.
+
+The flows are origin-destination aggregates, so they should be labelled as area context and not assigned as if they were observed at the individual parcel.
+
+##### Air quality and environmental noise
+
+ISPRA's [national air-quality forecast system](https://www.isprambiente.gov.it/it/attivita/aria-1/qualita-dellaria/mappe-previsionali) provides hourly modelled maps for PM10, PM2.5, ozone, NO2, and dust. ISPRA also documents noise-exposure indicators based on strategic and local acoustic maps, including Lden and Lnight.
+
+Potential fields:
+
+- annual and seasonal mean/concentration percentiles for PM2.5, PM10, NO2, and O3;
+- number of modeled exceedance days and `air_quality_data_vintage`;
+- `noise_lden_db`, `noise_lnight_db`, and exceedance flags where acoustic maps exist;
+- distance to the nearest monitoring station and station type.
+
+Keep modeled surfaces, observations, and legal noise maps in separate namespaces. Coverage is not uniform and a missing acoustic map is not evidence of low noise.
+
+#### Priority 3: advanced hazard and planning enrichment
+
+##### Historical earthquakes, active faults, and volcanic context
+
+The existing seismic zone/PGA block describes general hazard, but INGV also exposes historical catalogues and fault information through its open-data and mapping systems. The [INGV open-data page](https://istituto.ingv.it/it/open-science/open-data) references recent shakemaps, MPS04, volcanic monitoring, and historical catalogues such as ASMI and CFTI. The [DISS/MUDA mapping context](https://muda.mi.ingv.it/mappa.php?lang=it) includes active seismogenic sources, recent and historical seismicity, and monitoring stations.
+
+Potential fields:
+
+- `distance_to_seismogenic_source_m` and source identifier;
+- maximum historical intensity within a defined radius;
+- event count/magnitude quantiles over 10, 50, and 100 years;
+- distance to active volcano and volcanic hazard zone;
+- current volcanic alert/monitoring context for relevant areas.
+
+Do not turn historical event frequency into a building-safety score. The result should be a contextual hazard history with source catalogue, search radius, and observation window.
+
+##### Tsunami exposure for coastal parcels
+
+The [Italian Tsunami Hazard Model 2025 (ITHM25)](https://cat.ingv.it/it/tsunami-ready/comuni-italiani-che-partecipano-al-programma?catid=2&id=495%3Apericolosita-tsunami-ithm25&view=article) covers Italian coasts. Its published results use hazard curves at 1,085 points of interest, with return periods from 475 to 9,975 years and multiple percentiles.
+
+Potential fields:
+
+- nearest ITHM25 point and `distance_m`;
+- hazard curve values by return period and percentile;
+- coastal evacuation-zone or inundation scenario, when an official inundation layer is available;
+- `tsunami_data_vintage` and interpolation method.
+
+Because the points are around 5 km apart on average, any parcel assignment must disclose the distance and whether it is nearest-point context or a true inundation intersection.
+
+##### Planning and development controls
+
+Municipal PRG/PGT/PSC/PUG plans, zoning, building setbacks, landscape rules, and local urban regeneration constraints are among the most commercially valuable missing fields. They are also the least standardized: formats, naming, coordinate systems, update dates, and publication licenses differ by municipality.
+
+Recommended approach:
+
+1. Start with a city/region pilot where planning layers are already downloadable as WMS/WFS or open GIS files.
+2. Normalize the result into `planning_zone_code`, `planning_zone_label`, `allowed_uses`, `building_ratio`, `max_height_m`, `setback_rules`, and `plan_date`.
+3. Keep the original plan document and layer URL as provenance.
+4. Mark the result as “screening only”; a municipal certificate or professional planning review remains authoritative.
+
+#### Data that should remain gated or clearly out of scope
+
+Some attractive fields cannot be responsibly treated as a national open enrichment:
+
+- **Ownership, beneficial owner, mortgages, easements, and title history:** these are person/property-right data and require regulated or authenticated cadastral/land-registry access. The AdE citizen services provide personal or controlled access to cadastral and hypothecary information, not a public national parcel feed. See [AdE cadastral assistance](https://assistenzaipocat.agenziaentrate.gov.it/homeCittadino.asp).
+- **Cadastral rent, land income, category, class, and subalterno:** potentially valuable, but availability, licensing, and linkage to the national parcel geometry need to be confirmed with AdE before building a bulk product. Do not infer them from OMI prices or building tags.
+- **Utility capacity, grid connection availability, and planning permission:** these are operational or administrative facts, often held by utilities or municipalities and not reliably inferable from distance to a power line or from solar potential.
+
+### C.2 Recommended implementation roadmap
+
+> **Status (2026-10-17):** Phases A, B and C are untouched; see C.1. The roadmap in
+> §4 (Phases 0–5) is the one being executed.
+
+
+#### Phase A — national, high return
+
+1. HRL imperviousness 2024 plus 2021–2024 change.
+2. Natura 2000 and protected-area intersection/distance.
+3. Contaminated sites/SIN and remediation-status flags.
+4. Historic burned-area recurrence and last-burn year.
+5. Updated climate indicators for heat and drought.
+
+#### Phase B — differentiated product value
+
+1. Tree cover/forest and vegetation change.
+2. Riparian and surface-water context.
+3. GTFS-based accessibility and network travel times.
+4. ISTAT 2023 section refresh and commuting/activity indicators.
+5. Air-quality and acoustic-map overlays where coverage exists.
+
+#### Phase C — targeted premium layers
+
+1. Municipal planning-zone pilots.
+2. INGV fault, historical earthquake, volcanic, and tsunami context.
+3. Region-specific agricultural and irrigation layers.
+4. Utility/grid and renewable-connection intelligence, subject to authoritative access.
+
+### C.3 Schema improvements that multiply the value of every enrichment
+
+> **Status (2026-10-17): largely implemented for read-model blocks.** Every
+> parcel-detail block carries a common envelope (`_detail_block` in
+> `stats_service.py`): `available`, `data`, `source`, `dataset_version`,
+> `model_version`, `data_vintage`, `updated_at`, `match_method`,
+> `match_distance_m`, `coverage` (`full`, `partial`, `unavailable`, with
+> `coverage_status` as an alias), `confidence`, `spatial_resolution`,
+> `spatial_resolution_m`, `benchmarks` and `license`, plus `reason` when
+> unavailable. `/api/v2/catalog` publishes the field documentation, and each
+> panel card shows source, version, match method and resolution. Overlap area and
+> percentage are returned for ISPRA hazards, CORINE and EGMS; versioned model
+> identifiers exist for the OMI metrics, the composite score and solar economics.
+> Not implemented: `valid_from`/`valid_to`, `data_quality_flags`,
+> `source_record_id` for every block and a `not_covered`/`suppressed` coverage
+> state (unknown coverage is reported as `unavailable`).
+
+
+Every block should ideally return a common metadata envelope in addition to its domain fields:
+
+```json
+{
+  "value": {},
+  "available": true,
+  "source": "provider_dataset",
+  "source_url": "https://example.gov/dataset",
+  "data_vintage": "2024",
+  "updated_at": "2026-09-03T00:00:00Z",
+  "match_method": "centroid|intersects|zonal_stats|nearest|network",
+  "match_distance_m": null,
+  "coverage_status": "full|partial|not_covered|suppressed",
+  "confidence": null,
+  "license": "CC BY 4.0"
+}
+```
+
+This would make missingness and uncertainty machine-readable. Additional high-value quality fields are:
+
+- `overlap_m2` and `overlap_pct` for intersected zones;
+- `distance_m` for every nearest-feature result;
+- `resolution_m` for rasters and model grids;
+- `source_record_id` and original feature URL;
+- `methodology_version` for every derived score, not only solar;
+- `valid_from`, `valid_to`, and `observed_at` for time-varying data;
+- `data_quality_flags` for privacy suppression, fallback estimation, duplicate source records, and centroid-vs-boundary ambiguity.
+
+### C.4 Derived cross-block products worth building
+
+> **Status (2026-10-17): one of six started.**
+>
+> | Product | Status |
+> |---|---|
+> | Development pressure | Not started (no imperviousness change or land-use inputs). |
+> | Climate resilience | Not started. |
+> | Environmental constraint | Partial: coastal change, ISPRA hazards and the gated protection layers exist as separate cards; no combined view. |
+> | Accessibility | Not started (POI category counts only). |
+> | Renewable suitability | Partial: municipal PV aggregates and a PVGIS scenario; no grid, planning or protected-area inputs. |
+> | Data confidence | Partial: per-block coverage, provenance and match method, and a Data tab listing block coverage; no combined confidence score. |
+>
+> The municipal composite risk score (`municipal_hazard_index_v1`, equal-weight) is
+> the only implemented cross-block score, and it is labelled as municipal context.
+
+
+The next product advantage is likely to come from transparent combinations rather than another isolated field:
+
+| Derived product | Inputs | Output |
+|---|---|---|
+| **Development pressure** | Imperviousness change, buildings, OMI history, land use | Recent artificial-surface change, built-up intensity, and market trend |
+| **Climate resilience** | Heat, drought, tree cover, imperviousness, water proximity | Heat/drought exposure with green/water mitigation context |
+| **Environmental constraint** | Natura 2000, protected areas, riparian zones, contamination, coastal erosion | Explainable constraint flags with distances and overlap percentages |
+| **Accessibility** | GTFS, roads, POIs, population, commuting | Network-based service access and daytime activity profile |
+| **Renewable suitability** | Solar model, grid proximity, imperviousness, planning zones, protected areas | Technical potential separated from grid/planning feasibility |
+| **Data confidence** | Coverage, vintage, match method, source quality, fallback flags | A parcel-level confidence profile instead of a single opaque score |
+
+### C.5 PostgreSQL-specific enrichment opportunities
+
+> **Status (2026-10-17): historical audit, largely superseded by the schema
+> consolidation.** The relations audited on 2026-09-03 (`spatial.cadastral_parcel`,
+> `spatial.cadastral_sheet`, `spatial.hazard_area`, `spatial.market_zone`,
+> `spatial.postal_zone`, `facts.*`, `serving.parcel_risk_profile`,
+> `serving.market_zone_snapshot`) are not present in the local stats database.
+> It now holds source schemas: `hazards.*` (flood 85,460; landslide 1,060,084;
+> MPS04 17,602 points; seismic classification 7,896), `geo_surface_change.egms_subsidenza`
+> (8,486,494 cells), `zornade.zornade_zone_omi` (27,228), `cap_subcomunali` (9,232),
+> `sezioni_urbane` (1,523), `census_sections.sections` (756,376),
+> `solar.solar_potential_comuni` (7,898), `serving.irpef_comuni` (47,484),
+> `spatial.ispra_coastal_dynamics` (99,229), `serving.parcel_enrichment_read_model`
+> (49 cached profiles) and a `catalog` with two dataset releases. Parcel geometry
+> reaches the map through the map source (regional views in
+> `land_registry/cadastral_map_views.py`) and, for enrichment, the per-region
+> `aecs4u_stats.cadastral` stores; see `docs/CANONICAL_MAP_LAYERS.md` and
+> `docs/AECS4U_STATS_CONSOLIDATION_PLAN.md`. Status of each priority below:
+>
+> | Priority | Status |
+> |---|---|
+> | P0 Parcel spine | Done differently: stable feature IDs and regional parcel views serve the map; the canonical stats-database tables are not populated locally. |
+> | P1 Due-diligence profile | Hazard overlap, subsidence and PGA are computed per request from the source tables and cached in `parcel_enrichment_read_model`. The proposed `facts.parcel_spatial_context` table is not built. Administrative context is partial; services and raster context are partial (see below). |
+> | P1 OMI market depth | Derived metrics done (gross yield, zone percentile, 6-month to 10-year trend deltas, price-to-income) from a one-row-per-zone snapshot because `facts.market_quote_fact` is absent. No transaction or liquidity claim is made. |
+> | P1 POI accessibility | Not done: category counts within 1 km only. |
+> | P1 Census grain | Partial: the containing census section is found by parcel centroid and indicators, age pyramid and household metrics are shown; no area-weighted overlap. |
+> | P1 Tax and income composition | Partial: IRPEF brackets, mean income and Gini at comune level; no property-income or pension composition. |
+> | P2 Raster zonal statistics | Partial: terrain (TINITALY) done for Sicilia; the population and WSF rasters are not used. |
+> | P2 Planning layer | Not done: the protection layers are schema-gated on `aecs4u-stats#48`; no municipal PRG/PGT data. |
+> | P3 Composite scores | Partial: the municipal composite risk score only. |
+> | Database quality | Not re-audited. Applied since: PostGIS pushdown for the hazards and EGMS foreign servers, the map index and statistics scripts in `scripts/apply_map_sql.py`, and the OMI period index. |
+
+
+Inspected against the local `aecs4u-stats` PostgreSQL database on
+2026-09-03. The database contains substantially more reusable material than
+the current parcel-facing surface exposes. The priorities below are ordered by
+the amount of value unlocked per unit of new acquisition work.
+
+#### Priority 0: make the parcel spine operational
+
+This is the highest-leverage opportunity because nearly every useful spatial
+enrichment needs a parcel geometry and a stable parcel identifier.
+
+| Database evidence | Current state | Consequence |
+|---|---|---|
+| `spatial.cadastral_parcel` | **0 rows** | No parcel can currently receive a canonical spatial join. |
+| `spatial.cadastral_sheet` | **0 rows** | Sheet-level QA and map context are also unavailable in the canonical database. |
+| `spatial.cadastral_urban_section` | 1,523 geometries | Urban-section context exists, but cannot be attached to a parcel yet. |
+| `serving.parcel_risk_profile` | **0 rows** | The intended parcel risk serving view is correctly wired but has no input rows. |
+| `fdw_probe.*_ple` | Five foreign parcel tables are defined | There is already a route to local cadastral files, but it is not a stable materialized pipeline. |
+
+The FDW definitions point to national, Lombardia, Milano, Valle d'Aosta, and
+Arnad FlatGeobuf/GDAL VRT sources under `/data/catasto`. A direct national
+probe encountered a missing or stale source layer in one GPKG, so the first
+implementation task is an input-inventory and VRT repair rather than a blind
+bulk insert. The foreign-table schema already exposes the right bridge fields:
+`fid`, `inspireid_localid`, `label`, `nationalcadastralreference`,
+`administrativeunit`, and `geom`.
+
+Recommended parcel-spine deliverable:
+
+1. Repair or regenerate the VRT/source manifest, recording every missing,
+   malformed, and successfully readable comune layer.
+2. Materialize `spatial.cadastral_parcel` and `spatial.cadastral_sheet` with
+   `national_cadastral_reference` and a deterministic source key. Keep the
+   source release and source file in the catalog.
+3. Normalize all canonical geometry columns to an explicit 2D `geometry(...,
+   4326)` contract, while retaining the source CRS in provenance. The current
+   database contains both 4326 geometries and census-section geometry in 32632.
+4. Run a pilot on one complete region before national loading. Validate source
+   row counts, geometry validity, area distributions, duplicate natural keys,
+   municipality assignment, and foglio/particella lookup success.
+5. Refresh `serving.parcel_risk_profile` only after the pilot passes. Do not
+   expose a parcel score if its underlying parcel geometry is missing or only
+   coordinate-matched.
+
+#### Priority 1: turn existing spatial tables into a parcel due-diligence profile
+
+Once the parcel spine is populated, the database already contains the main
+ingredients for a strong first version of parcel due diligence:
+
+- `spatial.hazard_area`: about 1.17 million canonical flood/landslide
+  features, with `hazard_type`, `class_code`, geometry, source key, and
+  release lineage;
+- `facts.hazard_measurement`: about 25.5 million canonical point/polygon
+  hazard measurements, including EGMS subsidence metrics and MPS04 seismic
+  points; `facts.hazard_curve_point` stores the seismic probability/period
+  curves;
+- `spatial.postal_zone`: 9,230 sub-municipal CAP geometries;
+- `spatial.market_zone`: 27,212 OMI geometries;
+- `census_sections.sections`: section geometry plus 122 census indicators;
+- `facts.poi`: about 212,000 points in ten normalized categories, with about
+  1.15 million raw OSM tags;
+- `facts.raster_asset`: two externally stored Italy-wide rasters, the 30 m
+  population asset and the 10 m World Settlement Footprint asset.
+
+This suggests a concrete `parcel_context` serving product rather than a flat
+copy of every source field. Each result should include the value, source
+release, matching method, overlap or distance, and a coverage flag.
+
+Suggested parcel fields:
+
+| Product | Inputs | Useful parcel-level output |
+|---|---|---|
+| Hazard overlap | `spatial.hazard_area` | One row per hazard type/class, overlap m², overlap %, maximum class, and nearest distance when there is no intersection. |
+| Subsidence | `facts.hazard_measurement` | Mean velocity, acceleration, risk index, min/max/median over intersecting cells, cell count, and spatial coverage. |
+| Seismic | `facts.hazard_curve_point` plus `facts.hazard_measurement` | PGA/SA values by return-period or exceedance probability, nearest-point distance, and curve vintage. |
+| Administrative context | `geo.geo_boundary`, CAP zones, urban sections | Municipality, province, region, CAP candidates, urban-section overlap, and boundary confidence. |
+| Market context | OMI geometry and quote facts | Current OMI zone, typology/condition price and rent ranges, latest period, and data age. |
+| Local services | POIs and streets | Counts and nearest distances by category, plus selected service attributes from raw tags. |
+| Raster context | population and WSF assets | Zonal mean/max/percentiles, built-up share, population estimate, and raster coverage metadata. |
+
+The preferred physical model is a narrow, versioned intersection table such as
+`facts.parcel_spatial_context`, keyed by `(parcel_id, dataset_release_id,
+context_type, source_feature_key)`. A separate flattened view can serve the
+application. This preserves one-to-many hazard and POI relationships without
+making the parcel API return an unbounded nested payload.
+
+#### Priority 1: expose OMI market depth, not only OMI membership
+
+The database contains approximately 10.7 million rows in
+`facts.market_quote_fact` and 27,212 spatial OMI zones. The current
+`serving.market_zone_snapshot` is principally an inventory view: it exposes
+zone membership, quote count, and latest period. That leaves considerable
+parcel-useful information unused:
+
+- price and rent ranges by typology and conservation condition;
+- time-series change in the lower, upper, and midpoint range;
+- spread between typologies and condition states;
+- quote coverage and age as a confidence signal;
+- municipality-to-zone heterogeneity rather than one municipality average.
+
+The canonical `facts.market_transaction_fact` table is currently empty. This
+means a future liquidity product should not infer transaction activity from
+quote rows. It should load an authoritative volume/transaction source, or
+label the result explicitly as `quote_depth`, not `liquidity`.
+
+Recommended derived metrics:
+
+```text
+parcel_omi_midpoint_eur_m2
+parcel_omi_rent_midpoint_eur_m2
+parcel_omi_price_change_1y_pct
+parcel_omi_price_change_3y_pct
+parcel_omi_typology_count
+parcel_omi_condition_spread_pct
+parcel_omi_quote_count
+parcel_omi_latest_period
+parcel_omi_market_confidence
+```
+
+The metrics should be calculated from the parcel's intersected OMI zone and
+should retain the underlying `period`, `typology`, `condition`, and source
+rows for auditability.
+
+#### Priority 1: upgrade POIs and streets into accessibility intelligence
+
+The normalized POI categories are useful but intentionally narrow: public
+transport, hospitals, parks, pharmacies, universities, shops, supermarkets,
+schools, kindergartens, and restaurants. The raw tag store preserves a much
+richer signal, including address tags, websites, school grades, opening hours,
+wheelchair/accessibility attributes, and transport tags where mapped.
+
+Potential additions:
+
+- distance to the nearest school, pharmacy, hospital, supermarket, park, and
+  public-transport stop, using a consistent network or straight-line method;
+- accessible-service counts using `wheelchair`, entrance, lift, and related
+  tags where present;
+- school type and grade-band summaries;
+- opening-hours and service-availability indicators, with an explicit
+  `unknown` state when tags are absent;
+- parking, charging, bicycle, and mobility-service categories if present in
+  the raw OSM tag universe;
+- street-density and access-count context from the 1.21 million ANNCSU street
+  rows and their 618,630 distinct street-name/locality pairs.
+
+ANNCSU is currently represented as streets and access counts, not a complete
+parcel-address/civic-number point layer. It can therefore improve address
+normalization and street context, but it should not be presented as proof that
+a particular parcel has a mapped civic number. A future address resolver
+should return both `address_match_method` and `address_confidence`.
+
+#### Priority 1: repair the census subject grain before parcel weighting
+
+The census section table contains the geometry and 122 non-identity
+indicators, but the canonical unpivot currently attaches observations to the
+municipality `geo_unit`. Multiple sections in one municipality therefore share
+the same canonical subject even though their values differ. This is a data
+model limitation, not simply a missing field.
+
+The recommended design is to add a `census_section` geographic level or a
+dedicated `spatial.census_section` entity keyed by `sez21_id`, then expose:
+
+- area-weighted or population-weighted section context for each parcel;
+- population and household density near the parcel;
+- dwelling, building, age, employment, education, commuting, and vehicle
+  indicators using the official indicator dictionary;
+- a `section_overlap_pct` and `section_match_method` so small or boundary-
+  crossing parcels are not falsely treated as belonging to one section.
+
+This would also make the 30 m raster population asset more useful: section
+values can be used for reconciliation and anomaly detection rather than being
+silently mixed with raster estimates.
+
+#### Priority 1: expose municipal tax and income composition carefully
+
+`facts.tax_fact` contains 313,092 long-form facts covering 21 measures over
+2021 and 2022 for roughly 7,900 municipalities. The underlying MEF table also
+retains frequency/amount pairs for property income, employment, pensions,
+self-employment, businesses, tax brackets, taxable income, and net tax.
+
+The current municipality profile exposes only a small aggregate slice. A
+parcel-facing product can safely use municipality-level context such as:
+
+- median or mean taxable-income proxies, clearly labelled as aggregates;
+- shares of taxpayers in income brackets;
+- property-income frequency and amount;
+- employment/pension/self-employment composition;
+- year-over-year change and coverage completeness;
+- tax-base strength as a market-demand context feature.
+
+These must remain aggregate indicators. They should never be interpreted as
+the fiscal position of the parcel owner or as a valuation of a specific
+property.
+
+#### Priority 2: build a raster zonal-statistics layer
+
+The raster catalog already registers two external assets with footprints and
+resolution metadata:
+
+- `zornade_popolazione_ita_30m`, approximately 30.9 m native grid spacing;
+- `zornade_wsf_italy_10m`, 10 m World Settlement Footprint coverage.
+
+Neither asset is currently represented as parcel-level statistics. Add a
+small, release-aware table with `parcel_id`, `raster_asset_id`, statistic,
+value, pixel count, valid-pixel percentage, and extraction method. Useful
+statistics are mean, sum, max, percentile, and built-up/settlement share.
+
+The first version should compute statistics outside the request path in batch.
+External file paths currently live under `/media/emanuele/storage`; the
+serving layer should use durable URIs and checksums so a different host does
+not silently produce missing values.
+
+#### Priority 2: add a planning and development-feasibility layer
+
+The canonical database has cadastral urban sections and environmental hazard
+layers, but not a parcel-facing municipal planning-control layer. This is the
+largest remaining gap between “what is physically present” and “what can be
+legally or economically done”.
+
+A practical pilot should target municipalities with open, versioned planning
+data and model:
+
+- zoning destination and permitted uses;
+- building-volume/coverage limits where machine-readable;
+- landscape, archaeological, hydrogeological, and protected-area overlays;
+- implementation-plan or building-permit status when published;
+- plan vintage, authority, source URL, and a `planning_data_completeness`
+  score.
+
+Do not extrapolate one municipality's planning rules nationally. The API should
+return `not_available` when a municipality has no authoritative machine-readable
+plan rather than treating the absence of data as absence of a restriction.
+
+#### Priority 3: derive explainable cross-block scores
+
+The database is ready for composite products, but they should be built as
+auditable views over atomic observations:
+
+| Score | Atomic inputs | Guardrail |
+|---|---|---|
+| Development readiness | Parcel geometry, OMI, planning, hazards, built-up status, address confidence | Never turn missing planning data into a positive score. |
+| Climate resilience | Population raster, WSF, tree/land-cover additions, heat/drought data, water proximity | Separate exposure from mitigation; report both. |
+| Environmental constraint | Flood/landslide, subsidence, protected/heritage overlays, coastal context | Return every contributing overlay and overlap percentage. |
+| Accessibility | POIs, ANNCSU streets, transport, network distance | Distinguish mapped absence from dataset absence. |
+| Market opportunity | OMI ranges, quote age/depth, transaction data when available, tax-base context | Do not call quote counts “liquidity”. |
+| Renewable feasibility | PV potential, built-up/roof proxy, protected areas, planning, grid data if acquired | Separate solar resource, installable potential, and connection feasibility. |
+
+Each score should include a versioned formula, normalized component values,
+missing-input penalties, and a human-readable explanation. Store the formula
+version alongside the result so a future recalculation is distinguishable from
+a historical snapshot.
+
+#### Database-quality work required before broad exposure
+
+The live quality-check history records unresolved or historical failures in
+geometry validity/CRS, source-key uniqueness, source-release lineage,
+dimension coverage, municipality parity, and source-to-canonical matching.
+These should be rerun after any repair because the current check table contains
+multiple validation snapshots and is not itself a “latest status” view.
+
+Two operational issues are especially relevant:
+
+- The direct national FDW probe found a stale/missing cadastral source layer;
+  source manifests must be validated before a national materialization run.
+- A costly ad-hoc PostGIS query previously triggered a broken JIT bitcode
+  summary on this server. The migration helper now disables JIT for its own
+  statements, but API jobs and maintenance queries should use bounded spatial
+  batches and the same safe setting until the PostgreSQL/PostGIS installation
+  is repaired.
+
+#### Recommended implementation sequence from the database evidence
+
+1. **Repair cadastral source manifests and populate a pilot parcel region.**
+2. **Create parcel intersection facts** for OMI, hazards, CAP, urban sections,
+   and POIs, with overlap/distance and release metadata.
+3. **Refresh the parcel risk profile** and add a separate market-context view;
+   keep market quotes distinct from transaction/liquidity measures.
+4. **Fix census section grain** and add raster zonal statistics.
+5. **Expose aggregate municipal tax/income composition and richer POI tags.**
+6. **Pilot planning controls in a small set of open-data municipalities.**
+7. **Build the composite scores only after atomic coverage and confidence
+   fields are visible.**
+
+### C.6 Second-pass findings from live PostgreSQL state
+
+> **Status (2026-10-17): not applicable on this host as written.** The `facts`
+> dimension tables, the duplicate OMI/IRPEF/POI/Eurostat source registrations and
+> the empty fact tables described below belong to the canonical schema that is not
+> present locally. The catalog that exists (`catalog.dataset_release`: 2 rows,
+> `catalog.dataset_active_release`: 1 row) was not re-checked for duplicate
+> registrations. Statistics refresh after bulk loads is part of the map SQL runner
+> (`scripts/sql/map-layer-statistics.sql`). Treat the findings as a checklist for
+> the database that hosts the canonical schema, not as current facts about this one.
+
+
+The follow-up audit looked beyond table existence and checked active release
+registrations, dimension metadata, placeholder facts, indexes, and statistics.
+These findings add opportunities that are easy to miss when looking only at
+the dataset catalog.
+
+#### Release catalog: create a single current-release contract
+
+The catalog contains multiple active `source_file` registrations for the same
+physical path:
+
+- OMI: three registrations for the same `omi.IT.sqlite` path;
+- MEF IRPEF: two registrations;
+- OSM POIs: two registrations;
+- Eurostat: two registrations for each country file.
+
+The database does preserve release IDs, checksums, and lineage fields, but the
+duplicate registrations make “latest” ambiguous unless every query applies
+the same rule. This is particularly risky for parcel enrichment because an
+OMI or POI result can otherwise be associated with the wrong vintage while
+still passing a foreign-key check.
+
+Recommended improvements:
+
+- add an explicit `is_current` or `superseded_by_release_id` contract at the
+  dataset-release level;
+- expose a `catalog.current_dataset_release` view that resolves one current
+  release per dataset and geography;
+- enforce one active source file per `(dataset, normalized_path, checksum)`;
+- retain historical releases for reproducibility but exclude them from
+  default serving queries;
+- include `release_selection_rule` in every materialized parcel-enrichment
+  run;
+- add a checksum-equality check so a repeated import is classified as a
+  duplicate retrieval, not a new data vintage.
+
+This will make time-aware parcel comparisons safer: a change in a parcel score
+should be attributable to a source-vintage change, a geometry change, or a
+formula change rather than to an arbitrary release-row selection.
+
+#### Statistical dimensions: the fact rows are present, the dictionary is not
+
+The live database contains **8,183,715** rows in
+`facts.observation_dimension`, but both `facts.indicator_dimension` and
+`facts.indicator_member` contain **0** rows. A sample of the dimension facts
+shows Eurostat dimensions such as `unit`, `nace_r2`, `s_adj`, and `indic_bt`.
+
+This is not immediately blocking for the current parcel products, but it is a
+major missed capability for context selection and aggregation. The raw
+dimension values are there; the model lacks the declared vocabulary needed to
+answer questions such as “which observation represents annual, seasonally
+adjusted residential construction?”
+
+Recommended work:
+
+1. Seed `facts.indicator_dimension` from the authoritative Eurostat dataflow
+   schema for each indicator.
+2. Populate `facts.indicator_member` with member code, label, and codelist
+   provenance rather than inferring meanings from values at query time.
+3. Add dimension-aware unique keys and query helpers for `(indicator,
+   geography, period, dimension members)`.
+4. Use the same pattern for any future climate, air-quality, mobility, or
+   energy indicators that have multiple units, scenarios, percentiles, or
+   measurement methods.
+
+The result would allow parcel context to distinguish a comparable economic
+series from a merely similarly named one, and would prevent silent mixing of
+units or scenarios in derived scores.
+
+#### Empty fact tables reveal product gaps, not just incomplete ETL
+
+The following canonical tables are structurally ready but empty:
+
+| Empty relation | Opportunity unlocked by populating it |
+|---|---|
+| `facts.market_transaction_fact` | Separate transaction volume, turnover, or share from advertised quote depth. |
+| `facts.justice_kpi_fact` | Municipality/province-level legal-process context, useful for auction, foreclosure, and transaction-friction analysis. |
+| `facts.indicator_dimension` / `indicator_member` | Reliable multi-dimensional economic, climate, and mobility queries. |
+| `spatial.cadastral_parcel` / `cadastral_sheet` | The actual parcel anchor for all due-diligence enrichment. |
+| `serving.parcel_risk_profile` | A stable application-facing parcel risk summary. |
+
+The market transaction table is the most directly relevant. It already has a
+good canonical shape—geography, OMI zone, period, typology, measure, and
+value—but no rows. This is an opportunity to add measures such as transaction
+count, normalized turnover, or volume-to-stock ratios when an authoritative
+source is acquired. Until then, any product using quote counts should use names
+such as `quote_depth` or `market_observation_count`, never `liquidity`.
+
+The justice table is a lower-priority enrichment. It should be used only as
+aggregate geographic context and only after defining the relationship between
+a tribunal catchment area and a parcel's municipality. It must not be
+interpreted as a property-specific legal status or as evidence about an owner.
+
+#### OMI facts support a richer temporal product than the current snapshot
+
+Database statistics show that `facts.market_quote_fact` covers 43 semester
+periods, 18 typologies, and three conservation conditions. The current serving
+snapshot reduces this rich history largely to quote count and latest period.
+
+This supports a second-generation OMI product with:
+
+- current lower/upper/midpoint price and rent ranges;
+- a history curve per typology and condition;
+- number of observed semesters and gaps in the series;
+- volatility and range compression/expansion;
+- typology substitution signals, such as residential versus commercial
+  coverage;
+- a “last observed” age penalty;
+- comparison of the parcel's zone against its municipality and province.
+
+The product should keep the raw semester and typology dimensions accessible.
+Do not collapse all 18 typologies into one average unless the weighting rule is
+explicit and the resulting value is labelled as a derived estimate.
+
+#### Add indexes designed for parcel-serving workloads
+
+The canonical schema currently has strong primary keys and spatial GIST
+indexes, but several large tables lack the secondary indexes needed by the
+proposed enrichment joins:
+
+- `facts.market_quote_fact` has no visible index on zone, period, typology,
+  and condition;
+- `facts.hazard_curve_point` has no visible index on
+  `hazard_measurement_id`;
+- `facts.poi_tag` has only its primary-key index, not a `(poi_id, tag_key)`
+  lookup index;
+- `facts.hazard_measurement` has a geometry index but no dedicated index on
+  hazard type, metric, release, or source key;
+- `spatial.hazard_area` has a geometry index but no explicit class/type
+  filter index;
+- `facts.market_transaction_fact` will need a zone/period index before it is
+  populated at scale.
+
+Candidate indexes should be benchmarked with representative parcel joins,
+not added indiscriminately. The expected pattern is a cheap attribute/release
+filter followed by a spatial candidate filter and then exact geometry
+intersection. For raw POI exploration, a GIN index over `raw_tags` may be
+useful, but a normalized derived tag table is preferable for stable API
+fields.
+
+#### Refresh optimizer statistics as part of every bulk-load release
+
+`pg_stat_user_tables.n_live_tup` reports zero for many relations that are
+known to contain substantial data, including the OMI, census, POI, tax, and
+canonical geography tables. The catalog's `pg_class.reltuples` estimates and
+direct counts show the data is present, but monitoring statistics are stale or
+not a reliable row-count source in the current installation.
+
+Add to the release workflow:
+
+```text
+bulk load
+→ create/refresh spatial and attribute indexes
+→ ANALYZE affected tables
+→ run bounded EXPLAIN plans for representative parcel joins
+→ refresh serving views
+→ record row counts, table statistics timestamp, and query timings
+```
+
+This matters for enrichment because a bad estimate on a 25-million-row hazard
+table can choose a catastrophic nested-loop plan, while the same SQL appears
+fine on a small pilot. Keep heavy geometry work out of request paths and
+materialize parcel intersections in batches.
+
+#### Reduce legacy duplication while preserving auditability
+
+The database retains both source-shaped OMI tables and canonical OMI facts,
+alongside multiple catalog releases. This is valuable for auditability but
+expensive for repeated queries and creates two semantic surfaces for the same
+concept.
+
+A useful enrichment-platform improvement is a three-layer contract:
+
+```text
+raw/source-shaped tables
+    ↓ immutable, release-keyed
+canonical facts and spatial entities
+    ↓ one current-release selection
+serving parcel and municipality products
+```
+
+The serving layer should never join raw and canonical representations in the
+same query. Add a canonical-to-source reconciliation report containing row
+counts, checksum, period coverage, key coverage, and value spot checks. This
+will make future enrichment sources easier to onboard without duplicating
+large tables or accidentally mixing vintages.
+
+#### Additional derived products now suggested by the database
+
+The second-pass findings support these concrete products:
+
+| Product | Why the current database makes it feasible |
+|---|---|
+| **Parcel evidence bundle** | One versioned object combining all intersections, source records, distances, overlaps, and confidence flags. |
+| **Market time-series card** | 43 OMI semesters × 18 typologies × 3 conditions already provide the temporal dimensions. |
+| **Data freshness/coverage card** | Catalog releases, source files, quality checks, raster metadata, and periods are already modeled. |
+| **Cadastral resolution confidence** | FDW/native cadastral reference, municipality crosswalk, geometry match, and source-key lineage can be scored separately. |
+| **Service accessibility profile** | POI geometry, raw tags, ANNCSU streets, and CAP zones support service counts and nearest-distance measures. |
+| **Environmental exposure ledger** | Hazard polygons, EGMS metrics, MPS04 curves, raster assets, and parcel overlap statistics can be reported as evidence rather than one opaque score. |
+| **Municipal demand context** | Census indicators, tax facts, OMI history, PV aggregates, and POI counts can be combined at the municipality level without exposing personal data. |
+
+The strongest near-term sequence remains: repair the cadastral materialization,
+then build versioned parcel intersections, then expose the market and evidence
+cards. The dimension registry, release-selection view, secondary indexes, and
+post-load statistics should be treated as enabling infrastructure for those
+products rather than optional cleanup.

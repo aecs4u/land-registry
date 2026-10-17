@@ -657,3 +657,106 @@ body.direct-map-page > .direct-map-shell { height: 100vh; flex: 0 0 100vh; }
 .map-layer-stack { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 2px; }
 .map-layer-stack-item { display: flex; align-items: center; width: 100%; min-height: 32px; padding: 4px 8px; border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
 .map-layer-stack-item:hover, .map-layer-stack-item:focus-visible { background: color-mix(in srgb, var(--direct-map-border) 55%, transparent); }
+
+
+/* ---- Audit 2026-10-17 ---------------------------------------------------------
+ * Sheet height budget, overlap rules, attribution clearance and touch targets.
+ * Kept in one block so the intent of each rule stays traceable to the audit. */
+.direct-map-shell { --parcel-sheet-width: clamp(380px, 36vw, 540px); --map-attribution-clearance: 36px; }
+
+/* H4: panels stop above the MapLibre attribution instead of covering it. */
+.map-layers-card { max-height: calc(100% - 70px - var(--map-attribution-clearance)); }
+.map-maplibre-attribution-link, .maplibregl-ctrl-attrib a { text-decoration: underline; }
+.maplibregl-ctrl-attrib a { color: inherit; }
+
+/* M1: sections that have not loaded yet show a placeholder instead of a bare heading. */
+.parcel-section[data-state="idle"] .parcel-section-body::before { content: ""; display: block; width: 62%; height: 12px; border-radius: 4px; background: var(--direct-map-border); opacity: .55; }
+.parcel-section[data-state="idle"] .parcel-section-body::after { content: ""; display: block; width: 38%; height: 12px; margin-top: 7px; border-radius: 4px; background: var(--direct-map-border); opacity: .35; }
+
+/* H6: technical provenance sits behind a disclosure. */
+.parcel-technical { margin-top: 6px; font-size: 12px; color: var(--direct-map-muted); }
+.parcel-technical summary { cursor: pointer; font-weight: 600; }
+.parcel-technical p { margin: 4px 0 0; overflow-wrap: anywhere; }
+
+/* Scope label under the header chips that describe a wider area than the parcel. */
+.parcel-stat-scope { display: block; margin-top: 1px; color: var(--direct-map-muted); font-size: 10.5px; line-height: 1.2; font-weight: 500; }
+
+/* Desktop: keep the sheet clear of the attribution line, and let the table and the
+ * basemap popover sit beside the sheet instead of underneath it. */
+@media (min-width: 1025px) {
+  .direct-map-shell:has(.parcel-sheet:not([hidden])) .parcel-detail-card.parcel-sheet { bottom: var(--map-attribution-clearance); }
+  .direct-map-shell:has(.parcel-sheet:not([hidden])) .map-table-card { right: calc(65px + var(--parcel-sheet-width) + 12px); }
+  .direct-map-shell:has(.parcel-sheet:not([hidden])) .map-basemap-popover { right: calc(100% + 24px + var(--parcel-sheet-width)); }
+}
+
+/* M4: the attribute table's controls follow the compact map controls rather than the
+ * theme's full-width form defaults, so the grid is visible without scrolling. */
+.direct-map-shell .map-table-card .form-select, .direct-map-shell .map-table-card .form-control,
+.direct-map-shell .map-table-card select, .direct-map-shell .map-table-card input[type="search"] { width: auto; min-height: 28px; padding: 3px 8px; font-size: 12px; line-height: 1.3; }
+.direct-map-shell .map-table-card .map-table-toolbar input[type="search"] { flex: 1 1 140px; min-width: 110px; }
+.direct-map-shell .map-table-card .map-workbench-attribute-row input[type="search"] { flex: 1 1 120px; }
+.direct-map-shell .map-table-card .map-workbench-tabs button { font-size: 13px; padding: 5px 10px; }
+.direct-map-shell .map-table-card .map-card-heading h2 { font-size: 16px; margin: 0; }
+.direct-map-shell .map-table-card .map-table-page-size-label { font-size: 12px; margin: 0; }
+.direct-map-shell .map-table-card .secondary-action.compact { font-size: 12px; padding: 3px 8px; min-height: 26px; }
+
+/* H1: compact sheet chrome on short or narrow viewports so the scrolling area keeps room. */
+@media (max-height: 820px), (max-width: 1024px) {
+  .parcel-sheet .parcel-sheet-header { padding: 9px 14px 6px; }
+  .parcel-sheet .parcel-sheet-header h2 { font-size: 17px; }
+  .parcel-sheet .parcel-stat { padding: 5px 8px; }
+  .parcel-sheet .parcel-stat-label { font-size: 11px; }
+  .parcel-sheet .parcel-stat-value { font-size: 12px; overflow-wrap: normal; }
+  .parcel-sheet .parcel-section-nav { padding: 3px 8px; }
+  .parcel-sheet .parcel-sister-building-controls { padding: 4px 10px; }
+  .parcel-sheet .parcel-detail-actions { padding: 6px 10px; }
+  .parcel-sheet .parcel-detail-actions .secondary-action { min-height: 26px; padding: 3px 8px; }
+}
+.parcel-sheet .parcel-detail-content { min-height: 140px; }
+@media (min-width: 701px) and (max-width: 1024px) {
+  .parcel-detail-card.parcel-sheet { bottom: var(--map-attribution-clearance); max-height: min(80%, calc(100% - 96px)); }
+  .map-layers-card { right: 65px; }
+}
+
+/* H2: on a phone the sheet is a bottom sheet; the map's action column would sit on top of
+ * its close button, so it is hidden while the sheet is open. */
+@media (max-width: 700px) {
+  .direct-map-shell:has(.parcel-sheet:not([hidden])) .map-utility-stack,
+  .direct-map-shell:has(.parcel-sheet:not([hidden])) .map-mobile-action-bar { display: none; }
+  .parcel-sheet .parcel-sheet-header, .parcel-sheet .parcel-detail-content { padding-right: 16px; }
+  .parcel-sheet .parcel-stat-strip, .parcel-sheet .parcel-section-nav { margin-right: 0; }
+  .parcel-detail-card.parcel-sheet { max-height: 80%; }
+  .parcel-stat-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .parcel-stat:nth-child(2n) { border-right: 1px solid var(--direct-map-border); }
+  .parcel-stat:nth-child(3n) { border-right: 0; }
+  .parcel-stat:nth-child(-n+4) { border-bottom: 0; }
+  .parcel-stat:nth-child(-n+3) { border-bottom: 1px solid var(--direct-map-border); }
+  .map-layers-card { right: 66px; max-height: calc(100% - 268px - var(--map-attribution-clearance)); }
+}
+
+/* L1: touch targets of at least 40-44 px on coarse pointers and phones. */
+@media (pointer: coarse), (max-width: 700px) {
+  .map-round-button { width: 44px; height: 44px; }
+  .map-search-row button { width: 40px; height: 40px; }
+  .map-parcel-finder-form select, .map-parcel-finder-form input, .map-parcel-finder-form button { min-height: 40px; }
+  .map-search-privacy a { display: inline-block; padding: 8px 4px; }
+  .map-card-close, .parcel-sheet-header-actions .secondary-action { min-width: 40px; min-height: 40px; }
+}
+@media (max-height: 640px) {
+  .map-round-button { width: 34px; height: 34px; }
+}
+
+/* Unavailable actions keep keyboard focus (aria-disabled instead of the disabled attribute). */
+.secondary-action[aria-disabled="true"], .map-live-toggle[aria-disabled="true"] { opacity: .6; cursor: not-allowed; }
+
+/* Text on the accent colour: the dark theme remaps the accent to a light blue
+ * (#60a5fa), where white text is only 2.5:1. */
+.direct-map-shell { --direct-map-on-accent: #fff; }
+[data-bs-theme="dark"] .direct-map-shell { --direct-map-on-accent: #0b1220; }
+.map-welcome-primary, .map-search-row button, .map-parcel-finder-form button { color: var(--direct-map-on-accent); }
+
+/* Floating panels are region landmarks inside <main>: an <aside> must be top level. */
+/* Contrast: the current section tab and the SISTER toggle in the dark theme. */
+.parcel-section-nav button[aria-current="true"] { color: var(--direct-map-text); box-shadow: inset 0 -2px 0 var(--direct-map-accent); }
+.parcel-sister-building-controls .map-live-toggle { color: var(--direct-map-text); }
+.map-live-checkbox:has(input:checked) { color: var(--direct-map-text); }

@@ -186,9 +186,6 @@ _TEXT: dict[str, tuple[str, str]] = {
     "f_scenario_lcoe": ("Costo livellato dell'energia", "Levelized cost of energy"),
     "f_scenario_payback": ("Rientro semplice", "Simple payback"),
     "f_scenario_discounted_payback": ("Rientro attualizzato", "Discounted payback"),
-    "f_scenario_tilt": ("Inclinazione", "Tilt"),
-    "f_scenario_aspect": ("Azimut PVGIS", "PVGIS aspect"),
-    "f_scenario_losses": ("Perdite di sistema", "System losses"),
     "f_scenario_self_consumption": ("Autoconsumo ipotizzato", "Assumed self-consumption"),
     "f_scenario_lifetime": ("Durata dello scenario", "Scenario lifetime"),
     "f_scenario_install_cost": ("Costo installazione per kWp", "Installation cost per kWp"),
@@ -380,20 +377,12 @@ _TEXT: dict[str, tuple[str, str]] = {
         "Municipal aggregates only; these are not estimates for this parcel, a building or a roof.",
     ),
     "solar_scenario_note": (
-        "Stima di produzione PVGIS al centroide catastale, non una valutazione del tetto. Potenza, orientamento, autoconsumo, prezzi e costi derivano dagli input dello scenario; non sono simulati profili orari o ombreggiamento. Flussi pre-imposte, senza incentivi, finanziamento o sostituzione dell'inverter.",
-        "PVGIS production estimate at the cadastral parcel centroid, not a roof assessment. System size, orientation, self-consumption, prices and costs come from the scenario inputs; hourly load and shading are not simulated. Cash flows are pre-tax and exclude incentives, financing and inverter replacement.",
-    ),
-    "solar_scenario_timeout": (
-        "PVGIS non ha risposto in tempo; lo scenario non è stato incluso in questo PDF.",
-        "PVGIS did not respond in time; the scenario was not included in this PDF.",
+        "La resa deriva dal potenziale solare medio comunale esposto da aecs4u-stats e basato su PVGIS; non è una stima per questa particella, edificio o tetto. Potenza, autoconsumo, prezzi e costi derivano dagli input dello scenario. I flussi non simulano profili orari, ombreggiamento o vincoli tecnici; sono al lordo di imposte, incentivi, finanziamento e sostituzione dell'inverter.",
+        "Yield comes from the municipality-wide PVGIS-derived solar potential exposed by aecs4u-stats; it is not an estimate for this parcel, building or roof. Capacity, self-consumption, prices and costs come from the scenario inputs. Cash flows do not model hourly demand, shading or technical constraints and exclude taxes, incentives, financing and inverter replacement.",
     ),
     "solar_scenario_unavailable": (
-        "PVGIS non è disponibile; lo scenario non è stato incluso in questo PDF.",
-        "PVGIS is unavailable; the scenario was not included in this PDF.",
-    ),
-    "solar_scenario_geometry": (
-        "Geometria della particella non disponibile; non è stato possibile localizzare lo scenario.",
-        "Parcel geometry is unavailable, so the scenario could not be located.",
+        "Il potenziale solare comunale non è disponibile; lo scenario non è stato incluso in questo PDF.",
+        "Municipal solar potential is unavailable; the scenario was not included in this PDF.",
     ),
     "municipality_profile_note": (
         "Dati riferiti all'intero comune. La serie storica può avere anni mancanti e non descrive la particella.",
@@ -696,6 +685,10 @@ async def gather_inputs(
     municipality = await _safe(stats_service.aget_municipality_by_cadastral_code(code), "municipality") if code else None
     province_name = (municipality or {}).get("province") or props.get("province") or ""
     istat = (municipality or {}).get("istat_code") or (municipality or {}).get("procom")
+    solar_profile_task = asyncio.create_task(
+        _safe(stats_service.aget_municipality_solar_potential(str(istat)), "municipal-solar")
+        if istat else _none()
+    )
 
     async def omi() -> tuple[Any, Any, Any]:
         if not point or not province_name:
@@ -740,17 +733,9 @@ async def gather_inputs(
         from land_registry import solar_economics
 
         try:
-            centroid = await asyncio.to_thread(stats_service._parcel_centroid, parcel)
-            if centroid is None:
-                return {"available": False, "reason": "parcel_geometry_unavailable"}
+            solar_profile = await solar_profile_task
+            production = solar_economics.annual_yield_from_municipal_potential(solar_profile)
             scenario = solar_scenario.model_dump() if hasattr(solar_scenario, "model_dump") else dict(solar_scenario)
-            production = await solar_economics.annual_yield_per_kwp(
-                lat=centroid["lat"],
-                lng=centroid["lng"],
-                tilt_degrees=scenario["tilt_degrees"],
-                aspect_degrees=scenario["aspect_degrees"],
-                system_losses_pct=scenario["system_losses_pct"],
-            )
             economics, calculation_method = solar_economics.calculate_economics(
                 production["annual_yield_kwh_per_kwp"],
                 scenario["system_kwp"],
@@ -758,31 +743,27 @@ async def gather_inputs(
             )
             return {
                 "available": True,
-                "source": production.get("model") or solar_economics.PVGIS_MODEL,
+                "source": production.get("source") or "aecs4u-stats solar.solar_potential_comuni",
                 "location": {
-                    **centroid,
-                    "match_method": "parcel geometry centroid",
-                    "spatial_scope": "PVGIS location estimate; not a roof measurement",
+                    "cadastral_code": code,
+                    "istat_code": str(istat) if istat else None,
+                    "municipality": (municipality or {}).get("official_name") or (municipality or {}).get("name"),
+                    "match_method": "cadastral municipality code",
+                    "spatial_scope": "municipal aggregate; not an estimate for this parcel, building, or roof",
                 },
                 "production": production,
                 "scenario": scenario,
                 "economics": economics,
                 "calculation_method": calculation_method,
-                "dataset_version": production.get("data_period") or solar_economics.PVGIS_DATA_PERIOD,
+                "dataset_version": production.get("dataset_version"),
+                "updated_at": production.get("updated_at"),
                 "model_version": production.get("model") or solar_economics.PVGIS_MODEL,
             }
-        except solar_economics.SolarSourceTimeout:
-            return {"available": False, "reason": "pvgis_timeout"}
         except solar_economics.SolarSourceUnavailable:
-            return {"available": False, "reason": "pvgis_unavailable"}
+            return {"available": False, "reason": "municipal_solar_unavailable"}
         except Exception as exc:  # noqa: BLE001 - optional scenario must not fail the dossier
             log.warning("Dossier parcel solar scenario unavailable for %s: %s", reference, exc)
             return {"available": False, "reason": "scenario_calculation_failed"}
-
-    solar = (
-        _safe(stats_service.aget_municipality_solar_potential(str(istat)), "municipal-solar")
-        if istat else _none()
-    )
 
     results = await asyncio.gather(
         omi(),
@@ -814,7 +795,7 @@ async def gather_inputs(
             asyncio.to_thread(stats_service.get_anncsu_addresses_for_feature, parcel, municipality, code),
             "anncsu-addresses",
         ) if geometry else _none(),
-        solar,
+        solar_profile_task,
         _safe(stats_service.aget_quality_of_life_indicators(code), "quality-of-life", timeout=15) if code else _none(),
         _safe(parcel_solar_scenario(), "parcel-solar-scenario", timeout=18)
         if solar_scenario is not None else _none(),
@@ -1662,9 +1643,6 @@ def build_dossier(
             scenario_blocks.append(
                 _kv(
                     [
-                        [text["f_scenario_tilt"], _fmt(scenario.get("tilt_degrees"), locale, 0, "°")],
-                        [text["f_scenario_aspect"], _fmt(scenario.get("aspect_degrees"), locale, 0, "°")],
-                        [text["f_scenario_losses"], _pct(scenario.get("system_losses_pct"), locale)],
                         [text["f_scenario_install_cost"], _fmt(scenario.get("installation_cost_eur_per_kwp"), locale, 0, "€/kWp")],
                         [text["f_scenario_electricity_price"], _fmt(scenario.get("electricity_price_eur_per_kwh"), locale, 3, "€/kWh")],
                         [text["f_scenario_export_price"], _fmt(scenario.get("export_price_eur_per_kwh"), locale, 3, "€/kWh")],
@@ -1719,18 +1697,14 @@ def build_dossier(
                     **_provenance(
                         solar_scenario_result.get("source"),
                         solar_scenario_result,
-                        match_method="parcel geometry centroid",
-                        spatial_resolution="PVGIS location estimate",
+                        match_method="cadastral municipality code",
+                        spatial_resolution="municipality",
                     ),
                 }
             )
         else:
             reason = solar_scenario_result.get("reason")
-            message_key = {
-                "pvgis_timeout": "solar_scenario_timeout",
-                "parcel_geometry_unavailable": "solar_scenario_geometry",
-                "pvgis_unavailable": "solar_scenario_unavailable",
-            }.get(reason, "unavailable")
+            message_key = "solar_scenario_unavailable" if reason == "municipal_solar_unavailable" else "unavailable"
             scenario_blocks.append({"type": "unavailable", "text": text[message_key]})
         if solar_scenario_result.get("available") is True:
             scenario_blocks.append({"type": "note", "text": text["solar_scenario_note"]})

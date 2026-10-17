@@ -433,25 +433,29 @@ async def test_dossier_compiles_with_server_recomputed_solar_scenario():
     )
     scenario = {
         "available": True,
-        "source": "PVGIS 5.3 / PVGIS-SARAH3",
+        "source": "aecs4u-stats solar.solar_potential_comuni",
         "location": {
-            "lat": 38.1909,
-            "lng": 13.3072,
-            "match_method": "parcel geometry centroid",
-            "spatial_scope": "PVGIS location estimate; not a roof measurement",
+            "cadastral_code": "G273",
+            "istat_code": "082053",
+            "municipality": "Palermo",
+            "match_method": "cadastral municipality code",
+            "spatial_scope": "municipal aggregate; not an estimate for this parcel, building, or roof",
         },
         "production": {
             "annual_yield_kwh_per_kwp": annual_yield,
-            "monthly_yield_kwh_per_kwp": [annual_yield / 12] * 12,
-            "model": "PVGIS 5.3 / PVGIS-SARAH3",
-            "data_period": "2005–2023",
+            "municipal_output_kwh_year_total": annual_yield * 330_000,
+            "municipal_capacity_kwp_total": 330_000,
+            "model": "PVGIS-derived municipal solar potential",
+            "dataset_version": "pvgis:v5.3;sarah3:2025-10;model:v1.1",
+            "updated_at": "2026-05-11T10:35:00",
             "source_url": "https://joint-research-centre.ec.europa.eu/",
         },
         "scenario": request.model_dump(),
         "economics": economics,
         "calculation_method": calculation_method,
-        "dataset_version": "2005–2023",
-        "model_version": "PVGIS 5.3 / PVGIS-SARAH3",
+        "dataset_version": "pvgis:v5.3;sarah3:2025-10;model:v1.1",
+        "updated_at": "2026-05-11T10:35:00",
+        "model_version": "PVGIS-derived municipal solar potential",
     }
 
     variables, files = _build(_inputs(solar_scenario=scenario))
@@ -463,8 +467,8 @@ async def test_dossier_compiles_with_server_recomputed_solar_scenario():
         if source["title"] == "Scenario fotovoltaico della particella"
     )
     source_rows = dict(solar_source["rows"])
-    assert any("PVGIS 5.3 / PVGIS-SARAH3" in value for value in source_rows.values())
-    assert "2005–2023" in source_rows.values()
+    assert any("solar_potential_comuni" in value for value in source_rows.values())
+    assert "pvgis:v5.3;sarah3:2025-10;model:v1.1" in source_rows.values()
 
     pdf = await pd.render_dossier_pdf(variables, files)
 

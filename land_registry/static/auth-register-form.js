@@ -75,6 +75,9 @@
         clerkEnabled = config.dataset.clerkEnabled === 'true';
         afterSignUpUrl = config.dataset.afterSignUpUrl || '/map';
         registerPostUrl = config.dataset.registerPostUrl || '/auth/register';
+        // The strength meter is a progressbar and needs an accessible name.
+        document.getElementById('passwordStrength')?.setAttribute(
+            'aria-label', config.dataset.passwordStrengthLabel || 'Password strength');
         bindForm();
         if (!clerkEnabled) return;
         if (!await waitForClerk()) { showFallback(); return; }

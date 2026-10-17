@@ -46,7 +46,10 @@ def test_catalog_ids_are_safe_and_have_feature_ids():
         assert layer.id_column in layer.properties
         assert layer.table.replace(".", "").replace("_", "").isalnum()
     assert get_map_layer("cadastral-parcels").coverage == "unknown"
-    assert get_map_layer("urban-sections").coverage == "unknown"
+    # Only some municipalities have urban sections: partial, flagged sparse so an empty view is explained.
+    assert get_map_layer("urban-sections").coverage == "partial"
+    assert get_map_layer("urban-sections").sparse is True
+    assert "Only municipalities that have urban sections" in get_map_layer("urban-sections").coverage_note
     assert get_map_layer("maritime-concessions").id_column == "row_id"
     assert get_map_layer("geo-boundaries").role == "admin-substitute"
     assert get_map_layer("geo-boundaries").public()["role"] == "admin-substitute"
@@ -607,3 +610,26 @@ def test_map_pool_defaults_to_four_connections_and_honours_the_environment(monke
     assert _AsyncpgConnectionSource("postgresql://u@h/db").max_connections == 32
     # An explicit size (the dedicated cadastral pools use 2) is never overridden.
     assert _AsyncpgConnectionSource("postgresql://u@h/db", max_connections=2).max_connections == 2
+
+
+def test_geojson_flag_filter_runs_in_the_database_for_parcel_flags():
+    """Auction parcels are selected by SQL, not by downloading every parcel page."""
+    connection = _Connection(rows=[])
+    source = PostgresMapLayerSource(_ConnectionSource(connection))
+
+    asyncio.run(source.read_geojson("cadastral-parcels", (11.0, 45.4, 11.01, 45.41), 100, flag="is_auction_sale"))
+
+    assert 't."is_auction_sale" IS TRUE' in connection.sql
+    assert connection.sql.index('IS TRUE') < connection.sql.index("ORDER BY")
+
+
+def test_geojson_flag_filter_ignores_unknown_columns_and_layers_without_them():
+    connection = _Connection(rows=[])
+    source = PostgresMapLayerSource(_ConnectionSource(connection))
+
+    # Not an allow-listed flag: never interpolated into SQL.
+    asyncio.run(source.read_geojson("cadastral-parcels", (11.0, 45.4, 11.01, 45.41), 100, flag="geom; DROP TABLE x"))
+    assert "DROP" not in connection.sql and "IS TRUE" not in connection.sql
+    # An allow-listed flag on a layer that has no such column is ignored too.
+    asyncio.run(source.read_geojson("census-sections", (12, 41, 13, 42), 100, flag="is_auction_sale"))
+    assert "IS TRUE" not in connection.sql

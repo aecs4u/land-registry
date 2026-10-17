@@ -8,6 +8,7 @@ from starlette.middleware.gzip import GZipMiddleware
 import json
 import logging
 import os
+import re
 from pathlib import Path
 import duckdb
 import pandas as pd
@@ -892,9 +893,13 @@ async def _build_main_map_shell_context(request: Request) -> dict:
     # (treat them as parse errors and absorb content into the parent document),
     # so Leaflet initialises in the parent window where all JS expects it.
     folium_map_html = folium_map.get_root().render()
+    # Folium's page template carries its own viewport meta (maximum-scale=1,
+    # user-scalable=no) which, embedded in this page, blocks pinch-zoom.
+    folium_map_html = re.sub(r'<meta\s+name="viewport"[^>]*>', "", folium_map_html, flags=re.IGNORECASE)
 
     # Load cadastral statistics without blocking concurrent map/API requests.
     stats = await asyncio.to_thread(get_cadastral_stats)
+    regions_available = await asyncio.to_thread(_cadastral_regions_available)
 
     locale = detect_locale(request)
     gt = make_gettext(locale)
@@ -998,10 +1003,25 @@ async def _build_main_map_shell_context(request: Request) -> dict:
         "total_provinces": stats['total_provinces'],
         "total_municipalities": stats['total_municipalities'],
         "total_files": stats['total_files'],
+        "cadastral_structure_available": regions_available,
         "carto_enabled": map_generator.controls_manager.settings.carto_enabled,
         "carto_api_key": map_generator.controls_manager.settings.carto_api_key,
         "clerk_publishable_key": get_auth_config().clerk_publishable_key,
     }
+
+
+def _cadastral_regions_available() -> bool:
+    """True when ``/api/v1/get-regions/`` has a source (the local file tree or the structure JSON).
+
+    ``get_cadastral_stats`` can report regions from other sources (FlatGeobuf),
+    so it is not a safe proxy: the region list endpoint answers 404 without one.
+    """
+    from land_registry.cadastral_utils import list_local_cadastral_regions
+
+    try:
+        return bool(list_local_cadastral_regions()) or bool(load_cadastral_structure())
+    except Exception:
+        return False
 
 
 async def _serve_legacy_map_shell(request: Request):
@@ -1321,20 +1341,35 @@ async def redirect_root_to_map():
     return RedirectResponse(url="/map", status_code=307)
 
 
+@app.exception_handler(404)
+async def not_found_handler(request: Request, exc: Exception):
+    """Styled 404 for browsers; API clients keep the JSON body.
+
+    Only paths outside ``/api`` that ask for HTML get the page. Everything else
+    (including 404s raised by API handlers with their own detail) is unchanged.
+    """
+    detail = getattr(exc, "detail", "Not Found")
+    wants_html = "text/html" in request.headers.get("accept", "")
+    if wants_html and not request.url.path.startswith(("/api", "/static", "/docs", "/redoc", "/openapi")):
+        locale = detect_locale(request)
+        return templates.TemplateResponse(
+            request, "not_found.html", {"_": make_gettext(locale), "locale": locale}, status_code=404,
+        )
+    return JSONResponse({"detail": detail}, status_code=404)
+
+
 @app.get("/landing", response_class=HTMLResponse)
 async def landing_page(request: Request):
-    """Landing page summarizing all application features"""
-    # Offloaded like the /map route (see comment there) — a cold cache
-    # triggers a full local-directory scan that must not block the event loop.
-    stats = await asyncio.to_thread(get_cadastral_stats)
+    """Static product overview.
+
+    It used to show cadastral file counts, which meant a full scan of the local
+    cadastral directory on a cold cache (26 s) and zeros where that tree is not
+    mounted. The page now carries no live statistics.
+    """
     locale = detect_locale(request)
     return templates.TemplateResponse(request, "landing.html", {
         "_": make_gettext(locale),
         "locale": locale,
-        "total_regions": stats['total_regions'],
-        "total_provinces": stats['total_provinces'],
-        "total_municipalities": stats['total_municipalities'],
-        "total_files": stats['total_files'],
         "app_name": app_settings.app_name,
         "app_version": app_settings.app_version,
     })

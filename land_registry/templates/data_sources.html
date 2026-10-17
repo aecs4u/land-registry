@@ -2,6 +2,8 @@
 
 {% block title %}{{ page_title }} · AECS4U{% endblock %}
 
+{% block meta_description %}<meta name="description" content="{{ _('Every data provider behind the map, with its licence, attribution and the terms under which its data can be reused.') }}" />{% endblock %}
+
 {% block extra_css %}
 <style>
   .data-source-page { max-width: 1040px; margin: 0 auto; padding: 28px 18px 56px; }
@@ -26,6 +28,11 @@
   @media (max-width: 520px) { .data-source-card dl { grid-template-columns: 1fr; gap: 2px; } .data-source-card dd { margin-bottom: 8px; } }
 </style>
 {% endblock %}
+
+{# A text page: it needs none of the Leaflet map stack that base.html loads for the legacy map. #}
+{% block external_css %}{% endblock %}
+{% block external_js %}{% endblock %}
+{% block map_js %}{% endblock %}
 
 {% block content %}
 <main id="main-content" class="data-source-page">
@@ -66,7 +73,7 @@
     <h2 id="parcel-api-field-catalog-title">{{ _('Parcel API field catalog') }}</h2>
     <p class="data-source-lead">{{ _('This table documents the methodology, spatial scope, version identifiers and refresh information for each supported parcel API section. A stated unknown cadence means the application has no verified schedule; availability still depends on the requested parcel and mounted source data.') }}</p>
     <p class="data-source-lead">{{ _('For stable fields, data shapes and source metadata, use the machine-readable catalog:') }} <a href="/api/v2/catalog"><code>GET /api/v2/catalog</code></a></p>
-    <div class="data-field-table-wrap" role="region" aria-label="{{ _('Parcel API field catalog') }}" tabindex="0">
+    <div class="data-field-table-wrap" role="region" aria-label="{{ _('Parcel API field table') }}" tabindex="0">
       <table class="data-field-table">
         <caption class="visually-hidden">{{ _('Parcel API field catalog') }}</caption>
         <thead>

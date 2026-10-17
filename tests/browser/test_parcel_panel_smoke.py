@@ -7,6 +7,7 @@ follows the scroll position, and the OMI estimator reacts to input. Skipped
 when Playwright or a browser is unavailable.
 """
 
+import re
 import json
 import os
 import shutil
@@ -194,7 +195,8 @@ def test_panel_fills_sections_independently_and_survives_a_failing_source(server
         assert "Via Roma 1" in page.inner_text("#parcel-section-address")
         assert "not a geocoded address register" in page.inner_text("#parcel-section-address")
         assert any("/parcel/details/" in url and "view=panel" in url for url in requested)
-        assert page.inner_text('[data-stat="area"] .parcel-stat-value').startswith("5545")
+        # Numbers follow the page language: "5,545.2 m²" in English, "5545,2 m²" in Italian.
+        assert re.match(r"5[,.]?545", page.inner_text('[data-stat="area"] .parcel-stat-value'))
         assert f"/api/v1/enrichment/parcel/dossier/{REFERENCE}" in page.get_attribute("#parcelReportLink", "href")
         assert page.get_attribute("#parcelReportLink", "aria-disabled") == "false"
         page.wait_for_function("document.querySelector('[data-stat=\"hazard\"] .parcel-stat-value').textContent.startsWith('High')")
@@ -204,7 +206,7 @@ def test_panel_fills_sections_independently_and_survives_a_failing_source(server
         page.wait_for_selector('#parcel-section-risks[data-state="ready"]')
         assert "Zone 3" in page.inner_text("#parcel-section-risks")
         assert "PGA (10 percent in 50 years)" in page.inner_text("#parcel-section-risks")
-        assert "0,123 g" in page.inner_text("#parcel-section-risks")
+        assert re.search(r"0[,.]123 g", page.inner_text("#parcel-section-risks"))
         assert any("/mps04/pga?" in url for url in requested)
         # Lazy sections wait until they approach the viewport.
         assert not any("/income/" in url for url in requested)
@@ -430,7 +432,7 @@ def test_energy_tab_shows_only_municipal_solar_aggregates(server, browser):
         assert page.evaluate("location.hash") == "#energia"
         page.locator("#parcel-section-solar > summary").click()
         assert "940 MWh/year" in page.inner_text("#parcel-section-solar")
-        assert "1,2 GWh/year" in page.inner_text("#parcel-section-solar")
+        assert re.search(r"1[,.]2 GWh/year", page.inner_text("#parcel-section-solar"))
         assert "not estimates for this parcel, building, or roof" in page.inner_text("#parcel-section-solar")
         assert "solar-fixture-2026" in page.inner_text("#parcel-section-solar")
         assert "2026-09-30" in page.inner_text("#parcel-section-solar")

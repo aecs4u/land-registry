@@ -1,3 +1,11 @@
+/** Region list, skipped (no failing request) where the cadastral file tree is not provisioned. */
+function fetchCadastralRegions(url) {
+    if (window.cadastralStructureAvailable === false) {
+        return Promise.resolve({ ok: false, status: 404, json: async () => ({}) });
+    }
+    return fetch(url);
+}
+
 // Land Registry Map JavaScript
 // Initialize Leaflet map with all map providers
 let map, currentGeoJsonLayer, drawnItems, drawControl;
@@ -3817,7 +3825,7 @@ window.refreshSearchComuneList = async function() {
 
     if (!_cadastralStructure && !_searchRegionNames.length) {
         try {
-            const resp = await fetch('/api/v1/get-regions/');
+            const resp = await fetchCadastralRegions('/api/v1/get-regions/');
             if (resp.ok) {
                 const payload = await resp.json();
                 _searchRegionNames = Array.isArray(payload.regions) ? payload.regions : [];
@@ -4730,7 +4738,7 @@ async function _doLoadCadastralData() {
     // bounded endpoints when the preceding selector changes.
     let regionNames = [];
     try {
-        const regionResponse = await fetch('/api/v1/get-regions/');
+        const regionResponse = await fetchCadastralRegions('/api/v1/get-regions/');
         if (regionResponse.ok) {
             const regionPayload = await regionResponse.json();
             regionNames = Array.isArray(regionPayload.regions) ? regionPayload.regions : [];

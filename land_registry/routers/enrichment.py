@@ -25,13 +25,10 @@ from land_registry import stats_service
 from land_registry.map_layers import get_map_layer_source
 from land_registry.models import EnrichmentDatasetStatus, SolarEconomicsRequest
 from land_registry.solar_economics import (
-    PVGIS_DATA_PERIOD,
-    PVGIS_MODEL,
     PVGIS_SOURCE_URL,
-    SolarSourceTimeout,
     SolarSourceUnavailable,
     assumptions_from_request,
-    annual_yield_per_kwp,
+    annual_yield_from_municipal_potential,
     calculate_economics,
 )
 
@@ -389,28 +386,32 @@ async def post_parcel_solar_economics(
     scenario: SolarEconomicsRequest,
     id: Annotated[Optional[int], Query(ge=1, description="Canonical feature ID of the selected parcel")] = None,
 ):
-    """Calculate an editable PV economics scenario using PVGIS yield at the parcel centroid.
+    """Calculate editable economics from the aecs4u-stats municipal solar view.
 
-    The user supplies system size and assumptions. Parcel area is never treated
+    The source is a municipal PVGIS-derived aggregate exposed in
+    ``aecs4u-stats.solar.solar_potential_comuni``. Parcel area is never treated
     as roof area or used to infer an installable system size.
     """
     parcel = await get_parcel_by_reference(national_reference, id=id)
-    centroid = await asyncio.to_thread(stats_service._parcel_centroid, parcel)
-    if centroid is None:
-        raise HTTPException(status_code=422, detail="Parcel geometry is unavailable for a PVGIS location")
-
+    properties = parcel.get("properties") if isinstance(parcel, dict) else None
+    properties = properties if isinstance(properties, dict) else {}
+    cadastral_code = str(
+        properties.get("comune_code")
+        or properties.get("cadastral_code")
+        or national_reference.split("_", 1)[0]
+    ).strip()
+    municipality = await stats_service.aget_municipality_by_cadastral_code(cadastral_code)
+    istat_code = (municipality or {}).get("istat_code")
+    if not istat_code:
+        raise HTTPException(status_code=503, detail="Municipality metadata is unavailable for this parcel")
+    solar_profile = await stats_service.aget_municipality_solar_potential(str(istat_code))
     try:
-        production = await annual_yield_per_kwp(
-            lat=centroid["lat"],
-            lng=centroid["lng"],
-            tilt_degrees=scenario.tilt_degrees,
-            aspect_degrees=scenario.aspect_degrees,
-            system_losses_pct=scenario.system_losses_pct,
-        )
-    except SolarSourceTimeout as exc:
-        raise HTTPException(status_code=504, detail="PVGIS did not respond in time. Retry the calculation.") from exc
+        production = annual_yield_from_municipal_potential(solar_profile)
     except SolarSourceUnavailable as exc:
-        raise HTTPException(status_code=503, detail="PVGIS is temporarily unavailable for this scenario.") from exc
+        raise HTTPException(
+            status_code=503,
+            detail="Municipal solar potential is unavailable for this municipality.",
+        ) from exc
 
     economics, calculation_method = calculate_economics(
         production["annual_yield_kwh_per_kwp"],
@@ -420,9 +421,12 @@ async def post_parcel_solar_economics(
     return {
         "national_reference": national_reference,
         "location": {
-            **centroid,
-            "match_method": "parcel geometry centroid",
-            "spatial_scope": "PVGIS location estimate; not a roof measurement",
+            "cadastral_code": cadastral_code,
+            "istat_code": str(istat_code),
+            "municipality": (municipality or {}).get("official_name") or (municipality or {}).get("name"),
+            "match_method": "cadastral municipality code",
+            "spatial_resolution": "municipality",
+            "spatial_scope": "municipal aggregate; not an estimate for this parcel, building, or roof",
         },
         "production": production,
         "scenario": scenario.model_dump(),
@@ -430,10 +434,12 @@ async def post_parcel_solar_economics(
         "calculation_method": calculation_method,
         "provenance": {
             "source_key": "pvgis",
-            "source": PVGIS_MODEL,
-            "dataset_period": PVGIS_DATA_PERIOD,
-            "endpoint": PVGIS_SOURCE_URL,
-            "yield_method": "PVGIS PVcalc long-term monthly production for a 1 kWp reference system",
+            "source": production.get("source") or "aecs4u-stats solar.solar_potential_comuni",
+            "dataset_version": production.get("dataset_version"),
+            "updated_at": production.get("updated_at"),
+            "source_url": PVGIS_SOURCE_URL,
+            "yield_method": production["yield_method"],
+            "spatial_resolution": "municipality",
             "financial_inputs": "user supplied; defaults are illustrative only",
         },
     }

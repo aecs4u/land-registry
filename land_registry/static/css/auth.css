@@ -338,9 +338,11 @@
     color: var(--auth-danger-color);
 }
 
-/* Validation feedback */
+/* Validation feedback: hidden until the field is invalid after the form was
+ * validated (or flagged), as in Bootstrap. Showing it unconditionally printed
+ * every error on an untouched form. */
 .invalid-feedback {
-    display: block;
+    display: none;
     color: var(--auth-danger-color);
     font-size: 0.875rem;
     margin-top: 0.25rem;
@@ -353,6 +355,21 @@
     font-size: 0.875rem;
     margin-top: 0.25rem;
 }
+
+.was-validated .input-group:has(.form-control:invalid) + .invalid-feedback,
+.input-group:has(.form-control.is-invalid) + .invalid-feedback,
+.was-validated .form-control:invalid ~ .invalid-feedback,
+.form-control.is-invalid ~ .invalid-feedback,
+.was-validated .form-check-input:invalid ~ .invalid-feedback,
+.invalid-feedback.d-block {
+    display: block;
+}
+
+/* Helper text and the terms links need 4.5:1 on the card in both themes. */
+.auth-card .form-text, .auth-card .text-muted { color: #4f5b6b !important; }
+.auth-card a.link-primary, .auth-card .form-check-label a { color: #0a58ca !important; text-decoration: underline; }
+[data-bs-theme="dark"] .auth-card .form-text, [data-bs-theme="dark"] .auth-card .text-muted { color: #b8c0cc !important; }
+[data-bs-theme="dark"] .auth-card a.link-primary, [data-bs-theme="dark"] .auth-card .form-check-label a { color: #8ab4ff !important; }
 
 @keyframes shake {
     0%, 100% { transform: translateX(0); }

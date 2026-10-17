@@ -39,6 +39,10 @@ class MapLayerSpec:
     geojson_max_area: float = 250.0
     coverage: str = "full"
     coverage_note: str = ""
+    # True when features exist only in parts of the layer's extent (for example urban
+    # sections, which only some municipalities have): an empty view is then normal and
+    # the browser says so instead of leaving a ticked layer that draws nothing.
+    sparse: bool = False
     coverage_bounds: Optional[tuple[float, float, float, float]] = None
     properties: tuple[str, ...] = ()
     kind: str = "polygon"
@@ -115,7 +119,7 @@ MAP_LAYERS: tuple[MapLayerSpec, ...] = (
     # from PostGIS statistics when ANALYZE data is available.
     MapLayerSpec("cadastral-sheets", "Cadastral sheets", "spatial.cadastral_sheet", "geom", min_zoom=10, geojson_max_area=4.0, coverage="unknown", properties=("id", "sheet_reference", "municipality_id", "level", "level_name", "area_sqm", "source_release"), group="cadastral", color="#1976a8", z_order=70, tile_revision="regional-1"),
     MapLayerSpec("cadastral-parcels", "Cadastral parcels", "spatial.cadastral_parcel", "geom", min_zoom=14, max_features=5000, geojson_max_area=0.04, coverage="unknown", properties=("id", "canonical_reference", "national_cadastral_reference", "parcel", "sheet", "municipality_id", "area_sqm", "source_release", "has_visura", "is_auction_sale"), group="cadastral", color="#d97925", z_order=90, fill_opacity=0.04, line_width=0.8, tile_revision="regional-4"),
-    MapLayerSpec("urban-sections", "Cadastral urban sections", "sezioni_urbane.sezioni_urbane", "geom", id_column="OGC_FID", min_zoom=11, coverage="unknown", properties=("OGC_FID", "nationalcadastralzoningreference", "administrativeunit", "sezione_urbana"), group="cadastral", color="#2f9aa8", z_order=80, require_gist_index=False),
+    MapLayerSpec("urban-sections", "Cadastral urban sections", "sezioni_urbane.sezioni_urbane", "geom", id_column="OGC_FID", min_zoom=11, coverage="partial", coverage_note="Only municipalities that have urban sections (about 520, such as Rome, Genoa, Verona and Trieste); most of Italy has none", sparse=True, properties=("OGC_FID", "nationalcadastralzoningreference", "administrativeunit", "sezione_urbana"), group="cadastral", color="#2f9aa8", z_order=80, require_gist_index=False),
     MapLayerSpec("market-zones", "OMI market zones", "zornade.zornade_zone_omi", "geom", id_column="OGC_FID", min_zoom=10, properties=("OGC_FID", "codcom", "codzona", "zona_descr", "comune_descrizione", "descr_tip_prev", "compr_min", "compr_max"), group="market", color="#7b61a8", z_order=30, require_gist_index=False, tile_revision="2"),
     MapLayerSpec("postal-zones", "Postal zones", "cap_subcomunali.cap_subcomunali", "geom", id_column="OGC_FID", min_zoom=10, properties=("OGC_FID", "cap", "comune_cap", "comune", "provincia", "regione", "fonte"), group="administrative", color="#8a7a3d", z_order=40, require_gist_index=False, tile_revision="3"),
     MapLayerSpec("flood-hazard", "Flood hazard areas", "hazards.flood_hazard", "geom", id_column="scenario_code", min_zoom=8, max_features=3000, properties=("scenario_code", "scenario_label", "area_sqm"), group="risk", color="#2b7bb9", z_order=50, fill_opacity=0.2, require_gist_index=False, tile_revision="2"),
@@ -310,6 +314,10 @@ def _sister_reference_parts(reference: Any) -> tuple[str, str, str, str]:
 _VISURA_DOCUMENT_TYPES = ("visura_fabbricati", "visura_terreni", "visura")
 
 _PLACEHOLDER = re.compile(r"%(s|%)")
+
+
+# Boolean parcel columns a viewport read may filter on in the database.
+GEOJSON_FLAG_COLUMNS = frozenset({"is_auction_sale", "has_visura"})
 
 
 def _asyncpg_sql(sql: str) -> str:
@@ -1121,7 +1129,21 @@ class PostgresMapLayerSource:
             "source": "SITAP / Vincoli in Rete / Catalogo Generale via aecs4u-stats",
         }
 
-    async def read_geojson(self, layer_id: str, bbox: tuple[float, float, float, float], limit: int, offset: int = 0) -> dict[str, Any]:
+    async def read_geojson(
+        self,
+        layer_id: str,
+        bbox: tuple[float, float, float, float],
+        limit: int,
+        offset: int = 0,
+        flag: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Read a bounded GeoJSON page; ``flag`` keeps only rows where that boolean column is true.
+
+        The flag filter runs in the database so a client that wants the few
+        flagged parcels in a viewport (for example auction sales) does not have
+        to download and discard every parcel page. It is ignored for layers
+        that do not expose the column.
+        """
         layer = get_map_layer(layer_id)
         layer_source = await self._layer_source_for(layer)
         if layer_source is None:
@@ -1129,8 +1151,12 @@ class PostgresMapLayerSource:
         west, south, east, north = (float(value) for value in bbox)
         if (east - west) * (north - south) > layer.geojson_max_area:
             return {"type": "FeatureCollection", "features": [], "zoom_required": layer.min_zoom}
-        columns = self._source_columns(layer, self._properties_for(layer, layer_source))
+        properties = self._properties_for(layer, layer_source)
+        columns = self._source_columns(layer, properties)
         relation = self._query_relation(layer, await self._resolve_relation_for(layer, layer_source))
+        flag_clause = ""
+        if flag in GEOJSON_FLAG_COLUMNS and flag in properties:
+            flag_clause = f"AND {self._column_ref('t', flag)} IS TRUE"
         # Keep the foreign-table bbox independent of the bounds CTE so
         # postgres_fdw can ship it to the remote PostGIS source.
         source_bbox = (
@@ -1147,6 +1173,7 @@ class PostgresMapLayerSource:
             FROM {relation} AS t {self._source_join(layer)} CROSS JOIN bounds
             WHERE {self._column_ref('t', layer.geometry_column)} && {source_bbox}
               AND ST_Intersects({self._column_ref('t', layer.geometry_column)}, bounds.source)
+              {flag_clause}
             ORDER BY {self._column_ref('t', layer.id_column)}
             LIMIT %s OFFSET %s
         """

@@ -4,11 +4,12 @@ for broad land-use context.
 
 ## Implementation status
 
-The local app tree now has a dedicated parcel endpoint, lazy panel card,
-source-catalog entry and Typst dossier section. The upstream
-`aecs4u_stats.corine` importer/query is applied in the sibling working tree but
-is not committed or released. No regional store is provisioned, so live values
-remain unavailable.
+The app has a dedicated parcel endpoint, lazy panel card, source-catalog entry
+and Typst dossier section. Its installed `aecs4u_stats.corine` reader uses the
+source-owned PostgreSQL `corine` database by default. Sicilia's
+`public.r19__corine_clc2018` table contains 7,181 EPSG:3035 polygons and the
+app adapter returned a ready, matched result in a Palermo smoke query. Other
+regional tables are not provisioned.
 
 ## Scope
 - `stats_service.py`: consume the upstream regional status and area-weighted
@@ -28,8 +29,8 @@ remain unavailable.
   coverage and no-match cases.
 
 ## Dependencies
-- aecs4u/aecs4u-stats#32 (CORINE subpackage — must be committed/released and
-  regional stores imported before live values can be served)
+- aecs4u/aecs4u-stats#32 (provision and validate each additional region before
+  nationwide coverage is claimed)
 
 ## Notes
 See `docs/ZORNADE_GAP_ANALYSIS.md` §2 item 13, Appendix A.5.3 and §4 Phase 2.

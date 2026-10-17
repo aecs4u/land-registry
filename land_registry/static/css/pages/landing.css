@@ -222,7 +222,9 @@ footer {
   color: var(--clr-text-muted);
   border-top: 1px solid var(--clr-border);
 }
-footer a { color: var(--clr-accent); text-decoration: none; }
+footer a, .container p a { color: var(--clr-accent-strong, #1d4ed8); text-decoration: underline; }
+body.dark-mode footer a, body.dark-mode .container p a { color: #93c5fd; }
+.container p { max-width: 70ch; }
 
 /* ── Responsive ─────────────────────────────── */
 @media (max-width: 640px) {

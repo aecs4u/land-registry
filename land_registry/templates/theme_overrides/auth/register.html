@@ -17,6 +17,7 @@
      data-after-sign-up-url="{{ (clerk.after_sign_up_url if clerk else None) | default('/map') }}"
      data-sign-in-url="{{ (clerk.sign_in_url if clerk else None) | default('/auth/login') }}"
      data-register-post-url="{{ register_post_url | default('/auth/register') }}"
+     data-password-strength-label="{{ _('Password strength') }}"
      hidden></div>
 <script src="/static/auth-register-form.js"></script>
 {% endblock %}

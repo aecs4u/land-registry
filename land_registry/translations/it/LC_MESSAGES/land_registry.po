@@ -4821,3 +4821,270 @@ msgstr "I valori predefiniti sono indicativi. PVGIS usa un impianto di riferimen
 
 msgid "Active hazard"
 msgstr "Pericolo attivo"
+
+msgid "PVGIS-derived municipal yield"
+msgstr "Resa comunale derivata da PVGIS"
+
+msgid "Derived from municipality-wide modern PV output and estimated capacity. It is not parcel or roof production."
+msgstr "Derivata dalla produzione fotovoltaica moderna e dalla potenza stimata per l'intero comune. Non è la produzione della particella o del tetto."
+
+msgid "Calculating municipal solar scenario…"
+msgstr "Calcolo dello scenario solare comunale in corso…"
+
+msgid "A parcel reference is required to select its municipal solar potential."
+msgstr "È necessario il riferimento catastale della particella per selezionare il potenziale solare del comune."
+
+msgid "The yield uses the PVGIS-derived municipal potential exposed by aecs4u-stats. It is municipal context, not an estimate for this parcel, building or roof. You provide system size and financial assumptions; usable roof area and installation feasibility are not estimated."
+msgstr "La resa usa il potenziale comunale derivato da PVGIS esposto da aecs4u-stats. È un dato di contesto comunale, non una stima per questa particella, edificio o tetto. Potenza e ipotesi finanziarie sono fornite dall'utente; non vengono stimate la superficie utile del tetto né la fattibilità dell'installazione."
+
+msgid "Municipal solar potential is unavailable for this municipality."
+msgstr "Il potenziale solare comunale non è disponibile per questo comune."
+
+# Audit 2026-10-17
+msgid "Search is taking too long. Try again."
+msgstr "La ricerca sta impiegando troppo tempo. Riprova."
+
+msgid "Search unavailable"
+msgstr "Ricerca non disponibile"
+
+msgid "{n} buildings assessed"
+msgstr "{n} edifici valutati"
+
+msgid "OMI zone"
+msgstr "Zona OMI"
+
+msgid "Technical details"
+msgstr "Dettagli tecnici"
+
+msgid "Public road parcel: valuation, auction and solar sections do not apply."
+msgstr "Particella di strada pubblica: le sezioni su valore, aste e solare non si applicano."
+
+msgid "Public water parcel: valuation, auction and solar sections do not apply."
+msgstr "Particella di acque pubbliche: le sezioni su valore, aste e solare non si applicano."
+
+msgid "Browsing by cadastral hierarchy is not available on this server. Use the search box."
+msgstr "La ricerca per gerarchia catastale non è disponibile su questo server. Usa la casella di ricerca."
+
+msgid "SISTER property register"
+msgstr "Registro immobili SISTER"
+
+msgid "PVP public auctions portal"
+msgstr "Portale delle Vendite Pubbliche (PVP)"
+
+msgid "Agenzia delle Entrate OpenData"
+msgstr "Agenzia delle Entrate OpenData"
+
+msgid "Agenzia delle Entrate cadastral parcels"
+msgstr "Agenzia delle Entrate – particelle catastali"
+
+msgid "Municipal profile"
+msgstr "Profilo comunale"
+
+msgid "Reference dataset"
+msgstr "Dataset di riferimento"
+
+msgid "municipality plus parcel-centroid nearest grid point"
+msgstr "comune più punto della griglia più vicino al centroide della particella"
+
+msgid "OMI zone polygon"
+msgstr "Poligono della zona OMI"
+
+msgid "Villas and small villas"
+msgstr "Ville e villini"
+
+msgid "Workshops"
+msgstr "Laboratori"
+
+msgid "Shopping centers"
+msgstr "Centri commerciali"
+
+msgid "Structured offices"
+msgstr "Uffici strutturati"
+
+msgid "Luxury apartments"
+msgstr "Abitazioni signorili"
+
+msgid "Residential apartments"
+msgstr "Abitazioni civili"
+
+msgid "Economic apartments"
+msgstr "Abitazioni di tipo economico"
+
+msgid "Traditional local dwellings"
+msgstr "Abitazioni tipiche dei luoghi"
+
+msgid "Shops"
+msgstr "Negozi"
+
+msgid "Offices"
+msgstr "Uffici"
+
+msgid "Typical warehouses"
+msgstr "Capannoni tipici"
+
+msgid "Industrial warehouses"
+msgstr "Capannoni industriali"
+
+msgid "Warehouses"
+msgstr "Magazzini"
+
+msgid "Search Italian municipalities and cadastral parcels on one map, see the data around them and download a parcel dossier."
+msgstr "Cerca comuni e particelle catastali italiane su un'unica mappa, consulta i dati intorno a esse e scarica un dossier della particella."
+
+msgid "Main"
+msgstr "Principale"
+
+msgid "Data sources"
+msgstr "Fonti dati"
+
+msgid "What you can do"
+msgstr "Cosa puoi fare"
+
+msgid "Switch layers on and off"
+msgstr "Attiva e disattiva i livelli"
+
+msgid "Cadastral parcels and sheets, administrative boundaries, OMI market zones, flood and landslide hazard, seismic classification, ground movement and solar potential."
+msgstr "Particelle e fogli catastali, confini amministrativi, zone di mercato OMI, pericolosità da alluvioni e frane, classificazione sismica, movimenti del suolo e potenziale solare."
+
+msgid "Read a parcel"
+msgstr "Leggi una particella"
+
+msgid "Select a parcel to open its sheet: identity, OMI price ranges, hazards, energy, census data and which sources cover it."
+msgstr "Seleziona una particella per aprirne la scheda: identità, fasce di prezzo OMI, pericolosità, energia, dati censuari e fonti che la coprono."
+
+msgid "Follow public auctions"
+msgstr "Segui le aste pubbliche"
+
+msgid "Show public-auction listings on the map and filter them by type, price and date."
+msgstr "Mostra sulla mappa gli annunci delle aste pubbliche e filtrali per tipo, prezzo e data."
+
+msgid "Take it with you"
+msgstr "Portalo con te"
+
+msgid "Download a PDF dossier, save parcels to a shortlist and copy a link to the exact view."
+msgstr "Scarica un dossier in PDF, salva le particelle in una selezione e copia il link alla vista esatta."
+
+msgid "Analyse an area"
+msgstr "Analizza un'area"
+
+msgid "Use the attribute table, adjacency analysis and drawing tools, and import or export GeoJSON."
+msgstr "Usa la tabella degli attributi, l'analisi di adiacenza e gli strumenti di disegno, e importa o esporta GeoJSON."
+
+msgid "Where the data comes from"
+msgstr "Da dove provengono i dati"
+
+msgid "Boundaries and valuations come from public Italian sources. Figures that describe a municipality or a valuation zone are labelled as such, and modelled values are estimates, not valuations or surveys."
+msgstr "Confini e valori provengono da fonti pubbliche italiane. I dati che descrivono un comune o una zona di valore sono indicati come tali, e i valori modellati sono stime, non perizie né rilievi."
+
+msgid "See every source and its terms of reuse."
+msgstr "Consulta ogni fonte e le sue condizioni di riuso."
+
+msgid "API documentation"
+msgstr "Documentazione API"
+
+msgid "Page not found"
+msgstr "Pagina non trovata"
+
+msgid "The page you asked for does not exist or has moved."
+msgstr "La pagina richiesta non esiste o è stata spostata."
+
+msgid "Every data provider behind the map, with its licence, attribution and the terms under which its data can be reused."
+msgstr "Tutti i fornitori di dati della mappa, con licenza, attribuzione e condizioni di riuso."
+
+msgid "Parcel API field table"
+msgstr "Tabella dei campi dell'API delle particelle"
+
+msgid "Password strength"
+msgstr "Robustezza della password"
+msgid "Added to favourites"
+msgstr "Aggiunta ai preferiti"
+
+msgid "Analyzing selected parcels…"
+msgstr "Analisi delle particelle selezionate…"
+
+msgid "Civil Protection alerts could not be drawn (TopoJSON parser unavailable)."
+msgstr "Impossibile disegnare le allerte della Protezione Civile (parser TopoJSON non disponibile)."
+
+msgid "Civil Protection bulletin has expired; current alerts are unavailable."
+msgstr "Il bollettino della Protezione Civile è scaduto; le allerte attuali non sono disponibili."
+
+msgid "Copy unavailable"
+msgstr "Copia non disponibile"
+
+msgid "Finding…"
+msgstr "Ricerca in corso…"
+
+msgid "Invalid parcel reference — selection was not loaded."
+msgstr "Riferimento della particella non valido: la selezione non è stata caricata."
+
+msgid "Location found"
+msgstr "Posizione trovata"
+
+msgid "Location is not available"
+msgstr "La posizione non è disponibile"
+
+msgid "Location outside Italy — showing Rome."
+msgstr "Posizione fuori dall'Italia: viene mostrata Roma."
+
+msgid "Location requires a secure (HTTPS) connection"
+msgstr "La posizione richiede una connessione sicura (HTTPS)"
+
+msgid "Location unavailable; showing Italy."
+msgstr "Posizione non disponibile: viene mostrata l'Italia."
+
+msgid "Map controls could not be initialised; please reload the page."
+msgstr "Impossibile inizializzare i controlli della mappa: ricarica la pagina."
+
+msgid "Map layer catalog unavailable"
+msgstr "Catalogo dei livelli della mappa non disponibile"
+
+msgid "Map link copied"
+msgstr "Link della mappa copiato"
+
+msgid "Map ready"
+msgstr "Mappa pronta"
+
+msgid "Parcel already saved"
+msgstr "Particella già salvata"
+
+msgid "Parcel saved"
+msgstr "Particella salvata"
+
+msgid "Parcel selected"
+msgstr "Particella selezionata"
+
+msgid "Requesting your location…"
+msgstr "Richiesta della tua posizione…"
+
+msgid "Sales data is loading…"
+msgstr "Caricamento dei dati di vendita…"
+
+msgid "Select a parcel to check SISTER records."
+msgstr "Seleziona una particella per verificare i dati SISTER."
+
+msgid "Selection cleared"
+msgstr "Selezione annullata"
+
+msgid "Updating favourite…"
+msgstr "Aggiornamento del preferito…"
+
+msgid "Vector parcel layer unavailable; using boundary fallback."
+msgstr "Livello vettoriale delle particelle non disponibile: uso il livello di riserva dei confini."
+
+msgid "Zoom in to select a parcel"
+msgstr "Ingrandisci per selezionare una particella"
+
+msgid "Sign in to save parcels"
+msgstr "Accedi per salvare le particelle"
+
+msgid "distance from parcel centroid"
+msgstr "distanza dal centroide della particella"
+
+msgid "municipality lookup; MPS04 nearest native grid point"
+msgstr "ricerca per comune; punto della griglia MPS04 più vicino"
+
+msgid "Nothing in this view: this layer only covers part of Italy."
+msgstr "Nessun elemento in questa vista: questo livello copre solo una parte dell'Italia."
+
+msgid "Only municipalities that have urban sections (about 520, such as Rome, Genoa, Verona and Trieste); most of Italy has none"
+msgstr "Solo i comuni che hanno sezioni urbane (circa 520, come Roma, Genova, Verona e Trieste); la maggior parte dell'Italia non ne ha"

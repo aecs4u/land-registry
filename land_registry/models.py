@@ -49,14 +49,11 @@ from sqlmodel import Field
 
 
 class SolarEconomicsRequest(BaseModel):
-    """User-supplied inputs for a PVGIS-located financial scenario."""
+    """User-supplied inputs for a municipal solar-economics scenario."""
 
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     system_kwp: float = PydanticField(3.0, gt=0, le=1000)
-    tilt_degrees: float = PydanticField(30.0, ge=0, le=90)
-    aspect_degrees: float = PydanticField(0.0, ge=-180, le=180, description="PVGIS azimuth; 0 is south")
-    system_losses_pct: float = PydanticField(14.0, ge=0, le=50)
     installation_cost_eur_per_kwp: float = PydanticField(1200.0, gt=0, le=10000)
     electricity_price_eur_per_kwh: float = PydanticField(0.30, ge=0, le=10)
     export_price_eur_per_kwh: float = PydanticField(0.08, ge=0, le=10)

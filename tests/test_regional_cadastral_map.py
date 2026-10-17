@@ -5,8 +5,23 @@ from contextlib import asynccontextmanager
 
 import pytest
 
-from land_registry.cadastral_map_views import regional_health, view_branch
+from land_registry.cadastral_map_views import legacy_sheet_branch, regional_health, view_branch
 from land_registry.map_layers import PostgresMapLayerSource, _AsyncpgConnectionSource
+
+
+def test_migrated_sheet_fallback_preserves_references_and_skips_canonical_duplicates():
+    sql = legacy_sheet_branch(("abruzzo__fogli", "sicilia__fogli"))
+    assert "legacy.national_reference AS sheet_reference" in sql
+    assert "cadastral-map-sqlite" in sql
+    assert sql.count("NOT EXISTS") == 2
+    assert 'public."abruzzo__fogli"' in sql
+    assert 'public."sicilia__fogli"' in sql
+    assert "legacy.national_reference IS NOT NULL" in sql
+
+
+def test_migrated_sheet_fallback_rejects_non_sheet_relations():
+    with pytest.raises(ValueError):
+        legacy_sheet_branch(("sicilia__particelle",))
 
 
 class Connection:

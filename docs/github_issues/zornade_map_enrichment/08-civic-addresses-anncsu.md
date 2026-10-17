@@ -2,17 +2,19 @@
 Show geocoded ANNCSU civic access points alongside the existing SISTER address
 strings, fulfilling the intent already noted in `docs/urban_address_requirements.md`.
 
-**Implementation status (2026-10-16): code implemented, data acceptance pending.**
+**Implementation status (2026-10-17): regional PostgreSQL data provisioned; parcel acceptance partial.**
 The app has a dedicated parcel endpoint, lazy ANNCSU card, API v2 section and
-Typst dossier section. The panel and dossier explicitly distinguish complete,
-partial and unknown municipality coordinate coverage from a parcel no-match.
-The sibling `aecs4u-stats` working tree now includes a
-regional downloader/importer and an indexed point-in-polygon query. Those
-upstream changes are uncommitted and unreleased, and no regional address store
-is provisioned on the review host. Live parcel matches and coordinate coverage
-therefore remain unverified. The existing capped SISTER address section stays
-separate and clearly labelled as cadastral-reference matched, cache-dependent
-and non-geocoded.
+Typst dossier section. The panel and dossier distinguish complete, partial
+and unknown municipality coordinate coverage from a parcel no-match. The
+installed shared reader queries PostgreSQL. Sicilia's
+`anncsu.public.r19__addresses` contains 3,165,306 access points, including
+2,432,270 geocoded points; addresses, streets, municipality coverage and
+provenance are in the source-owned `anncsu` database. PostGIS stores points as
+EPSG:4258 with a GiST index. The app adapter returned regional results and
+exposed its candidate limit in a Palermo-area smoke query. Exact known-parcel /
+source-access-ID validation and national regional coverage remain open. The
+existing capped SISTER address section stays separate and clearly labelled as
+cadastral-reference matched, cache-dependent and non-geocoded.
 
 **Source review (2026-10-15):** ANNCSU's official [Open Data page](https://www.anncsu.gov.it/it/consultazione-dellarchivio/open-data/)
 lists monthly national and regional CSV ZIP downloads. The official
@@ -30,21 +32,25 @@ coordinate method with each address.
 - [x] Existing SISTER address strings remain exact-reference matched, capped
   and de-duplicated.
 - [x] Add an upstream importer for regional `stradario` and `indirizzario` ZIPs,
-  a per-region SQLite/R-tree store, source provenance and local import CLI.
+  a per-region SQLite/R-tree staging store, PostgreSQL publication with
+  provenance and indexed PostGIS geometry, and a local import CLI.
 - [x] Add a point-in-parcel query that returns civic components, coordinate
   method, source vintage, CRS, candidate/result cap states and municipality
   coordinate coverage.
 - [x] Add `/api/v1/enrichment/anncsu-addresses/{national_reference}`, a lazy
   parcel-panel card, an API v2 section and a dossier section.
-- [ ] Provision a regional store and verify known parcels against source
-  access IDs, including zero and multiple matches and partial candidate caps.
+- [x] Provision the Sicilia regional store in PostgreSQL and verify that the
+  app reader returns data and exposes its candidate cap.
+- [ ] Verify a known parcel against its source access IDs, including zero and
+  multiple matches and partial candidate caps.
 
 ## Acceptance Criteria
 - [ ] A known geocoded ANNCSU access point spatially matches its parcel with the
   correct stable access ID and full civic-number components.
-- [ ] No match, missing coordinates, partial coordinate coverage and missing
-  regional store remain distinct states; never imply that no point proves no
-  address exists.
+- [x] No match and missing regional store remain distinct in focused tests; a
+  no-point result never implies that no civic address exists.
+- [ ] Verify partial coordinate coverage and candidate-cap state against
+  provisioned source records.
 - [x] Each returned point carries its coordinate method and EPSG:4258 source
   frame; the block reports source vintage and municipality coordinate coverage
   when the source provides them. The panel and dossier show complete, partial
@@ -54,8 +60,8 @@ coordinate method with each address.
   address strings and preserve source attribution.
 
 ## Dependencies
-- aecs4u/aecs4u-stats#33 remains open until the local changes are reviewed,
-  released and a regional store is provisioned for acceptance.
+- aecs4u/aecs4u-stats#33 tracks review of the shared ANNCSU importer/query;
+  Sicilia is provisioned and exact source-access-ID acceptance remains open.
 
 ## Notes
 See `docs/ZORNADE_GAP_ANALYSIS.md` §2 item 14, §4 Phase 4.3, Appendix A.5.3 and
