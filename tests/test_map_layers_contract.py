@@ -633,3 +633,43 @@ def test_geojson_flag_filter_ignores_unknown_columns_and_layers_without_them():
     # An allow-listed flag on a layer that has no such column is ignored too.
     asyncio.run(source.read_geojson("census-sections", (12, 41, 13, 42), 100, flag="is_auction_sale"))
     assert "IS TRUE" not in connection.sql
+
+
+class _ProtectionConnection(_Connection):
+    """Answers the readiness probes: relation, columns and per-type row existence."""
+
+    def __init__(self, types_with_rows):
+        super().__init__()
+        self.types_with_rows = set(types_with_rows)
+
+    async def fetch(self, sql, *params):
+        return [
+            {"name": name}
+            for name in (
+                "id", "protection_type", "category", "source", "source_id", "source_label",
+                "act_reference", "source_url", "is_binding", "source_release", "geom",
+            )
+        ]
+
+    async def fetchval(self, sql, *params):
+        if "to_regclass" in sql:
+            return "spatial.protection_area"
+        return params[0] in self.types_with_rows
+
+
+@pytest.mark.parametrize(
+    ("loaded", "expected"),
+    [
+        ({"landscape"}, {"landscape-constraints"}),
+        ({"landscape", "cultural_heritage"}, {"landscape-constraints", "heritage-protections"}),
+        (set(), set()),
+    ],
+)
+def test_protection_layers_are_offered_only_when_their_type_has_rows(loaded, expected):
+    source = PostgresMapLayerSource(connection_source=_ConnectionSource(_ProtectionConnection(loaded)))
+    assert asyncio.run(source.available_protection_layer_ids()) == expected
+
+
+def test_census_sections_do_not_require_a_local_gist_index():
+    # The relation is a foreign table; its GiST index lives in the census database.
+    assert get_map_layer("census-sections").require_gist_index is False

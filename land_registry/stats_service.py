@@ -206,8 +206,11 @@ except ImportError:
 from aecs4u_stats.osm.config import POI_CATEGORIES
 from aecs4u_stats.osm.pois import bbox_from_center, pois_within_radius, resolve_poi_db
 from land_registry.nightlights import get_parcel_nightlights, nightlights_raster_marker, nightlights_store_status
+from land_registry.pg_ssl import guard_aecs4u_stats_source_connections, plain_loopback_dsn
 from shapely.geometry import Point, shape
 from shapely.ops import transform as _transform_geometry, unary_union as _unary_union
+
+guard_aecs4u_stats_source_connections()
 
 logger = logging.getLogger(__name__)
 
@@ -1217,7 +1220,7 @@ class _PostgresPoiSource:
                     import psycopg2.pool
 
                     self._pool = _call_with_hard_timeout(
-                        psycopg2.pool.ThreadedConnectionPool, 5, 1, self.max_connections, self.dsn
+                        psycopg2.pool.ThreadedConnectionPool, 5, 1, self.max_connections, plain_loopback_dsn(self.dsn)
                     )
         return self._pool
 

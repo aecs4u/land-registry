@@ -35,3 +35,28 @@ def plain_loopback_dsn(dsn: str) -> str:
     if "sslmode" in parts or not is_loopback_host(parts.get("host")):
         return dsn
     return make_dsn(dsn, sslmode="disable")
+
+
+def guard_aecs4u_stats_source_connections() -> bool:
+    """Apply :func:`plain_loopback_dsn` to ``aecs4u_stats`` source databases.
+
+    ``aecs4u_stats.connect_source_database`` calls ``psycopg2.connect`` on a URL
+    derived from ``STATS_POSTGRES_DSN``. That URL carries no ``sslmode``, so libpq
+    negotiates TLS even on loopback and crashes the worker the same way. The
+    helper lives in an installed package, so wrap its URL resolver here.
+    Returns ``False`` when the package is unavailable. Safe to call repeatedly.
+    """
+    try:
+        from aecs4u_stats import _source_postgres
+    except ImportError:
+        return False
+    resolver = _source_postgres.source_database_url
+    if getattr(resolver, "_loopback_guarded", False):
+        return True
+
+    def guarded(slug: str) -> str:
+        return plain_loopback_dsn(resolver(slug))
+
+    guarded._loopback_guarded = True  # type: ignore[attr-defined]
+    _source_postgres.source_database_url = guarded
+    return True

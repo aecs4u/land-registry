@@ -32,3 +32,19 @@ def test_explicit_sslmode_is_respected():
 
 def test_unparseable_dsn_is_returned_unchanged():
     assert plain_loopback_dsn("not a dsn ::") == "not a dsn ::"
+
+
+def test_aecs4u_stats_source_urls_skip_tls_on_loopback(monkeypatch):
+    from aecs4u_stats import _source_postgres
+
+    from land_registry.pg_ssl import guard_aecs4u_stats_source_connections
+
+    monkeypatch.setattr(_source_postgres, "source_database_url", _source_postgres.source_database_url)
+    monkeypatch.setenv("STATS_POSTGRES_DSN", "postgresql+asyncpg://u@127.0.0.1:5432/aecs4u-stats?passfile=/x")
+    for name in ("AECS4U_POSTGRES_DATABASE_URL", "AECS4U_STATS_DATABASE_URL", "AECS4U_STATS_POSTGRES_DSN"):
+        monkeypatch.delenv(name, raising=False)
+    assert guard_aecs4u_stats_source_connections()
+    assert guard_aecs4u_stats_source_connections()  # idempotent
+    assert "sslmode=disable" in _source_postgres.source_database_url("buildings")
+    monkeypatch.setenv("STATS_POSTGRES_DSN", "postgresql://u@db.example.com/aecs4u-stats")
+    assert "sslmode" not in _source_postgres.source_database_url("buildings")
