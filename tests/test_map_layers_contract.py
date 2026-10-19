@@ -572,7 +572,7 @@ def test_seismic_and_solar_layers_are_data_driven():
     seismic = get_map_layer("seismic-classification")
     match = seismic.public()["color_match"]
     assert match["property"] == "zone_label" and match["property"] in seismic.properties
-    assert any(case["contains"] == "zone 1" for case in match["cases"])
+    assert [case["contains"] for case in match["cases"]] == ["1", "2", "3", "4"]
     solar = get_map_layer("solar-potential")
     ramp = solar.public()["color_ramp"]
     assert ramp["property"] == "high_viability_pct" and "high_viability_pct" in solar.properties
@@ -673,3 +673,29 @@ def test_protection_layers_are_offered_only_when_their_type_has_rows(loaded, exp
 def test_census_sections_do_not_require_a_local_gist_index():
     # The relation is a foreign table; its GiST index lives in the census database.
     assert get_map_layer("census-sections").require_gist_index is False
+
+
+@pytest.mark.parametrize(
+    ("label", "colour"),
+    [
+        ("1", "#7d1515"), ("1a", "#7d1515"), ("1-2A", "#7d1515"),
+        ("2", "#c44444"), ("2B", "#c44444"), ("2A-3A-3B", "#c44444"), ("2B-3A", "#c44444"),
+        ("3", "#e6a700"), ("3S", "#e6a700"),
+        ("4", "#5b8f55"),
+    ],
+)
+def test_seismic_zone_labels_resolve_to_the_zone_colours(label, colour):
+    # Mirrors the map's case expression: the first case whose text occurs in the
+    # lower-cased label wins. The source labels are bare codes, never "zone 1".
+    cases = get_map_layer("seismic-classification").public()["color_match"]["cases"]
+    fallback = get_map_layer("seismic-classification").color
+    resolved = next((case["color"] for case in cases if case["contains"].lower() in label.lower()), fallback)
+    assert resolved == colour
+
+
+def test_egms_tiles_never_exceed_the_feature_cap_at_the_minimum_zoom():
+    # EGMS cells are 100 m squares. The tile query has an unordered LIMIT, so any tile
+    # that could hold more cells than the cap would be silently truncated.
+    layer = get_map_layer("surface-subsidence")
+    tile_width_m = 40075016.686 / 2 ** layer.min_zoom  # widest case: the equator
+    assert (tile_width_m / 100) ** 2 <= layer.max_features

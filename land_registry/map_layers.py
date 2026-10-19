@@ -67,6 +67,8 @@ class MapLayerSpec:
     # Optional categorical colouring: ("property", ((substring, colour), ...)).
     # The first case-insensitive substring found in the property wins; anything
     # else keeps the flat ``color``, so unexpected source values stay visible.
+    # Seismic ``zone_label`` holds bare codes such as "2", "3S" or "2A-3A-3B", so
+    # its cases are the digits 1-4 in order: a mixed label takes its most hazardous zone.
     color_match: Optional[tuple[str, tuple[tuple[str, str], ...]]] = None
     # Health checks report whether the serving relation needs a GiST index.
     require_gist_index: bool = True
@@ -126,8 +128,11 @@ MAP_LAYERS: tuple[MapLayerSpec, ...] = (
     MapLayerSpec("landslide-hazard", "Landslide hazard areas", "hazards.landslide_hazard", "geom", id_column="hazard_code", min_zoom=8, max_features=3000, properties=("hazard_code", "hazard_label", "area_sqm"), group="risk", color="#a0522d", z_order=51, fill_opacity=0.2, require_gist_index=False, tile_revision="2"),
     MapLayerSpec("census-sections", "ISTAT census sections", "census.sections", "geom", id_column="sez21_id", source_srid=32632, min_zoom=11, max_features=2000, properties=("sez21_id", "procom", "cod_reg", "pop21", "fam21", "abi21", "edi21"), group="demographics", color="#3f8f73", z_order=60, fill_opacity=0.3, color_ramp=("pop21", ((0, "#e8f4ef"), (50, "#bfe3d2"), (200, "#7fc1a3"), (500, "#3f8f73"), (1500, "#1f5d49"))), fallback_tables=("census_sections.sections",), require_gist_index=False),
     MapLayerSpec("mps04-points", "MPS04 seismic points", "hazards.mps04_points", "geom", id_column="point_id", min_zoom=7, max_features=3000, properties=("point_id", "grid_variant", "lon", "lat"), kind="point", group="risk", color="#5b6fb5", z_order=120, require_gist_index=False, tile_revision="1"),
-    MapLayerSpec("seismic-classification", "Seismic classification", "hazards.v_seismic_classification_map", "geom", id_column="istat_code", min_zoom=6, max_features=3000, properties=("istat_code", "comune", "regione", "provincia", "zone", "zone_label"), group="risk", color="#7a4cb5", z_order=110, fill_opacity=0.2, color_match=("zone_label", (("zone 1", "#7d1515"), ("zone 2", "#c44444"), ("zone 3", "#e6a700"), ("zone 4", "#5b8f55"))), require_gist_index=False, tile_revision="1"),
-    MapLayerSpec("surface-subsidence", "Ground movement (EGMS)", "geo_surface_change.egms_subsidenza", "geom", id_column="risk_index", min_zoom=8, max_features=3000, geojson_max_area=4.0, properties=("risk_index", "mean_velocity", "acceleration", "risk_class", "risk_class_label", "velocity_class_label", "signal_quality"), group="risk", color="#c45c2d", z_order=115, fill_opacity=0.25, require_gist_index=False, tile_revision="2"),
+    MapLayerSpec("seismic-classification", "Seismic classification", "hazards.v_seismic_classification_map", "geom", id_column="istat_code", min_zoom=6, max_features=3000, properties=("istat_code", "comune", "regione", "provincia", "zone", "zone_label"), group="risk", color="#7a4cb5", z_order=110, fill_opacity=0.2, color_match=("zone_label", (("1", "#7d1515"), ("2", "#c44444"), ("3", "#e6a700"), ("4", "#5b8f55"))), require_gist_index=False, tile_revision="1"),
+    # EGMS cells are 100 m, so a z13 tile holds at most ~2,400 of them. Below that the
+    # unordered per-tile LIMIT silently dropped most of a dense tile (z11 Palermo: 3,000 of
+    # 13,879), so the layer starts at z13 where the cap can never truncate.
+    MapLayerSpec("surface-subsidence", "Ground movement (EGMS)", "geo_surface_change.egms_subsidenza", "geom", id_column="risk_index", min_zoom=13, max_features=3000, geojson_max_area=4.0, properties=("risk_index", "mean_velocity", "acceleration", "risk_class", "risk_class_label", "velocity_class_label", "signal_quality"), group="risk", color="#c45c2d", z_order=115, fill_opacity=0.25, require_gist_index=False, tile_revision="3"),
     MapLayerSpec(
         "landscape-constraints", "Landscape constraints",
         "spatial.protection_area", "geom", min_zoom=8, max_features=3000,
