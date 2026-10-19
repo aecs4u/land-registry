@@ -72,6 +72,13 @@ class MapLayerSpec:
     color_match: Optional[tuple[str, tuple[tuple[str, str], ...]]] = None
     # Health checks report whether the serving relation needs a GiST index.
     require_gist_index: bool = True
+    # Numeric column (square metres) ranking features by on-screen significance. A tile
+    # drops features smaller than about one pixel before the per-tile cap, then keeps the
+    # largest features if the cap is still exceeded, instead of an arbitrary subset.
+    size_column: Optional[str] = None
+    # Mixed layers below this zoom return grid clusters (``point_count``) instead of
+    # individual features, so a coastline-wide view is summarised rather than truncated.
+    cluster_below_zoom: int = 0
     # Change when tile geometry/selection changes so browsers fetch fresh tiles.
     tile_revision: str = ""
     # Highest zoom at which the browser requests tiles. Above it MapLibre
@@ -99,6 +106,7 @@ class MapLayerSpec:
         )
         value.pop("require_gist_index", None)
         value.pop("tile_revision", None)
+        value.pop("size_column", None)
         value.pop("fallback_tables", None)
         value["source"] = "aecs4u-stats PostgreSQL/PostGIS"
         value["tile_url"] = f"/api/v1/tiles/map-layers/{self.id}/{{z}}/{{x}}/{{y}}.pbf"
@@ -119,14 +127,14 @@ MAP_LAYERS: tuple[MapLayerSpec, ...] = (
     # Coverage changes as upstream publications are loaded. Do not hard-code a
     # region or a row count here; health() reports the current estimated extent
     # from PostGIS statistics when ANALYZE data is available.
-    MapLayerSpec("cadastral-sheets", "Cadastral sheets", "spatial.cadastral_sheet", "geom", min_zoom=10, geojson_max_area=4.0, coverage="unknown", properties=("id", "sheet_reference", "municipality_id", "level", "level_name", "area_sqm", "source_release"), group="cadastral", color="#1976a8", z_order=70, tile_revision="regional-1"),
-    MapLayerSpec("cadastral-parcels", "Cadastral parcels", "spatial.cadastral_parcel", "geom", min_zoom=14, max_features=5000, geojson_max_area=0.04, coverage="unknown", properties=("id", "canonical_reference", "national_cadastral_reference", "parcel", "sheet", "municipality_id", "area_sqm", "source_release", "has_visura", "is_auction_sale"), group="cadastral", color="#d97925", z_order=90, fill_opacity=0.04, line_width=0.8, tile_revision="regional-4"),
+    MapLayerSpec("cadastral-sheets", "Cadastral sheets", "spatial.cadastral_sheet", "geom", min_zoom=10, max_features=3000, geojson_max_area=4.0, coverage="unknown", properties=("id", "sheet_reference", "municipality_id", "level", "level_name", "area_sqm", "source_release"), group="cadastral", color="#1976a8", z_order=70, tile_revision="regional-2"),
+    MapLayerSpec("cadastral-parcels", "Cadastral parcels", "spatial.cadastral_parcel", "geom", min_zoom=14, max_features=10000, size_column="area_sqm", geojson_max_area=0.04, coverage="unknown", properties=("id", "canonical_reference", "national_cadastral_reference", "parcel", "sheet", "municipality_id", "area_sqm", "source_release", "has_visura", "is_auction_sale"), group="cadastral", color="#d97925", z_order=90, fill_opacity=0.04, line_width=0.8, tile_revision="regional-5"),
     MapLayerSpec("urban-sections", "Cadastral urban sections", "sezioni_urbane.sezioni_urbane", "geom", id_column="OGC_FID", min_zoom=11, coverage="partial", coverage_note="Only municipalities that have urban sections (about 520, such as Rome, Genoa, Verona and Trieste); most of Italy has none", sparse=True, properties=("OGC_FID", "nationalcadastralzoningreference", "administrativeunit", "sezione_urbana"), group="cadastral", color="#2f9aa8", z_order=80, require_gist_index=False),
     MapLayerSpec("market-zones", "OMI market zones", "zornade.zornade_zone_omi", "geom", id_column="OGC_FID", min_zoom=10, properties=("OGC_FID", "codcom", "codzona", "zona_descr", "comune_descrizione", "descr_tip_prev", "compr_min", "compr_max"), group="market", color="#7b61a8", z_order=30, require_gist_index=False, tile_revision="2"),
     MapLayerSpec("postal-zones", "Postal zones", "cap_subcomunali.cap_subcomunali", "geom", id_column="OGC_FID", min_zoom=10, properties=("OGC_FID", "cap", "comune_cap", "comune", "provincia", "regione", "fonte"), group="administrative", color="#8a7a3d", z_order=40, require_gist_index=False, tile_revision="3"),
-    MapLayerSpec("flood-hazard", "Flood hazard areas", "hazards.flood_hazard", "geom", id_column="scenario_code", min_zoom=8, max_features=3000, properties=("scenario_code", "scenario_label", "area_sqm"), group="risk", color="#2b7bb9", z_order=50, fill_opacity=0.2, require_gist_index=False, tile_revision="2"),
-    MapLayerSpec("landslide-hazard", "Landslide hazard areas", "hazards.landslide_hazard", "geom", id_column="hazard_code", min_zoom=8, max_features=3000, properties=("hazard_code", "hazard_label", "area_sqm"), group="risk", color="#a0522d", z_order=51, fill_opacity=0.2, require_gist_index=False, tile_revision="2"),
-    MapLayerSpec("census-sections", "ISTAT census sections", "census.sections", "geom", id_column="sez21_id", source_srid=32632, min_zoom=11, max_features=2000, properties=("sez21_id", "procom", "cod_reg", "pop21", "fam21", "abi21", "edi21"), group="demographics", color="#3f8f73", z_order=60, fill_opacity=0.3, color_ramp=("pop21", ((0, "#e8f4ef"), (50, "#bfe3d2"), (200, "#7fc1a3"), (500, "#3f8f73"), (1500, "#1f5d49"))), fallback_tables=("census_sections.sections",), require_gist_index=False),
+    MapLayerSpec("flood-hazard", "Flood hazard areas", "hazards.flood_hazard", "geom", id_column="scenario_code", min_zoom=8, max_features=3000, size_column="area_sqm", properties=("scenario_code", "scenario_label", "area_sqm"), group="risk", color="#2b7bb9", z_order=50, fill_opacity=0.2, require_gist_index=False, tile_revision="3"),
+    MapLayerSpec("landslide-hazard", "Landslide hazard areas", "hazards.landslide_hazard", "geom", id_column="hazard_code", min_zoom=8, max_features=3000, size_column="area_sqm", properties=("hazard_code", "hazard_label", "area_sqm"), group="risk", color="#a0522d", z_order=51, fill_opacity=0.2, require_gist_index=False, tile_revision="3"),
+    MapLayerSpec("census-sections", "ISTAT census sections", "census.sections", "geom", id_column="sez21_id", source_srid=32632, min_zoom=13, max_features=3000, properties=("sez21_id", "procom", "cod_reg", "pop21", "fam21", "abi21", "edi21"), group="demographics", color="#3f8f73", z_order=60, fill_opacity=0.3, color_ramp=("pop21", ((0, "#e8f4ef"), (50, "#bfe3d2"), (200, "#7fc1a3"), (500, "#3f8f73"), (1500, "#1f5d49"))), fallback_tables=("census_sections.sections",), require_gist_index=False, tile_revision="1"),
     MapLayerSpec("mps04-points", "MPS04 seismic points", "hazards.mps04_points", "geom", id_column="point_id", min_zoom=7, max_features=3000, properties=("point_id", "grid_variant", "lon", "lat"), kind="point", group="risk", color="#5b6fb5", z_order=120, require_gist_index=False, tile_revision="1"),
     MapLayerSpec("seismic-classification", "Seismic classification", "hazards.v_seismic_classification_map", "geom", id_column="istat_code", min_zoom=6, max_features=3000, properties=("istat_code", "comune", "regione", "provincia", "zone", "zone_label"), group="risk", color="#7a4cb5", z_order=110, fill_opacity=0.2, color_match=("zone_label", (("1", "#7d1515"), ("2", "#c44444"), ("3", "#e6a700"), ("4", "#5b8f55"))), require_gist_index=False, tile_revision="1"),
     # EGMS cells are 100 m, so a z13 tile holds at most ~2,400 of them. Below that the
@@ -170,7 +178,7 @@ MAP_LAYERS: tuple[MapLayerSpec, ...] = (
     MapLayerSpec(
         "maritime-concessions", "Maritime-domain concessions",
         "agenziademanio.concessions", "geom",
-        id_column="row_id", min_zoom=6, max_features=5000, geojson_max_area=4.0,
+        id_column="row_id", min_zoom=6, max_features=5000, cluster_below_zoom=12, geojson_max_area=4.0,
         coverage_note="MIT/SID snapshot; published coverage may be incomplete",
         properties=(
             "row_id", "idconc", "admin_label", "layer_kind", "geometry_type",
@@ -179,7 +187,7 @@ MAP_LAYERS: tuple[MapLayerSpec, ...] = (
         ),
         kind="mixed", group="territory", color="#1f8ea3", z_order=130,
         polygon_color="#e45724", fill_opacity=0.42, line_width=3.0,
-        require_gist_index=False, tile_revision="3",
+        require_gist_index=False, tile_revision="4",
     ),
 )
 
@@ -258,6 +266,19 @@ def get_map_layer(layer_id: str) -> MapLayerSpec:
         return _BY_ID[layer_id]
     except KeyError as exc:
         raise KeyError(f"Unknown map layer: {layer_id}") from exc
+
+
+def _one_pixel_area_m2(z: int, y: int) -> float:
+    """Ground area of one screen pixel (512 px tiles) at the tile's latitude, in m^2.
+
+    Features smaller than this render as less than a pixel, so tiles drop them before the
+    per-tile cap. Using the tile's own latitude keeps the threshold from removing anything
+    visible in the north of Italy, where a Mercator pixel covers less ground.
+    """
+    n = 1 << z
+    latitude = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * (y + 0.5) / n))))
+    side = 40075016.686 / n * math.cos(math.radians(latitude)) / 512
+    return side * side
 
 
 def map_layer_catalog(include_protection_ids: Optional[set[str]] = None) -> list[dict[str, Any]]:
@@ -961,7 +982,28 @@ class PostgresMapLayerSource:
                 if z >= minimum:
                     level = unit
             level_filter = " AND t.unit_type = %s"
-        if layer.kind == "mixed":
+        truncation_cap: Optional[int] = None
+        if layer.kind == "mixed" and z < layer.cluster_below_zoom:
+            # Coastline-wide views: summarise into grid clusters instead of truncating. Each
+            # feature is assigned to exactly one tile (no padding) so no cluster is counted
+            # twice; the grid is global, so cells line up across tiles.
+            cell = tile_width / 8
+            feature_ctes = f"""
+                mvtgeom AS (
+                    SELECT count(*)::integer AS point_count,
+                           ST_AsMVTGeom(
+                               ST_Transform(ST_SetSRID(ST_MakePoint(avg(ST_X(c.pt)), avg(ST_Y(c.pt))), {int(layer.source_srid)}), 3857),
+                               bounds.tile, 4096, 64, true) AS geom
+                    FROM (
+                        SELECT ST_Centroid({geometry_ref}) AS pt
+                        FROM {relation} AS t
+                        WHERE {geometry_ref} && {source_envelope}
+                    ) AS c CROSS JOIN bounds
+                    GROUP BY ST_SnapToGrid(c.pt, {cell!r}), bounds.tile
+                )
+            """
+            params = (layer.id,)
+        elif layer.kind == "mixed":
             # Points and polygons share this foreign table. A single unordered
             # LIMIT can return only the first physical rows (currently mostly
             # CSV points) for a dense low-zoom tile. Fetch bounded candidates
@@ -1023,25 +1065,72 @@ class PostgresMapLayerSource:
             """
             params = (layer.max_features, layer.max_features, layer.max_features, layer.id)
         else:
-            feature_ctes = f"""
-                mvtgeom AS (
-                    SELECT {columns},
-                           ST_AsMVTGeom(ST_Transform({geometry}, 3857), bounds.tile, 4096, 64, true) AS geom
-                    FROM {relation} AS t {self._source_join(layer)} CROSS JOIN bounds
-                    WHERE {spatial_filter}{level_filter}
-                    LIMIT %s
+            # Fetch one row past the cap so a truncated tile can say so (see below).
+            truncation_cap = layer.max_features
+            if layer.size_column:
+                size_ref = self._column_ref("t", layer.size_column)
+                needed = dict.fromkeys(
+                    self._column_ref("t", column)
+                    for column in (*self._properties_for(layer, layer_source), layer.geometry_column, layer.size_column)
                 )
-            """
-            params = ((level, layer.max_features, layer.id) if level_filter else (layer.max_features, layer.id))
+                # Drop sub-pixel features, then keep the largest if the cap is still hit.
+                # The ranking runs on ids and sizes only; geometry is clipped and simplified
+                # for the surviving rows in the outer query.
+                feature_ctes = f"""
+                    mvtgeom AS (
+                        SELECT {columns},
+                               ST_AsMVTGeom(ST_Transform({geometry}, 3857), bounds.tile, 4096, 64, true) AS geom
+                        FROM (
+                            SELECT {", ".join(needed)}
+                            FROM {relation} AS t
+                            WHERE {spatial_filter}{level_filter}
+                              AND ({size_ref} IS NULL OR {size_ref} >= {_one_pixel_area_m2(z, y)!r})
+                            ORDER BY {size_ref} DESC NULLS LAST
+                            LIMIT %s
+                        ) AS t CROSS JOIN bounds
+                    )
+                """
+            else:
+                feature_ctes = f"""
+                    mvtgeom AS (
+                        SELECT {columns},
+                               ST_AsMVTGeom(ST_Transform({geometry}, 3857), bounds.tile, 4096, 64, true) AS geom
+                        FROM {relation} AS t {self._source_join(layer)} CROSS JOIN bounds
+                        WHERE {spatial_filter}{level_filter}
+                        LIMIT %s
+                    )
+                """
+            params = (
+                (level, truncation_cap + 1, layer.id) if level_filter else (truncation_cap + 1, layer.id)
+            )
 
+        if truncation_cap is None:
+            final_select = """
+            SELECT COALESCE(ST_AsMVT(mvtgeom, %s::text, 4096, 'geom'), ''::bytea)
+            FROM mvtgeom
+            WHERE geom IS NOT NULL
+            """
+        else:
+            # Truncation is never silent: when more rows matched than the cap allows, the tile
+            # carries a one-point ``_truncated`` layer at its centre. The map reads it with
+            # querySourceFeatures and tells the user to zoom in.
+            final_select = f"""
+            SELECT COALESCE(ST_AsMVT(visible, %s::text, 4096, 'geom'), ''::bytea)
+                   || CASE WHEN (SELECT count(*) FROM mvtgeom) > {int(truncation_cap)}
+                           THEN COALESCE((
+                               SELECT ST_AsMVT(marker, '_truncated', 4096, 'geom')
+                               FROM (SELECT ST_AsMVTGeom(ST_Centroid(bounds.tile), bounds.tile, 4096, 64, true) AS geom,
+                                            {int(truncation_cap)} AS cap
+                                     FROM bounds) AS marker), ''::bytea)
+                           ELSE ''::bytea END
+            FROM (SELECT * FROM mvtgeom WHERE geom IS NOT NULL LIMIT {int(truncation_cap)}) AS visible
+            """
         sql = f"""
             WITH bounds AS (
                 SELECT {tile_envelope} AS tile,
                        {source_envelope} AS source
             ), {feature_ctes}
-            SELECT COALESCE(ST_AsMVT(mvtgeom, %s::text, 4096, 'geom'), ''::bytea)
-            FROM mvtgeom
-            WHERE geom IS NOT NULL
+            {final_select}
         """
         async with layer_source.connection() as connection:
             tile = await connection.fetchval(_asyncpg_sql(sql), *params)

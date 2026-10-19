@@ -663,6 +663,51 @@
     return url.startsWith('/') ? `${window.location.origin}${url}` : url;
   }
 
+  function addClusterLayers(layer, sourceId, color) {
+    const minzoom = Number(layer.min_zoom || 0);
+    const maxzoom = Number(layer.cluster_below_zoom);
+    state.map.addLayer({ id: `cluster-${layer.id}`, type: 'circle', source: sourceId, 'source-layer': layer.id,
+      minzoom, maxzoom, filter: ['has', 'point_count'],
+      paint: {
+        'circle-color': color,
+        'circle-radius': ['step', ['get', 'point_count'], 14, 50, 18, 500, 24, 5000, 30],
+        'circle-opacity': 0.85, 'circle-stroke-color': '#fff', 'circle-stroke-width': 2,
+      } });
+    state.map.addLayer({ id: `clustercount-${layer.id}`, type: 'symbol', source: sourceId, 'source-layer': layer.id,
+      minzoom, maxzoom, filter: ['has', 'point_count'],
+      layout: { 'text-field': ['to-string', ['get', 'point_count']], 'text-font': ['noto-sans-regular'], 'text-size': 11, 'text-allow-overlap': true },
+      paint: { 'text-color': '#fff' } });
+    // A cluster is a summary, not a record: clicking it zooms toward the detail.
+    state.map.on('click', `cluster-${layer.id}`, (event) => {
+      const feature = event.features?.[0];
+      if (!feature) return;
+      event.originalEvent?.stopPropagation?.();
+      state.map.easeTo({ center: feature.geometry.coordinates, zoom: Math.min(maxzoom, state.map.getZoom() + 2) });
+    });
+    state.map.on('mouseenter', `cluster-${layer.id}`, () => { state.map.getCanvas().style.cursor = 'pointer'; });
+    state.map.on('mouseleave', `cluster-${layer.id}`, () => { state.map.getCanvas().style.cursor = ''; });
+  }
+
+  // Tiles that hit their feature cap carry a one-point ``_truncated`` layer. Say so, so a
+  // dense tile never looks like missing data.
+  function updateTruncationNote() {
+    const note = $('mapTruncationNote');
+    const map = state.map;
+    if (!note || !map) return;
+    const visible = (layer) => ['fill', 'line', 'point'].some((prefix) => {
+      const id = `${prefix}-${layer.id}`;
+      return map.getLayer(id) && (map.getLayoutProperty(id, 'visibility') ?? 'visible') === 'visible';
+    });
+    const titles = state.catalog
+      .filter((layer) => layer.tile_url && map.getSource(layerSourceId(layer)) && visible(layer) && map.getZoom() >= Number(layer.min_zoom || 0))
+      .filter((layer) => map.querySourceFeatures(layerSourceId(layer), { sourceLayer: '_truncated' }).length > 0)
+      .map((layer) => tr(layer.title));
+    note.textContent = titles.length
+      ? tr('Dense area: showing only the largest features of {layers}. Zoom in to see all.', { layers: titles.join(', ') })
+      : '';
+    note.hidden = !titles.length;
+  }
+
   function addCatalogLayer(layer) {
     if (!layer || layer.id === 'raster-coverage') return;
     if (!state.map && state.fallbackMap) {
@@ -695,10 +740,16 @@
         if (Array.isArray(layer.unit_levels) && layer.unit_levels.length) bindUnitLevels(layer);
       }
       if (isPointLayer(layer)) {
+        // Below ``cluster_below_zoom`` the server sends grid clusters (``point_count``)
+        // instead of individual features; they get their own circle + count layers.
+        const clustered = Number(layer.cluster_below_zoom || 0) > 0;
         state.map.addLayer({ id: `point-${layer.id}`, type: 'circle', source: sourceId, 'source-layer': layer.id,
-          ...(layer.kind === 'mixed' ? { filter: ['==', ['geometry-type'], 'Point'] } : {}),
+          ...(layer.kind === 'mixed'
+            ? { filter: clustered ? ['all', ['==', ['geometry-type'], 'Point'], ['!', ['has', 'point_count']]] : ['==', ['geometry-type'], 'Point'] }
+            : {}),
           minzoom: Number(layer.min_zoom || 0), paint: { 'circle-color': color, 'circle-radius': 4, 'circle-stroke-color': '#fff', 'circle-stroke-width': 1, 'circle-opacity': layer.kind === 'point' ? (userOpacity ?? 1) : 1 } });
       }
+      if (Number(layer.cluster_below_zoom || 0) > 0) addClusterLayers(layer, sourceId, color);
       if (layer.id === 'maritime-concessions') {
         state.map.addLayer({
           id: `label-${layer.id}`, type: 'symbol', source: sourceId, 'source-layer': layer.id,
@@ -1297,6 +1348,7 @@
       ...idsFor('fill', isPolygonLayer), 'fill-enrichment-bulletin',
       ...idsFor('line', isPolygonLayer),
       ...idsFor('point', isPointLayer),
+      ...idsFor('cluster', (layer) => Number(layer.cluster_below_zoom || 0) > 0), ...idsFor('clustercount', (layer) => Number(layer.cluster_below_zoom || 0) > 0),
       'point-enrichment-fires', 'auction-clusters', 'auction-cluster-count', 'point-auction-properties', 'point-sales-properties',
       'label-cadastral-parcels', ...idsFor('label', layer => layer.id === 'postal-zones' || layer.id === 'cadastral-sheets' || layer.kind === 'mixed'),
       'fill-adjacent-parcels', 'line-adjacent-parcels', 'fill-sister-listed-parcels', 'line-sister-listed-parcels',
@@ -1331,7 +1383,7 @@
       return;
     }
     const value = visible ? 'visible' : 'none';
-    ['fill', 'line', 'point', 'label'].forEach((prefix) => {
+    ['fill', 'line', 'point', 'label', 'cluster', 'clustercount'].forEach((prefix) => {
       const id = `${prefix}-${layerId}`;
       const layerVisibility = prefix === 'label' && layerId === 'postal-zones'
         ? (visible && state.postalLabelsEnabled ? 'visible' : 'none')
@@ -6008,6 +6060,7 @@
         mapStatus('');
       }
       updateParcelZoomAffordance();
+      updateTruncationNote();
     });
     // MapLibre never re-requests a tile that failed (e.g. a cold-cache 503),
     // which left silent holes in overlays; retry the source and say so.

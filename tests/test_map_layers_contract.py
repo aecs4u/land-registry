@@ -170,7 +170,7 @@ def test_mixed_tile_query_avoids_polygon_point_nested_loop():
     connection = _Connection()
     source = PostgresMapLayerSource(_ConnectionSource(connection))
 
-    assert asyncio.run(source.read_mvt("maritime-concessions", 7, 67, 46)) == b"mvt"
+    assert asyncio.run(source.read_mvt("maritime-concessions", 12, 2190, 1520)) == b"mvt"
     sql = connection.sql
     assert "polygon_keys AS" in sql and "FROM polygon_keys AS p" in sql
     assert "ST_Dimension(p.geom)" not in sql
@@ -699,3 +699,59 @@ def test_egms_tiles_never_exceed_the_feature_cap_at_the_minimum_zoom():
     layer = get_map_layer("surface-subsidence")
     tile_width_m = 40075016.686 / 2 ** layer.min_zoom  # widest case: the equator
     assert (tile_width_m / 100) ** 2 <= layer.max_features
+
+
+def _tile_sql(layer_id, z, x, y):
+    connection = _Connection()
+    source = PostgresMapLayerSource(_ConnectionSource(connection))
+    assert asyncio.run(source.read_mvt(layer_id, z, x, y)) == b"mvt"
+    return connection
+
+
+def test_size_ranked_layers_drop_subpixel_features_then_keep_the_largest():
+    layer = get_map_layer("landslide-hazard")
+    connection = _tile_sql("landslide-hazard", 8, 136, 95)
+    sql = connection.sql
+    # Ranking runs in a subquery on the size column, before geometry is processed.
+    assert 'ORDER BY t."area_sqm" DESC NULLS LAST' in sql
+    assert 't."area_sqm" IS NULL OR t."area_sqm" >=' in sql
+    assert connection.params[0] == layer.max_features + 1
+    ranking = sql[sql.index("FROM (\n") : sql.index(") AS t CROSS JOIN bounds")]
+    assert "ORDER BY" in ranking and "LIMIT" in ranking
+    assert "ST_AsMVTGeom" not in ranking and "ST_ClipByBox2D" not in ranking
+
+
+def test_truncated_tiles_carry_a_marker_layer_and_exact_cap():
+    for layer_id, z, x, y in (("landslide-hazard", 8, 136, 95), ("market-zones", 12, 2100, 1500)):
+        cap = get_map_layer(layer_id).max_features
+        sql = _tile_sql(layer_id, z, x, y).sql
+        assert "'_truncated'" in sql and f"> {cap}" in sql and f"LIMIT {cap}" in sql
+
+
+def test_pixel_threshold_shrinks_with_zoom_and_latitude():
+    from land_registry.map_layers import _one_pixel_area_m2
+
+    # One 512px-tile pixel at the equator is about 306 m at z8.
+    assert _one_pixel_area_m2(8, 128) ** 0.5 == pytest.approx(40075016.686 / 256 / 512, rel=0.01)
+    assert _one_pixel_area_m2(9, 256) < _one_pixel_area_m2(8, 128)
+    # Further north a Mercator pixel covers less ground, so the threshold is smaller.
+    assert _one_pixel_area_m2(8, 95) < _one_pixel_area_m2(8, 128)
+
+
+def test_maritime_concessions_cluster_below_the_cluster_zoom_only():
+    layer = get_map_layer("maritime-concessions")
+    assert layer.cluster_below_zoom == 12
+    clustered = _tile_sql("maritime-concessions", 7, 67, 46).sql
+    assert "ST_SnapToGrid" in clustered and "point_count" in clustered
+    assert "_truncated" not in clustered and "polygon_keys" not in clustered
+    detailed = _tile_sql("maritime-concessions", 12, 2190, 1520).sql
+    assert "polygon_keys" in detailed and "ST_SnapToGrid" not in detailed
+
+
+def test_dense_layers_have_caps_that_fit_their_measured_worst_tiles():
+    # Measured over 15 cities: the most source rows matching one tile's filter.
+    assert get_map_layer("cadastral-parcels").max_features >= 9290  # Venice z14
+    assert get_map_layer("cadastral-sheets").max_features >= 2043  # Milan z10
+    census = get_map_layer("census-sections")
+    assert census.min_zoom >= 13 and census.max_features >= 1875  # Rome z13
+    assert get_map_layer("cadastral-parcels").size_column == "area_sqm"

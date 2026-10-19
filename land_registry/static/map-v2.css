@@ -25,7 +25,7 @@
 .map-round-button:hover, .layers-toggle:hover, .shortlist-toggle:hover { border-color: var(--direct-map-accent); color: var(--direct-map-accent); }
 .direct-map-stage { position: relative; flex: 1; min-height: 0; }
 .direct-map { position: absolute; inset: 0; }
-.map-search-card, .map-layers-card, .parcel-detail-card, .parcel-shortlist-card, .map-table-card, .map-status-pill, .map-help-note, .layers-toggle { position: absolute; z-index: 2; box-shadow: var(--direct-map-shadow); }
+.map-search-card, .map-layers-card, .parcel-detail-card, .parcel-shortlist-card, .map-table-card, .map-status-pill, .map-help-note, .map-truncation-note, .layers-toggle { position: absolute; z-index: 2; box-shadow: var(--direct-map-shadow); }
 /* Above the other floating cards (z-index 2): the results list expands
    downward and must never be clipped behind the shortlist panel that sits
    just below it at the same left edge. */
@@ -307,6 +307,9 @@
 .map-source-banner .secondary-action { flex: none; }
 @media (max-width: 700px) { .map-source-banner { top: 148px; } }
 /* Centred so it never covers the basemap attribution in the bottom-right. */
+/* Shown on every screen size: unlike the zoom hint, it explains why data looks incomplete. */
+.map-truncation-note { left: 50%; transform: translateX(-50%); bottom: 88px; max-width: min(560px, calc(100% - 32px)); padding: 7px 11px; border: 1px solid var(--direct-map-border); border-radius: 6px; background: var(--direct-map-panel); color: var(--direct-map-muted); font-size: 12px; text-align: center; }
+.map-truncation-note[hidden] { display: none; }
 .map-help-note { left: 50%; transform: translateX(-50%); bottom: 50px; padding: 7px 11px; border: 1px solid var(--direct-map-border); border-radius: 6px; background: var(--direct-map-panel); color: var(--direct-map-muted); font-size: 12px; }
 .maplibregl-ctrl-group { box-shadow: var(--direct-map-shadow); }
 /* MapLibre's stylesheet hard-codes a white popup while its content inherits

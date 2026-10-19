@@ -4008,6 +4008,9 @@ msgstr "Scaricate {rows} richieste SISTER per {parcels} particelle."
 msgid "Zoom in to see more"
 msgstr "Aumenta lo zoom per visualizzarne altre"
 
+msgid "Dense area: showing only the largest features of {layers}. Zoom in to see all."
+msgstr "Zona densa: vengono mostrati solo gli elementi più grandi di {layers}. Aumenta lo zoom per vederli tutti."
+
 msgid "zoom in"
 msgstr "ingrandisci"
 
