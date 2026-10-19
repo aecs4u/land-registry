@@ -643,3 +643,35 @@ def test_sync_poi_lookup_uses_available_relation_or_local_fallback(monkeypatch, 
         assert result["source"] == "OpenStreetMap via aecs4u-stats (PostGIS)"
         assert f"FROM {relation} p" in cursor.execute.call_args.args[0]
         local.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_municipality_endpoint_reports_backoff_as_unavailable_not_missing(monkeypatch):
+    from fastapi import HTTPException
+
+    from land_registry.routers import enrichment
+
+    class FakeSource:
+        _retry_at = 0.0
+
+    source = FakeSource()
+
+    async def source_factory(*, poi=False):
+        return source
+
+    async def missing(_code):
+        return None
+
+    monkeypatch.setattr(stats_service, "_get_async_postgres_source", source_factory)
+    monkeypatch.setattr(stats_service, "istat_db_available", lambda: True)
+    monkeypatch.setattr(stats_service, "aget_municipality_by_cadastral_code", missing)
+
+    with pytest.raises(HTTPException) as healthy:
+        await enrichment.get_municipality("ZZZZ")
+    assert healthy.value.status_code == 404
+
+    source._retry_at = stats_service.time.monotonic() + 30
+    with pytest.raises(HTTPException) as backing_off:
+        await enrichment.get_municipality("H501")
+    assert backing_off.value.status_code == 503
+    assert 1 <= int(backing_off.value.headers["Retry-After"]) <= 30

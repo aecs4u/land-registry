@@ -183,6 +183,7 @@
                     <legend class="visually-hidden">{{ _('Default basemap') }}</legend>
                     <div class="account-choice-grid">
                         {% for value, label, hint in [
+                            ('osm', _('Standard'), _('Detailed streets, sharp at parcel zoom and quick to load.')),
                             ('light', _('Light'), _('Quiet streets, best for reading parcel outlines.')),
                             ('dark', _('Dark'), _('Low glare for long sessions.')),
                             ('satellite', _('Satellite'), _('Aerial imagery for checking land use.')),

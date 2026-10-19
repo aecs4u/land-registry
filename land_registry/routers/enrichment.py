@@ -285,6 +285,15 @@ async def get_municipality(cadastral_code: str):
         )
     result = await stats_service.aget_municipality_by_cadastral_code(cadastral_code)
     if result is None:
+        # A PostgreSQL failure puts the source in a short backoff and the local
+        # fallback may not exist; that is "unavailable", not "no such municipality".
+        retry_after = await stats_service.apostgres_retry_after()
+        if retry_after:
+            raise HTTPException(
+                status_code=503,
+                detail="Municipality reference store temporarily unavailable",
+                headers={"Retry-After": str(retry_after)},
+            )
         raise HTTPException(
             status_code=404,
             detail=f"No municipality found for cadastral code '{cadastral_code}'",

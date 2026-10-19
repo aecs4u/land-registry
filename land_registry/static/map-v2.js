@@ -18,7 +18,10 @@
   const SEARCH_DEBOUNCE_MS = 250;
   const LAST_VIEW_KEY = 'land-registry.map.lastView';
   const WELCOME_TOUR_KEY = 'land-registry.map.welcome-seen.v1';
-  const BASEMAPS = ['light', 'dark', 'satellite'];
+  const BASEMAPS = ['osm', 'light', 'dark', 'satellite'];
+  // One tile request per tile, labels baked in and native detail to z19; Esri
+  // Light needs two requests (base + labels) and is only native to z16.
+  const DEFAULT_BASEMAP = 'osm';
   const state = {
     map: null,
     fallbackMap: null,
@@ -471,7 +474,7 @@
   }
 
   function currentBasemap() {
-    return $('basemapEngineSelect')?.value || (state.dark ? 'dark' : 'light');
+    return $('basemapEngineSelect')?.value || (state.dark ? 'dark' : DEFAULT_BASEMAP);
   }
 
   // Keep V2 usable if the shared workbench bundle fails to load. This catalog
@@ -1105,6 +1108,7 @@
     updateParcelZoomAffordance();
     updateCoverageStatus();
     writeSelectedLayersUrl();
+    syncSelectAll();
   }
 
   function updateCoverageStatus() {
@@ -1202,10 +1206,38 @@
     }
   }
 
+  // Only each layer's own tick: the parcels item also nests unrelated option checkboxes.
+  function overlayInputs() {
+    return [...document.querySelectorAll('#mapLayerList .map-layer-item > .map-layer-row > input[type="checkbox"]')];
+  }
+
+  // Tri-state header tick: checked = every overlay on, indeterminate = some.
+  function syncSelectAll() {
+    const box = $('layersSelectAll');
+    if (!box) return;
+    const inputs = overlayInputs();
+    const on = inputs.filter((input) => input.checked).length;
+    box.disabled = !inputs.length;
+    box.checked = inputs.length > 0 && on === inputs.length;
+    box.indeterminate = on > 0 && on < inputs.length;
+  }
+
+  // Go through each layer's own change handler so adding the layer, visibility,
+  // the administrative-boundary fallback and the URL all behave as for a manual click.
+  function setAllOverlays(checked) {
+    overlayInputs().forEach((input) => {
+      if (input.checked === checked) return;
+      input.checked = checked;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    syncSelectAll();
+  }
+
   function syncLayerCheckbox(layerId, checked) {
     const input = document.querySelector(`[data-layer-id="${CSS.escape(layerId)}"] input[type="checkbox"]`);
     if (!input) return;
     input.checked = checked;
+    syncSelectAll();
     const opacity = input.closest('.map-layer-item')?.querySelector('.map-layer-opacity');
     if (opacity) opacity.hidden = !checked || !state.map;
     const geometryControls = input.closest('.map-layer-item')?.querySelector('.map-layer-geometry-controls');
@@ -5663,6 +5695,9 @@
     });
     window.ParcelPanel?.mount({ content: $('directParcelContent'), nav: $('parcelSectionNav'), strip: $('parcelStatStrip'), tr });
     $('parcelCloseButton').addEventListener('click', () => { $('directParcelPanel').hidden = true; updateParcelZoomAffordance(); mapStatus(''); });
+    $('layersSelectAll')?.addEventListener('change', (event) => setAllOverlays(event.target.checked));
+    // A manual tick on any layer row changes the header state too.
+    $('mapLayerList')?.addEventListener('change', syncSelectAll);
     $('layersCloseButton').addEventListener('click', () => { $('mapLayersCard').hidden = true; $('layersToggle').setAttribute('aria-expanded', 'false'); });
     const basemapToggle = $('basemapToggle');
     const basemapPopover = $('mapBasemapPopover');
@@ -5980,7 +6015,7 @@
     }
     state.preferences = await loadPreferences();
     const restored = urlState();
-    const basemap = restored.basemap || (BASEMAPS.includes(state.preferences?.default_basemap) ? state.preferences.default_basemap : (document.documentElement.getAttribute('data-bs-theme') === 'dark' ? 'dark' : 'light'));
+    const basemap = restored.basemap || (BASEMAPS.includes(state.preferences?.default_basemap) ? state.preferences.default_basemap : (document.documentElement.getAttribute('data-bs-theme') === 'dark' ? 'dark' : DEFAULT_BASEMAP));
     if (Array.isArray(state.preferences?.default_layers)) state.defaultLayers = new Set(state.preferences.default_layers);
     if (restored.layers !== null) state.defaultLayers = new Set(restored.layers);
     applyInitialBasemap(basemap);

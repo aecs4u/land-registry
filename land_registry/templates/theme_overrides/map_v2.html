@@ -103,13 +103,13 @@
           <label class="visually-hidden" for="basemapEngineSelect">{{ _('Basemap engine') }}</label>
           <select id="basemapEngineSelect" name="basemap" class="map-basemap-select" aria-label="{{ _('Basemap engine') }}">
             <optgroup label="{{ _('Esri') }}">
-              <option value="light" selected>{{ _('Esri Light') }}</option>
+              <option value="light">{{ _('Esri Light') }}</option>
               <option value="dark">{{ _('Esri Dark') }}</option>
               <option value="satellite">{{ _('ESRI World Imagery') }}</option>
               <option value="esri-terrain">{{ _('ESRI World Terrain') }}</option>
             </optgroup>
             <optgroup label="{{ _('OpenStreetMap') }}">
-              <option value="osm">{{ _('OpenStreetMap') }}</option>
+              <option value="osm" selected>{{ _('OpenStreetMap') }}</option>
             </optgroup>
             <optgroup label="{{ _('Google') }}">
               <option value="google-road">{{ _('Google Maps') }}</option>
@@ -240,7 +240,13 @@
         <h2>{{ _('Layers') }}</h2>
         <button type="button" class="map-card-close" id="layersCloseButton" aria-label="{{ _('Close layers') }}">×</button>
       </div>
-      <div class="layer-section-title">{{ _('Overlays') }}</div>
+      <div class="map-layer-section-heading">
+        <div class="layer-section-title">{{ _('Overlays') }}</div>
+        <label class="map-layer-select-all" title="{{ _('Select or clear all overlays') }}">
+          <input type="checkbox" id="layersSelectAll" aria-label="{{ _('Select all overlays') }}" disabled>
+          <span>{{ _('All') }}</span>
+        </label>
+      </div>
       <div id="mapLayerList" class="map-layer-list"><p class="map-muted">{{ _('Loading layer catalog…') }}</p></div>
       <p class="map-muted map-layer-meta maritime-layer-disclosure">{{ _('MIT/SID snapshot; published coverage may be incomplete. Orange polygons are concession footprints; blue points are point records. A marker is hidden when its matching footprint is drawable in the same tile. Use “Zoom to polygons” to move the map to available footprints.') }}</p>
       <p class="map-muted map-layer-meta solar-layer-disclosure">{{ _('Solar potential is aggregated by municipality from the Zornade PV model. Shading represents the share of assessed roof area with high suitability; values are estimates, not a permit or engineering assessment.') }}</p>

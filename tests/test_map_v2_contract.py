@@ -634,3 +634,28 @@ def test_sparse_layers_explain_an_empty_view_instead_of_looking_broken():
     assert "updateLayerBadges()" in idle and "if (!state.tilesLoading) return;" in idle
     # Popups no longer print the serving database as if it were the data provider.
     assert "layer.source || 'Source not available'" not in MAP_SCRIPT
+
+
+def test_layers_card_has_a_tri_state_select_all_tick_wired_through_each_layers_handler():
+    for template in (TEMPLATE, THEME_TEMPLATE):
+        assert template.count('id="layersSelectAll"') == 1
+        # The tick sits beside the Overlays heading, outside the re-rendered layer list.
+        heading = template.index('class="map-layer-section-heading"')
+        assert heading < template.index('id="layersSelectAll"') < template.index('id="mapLayerList"')
+    assert "const setAllOverlays" in SCRIPT or "function setAllOverlays" in SCRIPT
+    # It must reuse every layer's own change handler instead of duplicating its logic.
+    assert "input.dispatchEvent(new Event('change', { bubbles: true }))" in MAP_SCRIPT
+    # Nested option checkboxes (SISTER/auction highlights) are not layers.
+    assert ".map-layer-item > .map-layer-row > input[type=\"checkbox\"]" in MAP_SCRIPT
+    assert "box.indeterminate = on > 0 && on < inputs.length" in MAP_SCRIPT
+    assert ".map-layer-select-all" in STYLES
+
+
+def test_default_basemap_is_one_consistent_choice():
+    # Standard OSM: one tile request per tile and native detail to z19, versus
+    # Esri Light's base+labels pair that is only native to z16.
+    assert "const DEFAULT_BASEMAP = 'osm'" in MAP_SCRIPT
+    assert "'osm'" in MAP_SCRIPT.split("const BASEMAPS = ")[1].split(";")[0]
+    for template in (TEMPLATE, THEME_TEMPLATE):
+        assert '<option value="osm" selected>' in template
+        assert '<option value="light" selected>' not in template

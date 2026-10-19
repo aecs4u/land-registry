@@ -42,7 +42,7 @@ def client(tmp_path, monkeypatch):
 
 def test_preferences_model_defaults_and_validation():
     defaults = UserPreferences()
-    assert defaults.default_basemap == "light"
+    assert defaults.default_basemap == "osm"
     assert defaults.start_view == "italy"
     assert defaults.default_layers == ["cadastral-parcels"]
     assert defaults.parcel_labels is True
@@ -88,7 +88,7 @@ def test_invalid_stored_preferences_fall_back_to_defaults(client):
     test_client, db = client
     db.save_user_preferences(USER.id, {"default_basemap": "retro"})
     loaded = test_client.get("/api/v1/user/preferences").json()["preferences"]
-    assert loaded["default_basemap"] == "light"
+    assert loaded["default_basemap"] == "osm"
 
 
 def test_export_downloads_saved_parcels_and_preferences(client):
@@ -99,7 +99,7 @@ def test_export_downloads_saved_parcels_and_preferences(client):
     payload = response.json()
     assert payload["user"]["id"] == USER.id
     assert payload["saved_parcels"] == []
-    assert payload["preferences"]["default_basemap"] == "light"
+    assert payload["preferences"]["default_basemap"] == "osm"
 
 
 @pytest.mark.parametrize("path", ["/profile", "/settings"])

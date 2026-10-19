@@ -195,7 +195,7 @@ class UserPreferences(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     language: Literal["it", "en"] | None = None
-    default_basemap: Literal["light", "dark", "satellite"] = "light"
+    default_basemap: Literal["osm", "light", "dark", "satellite"] = "osm"
     start_view: Literal["italy", "last", "geolocate"] = "italy"
     default_layers: list[str] = PydanticField(default_factory=lambda: ["cadastral-parcels"])
     parcel_labels: bool = True

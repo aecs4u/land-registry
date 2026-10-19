@@ -95,6 +95,10 @@
 .basemap-options input { position: absolute; opacity: 0; }
 .basemap-options label:has(input:checked) { border-color: var(--direct-map-accent); color: var(--direct-map-accent); background: var(--direct-map-accent-soft); }
 .map-layer-list { display: grid; gap: 6px; margin-top: 8px; }
+.map-layer-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.map-layer-select-all { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; }
+.map-layer-select-all input { margin: 0; cursor: pointer; }
+.map-layer-select-all input:disabled { cursor: default; }
 .map-layer-row { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; padding: 5px 0; }
 .map-layer-row input { margin-top: 2px; }
 .map-layer-row.is-unavailable { opacity: .6; }

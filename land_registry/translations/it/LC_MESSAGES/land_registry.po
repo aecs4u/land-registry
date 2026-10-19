@@ -1082,11 +1082,17 @@ msgstr "Mappa di base"
 msgid "Default basemap"
 msgstr "Mappa di base predefinita"
 
+msgid "Standard"
+msgstr "Standard"
+
 msgid "Light"
 msgstr "Chiara"
 
 msgid "Quiet streets, best for reading parcel outlines."
 msgstr "Strade discrete, ideale per leggere i contorni delle particelle."
+
+msgid "Detailed streets, sharp at parcel zoom and quick to load."
+msgstr "Strade dettagliate, nitide al livello delle particelle e veloci da caricare."
 
 msgid "Dark"
 msgstr "Scura"
@@ -3535,6 +3541,12 @@ msgstr "Livelli della mappa"
 
 msgid "Close layers"
 msgstr "Chiudi i livelli"
+
+msgid "Select all overlays"
+msgstr "Seleziona tutti i livelli"
+
+msgid "Select or clear all overlays"
+msgstr "Seleziona o deseleziona tutti i livelli"
 
 msgid "Overlays"
 msgstr "Sovrapposizioni"

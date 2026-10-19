@@ -3584,6 +3584,14 @@ async def aget_municipality_by_cadastral_code(cadastral_code: str) -> Optional[D
     return await asyncio.to_thread(get_municipality_by_cadastral_code, cadastral_code, use_postgres=False)
 
 
+async def apostgres_retry_after() -> int:
+    """Seconds until the async PostgreSQL source is retried after a failure (0 when it is not backing off)."""
+    source = await _get_async_postgres_source()
+    if source is None:
+        return 0
+    return max(0, math.ceil(source._retry_at - time.monotonic()))
+
+
 async def aget_municipality_solar_potential(istat_code: str) -> dict[str, Any] | None:
     """Return municipality-wide PV aggregates with their scope and provenance."""
     code = str(istat_code or "").strip()
