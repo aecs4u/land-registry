@@ -96,3 +96,25 @@ def test_identify_joins_geo_lookup_when_available_and_checks_only_once(source):
     assert "geo.geo_unit" in cursor.executed[1]
     assert first["comune"] == "Roma"
     assert sum("to_regclass" in sql for sql in cursor.executed) == 1
+
+
+def test_from_environment_prefers_the_dedicated_cadastral_dsn(monkeypatch):
+    monkeypatch.setenv("STATS_POSTGRES_ENABLE", "true")
+    monkeypatch.setenv("STATS_POSTGRES_DSN", "postgresql://u@localhost/aecs4u-stats")
+    monkeypatch.setenv("CADASTRAL_POSTGRES_DSN", "postgresql+asyncpg://u@localhost/cadastral")
+
+    source = PostgresCadastralBoundarySource.from_environment()
+
+    assert "/cadastral" in source.dsn
+    assert "aecs4u-stats" not in source.dsn
+
+
+def test_from_environment_stays_opt_in_and_falls_back_to_stats_dsn(monkeypatch):
+    monkeypatch.delenv("STATS_POSTGRES_ENABLE", raising=False)
+    monkeypatch.setenv("CADASTRAL_POSTGRES_DSN", "postgresql://u@localhost/cadastral")
+    assert PostgresCadastralBoundarySource.from_environment() is None
+
+    monkeypatch.setenv("STATS_POSTGRES_ENABLE", "true")
+    monkeypatch.delenv("CADASTRAL_POSTGRES_DSN")
+    monkeypatch.setenv("STATS_POSTGRES_DSN", "postgresql://u@localhost/aecs4u-stats")
+    assert "aecs4u-stats" in PostgresCadastralBoundarySource.from_environment().dsn

@@ -106,8 +106,11 @@ class PostgresCadastralBoundarySource:
         # real process isolation (a subprocess that can be SIGKILLed).
         if os.getenv("STATS_POSTGRES_ENABLE", "").strip().lower() not in ("1", "true", "yes", "on"):
             return None
+        # The cadastre may live in its own database (the stats one then has empty spatial.cadastral_* tables);
+        # map_layers.cadastral_from_environment already honours the same override for the vector layers.
         dsn = (
-            os.getenv("STATS_POSTGRES_DSN")
+            os.getenv("CADASTRAL_POSTGRES_DSN")
+            or os.getenv("STATS_POSTGRES_DSN")
             or os.getenv("AECS4U_STATS_DATABASE_URL")
             or os.getenv("AECS4U_STATS_SPATIAL_DATABASE_URL")
             or os.getenv("DATABASE_URL")
