@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% from "components/land_registry_map.html" import cadastral_map_assets, cadastral_map_scripts, cadastral_map_view, cadastral_layer_control %}
+
+{% block title %}{{ _('Cadastral Map') }} - AECS4U{% endblock %}
+
+{% block extra_css %}
+{{ super() }}
+{{ cadastral_map_assets() }}
+{% endblock %}
+
+{% block content %}
+<main class="container-fluid py-3">
+  <h1 class="h3">{{ _('Cadastral map') }}</h1>
+  <p class="text-muted">{{ _('Toggle cadastral sheets and parcels as separate map layers.') }}</p>
+  {{ cadastral_layer_control(map_id="land-registry-embed-map") }}
+  {{ cadastral_map_view(
+      map_id="land-registry-embed-map",
+      api_base=api_base,
+      aria_label="Interactive cadastral map",
+      center_lat=41.9028,
+      center_lng=12.4964,
+      zoom=6
+  ) }}
+</main>
+{% endblock %}
+
+{% block extra_js %}
+{{ super() }}
+{{ cadastral_map_scripts(static_base=static_base) }}
+{% endblock %}

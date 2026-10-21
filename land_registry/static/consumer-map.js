@@ -61,9 +61,10 @@
             { pane: 'cadastralPane', opacity: 0.85, minZoom: 16, maxZoom: 22, maxNativeZoom: 19, tileSize: 512 }
         );
         var cadastral = L.layerGroup([sheets, parcels]);
-        // Keep the boundary group attached to the map; the child layers are
-        // zoom-gated and therefore do not request detail at overview zoom.
-        cadastral.addTo(map);
+        // Keep sheets and parcels independently switchable while their zoom
+        // gates prevent detail requests at overview zoom.
+        sheets.addTo(map);
+        parcels.addTo(map);
 
         map.createPane('canonicalPane').style.zIndex = String(options.canonicalZIndex || 425);
         var canonicalLayers = {};
@@ -167,8 +168,11 @@
         L.control.scale({ metric: true, imperial: false, position: 'bottomleft' }).addTo(map);
 
         function identify(event) {
-            if (!map.hasLayer(cadastral) || map.getZoom() < 13) return;
-            var layer = map.getZoom() >= 16 ? 'ple' : 'map';
+            if (map.getZoom() < 13) return;
+            var layer = map.getZoom() >= 16 && map.hasLayer(parcels)
+                ? 'ple'
+                : (map.hasLayer(sheets) ? 'map' : null);
+            if (!layer) return;
             var url = joinUrl(apiBase, '/cadastral-identify')
                 + '?lat=' + encodeURIComponent(event.latlng.lat)
                 + '&lng=' + encodeURIComponent(event.latlng.lng)

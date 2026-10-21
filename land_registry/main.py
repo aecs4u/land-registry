@@ -37,6 +37,7 @@ from land_registry.routers.api import account_workspace_snapshot, load_account_p
 from land_registry.routers.auth import get_current_user_optional
 from land_registry.legal_pages import PAGE_KEYS, build_page
 from land_registry.map_layers import get_map_layer_source, map_layer_catalog
+from land_registry.consumer import install_land_registry_consumer
 from land_registry.source_catalog import PARCEL_API_FIELD_CATALOG, SOURCE_CATALOG
 from land_registry.models import UserPreferences
 from land_registry.s3_storage import get_s3_storage
@@ -727,6 +728,10 @@ if os.path.exists(static_dir):
 else:
     logger.error("Static files directory not found - static content will not be served")
 
+# SISTER and other sibling apps use these focused assets and cadastral routes
+# through the same-origin /land-registry mount.
+install_land_registry_consumer(app, prefix="/land-registry")
+
 templates = Jinja2Templates(directory=templates_dir)
 templates.env.globals["_"] = contextvar_gettext
 # locale is passed per-request in template context (set by each route handler)
@@ -1119,6 +1124,20 @@ async def serve_direct_map(request: Request, user=Depends(get_current_user_optio
         return _theme_setup.render("map_v2.html", request, user=user, **context)
     context["request"] = request
     return templates.TemplateResponse(request, "map_v2.html", context)
+
+
+@app.get("/map/embed", response_class=HTMLResponse)
+async def serve_embedded_cadastral_map(request: Request, user=Depends(get_current_user_optional)):
+    """Preview the reusable cadastral-map component used by sibling apps."""
+    if _theme_setup is None:
+        return HTMLResponse("The shared cadastral map component requires aecs4u-theme.", status_code=503)
+    return _theme_setup.render(
+        "map_embed.html",
+        request,
+        user=user,
+        api_base="/land-registry/api",
+        static_base="/land-registry/static",
+    )
 
 
 _ACCOUNT_LOCALES = (("it", "Italiano"), ("en", "English"))
