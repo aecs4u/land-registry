@@ -2328,6 +2328,7 @@
       // Out of retries: stop requesting and tell the user once. Panning or
       // the banner's Retry button starts a fresh round.
       refreshSourceTileDown();
+      state.map?.triggerRepaint();
       return;
     }
     tileRetry.pending.add(sourceId);
@@ -6103,6 +6104,9 @@
       if (event.sourceId && event.tile && !String(event.sourceId).startsWith('basemap')) {
         state.tileErrors.add(event.sourceId);
         scheduleTileRetry(event.sourceId);
+        // A failed tile schedules no render frame, and 'idle' only fires after
+        // one, so the "Loading map tiles…" task would otherwise never finish.
+        state.map.triggerRepaint();
       }
     });
     state.map.on('moveend', () => { tileRetry.attempts = {}; state.tileErrors.clear(); });
