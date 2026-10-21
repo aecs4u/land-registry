@@ -130,6 +130,8 @@ MAP_LAYERS: tuple[MapLayerSpec, ...] = (
     MapLayerSpec("cadastral-sheets", "Cadastral sheets", "spatial.cadastral_sheet", "geom", min_zoom=10, max_features=3000, geojson_max_area=4.0, coverage="unknown", properties=("id", "sheet_reference", "municipality_id", "level", "level_name", "area_sqm", "source_release"), group="cadastral", color="#1976a8", z_order=70, tile_revision="regional-2"),
     MapLayerSpec("cadastral-parcels", "Cadastral parcels", "spatial.cadastral_parcel", "geom", min_zoom=14, max_features=10000, size_column="area_sqm", geojson_max_area=0.04, coverage="unknown", properties=("id", "canonical_reference", "national_cadastral_reference", "parcel", "sheet", "municipality_id", "area_sqm", "source_release", "has_visura", "is_auction_sale"), group="cadastral", color="#d97925", z_order=90, fill_opacity=0.04, line_width=0.8, tile_revision="regional-5"),
     MapLayerSpec("urban-sections", "Cadastral urban sections", "sezioni_urbane.sezioni_urbane", "geom", id_column="OGC_FID", min_zoom=11, coverage="partial", coverage_note="Only municipalities that have urban sections (about 520, such as Rome, Genoa, Verona and Trieste); most of Italy has none", sparse=True, properties=("OGC_FID", "nationalcadastralzoningreference", "administrativeunit", "sezione_urbana"), group="cadastral", color="#2f9aa8", z_order=80, require_gist_index=False),
+    # DEPRECATED (2026-10-21): the Zornade-sourced zornade.zornade_zone_omi relation. Keep it serving
+    # tiles until a replacement source exists, but do not build new features on it.
     MapLayerSpec("market-zones", "OMI market zones", "zornade.zornade_zone_omi", "geom", id_column="OGC_FID", min_zoom=10, properties=("OGC_FID", "codcom", "codzona", "zona_descr", "comune_descrizione", "descr_tip_prev", "compr_min", "compr_max"), group="market", color="#7b61a8", z_order=30, require_gist_index=False, tile_revision="2"),
     MapLayerSpec("postal-zones", "Postal zones", "cap_subcomunali.cap_subcomunali", "geom", id_column="OGC_FID", min_zoom=10, properties=("OGC_FID", "cap", "comune_cap", "comune", "provincia", "regione", "fonte"), group="administrative", color="#8a7a3d", z_order=40, require_gist_index=False, tile_revision="3"),
     MapLayerSpec("flood-hazard", "Flood hazard areas", "hazards.flood_hazard", "geom", id_column="scenario_code", min_zoom=8, max_features=3000, size_column="area_sqm", properties=("scenario_code", "scenario_label", "area_sqm"), group="risk", color="#2b7bb9", z_order=50, fill_opacity=0.2, require_gist_index=False, tile_revision="3"),
@@ -140,6 +142,7 @@ MAP_LAYERS: tuple[MapLayerSpec, ...] = (
     # EGMS cells are 100 m, so a z13 tile holds at most ~2,400 of them. Below that the
     # unordered per-tile LIMIT silently dropped most of a dense tile (z11 Palermo: 3,000 of
     # 13,879), so the layer starts at z13 where the cap can never truncate.
+    # DEPRECATED (2026-10-21): the Zornade EGMS summary is the source; do not build new features on it.
     MapLayerSpec("surface-subsidence", "Ground movement (EGMS)", "geo_surface_change.egms_subsidenza", "geom", id_column="risk_index", min_zoom=13, max_features=3000, geojson_max_area=4.0, properties=("risk_index", "mean_velocity", "acceleration", "risk_class", "risk_class_label", "velocity_class_label", "signal_quality"), group="risk", color="#c45c2d", z_order=115, fill_opacity=0.25, require_gist_index=False, tile_revision="3"),
     MapLayerSpec(
         "landscape-constraints", "Landscape constraints",
@@ -160,6 +163,8 @@ MAP_LAYERS: tuple[MapLayerSpec, ...] = (
         kind="mixed", group="territory", color="#9b4c83", z_order=76,
         polygon_color="#934274", fill_opacity=0.24, tile_revision="1",
     ),
+    # DEPRECATED (2026-10-21): the municipal aggregate is the Zornade solar-potential dataset; do not
+    # build new features on it.
     MapLayerSpec(
         "solar-potential", "Solar potential by municipality",
         "solar.solar_potential_comuni", "geom", id_column="id",

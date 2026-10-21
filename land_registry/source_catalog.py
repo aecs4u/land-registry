@@ -96,6 +96,8 @@ SOURCE_CATALOG = (
             "Mirror-specific reuse terms have not been reviewed; the 2018/2 polygons are approximate geometry."
         ),
     ),
+    # DEPRECATED (2026-10-21): Zornade datasets stay documented while they are served, but no new
+    # features should depend on them. Licence and attribution text below is unchanged.
     SourceCatalogEntry(
         key="zornade_egms_summary",
         display_name="Zornade Rischio Subsidenza Italia (EGMS 100 m summary)",
@@ -360,6 +362,7 @@ SOURCE_CATALOG = (
             "asserted."
         ),
     ),
+    # DEPRECATED (2026-10-21): see zornade_egms_summary.
     SourceCatalogEntry(
         key="zornade_municipal_solar",
         display_name="Zornade municipal solar-potential aggregate",

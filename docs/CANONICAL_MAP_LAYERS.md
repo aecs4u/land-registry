@@ -59,6 +59,12 @@ reference search, adjacent parcels, and the Leaflet vector fallback use the
 same prepared source. Identity IDs represent a national cadastral entity;
 multiple imported polygon parts with the same reference share that ID.
 
+> **Deprecated (2026-10-21): Zornade-sourced data.** `market-zones`
+> (`zornade.zornade_zone_omi`), `surface-subsidence` (Zornade EGMS summary)
+> and `solar-potential` (Zornade municipal aggregate) keep serving, but no new
+> features should depend on them. Licence and attribution text for these
+> sources is unchanged in `source_catalog.py`.
+
 Map layers use the consolidated `aecs4u-stats` relations directly: municipal,
 province, and region boundaries from `istat.v_*_map`; OMI zones from
 `zornade.zornade_zone_omi`; urban sections from `sezioni_urbane.sezioni_urbane`;

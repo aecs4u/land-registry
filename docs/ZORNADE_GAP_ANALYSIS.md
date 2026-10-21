@@ -4,6 +4,12 @@
 2026-07-13, status consolidated through 2026-10-17. This file also contains the
 former `zornade-cadastral-parcel-reference.md` (Appendices B and C).*
 
+> **Deprecated (2026-10-21): Zornade datasets.** The Zornade-sourced OMI zone
+> table, EGMS summary and municipal solar aggregate stay in service but are
+> deprecated as sources; see [CANONICAL_MAP_LAYERS.md](CANONICAL_MAP_LAYERS.md).
+> This comparison is kept as a historical record and is not a plan to adopt
+> more Zornade data.
+
 ## Contents
 
 | Part | Content |

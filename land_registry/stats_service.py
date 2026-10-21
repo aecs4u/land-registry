@@ -2610,7 +2610,11 @@ class _AsyncPostgresSource:
     async def _zornade_omi_quotes_by_cadastral_code(
         self, cadastral_code: str
     ) -> Optional[Dict[str, Any]]:
-        """Read the current OMI quote fields carried by the published zone table."""
+        """Read the current OMI quote fields carried by the published zone table.
+
+        Deprecated (2026-10-21): reads the Zornade-sourced zornade.zornade_zone_omi. It remains
+        the fallback when the canonical quote tables are missing or empty.
+        """
         if not await self._relations_available(("zornade.zornade_zone_omi",)):
             return None
         rows = await self._fetch(
@@ -2857,7 +2861,10 @@ class _AsyncPostgresSource:
         lng: float,
         cadastral_code: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Resolve an OMI zone from the current PostGIS zone table."""
+        """Resolve an OMI zone from the current PostGIS zone table.
+
+        Deprecated (2026-10-21): the table is the Zornade-sourced zornade.zornade_zone_omi.
+        """
         if not await self._relations_available(("zornade.zornade_zone_omi",)):
             return None
         code_filter = "AND UPPER(codcom) = UPPER(%s)" if cadastral_code else ""
