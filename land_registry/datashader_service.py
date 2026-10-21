@@ -90,6 +90,7 @@ class PostgresCadastralBoundarySource:
         self.max_connections = max_connections
         self._pool = None
         self._pool_lock = threading.Lock()
+        self._geo_lookup: Optional[bool] = None
 
     @classmethod
     def from_environment(cls):
@@ -193,40 +194,58 @@ class PostgresCadastralBoundarySource:
                 return (cursor.fetchone() or (b"",))[0] or b""
 
     def read_geometries(self, layer_type: str, bbox: tuple) -> gpd.GeoDataFrame:
-        """Read only the clipped boundary geometries needed by one raster tile."""
+        """Read only the clipped boundary geometries needed by one raster tile.
+
+        The boundary tables are stored in EPSG:4326 (like ``read_mvt`` already assumes), so the filter must compare
+        ``t.geom`` directly: wrapping it in ``ST_Transform`` defeats the GiST index and turns every tile into a
+        full scan of the national views.
+        """
         table = self.TABLES[layer_type]
         west, south, east, north = bbox
         sql = f"""
             WITH bounds AS (
                 SELECT ST_MakeEnvelope(%s, %s, %s, %s, 4326) AS geom
             )
-            SELECT ST_AsBinary(ST_Intersection(ST_Transform(t.geom, 4326), bounds.geom))
+            SELECT ST_AsBinary(ST_Intersection(t.geom, bounds.geom))
             FROM {table} AS t CROSS JOIN bounds
-            WHERE ST_Intersects(ST_Transform(t.geom, 4326), bounds.geom)
+            WHERE t.geom && bounds.geom
+              AND ST_Intersects(t.geom, bounds.geom)
         """
         with self._connection() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(sql, (west, south, east, north))
-                geometries = [wkb.loads(row[0]) for row in cursor.fetchall() if row[0]]
+                geometries = [wkb.loads(bytes(row[0])) for row in cursor.fetchall() if row[0]]
                 return gpd.GeoDataFrame({"geometry": geometries}, geometry="geometry", crs=4326)
+
+    def _has_geo_lookup(self, cursor) -> bool:
+        """Whether the optional ``geo`` comune lookup tables exist (a cadastre-only database lacks them)."""
+        if self._geo_lookup is None:
+            cursor.execute("SELECT to_regclass('geo.geo_unit') IS NOT NULL AND to_regclass('geo.geo_identifier') IS NOT NULL")
+            self._geo_lookup = bool(cursor.fetchone()[0])
+        return self._geo_lookup
 
     def identify(self, layer_type: str, lat: float, lng: float) -> Optional[dict]:
         table = self.TABLES[layer_type]
-        sql = f"""
+        with self._connection() as conn:
+            with conn.cursor() as cursor:
+                if self._has_geo_lookup(cursor):
+                    select = "t.*, u.canonical_name AS canonical_comune_name, gi.code AS cadastral_code"
+                    joins = """
+            LEFT JOIN geo.geo_unit AS u ON u.id = t.municipality_id
+            LEFT JOIN geo.geo_identifier AS gi
+              ON gi.geo_unit_id = t.municipality_id AND gi.scheme = 'CATASTALE_COMUNE'"""
+                else:
+                    select, joins = "t.*", ""
+                sql = f"""
             WITH click AS (
                 SELECT ST_SetSRID(ST_Point(%s, %s), 4326) AS geom
             )
-            SELECT t.*, u.canonical_name AS canonical_comune_name, gi.code AS cadastral_code
-            FROM {table} AS t
-            LEFT JOIN geo.geo_unit AS u ON u.id = t.municipality_id
-            LEFT JOIN geo.geo_identifier AS gi
-              ON gi.geo_unit_id = t.municipality_id AND gi.scheme = 'CATASTALE_COMUNE'
+            SELECT {select}
+            FROM {table} AS t{joins}
             CROSS JOIN click
             WHERE ST_Covers(t.geom, click.geom)
             LIMIT 1
         """
-        with self._connection() as conn:
-            with conn.cursor() as cursor:
                 cursor.execute(sql, (lng, lat))
                 row = cursor.fetchone()
                 if not row:
@@ -240,11 +259,12 @@ class PostgresCadastralBoundarySource:
                     or values.get("canonical_reference")
                     or values.get("sheet_reference"),
                     "comune": values.get("canonical_comune_name")
+                    or values.get("municipality_name")
                     or values.get("cadastral_code")
                     or values.get("comune_name")
                     or values.get("administrativeunit"),
-                    "provincia": values.get("provincia"),
-                    "regione": values.get("regione"),
+                    "provincia": values.get("provincia") or values.get("province"),
+                    "regione": values.get("regione") or values.get("region"),
                     "administrative_unit": values.get("administrativeunit"),
                 }
 
