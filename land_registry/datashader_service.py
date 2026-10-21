@@ -204,7 +204,8 @@ class PostgresCadastralBoundarySource:
         full scan of the national views.
         """
         table = self.TABLES[layer_type]
-        west, south, east, north = bbox
+        # _tile_to_bbox yields numpy floats; psycopg2 would render them as ``np.float64(...)`` in the SQL.
+        west, south, east, north = (float(value) for value in bbox)
         sql = f"""
             WITH bounds AS (
                 SELECT ST_MakeEnvelope(%s, %s, %s, %s, 4326) AS geom
@@ -397,6 +398,17 @@ class DatashaderTileService:
                 path.unlink(missing_ok=True)
         except OSError:
             log.debug("Unable to prune Datashader disk cache", exc_info=True)
+
+    def _empty_boundary_tile(self, cache_key):
+        """Empty boundary tile that is not pinned in the cache while the PostGIS source is failing.
+
+        A failed read is indistinguishable from "no data" to the caller; caching that answer (memory and disk, which
+        outlives a restart) would keep serving blank tiles after the source recovers.
+        """
+        source_failing = (
+            self._postgres_boundary_source is not None and time.monotonic() < self._postgres_boundary_retry_at
+        )
+        return self._empty_tile() if source_failing else self._empty_cached_tile(cache_key)
 
     def _empty_cached_tile(self, cache_key):
         # Empty responses are stable for a given tile/source state and must be
@@ -781,7 +793,7 @@ class DatashaderTileService:
 
             fgb_files = self._candidate_fgb_files(bbox, layer_type)
             if not fgb_files:
-                return self._empty_cached_tile(cache_key)
+                return self._empty_boundary_tile(cache_key)
 
             # Defensive cap: this is a public, unauthenticated endpoint, and a
             # low-zoom bbox can span several hundred-MB (or, for "ple",

@@ -34,3 +34,16 @@ def test_consumer_package_installer_mounts_asset_and_api():
     assert "/land-registry/api/map/layers/health" in paths
     assert "/land-registry/api/map/layers/{layer_id}/features" in paths
     assert "/land-registry/api/tiles/map-layers/{layer_id}/{z}/{x}/{y}.pbf" in paths
+
+
+def test_consumer_boundary_tiles_use_zoom_offset_for_512px_tiles() -> None:
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "land_registry" / "static" / "consumer-map.js").read_text(
+        encoding="utf-8"
+    )
+    layers = [chunk for chunk in source.split("L.tileLayer(")[1:] if "cadastral-boundaries" in chunk[:200]]
+
+    assert len(layers) == 2
+    # Without it Leaflet asks for z=<map zoom> on the 512px grid and the server reads the wrong tile.
+    assert all("tileSize: 512" in chunk and "zoomOffset: -1" in chunk for chunk in layers)

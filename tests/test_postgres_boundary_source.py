@@ -67,6 +67,20 @@ def test_read_geometries_filters_on_the_indexed_column_and_parses_memoryview(sou
     assert frame.crs.to_epsg() == 4326
 
 
+def test_read_geometries_binds_plain_floats_not_numpy_scalars(source):
+    import numpy as np
+
+    params = []
+    cursor = _FakeCursor([[]])
+    original = cursor.execute
+    cursor.execute = lambda sql, p=None: (params.append(p), original(sql, p))[1]
+    _use_cursor(source, cursor)
+
+    source.read_geometries("map", (np.float64(12.4), np.float64(41.8), np.float64(12.5), np.float64(41.9)))
+
+    assert all(type(value) is float for value in params[0])  # psycopg2 renders np.float64 as "np.float64(..)"
+
+
 def test_identify_without_geo_schema_uses_view_columns(source):
     columns = ["id", "sheet_reference", "level_name", "municipality_name", "province", "region", "geom"]
     values = (1, "H501A048600", "Mappa Catastale", "ROMA", "RM", "LAZIO", None)
@@ -118,3 +132,27 @@ def test_from_environment_stays_opt_in_and_falls_back_to_stats_dsn(monkeypatch):
     monkeypatch.delenv("CADASTRAL_POSTGRES_DSN")
     monkeypatch.setenv("STATS_POSTGRES_DSN", "postgresql://u@localhost/aecs4u-stats")
     assert "aecs4u-stats" in PostgresCadastralBoundarySource.from_environment().dsn
+
+
+def test_empty_tile_is_not_cached_while_the_postgres_source_is_failing(tmp_path, monkeypatch):
+    import time
+    from unittest.mock import MagicMock
+
+    from land_registry.datashader_service import DatashaderTileService
+
+    monkeypatch.setenv("DATASHADER_TILE_CACHE_DIR", str(tmp_path))
+    source = MagicMock()
+    source.read_geometries.side_effect = RuntimeError("db down")
+    service = DatashaderTileService(cadastral_db=None, boundary_source=source)
+    monkeypatch.setattr(service, "_candidate_fgb_files", lambda *a, **k: [])
+
+    service.generate_boundary_tile(35039, 24352, 16, "ple")  # read fails -> blank tile, retry window opens
+    assert service._postgres_boundary_retry_at > time.monotonic()
+    assert not list(tmp_path.glob("*.png")), "a failed read must not be written to the disk cache"
+    assert not service._tile_cache
+
+    # Without a failing source an empty answer is still cached (sparse pans stay cheap).
+    service._postgres_boundary_retry_at = 0.0
+    service._postgres_boundary_source = None
+    service.generate_boundary_tile(35039, 24352, 16, "ple")
+    assert service._tile_cache

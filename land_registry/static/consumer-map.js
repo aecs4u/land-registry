@@ -52,13 +52,15 @@
         });
         streets.addTo(map);
 
+        // The server renders 512px images for a standard {z}/{x}/{y} slippy tile. Leaflet numbers 512px tiles on a
+        // half-resolution grid, so zoomOffset: -1 makes the requested {z} match the server's tile grid.
         var sheets = L.tileLayer(
             joinUrl(apiBase, '/tiles/cadastral-boundaries/{z}/{x}/{y}.png?layer=map'),
-            { pane: 'cadastralPane', opacity: 0.75, minZoom: 13, maxZoom: 22, maxNativeZoom: 19, tileSize: 512, attribution: labels.cadastral || 'Cadastral data' }
+            { pane: 'cadastralPane', opacity: 0.75, minZoom: 13, maxZoom: 22, maxNativeZoom: 19, tileSize: 512, zoomOffset: -1, attribution: labels.cadastral || 'Cadastral data' }
         );
         var parcels = L.tileLayer(
             joinUrl(apiBase, '/tiles/cadastral-boundaries/{z}/{x}/{y}.png?layer=ple'),
-            { pane: 'cadastralPane', opacity: 0.85, minZoom: 16, maxZoom: 22, maxNativeZoom: 19, tileSize: 512 }
+            { pane: 'cadastralPane', opacity: 0.85, minZoom: 16, maxZoom: 22, maxNativeZoom: 19, tileSize: 512, zoomOffset: -1 }
         );
         var cadastral = L.layerGroup([sheets, parcels]);
         // Keep sheets and parcels independently switchable while their zoom
