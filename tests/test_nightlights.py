@@ -47,9 +47,13 @@ def test_good_quality_pixel_mean_and_raster_provenance(tmp_path, monkeypatch):
     status = nightlights.nightlights_store_status()
     result = nightlights.get_parcel_nightlights(mapping(box(10.01, 45.91, 10.19, 45.99)))
 
-    assert status["available"] is True, status
+    assert status["available"] is True, (status.get("reason"), status.get("missing_metadata"))
     assert status["data_vintage"] == "2025"
-    assert result.get("matched") is True, result
+    assert result.get("matched") is True, (
+        result.get("reason"),
+        result.get("missing_metadata"),
+        result.get("error"),
+    )
     assert result["intensity_nw_cm2_sr"] == 20
     assert result["valid_pixel_count"] == 2
     assert result["match_method"] == "parcel_pixel_mean"
@@ -61,7 +65,11 @@ def test_subpixel_parcel_uses_representative_point_pixel(tmp_path, monkeypatch):
 
     result = nightlights.get_parcel_nightlights(mapping(box(10.01, 45.91, 10.04, 45.94)))
 
-    assert result.get("matched") is True, result
+    assert result.get("matched") is True, (
+        result.get("reason"),
+        result.get("missing_metadata"),
+        result.get("error"),
+    )
     assert result["intensity_nw_cm2_sr"] == 15
     assert result["match_method"] == "representative_point_pixel"
     assert result["coverage_status"] == "partial_sampling"
@@ -73,7 +81,11 @@ def test_bad_quality_pixels_are_unmatched_not_zero(tmp_path, monkeypatch):
 
     result = nightlights.get_parcel_nightlights(mapping(box(10.01, 45.91, 10.09, 45.99)))
 
-    assert result["available"] is True, result
+    assert result["available"] is True, (
+        result.get("reason"),
+        result.get("missing_metadata"),
+        result.get("error"),
+    )
     assert result["matched"] is False
     assert result["reason"] == "no_good_quality_pixel"
     assert "intensity_nw_cm2_sr" not in result
