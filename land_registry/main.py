@@ -636,7 +636,10 @@ if _THEME_AVAILABLE:
 
     _theme_setup.templates.env.loader = ChoiceLoader([
         _theme_setup.templates.env.loader,
-        PrefixLoader({"partials": FileSystemLoader(_theme_overrides_dir.parent / "partials")}),
+        PrefixLoader({
+            "partials": FileSystemLoader(_theme_overrides_dir.parent / "partials"),
+            "land_registry": FileSystemLoader(_theme_overrides_dir.parent),
+        }),
     ])
 else:
     logger.warning("aecs4u-theme not installed - running without theme package")

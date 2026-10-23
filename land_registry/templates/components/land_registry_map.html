@@ -1,0 +1,48 @@
+{% macro cadastral_map_assets(
+    leaflet_css_url='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
+    static_base='/land-registry/static'
+) -%}
+<link rel="stylesheet" href="{{ leaflet_css_url }}">
+<link rel="stylesheet" href="{{ static_base }}/land_registry_map.css?v=20261023a">
+{%- endmacro %}
+
+{% macro cadastral_map_scripts(
+    static_base='/land-registry/static',
+    leaflet_js_url='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
+) -%}
+<script src="{{ leaflet_js_url }}" defer></script>
+<script src="{{ static_base }}/consumer-map.js" defer></script>
+<script src="{{ static_base }}/land-registry-map.js?v=20261023a" defer></script>
+{%- endmacro %}
+
+{% macro cadastral_layer_control(map_id, sheets_label='Cadastral sheets', parcels_label='Parcels') -%}
+<fieldset class="leaflet-map-layer-control" aria-label="Cadastral map layers">
+    <legend>Layers</legend>
+    <label>
+        <input type="checkbox" checked data-land-registry-layer-map="{{ map_id }}" data-layer-key="sheets">
+        <span>{{ sheets_label }}</span>
+    </label>
+    <label>
+        <input type="checkbox" checked data-land-registry-layer-map="{{ map_id }}" data-layer-key="parcels">
+        <span>{{ parcels_label }}</span>
+    </label>
+</fieldset>
+{%- endmacro %}
+
+{% macro cadastral_map_view(
+    map_id='land-registry-map',
+    api_base='/land-registry/api',
+    aria_label='Interactive cadastral map',
+    center_lat=41.9028,
+    center_lng=12.4964,
+    zoom=6,
+    labels=None
+) -%}
+<div class="leaflet-map-shell">
+    <div class="map-load-status" data-map-status role="status" aria-live="polite">Loading cadastral map…</div>
+    <div id="{{ map_id }}" class="leaflet-map-canvas" data-land-registry-map
+         data-api-base="{{ api_base }}" data-center-lat="{{ center_lat }}" data-center-lng="{{ center_lng }}"
+         data-zoom="{{ zoom }}" data-labels="{{ (labels or {})|tojson|forceescape }}"
+         role="region" aria-label="{{ aria_label }}"></div>
+</div>
+{%- endmacro %}

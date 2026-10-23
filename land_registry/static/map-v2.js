@@ -839,7 +839,19 @@
       id: 'label-cadastral-parcels', type: 'symbol', source: layerSourceId({ id: 'cadastral-parcels' }), 'source-layer': 'cadastral-parcels',
       minzoom: 16,
       filter: ['all', ['!=', ['slice', ['to-string', ['coalesce', ['get', 'parcel'], '']], 0, 6], 'STRADA'], ['!=', ['slice', ['to-string', ['coalesce', ['get', 'parcel'], '']], 0, 5], 'ACQUA']],
-      layout: { 'text-field': ['coalesce', ['get', 'parcel'], ['get', 'canonical_reference'], ''], 'text-font': ['noto-sans-regular'], 'text-size': 11, 'text-allow-overlap': false, 'text-padding': 2 },
+      // Keep each number anchored to the same polygon feature as its outline.
+      // At parcel zooms collision rejection can otherwise drop labels in dense
+      // blocks, leaving visible polygons with no identifying number.
+      layout: {
+        'symbol-placement': 'point',
+        'text-field': ['coalesce', ['get', 'parcel'], ['get', 'canonical_reference'], ''],
+        'text-font': ['noto-sans-regular'],
+        'text-size': 11,
+        'text-anchor': 'center',
+        'text-allow-overlap': true,
+        'text-ignore-placement': true,
+        'text-padding': 2,
+      },
       paint: { 'text-color': '#263b4d', 'text-halo-color': '#fff', 'text-halo-width': 1.5 },
     });
   }

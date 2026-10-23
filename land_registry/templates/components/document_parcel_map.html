@@ -1,0 +1,180 @@
+{# Shared cadastral parcel map, kept free of app-specific route and language assumptions. #}
+{% macro document_parcel_map_assets(
+    map_data,
+    include_layout=false,
+    leaflet_css_url='/static/vendor/leaflet/leaflet.css',
+    static_base='/land-registry/static'
+) -%}
+{% if map_data or include_layout %}
+<link rel="stylesheet" href="{{ static_base }}/document_parcel_map.css?v=20261023a">
+{% if map_data and map_data.available %}
+<link rel="stylesheet" href="{{ leaflet_css_url }}">
+<link rel="stylesheet" href="{{ static_base }}/land_registry_map.css?v=20261023a">
+{% endif %}
+{% endif %}
+{%- endmacro %}
+
+{% macro document_parcel_map_scripts(
+    map_data,
+    leaflet_already_loaded=false,
+    nonce='',
+    leaflet_js_url='/static/vendor/leaflet/leaflet.js',
+    consumer_map_url='/land-registry/static/consumer-map.js',
+    renderer_url='/land-registry/static/document_parcel_map.js?v=20261023a'
+) -%}
+{% if map_data and map_data.available %}
+{% if not leaflet_already_loaded %}
+<script src="{{ leaflet_js_url }}" data-document-map-script defer></script>
+{% endif %}
+<script src="{{ consumer_map_url }}" data-document-map-script defer></script>
+<script src="{{ renderer_url }}" data-document-map-script defer></script>
+<script nonce="{{ nonce }}">
+document.addEventListener('error', function (event) {
+    var script = event.target;
+    if (!script || !script.matches || !script.matches('script[data-document-map-script]')) return;
+    var card = document.querySelector('.document-parcel-map-card');
+    var status = card && card.querySelector('[data-document-map-status]');
+    var message = status && status.querySelector('[data-map-status-text]');
+    var retry = status && status.querySelector('[data-document-map-retry]');
+    var labels = {};
+    try { labels = JSON.parse(card && card.dataset.documentMapLabels || '{}'); } catch (error) {}
+    if (message) message.textContent = labels.script_error || 'Non è stato possibile caricare la mappa catastale.';
+    if (status) status.hidden = false;
+    if (retry) {
+        retry.hidden = false;
+        retry.dataset.documentMapScriptRetry = 'true';
+    }
+}, true);
+document.addEventListener('click', function (event) {
+    var retry = event.target.closest && event.target.closest('[data-document-map-retry]');
+    if (retry && retry.dataset.documentMapScriptRetry === 'true') window.location.reload();
+});
+</script>
+{% endif %}
+{%- endmacro %}
+
+{% macro document_parcel_map(map_data, labels={}, full_map_url='', map_id='document-parcel-map') -%}
+{% if map_data %}
+{% set open_map_url = full_map_url or map_data.full_map_url|default('/documents?view=cadastral-map', true) %}
+{% set map_region_label = labels.get('aria_listed', 'Mappa catastale di {parcel_count} particelle elencate, {mapped_parcel_count} con geometria')
+    |replace('{parcel_count}', map_data.parcel_count|string)
+    |replace('{mapped_parcel_count}', map_data.mapped_parcel_count|string) if map_data.listed_only else
+    labels.get('aria_single', 'Mappa catastale per foglio {sheet}, particella {parcel}')
+    |replace('{sheet}', map_data.sheet|string)
+    |replace('{parcel}', map_data.parcel|string) %}
+<section class="card border-0 shadow-sm mb-4 document-parcel-map-card"
+         aria-labelledby="{{ map_id }}-heading" data-document-map-labels="{{ labels|tojson|forceescape }}">
+    <div class="card-header bg-white d-flex flex-wrap align-items-center justify-content-between gap-2">
+        <div>
+            <h2 class="h5 mb-1" id="{{ map_id }}-heading">
+                <i class="fas fa-map-location-dot text-primary me-2" aria-hidden="true"></i>{{ labels.get('heading', 'Mappa catastale') }}
+            </h2>
+            <div class="small text-muted">
+                {% if map_data.listed_only %}
+                {{ labels.get('summary_listed', '{sheet_count} fogli e {parcel_count} particelle elencati nelle tabelle della visura')
+                    |replace('{sheet_count}', map_data.sheet_count|string)
+                    |replace('{parcel_count}', map_data.parcel_count|string) }}
+                {% else %}
+                {{ labels.get('sheet_label', 'Foglio') }} <strong>{{ map_data.sheet }}</strong> · {{ labels.get('parcel_label', 'Particella') }} <strong>{{ map_data.parcel }}</strong>
+                {% endif %}
+                {% if map_data.municipality %} · {{ map_data.municipality }}{% endif %}
+                {% if map_data.province %} ({{ map_data.province }}){% endif %}
+                {% if map_data.listed_only %}
+                <span class="d-block mt-1">{{ labels.get('mapped_count_listed', 'Trovate {mapped_parcel_count} di {parcel_count} particelle')
+                    |replace('{mapped_parcel_count}', map_data.mapped_parcel_count|string)
+                    |replace('{parcel_count}', map_data.parcel_count|string) }}{% if map_data.sheet_count %} {{ labels.get('mapped_sheets_listed', 'e {mapped_sheet_count} di {sheet_count} fogli')
+                    |replace('{mapped_sheet_count}', map_data.mapped_sheet_count|string)
+                    |replace('{sheet_count}', map_data.sheet_count|string) }}{% endif %}</span>
+                {% elif map_data.parcel_count > 1 %}<span class="d-block mt-1">{{ labels.get('mapped_count', '{mapped_parcel_count} di {parcel_count} particelle con posizione trovata')
+                    |replace('{mapped_parcel_count}', map_data.mapped_parcel_count|string)
+                    |replace('{parcel_count}', map_data.parcel_count|string) }}</span>{% endif %}
+            </div>
+        </div>
+        <a class="btn btn-sm btn-outline-primary no-print" href="{{ open_map_url }}" target="_blank" rel="noopener noreferrer">
+            <i class="fas fa-up-right-from-square me-1" aria-hidden="true"></i>{{ labels.get('full_map', 'Mappa completa') }}
+        </a>
+    </div>
+    {% if map_data.available %}
+    <div class="card-body">
+        <fieldset class="leaflet-map-layer-control" aria-label="{{ labels.get('layers_aria', 'Livelli della mappa catastale') }}">
+            <legend>{{ labels.get('layers', 'Livelli') }}</legend>
+            {% if map_data.listed_only %}
+            <label>
+                <input type="checkbox" checked data-document-map-layer="{{ map_id }}" data-layer-key="sheets">
+                <span>{{ labels.get('sheets_listed_short', 'Fogli elencati') }}</span>
+            </label>
+            <label>
+                <input type="checkbox" checked data-document-map-layer="{{ map_id }}" data-layer-key="parcels">
+                <span>{{ labels.get('parcels_listed_short', 'Particelle elencate') }}</span>
+            </label>
+            {% else %}
+            <label>
+                <input type="checkbox" checked data-land-registry-layer-map="{{ map_id }}" data-layer-key="sheets">
+                <span>{{ labels.get('sheets', 'Fogli catastali') }}</span>
+            </label>
+            <label>
+                <input type="checkbox" checked data-land-registry-layer-map="{{ map_id }}" data-layer-key="parcels">
+                <span>{{ labels.get('parcels', 'Particelle') }}</span>
+            </label>
+            {% endif %}
+        </fieldset>
+        <div class="leaflet-map-shell document-parcel-map-shell">
+            <div class="map-load-status" data-document-map-status role="status" aria-live="polite">
+                <span data-map-status-text>{{ labels.get('loading', 'Caricamento mappa catastale…') }}</span>
+                <button class="btn btn-sm btn-outline-primary ms-2" type="button" data-document-map-retry hidden>{{ labels.get('retry', 'Riprova') }}</button>
+            </div>
+            <div id="{{ map_id }}" class="leaflet-map-canvas"
+                 data-document-parcel-map
+                 data-api-base="{{ map_data.api_base|default('/land-registry/api') }}"
+                 data-map-data-url="{{ map_data.data_url }}"
+                 data-center-lat="{{ map_data.latitude }}"
+                 data-center-lng="{{ map_data.longitude }}"
+                 data-zoom="{{ map_data.zoom }}"
+                 data-center-kind="{{ map_data.center_kind }}"
+                 data-listed-only="{{ 'true' if map_data.listed_only else 'false' }}"
+                 data-reference="{% if map_data.listed_only %}{{ map_data.parcel_count }} {{ labels.get('parcels_listed_short', 'particelle elencate') }}{% else %}{{ labels.get('sheet_label', 'Foglio') }} {{ map_data.sheet }} · {{ labels.get('parcel_label', 'Particella') }} {{ map_data.parcel }}{% endif %}"
+                 data-labels="{{ labels.get('map_layers', {'streets': 'Stradale', 'satellite': 'Satellite', 'terrain': 'Rilievo', 'cadastral': 'Confini catastali', 'parcel': 'Particella'})|tojson|forceescape }}"
+                 role="region" aria-label="{{ map_region_label }}"></div>
+            <button class="btn btn-sm btn-light document-map-fit-all shadow-sm" type="button"
+                    data-document-map-fit-all disabled
+                    aria-label="{{ labels.get('fit_all_aria', 'Adatta la mappa a tutte le particelle') }}"
+                    title="{{ labels.get('fit_all', 'Adatta tutte le particelle') }}">
+                <i class="fas fa-expand me-1" aria-hidden="true"></i>{{ labels.get('fit_all', 'Adatta particelle') }}
+            </button>
+        </div>
+        <noscript><p class="alert alert-warning mt-3 mb-0">{{ labels.get('enable_javascript', 'Per visualizzare la mappa catastale è necessario attivare JavaScript.') }}</p></noscript>
+        <p class="small text-muted mt-2 mb-0">
+            {% if map_data.listed_only %}
+            {{ labels.get('description_listed', 'La mappa mostra esclusivamente i fogli e le particelle elencati nelle tabelle della visura.') }}
+            {{ labels.get('description_zoom', 'A zoom ridotto i marcatori riportano comune, foglio e particella; ingrandisci per vedere meglio i confini.') }}
+            {% if map_data.mapped_parcel_count < map_data.parcel_count %}{{ labels.get('description_unmapped', 'Per le particelle senza geometria, il marcatore indica la posizione approssimativa al centro del foglio; “Adatta particelle” include il perimetro del foglio disponibile.') }}{% endif %}
+            {% elif map_data.parcel_count > 1 %}
+            {{ labels.get('description_multiple', 'La mappa mostra le particelle con posizione catastale trovata. Attiva o disattiva i confini catastali dai controlli.') }}
+            {% elif map_data.center_kind == 'parcel' %}
+            {{ labels.get('description_single', 'La mappa è centrata sul centroide della particella. Attiva o disattiva i confini catastali dai controlli; le particelle compaiono ai livelli di zoom supportati.') }}
+            {% else %}
+            {{ map_data.message }} {{ labels.get('description_fallback', 'Usa lo zoom e sposta la mappa per esplorare il comune.') }}
+            {% endif %}
+            {% if not map_data.listed_only %}{{ labels.get('attribution', 'Cartografia di base: OpenStreetMap, Esri e OpenTopoMap; confini catastali: Land Registry.') }}{% endif %}
+        </p>
+        {% if map_data.unmapped_parcels %}
+        <details class="small mt-2">
+            <summary>{{ labels.get('unmapped_summary', '{count} particelle senza geometria nella cartografia locale')|replace('{count}', map_data.unmapped_parcels|length|string) }}</summary>
+            <ul class="mb-0 mt-1">
+                {% for reference in map_data.unmapped_parcels %}<li>{{ reference }}</li>{% endfor %}
+            </ul>
+        </details>
+        {% endif %}
+    </div>
+    {% else %}
+    <div class="card-body">
+        <div class="alert alert-warning mb-0" role="status">
+            <i class="fas fa-circle-info me-2" aria-hidden="true"></i>
+            {{ map_data.message }}
+            <a href="{{ open_map_url }}" class="alert-link ms-1" target="_blank" rel="noopener noreferrer">{{ labels.get('open_map', 'Apri la mappa catastale') }}</a>.
+        </div>
+    </div>
+    {% endif %}
+</section>
+{% endif %}
+{%- endmacro %}

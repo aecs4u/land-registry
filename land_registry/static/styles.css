@@ -3597,6 +3597,28 @@ body.dark-mode .drawing-subsection-divider {
   position: relative;
 }
 
+.legacy-map-watermark {
+  position: absolute;
+  z-index: 1100;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.legacy-map-watermark span {
+  padding: .15em .3em;
+  border: .08em solid rgba(150, 28, 28, .28);
+  color: rgba(150, 28, 28, .3);
+  font-size: clamp(2.5rem, 8vw, 7rem);
+  font-weight: 800;
+  letter-spacing: .14em;
+  line-height: 1;
+  transform: rotate(-18deg);
+  white-space: nowrap;
+}
+
 /* Ensure Folium map fills the container */
 #folium-map-container > div {
   width: 100% !important;

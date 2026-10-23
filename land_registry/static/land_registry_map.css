@@ -1,0 +1,65 @@
+.leaflet-map-shell {
+    position: relative;
+    width: 100%;
+    min-height: 28rem;
+    height: min(72vh, 54rem);
+    overflow: hidden;
+    border: 1px solid var(--bs-border-color, #dee2e6);
+    border-radius: .75rem;
+    background: #e9ecef;
+}
+
+.leaflet-map-canvas {
+    width: 100%;
+    height: 100%;
+}
+
+.map-load-status {
+    position: absolute;
+    z-index: 1000;
+    top: .75rem;
+    left: .75rem;
+    padding: .5rem .75rem;
+    border-radius: .375rem;
+    background: var(--bs-body-bg, #fff);
+    color: var(--bs-secondary-color, #6c757d);
+    box-shadow: 0 1px 4px rgb(0 0 0 / 18%);
+}
+
+.map-load-status[hidden] {
+    display: none;
+}
+
+.leaflet-map-layer-control {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem 1rem;
+    margin: 0 0 .65rem;
+    padding: .5rem .75rem;
+    border: 1px solid var(--bs-border-color, #dee2e6);
+    border-radius: .5rem;
+}
+
+.leaflet-map-layer-control legend {
+    float: none;
+    width: auto;
+    margin: 0;
+    padding: 0 .25rem;
+    font-size: .8rem;
+    font-weight: 600;
+}
+
+.leaflet-map-layer-control label {
+    display: inline-flex;
+    align-items: center;
+    gap: .4rem;
+    margin: 0;
+    font-size: .9rem;
+}
+
+@media (max-width: 575.98px) {
+    .leaflet-map-shell {
+        min-height: 24rem;
+        height: 66vh;
+    }
+}
