@@ -247,7 +247,7 @@ def get_parcel_nightlights(geometry: dict[str, Any]) -> dict[str, Any]:
                 values = dataset.read(1, window=window, masked=True)
                 out_height, out_width = values.shape
 
-            transform = dataset.window_transform(window) @ Affine.scale(
+            transform = dataset.window_transform(window) * Affine.scale(
                 window.width / out_width, window.height / out_height
             )
             inside = geometry_mask(
