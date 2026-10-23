@@ -81,6 +81,16 @@
     transform: var(--document-map-overview-transform, translateY(-50%));
 }
 
+.document-map-overview-draggable {
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+}
+
+.document-map-overview-dragging {
+    cursor: grabbing;
+}
+
 .document-map-overview-position-placed {
     right: auto;
     bottom: auto;

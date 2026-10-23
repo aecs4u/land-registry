@@ -266,6 +266,8 @@
             var overviewMarkers = [];
             var parcelOverviewMarkers = window.L.layerGroup();
             var sheetOverviewMarkers = window.L.layerGroup();
+            // Parcels without geometry have no true position; they stay visible at every zoom.
+            var approximateParcelMarkers = window.L.layerGroup();
             var updateOverviewMarkers = null;
             var overviewLayoutFrame = null;
 
@@ -291,6 +293,10 @@
                 active.sort(function (first, second) {
                     return second.entry.priority - first.entry.priority
                         || first.entry.label.localeCompare(second.entry.label, 'it');
+                });
+                // Labels the user has moved keep their spot; the others are placed around them.
+                active.sort(function (first, second) {
+                    return (second.entry.manual ? 1 : 0) - (first.entry.manual ? 1 : 0);
                 });
 
                 var mapBounds = instance.map.getContainer().getBoundingClientRect();
@@ -337,6 +343,11 @@
                     var width = chipSize.width;
                     var height = chipSize.height;
                     var chosen = null;
+                    if (item.entry.manual) {
+                        var manualLeft = anchor.left + item.entry.manual.dx;
+                        var manualTop = anchor.top + item.entry.manual.dy;
+                        chosen = { left: manualLeft, top: manualTop, bounds: boundsAt(manualLeft, manualTop, width, height) };
+                    }
                     var step = Math.max(18, Math.min(32, height + 6));
 
                     // Try positions in expanding rings around the parcel first, then use
@@ -398,6 +409,59 @@
                 overviewLayoutFrame = window.requestAnimationFrame(layoutOverviewLabels);
             }
 
+            // Let the user drag a label chip to resolve overlaps; the offset is kept relative
+            // to its marker, so it follows pans and zooms. Double-click restores automatic placement.
+            function enableLabelDrag(entry) {
+                var element = entry.marker.getElement();
+                var chip = element && element.querySelector('.document-map-overview-marker');
+                if (!chip || chip.dataset.dragBound === 'true') return;
+                chip.dataset.dragBound = 'true';
+                chip.classList.add('document-map-overview-draggable');
+                chip.title = localized(container, 'drag_label',
+                    'Trascina per spostare l’etichetta (doppio clic per ripristinare)');
+                window.L.DomEvent.on(chip, 'mousedown touchstart dblclick', window.L.DomEvent.stopPropagation);
+                var drag = null;
+                chip.addEventListener('pointerdown', function (event) {
+                    if (event.button) return;
+                    var rect = chip.getBoundingClientRect();
+                    drag = { id: event.pointerId, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top, moved: false };
+                    chip.setPointerCapture(event.pointerId);
+                    event.stopPropagation();
+                });
+                chip.addEventListener('pointermove', function (event) {
+                    if (!drag || event.pointerId !== drag.id) return;
+                    var dx = event.clientX - drag.x;
+                    var dy = event.clientY - drag.y;
+                    if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+                    drag.moved = true;
+                    chip.classList.add('document-map-overview-dragging');
+                    var anchor = element.getBoundingClientRect();
+                    var mapBounds = instance.map.getContainer().getBoundingClientRect();
+                    var rect = chip.getBoundingClientRect();
+                    var left = Math.max(mapBounds.left + 2, Math.min(drag.left + dx, mapBounds.right - rect.width - 2));
+                    var top = Math.max(mapBounds.top + 2, Math.min(drag.top + dy, mapBounds.bottom - rect.height - 2));
+                    entry.manual = { dx: left - anchor.left, dy: top - anchor.top };
+                    scheduleOverviewLabelLayout();
+                });
+                function endDrag(event) {
+                    if (!drag || event.pointerId !== drag.id) return;
+                    var moved = drag.moved;
+                    drag = null;
+                    chip.classList.remove('document-map-overview-dragging');
+                    if (!moved) return;
+                    // The click that follows a drag must not open the marker popup.
+                    var swallow = function (clickEvent) { clickEvent.stopPropagation(); clickEvent.preventDefault(); };
+                    chip.addEventListener('click', swallow, true);
+                    window.setTimeout(function () { chip.removeEventListener('click', swallow, true); }, 0);
+                }
+                chip.addEventListener('pointerup', endDrag);
+                chip.addEventListener('pointercancel', endDrag);
+                chip.addEventListener('dblclick', function () {
+                    entry.manual = null;
+                    scheduleOverviewLabelLayout();
+                });
+            }
+
             function addOverviewMarker(group, kind, item, position, approximate) {
                 var category = kind === 'parcel' ? cadastralCategory(item.category || item.Categoria) : null;
                 var label = overviewLabel(item, kind, container);
@@ -429,11 +493,15 @@
                     ? label + ' · ' + localized(container, 'approximate_location', 'Posizione indicativa: centro del foglio catastale')
                     : label;
                 marker.bindPopup(popup);
-                overviewMarkers.push({
+                var entry = {
                     marker: marker,
                     label: label,
+                    manual: null,
                     priority: approximate ? 3 : (kind === 'parcel' ? 2 : 1)
-                });
+                };
+                overviewMarkers.push(entry);
+                // The icon element is recreated whenever the marker's layer is re-added.
+                marker.on('add', function () { enableLabelDrag(entry); });
                 if (kind === 'parcel') {
                     var row = resolveRow(records, item);
                     var target = rowTarget(targets, row);
@@ -551,16 +619,20 @@
                 unmappedParcels.forEach(function (item) {
                     var key = parcelMapKey(item);
                     if (overviewParcelKeys.has(key)) return;
-                    var center = sheetCenters.get(parcelSheetKey(item));
-                    if (!center) return;
-                    addOverviewMarker(parcelOverviewMarkers, 'parcel', item, center, true);
+                    // Without a sheet outline either, fall back to the centre of the map.
+                    var center = sheetCenters.get(parcelSheetKey(item)) || window.L.latLng(latitude, longitude);
+                    addOverviewMarker(approximateParcelMarkers, 'parcel', item, center, true);
                     overviewParcelKeys.add(key);
+                    parcelBounds.extend(center);
                 });
 
                 var overviewMaxZoom = 14;
                 updateOverviewMarkers = function () {
                     var visible = instance.map.getZoom() <= overviewMaxZoom;
                     container.classList.toggle('document-map-polygons-labeled', !visible);
+                    if (listedLayers.parcels && !listedLayers.parcels.hasLayer(approximateParcelMarkers)) {
+                        listedLayers.parcels.addLayer(approximateParcelMarkers);
+                    }
                     [
                         [listedLayers.parcels, parcelOverviewMarkers],
                         [listedLayers.sheets, sheetOverviewMarkers]
