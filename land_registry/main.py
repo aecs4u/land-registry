@@ -19,6 +19,7 @@ import threading
 from tornado.ioloop import IOLoop
 
 from land_registry.cadastral_utils import load_cadastral_structure, get_cadastral_stats
+from land_registry import stats_service
 from land_registry.dashboard import TEMPLATE
 from land_registry.file_availability_db import file_availability_db
 from land_registry.i18n import LocaleMiddleware, detect_locale, make_gettext, contextvar_gettext, translation_map
@@ -1138,6 +1139,71 @@ async def serve_embedded_cadastral_map(request: Request, user=Depends(get_curren
         api_base="/land-registry/api",
         static_base="/land-registry/static",
     )
+
+
+@app.get("/omi/valuation", response_class=HTMLResponse, name="omi_valuation")
+async def serve_omi_valuation_page(
+    request: Request,
+    comune: Optional[str] = None,
+    zona: Optional[str] = None,
+    user=Depends(get_current_user_optional),
+):
+    """Render OMI quote ranges for one municipality and one OMI zone."""
+    if _theme_setup is None:
+        return HTMLResponse("The OMI valuation page requires aecs4u-theme.", status_code=503)
+
+    locale = detect_locale(request)
+    gettext = make_gettext(locale)
+    normalized_comune = (comune or "").strip().upper()
+    normalized_zona = (zona or "").strip().upper()
+    search_submitted = bool(normalized_comune or normalized_zona)
+    error_message = None
+    quotes_payload = {}
+    quotes = []
+    response_status = 200
+
+    if search_submitted and not (normalized_comune and normalized_zona):
+        error_message = gettext("Enter both a municipality code and an OMI zone.")
+        response_status = 422
+    elif len(normalized_comune) > 24 or len(normalized_zona) > 24:
+        error_message = gettext("The municipality code and OMI zone must be 24 characters or fewer.")
+        response_status = 422
+    elif search_submitted:
+        if not stats_service.omi_db_available_public():
+            error_message = gettext("OMI data are temporarily unavailable.")
+            response_status = 503
+        else:
+            try:
+                result = await stats_service.aget_omi_quotes(normalized_comune, zona=normalized_zona)
+                quotes_payload = result if isinstance(result, dict) else {}
+                rows = quotes_payload.get("quotes")
+                quotes = rows if isinstance(rows, list) else []
+            except Exception:
+                logger.exception(
+                    "OMI valuation page lookup failed for comune=%s zona=%s",
+                    normalized_comune,
+                    normalized_zona,
+                )
+                error_message = gettext("Could not load OMI quotes right now.")
+                response_status = 503
+
+    response = _theme_setup.render(
+        "omi_valuation.html",
+        request,
+        user=user,
+        _=gettext,
+        locale=locale,
+        page_title=gettext("OMI valuation by zone"),
+        comune=normalized_comune,
+        zona=normalized_zona,
+        search_submitted=search_submitted,
+        error_message=error_message,
+        quotes=quotes,
+        source=quotes_payload.get("source"),
+        dataset_version=quotes_payload.get("dataset_version"),
+    )
+    response.status_code = response_status
+    return response
 
 
 _ACCOUNT_LOCALES = (("it", "Italiano"), ("en", "English"))

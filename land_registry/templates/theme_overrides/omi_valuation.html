@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% from "components/omi_valuation.html" import omi_quotes_table with context %}
+
+{% block title %}{{ page_title }} - {{ site_name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <header class="mb-4">
+        <h1 class="h2">{{ page_title }}</h1>
+        <p class="text-muted mb-0">{{ _('Compare sale and rental ranges for a municipality and OMI zone. These are market indicators, not an appraisal.') }}</p>
+    </header>
+
+    <form class="card border-0 shadow-sm mb-4" method="get" action="/omi/valuation">
+        <div class="card-body">
+            <input type="hidden" name="lang" value="{{ locale }}">
+            <div class="row g-3 align-items-end">
+                <div class="col-sm-6 col-lg-4">
+                    <label class="form-label" for="omiComune">{{ _('Cadastral or ISTAT municipality code') }}</label>
+                    <input class="form-control" id="omiComune" name="comune" type="text"
+                           value="{{ comune }}" maxlength="24" autocomplete="off" required
+                           placeholder="{{ _('e.g. C773') }}">
+                </div>
+                <div class="col-sm-6 col-lg-4">
+                    <label class="form-label" for="omiZona">{{ _('OMI zone code') }}</label>
+                    <input class="form-control" id="omiZona" name="zona" type="text"
+                           value="{{ zona }}" maxlength="24" autocomplete="off" required
+                           placeholder="{{ _('e.g. B1') }}">
+                    <div class="form-text">{{ _('OMI zone codes repeat between municipalities, so enter both values.') }}</div>
+                </div>
+                <div class="col-lg-4">
+                    <button class="btn btn-primary" type="submit">{{ _('Search OMI quotes') }}</button>
+                    <a class="btn btn-outline-secondary" href="/omi/valuation">{{ _('Clear') }}</a>
+                </div>
+            </div>
+        </div>
+    </form>
+
+    {% if error_message %}
+    <div class="alert alert-warning" role="alert">{{ error_message }}</div>
+    {% endif %}
+
+    {% if search_submitted and not error_message %}
+    <section aria-labelledby="omiResultsTitle">
+        <div class="d-flex flex-wrap justify-content-between align-items-baseline gap-2 mb-2">
+            <h2 class="h4 mb-0" id="omiResultsTitle">{{ _('OMI quotes') }}</h2>
+            <p class="text-muted mb-0">{{ _('Municipality') }} <strong>{{ comune }}</strong> · {{ _('OMI zone') }} <strong>{{ zona }}</strong></p>
+        </div>
+        {% if dataset_version or source %}
+        <p class="small text-muted">
+            {% if dataset_version %}{{ _('Dataset version') }}: {{ dataset_version }}{% endif %}
+            {% if dataset_version and source %} · {% endif %}
+            {% if source %}{{ _('Source') }}: {{ source }}{% endif %}
+        </p>
+        {% endif %}
+        {{ omi_quotes_table(
+            quotes,
+            title=_('OMI quotations'),
+            empty_message=_('No OMI quotes are available for this municipality and zone.'),
+            collapsible=False
+        ) }}
+        <p class="small text-muted mt-2">{{ _('OMI ranges describe the zone market and do not represent the value of an individual property.') }}</p>
+    </section>
+    {% endif %}
+</div>
+{% endblock %}

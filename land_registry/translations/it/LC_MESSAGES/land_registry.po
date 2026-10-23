@@ -5103,3 +5103,96 @@ msgstr "Nessun elemento in questa vista: questo livello copre solo una parte del
 
 msgid "Only municipalities that have urban sections (about 520, such as Rome, Genoa, Verona and Trieste); most of Italy has none"
 msgstr "Solo i comuni che hanno sezioni urbane (circa 520, come Roma, Genova, Verona e Trieste); la maggior parte dell'Italia non ne ha"
+
+msgid "Enter both a municipality code and an OMI zone."
+msgstr "Inserire sia il codice del comune sia la zona OMI."
+
+msgid "The municipality code and OMI zone must be 24 characters or fewer."
+msgstr "Il codice del comune e la zona OMI non possono superare 24 caratteri."
+
+msgid "OMI data are temporarily unavailable."
+msgstr "I dati OMI non sono temporaneamente disponibili."
+
+msgid "Could not load OMI quotes right now."
+msgstr "Impossibile caricare le quotazioni OMI al momento."
+
+msgid "OMI valuation by zone"
+msgstr "Valutazione OMI per zona"
+
+msgid "Compare sale and rental ranges for a municipality and OMI zone. These are market indicators, not an appraisal."
+msgstr "Confronta gli intervalli di compravendita e locazione per comune e zona OMI. Sono indicatori di mercato, non una perizia."
+
+msgid "Cadastral or ISTAT municipality code"
+msgstr "Codice catastale o ISTAT del comune"
+
+msgid "OMI zone code"
+msgstr "Codice zona OMI"
+
+msgid "e.g. C773"
+msgstr "es. C773"
+
+msgid "e.g. B1"
+msgstr "es. B1"
+
+msgid "OMI zone codes repeat between municipalities, so enter both values."
+msgstr "I codici delle zone OMI si ripetono tra comuni diversi: inserisci entrambi i valori."
+
+msgid "Search OMI quotes"
+msgstr "Cerca quotazioni OMI"
+
+msgid "OMI quotes"
+msgstr "Quotazioni OMI"
+
+msgid "OMI quotations"
+msgstr "Quotazioni OMI"
+
+msgid "No OMI quotes are available for this municipality and zone."
+msgstr "Non sono disponibili quotazioni OMI per questo comune e questa zona."
+
+msgid "OMI ranges describe the zone market and do not represent the value of an individual property."
+msgstr "Gli intervalli OMI descrivono il mercato della zona e non rappresentano il valore di un singolo immobile."
+
+msgid "Zona"
+msgstr "Zona"
+
+msgid "Tipologia"
+msgstr "Tipologia"
+
+msgid "Stato conservativo"
+msgstr "Stato conservativo"
+
+msgid "Compravendita (€/m²)"
+msgstr "Compravendita (€/m²)"
+
+msgid "Locazione (€/m²/mese)"
+msgstr "Locazione (€/m²/mese)"
+
+msgid "Rendimento lordo"
+msgstr "Rendimento lordo"
+
+msgid "Percentile zona"
+msgstr "Percentile della zona"
+
+msgid "Periodo"
+msgstr "Periodo"
+
+msgid "Quotazioni OMI non disponibili."
+msgstr "Quotazioni OMI non disponibili."
+
+msgid "Stima indicativa OMI"
+msgstr "Stima indicativa OMI"
+
+msgid "Superficie considerata"
+msgstr "Superficie considerata"
+
+msgid "Intervallo OMI"
+msgstr "Intervallo OMI"
+
+msgid "Intervallo totale indicativo"
+msgstr "Intervallo totale indicativo"
+
+msgid "Stima indicativa ottenuta moltiplicando la superficie per l’intervallo OMI selezionato; non è una perizia."
+msgstr "Stima indicativa calcolata moltiplicando la superficie per l’intervallo OMI selezionato; non è una perizia."
+
+msgid "Inserire una superficie e un intervallo OMI valido per calcolare la stima indicativa."
+msgstr "Inserire una superficie e un intervallo OMI valido per calcolare la stima indicativa."
