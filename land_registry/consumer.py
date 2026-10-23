@@ -4,12 +4,10 @@ import asyncio
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, FastAPI, HTTPException, Query, Path as ApiPath
+from fastapi import APIRouter, FastAPI, HTTPException, Query
+from fastapi import Path as ApiPath
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
-
-from land_registry.dependencies import get_datashader_registry
-from land_registry.map_layers import get_map_layer, get_map_layer_source, map_layer_catalog
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +15,11 @@ consumer_router = APIRouter()
 
 
 def _tile_service():
+    # Keep the geospatial rendering stack out of the host app's startup path.
+    # Importing the registry loads Datashader, GeoPandas, NumPy, and GDAL even
+    # when a consumer only serves the reusable parcel-map templates/assets.
+    from land_registry.dependencies import get_datashader_registry
+
     return get_datashader_registry().get_service()
 
 
@@ -61,6 +64,8 @@ async def cadastral_identify(
 @consumer_router.get("/map/layers")
 async def canonical_map_layers() -> dict:
     """Expose the canonical layer catalog to embedded map consumers."""
+    from land_registry.map_layers import get_map_layer_source, map_layer_catalog
+
     source = get_map_layer_source()
     return {"source": "aecs4u-stats PostgreSQL/PostGIS", "available": source.available, "layers": map_layer_catalog()}
 
@@ -68,6 +73,8 @@ async def canonical_map_layers() -> dict:
 @consumer_router.get("/map/layers/health")
 async def canonical_map_layers_health() -> dict:
     """Expose the same preflight checks to embedded map consumers."""
+    from land_registry.map_layers import get_map_layer_source
+
     source = get_map_layer_source()
     if not source.available:
         return {"available": False, "layers": await source.health()}
@@ -88,6 +95,8 @@ async def canonical_map_layer_features(
     limit: int = Query(2000, ge=1, le=5000),
 ) -> dict:
     """Serve a bounded GeoJSON fallback for hosts without VectorGrid."""
+    from land_registry.map_layers import get_map_layer, get_map_layer_source
+
     try:
         layer = get_map_layer(layer_id)
     except KeyError as exc:
@@ -118,6 +127,8 @@ async def canonical_map_layer_features(
 @consumer_router.get("/map/layers/{layer_id}/features/{feature_id}")
 async def canonical_map_layer_feature_details(layer_id: str, feature_id: int = ApiPath(..., ge=1)) -> dict:
     """Return one map feature and its related source records."""
+    from land_registry.map_layers import get_map_layer, get_map_layer_source
+
     try:
         get_map_layer(layer_id)
     except KeyError as exc:
@@ -138,6 +149,8 @@ async def canonical_map_layer_feature_details(layer_id: str, feature_id: int = A
 @consumer_router.get("/tiles/map-layers/{layer_id}/{z}/{x}/{y}.pbf")
 async def canonical_map_layer_tile(layer_id: str, z: int, x: int, y: int) -> Response:
     """Serve one canonical map layer to an embedded consumer map."""
+    from land_registry.map_layers import get_map_layer, get_map_layer_source
+
     try:
         layer = get_map_layer(layer_id)
     except KeyError as exc:
