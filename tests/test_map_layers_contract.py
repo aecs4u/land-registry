@@ -792,3 +792,76 @@ def test_market_zones_prefer_the_indexed_copy_and_fall_back_to_the_foreign_table
     source = PostgresMapLayerSource(_ConnectionSource(_MissingCopy()))
     relation = asyncio.run(source._resolve_relation_for(layer, source._source_for(layer)))
     assert relation == "zornade.zornade_zone_omi"
+
+
+def test_egms_layer_offers_selectable_colour_modes():
+    layer = get_map_layer("surface-subsidence")
+    public = layer.public()
+    modes = {mode["id"]: mode for mode in public["color_modes"]}
+    assert public["default_color_mode"] == "risk-class"
+    assert list(modes) == [
+        "risk-class", "risk-index", "mean-velocity", "velocity-class", "acceleration", "trend", "signal-quality",
+    ]
+    # Every plotted property has to be in the tile, or the fill would silently fall back to no-data.
+    assert {mode["property"] for mode in modes.values()} <= set(layer.properties)
+    # The five source classes, in order of severity, each with its own colour.
+    for mode_id in ("risk-class", "velocity-class"):
+        cases = modes[mode_id]["cases"]
+        assert [case["value"] for case in cases] == ["1", "2", "3", "4", "5"]
+        assert len({case["color"] for case in cases}) == 5
+    # Signed quantities need a neutral midpoint so lowering and uplift read as opposites.
+    for mode_id in ("mean-velocity", "acceleration"):
+        values = [stop["value"] for stop in modes[mode_id]["stops"]]
+        assert values == sorted(values) and values[0] < 0 < values[-1] and 0 in values
+        assert modes[mode_id]["unit"]
+    assert {case["value"] for case in modes["trend"]["cases"]} == {"accelerazione", "stabile", "decelerazione"}
+    assert {case["value"] for case in modes["signal-quality"]["cases"]} == {"buona", "moderata", "scarsa"}
+    # Tile contents changed, so browsers must refetch.
+    assert layer.tile_revision == "4" and public["tile_url"].endswith("?v=4")
+
+
+def test_layers_without_colour_modes_keep_their_flat_or_legacy_styling():
+    for layer in MAP_LAYERS:
+        if layer.id == "surface-subsidence":
+            continue
+        public = layer.public()
+        assert public["color_modes"] == [] and public["default_color_mode"] == ""
+
+
+def test_colour_mode_definitions_are_validated_at_import_time():
+    from land_registry.map_layers import MapLayerColorMode, MapLayerSpec
+
+    ramp = MapLayerColorMode("m", "M", "value", "ramp", stops=((0, "#000"), (1, "#fff")))
+    base = {"id": "demo", "title": "Demo", "table": "demo.t", "geometry_column": "geom", "properties": ("value",)}
+    assert MapLayerSpec(**base, color_modes=(ramp,)).public()["default_color_mode"] == "m"
+    with pytest.raises(ValueError, match="not in the tile"):
+        MapLayerSpec(**{**base, "properties": ("other",)}, color_modes=(ramp,))
+    with pytest.raises(ValueError, match="default colour mode"):
+        MapLayerSpec(**base, color_modes=(ramp,), default_color_mode="missing")
+    with pytest.raises(ValueError, match="duplicate"):
+        MapLayerSpec(**base, color_modes=(ramp, ramp))
+    with pytest.raises(ValueError, match="ascending"):
+        MapLayerColorMode("bad", "Bad", "value", "ramp", stops=((1, "#000"), (0, "#fff")))
+    with pytest.raises(ValueError, match="unique class values"):
+        MapLayerColorMode("bad", "Bad", "value", "classes", cases=(("a", "#000", "A"), ("a", "#fff", "B")))
+    with pytest.raises(ValueError, match="unknown kind"):
+        MapLayerColorMode("bad", "Bad", "value", "gradient")
+
+
+def test_colour_mode_text_is_translated_into_italian():
+    import re
+
+    from land_registry.map_layers import color_mode_strings
+
+    po = (Path(__file__).parents[1] / "land_registry" / "translations" / "it" / "LC_MESSAGES" / "land_registry.po").read_text(encoding="utf-8")
+    translated = set(re.findall(r'^msgid "(.+)"$', po, flags=re.MULTILINE))
+    assert not [text for text in color_mode_strings() if text not in translated]
+    assert {"Plot", "Legend", "Zoom in to level {n} to see this layer."} <= translated
+
+
+def test_map_script_draws_the_chosen_colour_mode_and_keeps_it_in_the_link():
+    script = (Path(__file__).parents[1] / "land_registry" / "static" / "map-v2.js").read_text(encoding="utf-8")
+    for name in ("function colorModeExpression", "function applyColorMode", "function updateColorLegends", "function writeColorModesUrl"):
+        assert name in script
+    # Repainting reuses the loaded tiles instead of re-adding the layer.
+    assert "setPaintProperty(`fill-${layer.id}`, 'fill-color'" in script

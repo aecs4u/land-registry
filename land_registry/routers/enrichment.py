@@ -694,12 +694,33 @@ async def get_omi_history(
             status_code=503,
             detail="OMI store not built. Run: python -m aecs4u_stats.omi.scripts.import_omi",
         )
-    return stats_service.get_omi_history(
-        comune,
-        zona,
-        cod_tipologia=cod_tipologia,
-        stato_conservazione=stato_conservazione,
-    )
+    payload = await stats_service.aget_omi_zone_quote_history(comune, zona)
+    history = [
+        quote for quote in payload.get("quotes", [])
+        if quote.get("anno") is not None and quote.get("semestre") is not None
+    ]
+    if cod_tipologia is not None:
+        requested_type = cod_tipologia.strip().casefold()
+        history = [
+            quote for quote in history
+            if str(quote.get("cod_tipologia") or "").strip().casefold() == requested_type
+        ]
+    if stato_conservazione is not None:
+        requested_state = stato_conservazione.strip().casefold()
+        history = [
+            quote for quote in history
+            if str(quote.get("stato_conservazione") or "").strip().casefold() == requested_state
+        ]
+    history.sort(key=lambda quote: (quote["anno"], quote["semestre"], str(quote.get("cod_tipologia") or "")))
+    return {
+        "comune": payload.get("comune") or comune,
+        "zona": payload.get("zona") or zona,
+        "history": history,
+        "trend_deltas": stats_service._omi_history_trend_deltas(history),
+        "trend_model_version": "omi-semester-trend-v1",
+        "dataset_version": payload.get("dataset_version"),
+        "source": payload.get("source"),
+    }
 
 
 @enrichment_router.get("/omi/at-point")

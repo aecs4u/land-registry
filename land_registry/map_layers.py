@@ -27,6 +27,55 @@ log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
+class MapLayerColorMode:
+    """One selectable entity a layer can be coloured by (a "Plot" option in the browser).
+
+    ``kind="ramp"`` interpolates a numeric ``property`` through ``stops``
+    ((value, colour), ascending); ``kind="classes"`` matches the property's exact
+    value against ``cases`` ((value, colour, label)). Features whose value is
+    missing or unlisted take ``nodata_color`` so unexpected source values stay visible.
+    """
+
+    id: str
+    title: str
+    property: str
+    kind: str
+    description: str = ""
+    unit: str = ""
+    stops: tuple[tuple[float, str], ...] = ()
+    cases: tuple[tuple[str, str, str], ...] = ()
+    nodata_color: str = "#9aa4ad"
+
+    def __post_init__(self) -> None:
+        if self.kind == "ramp":
+            values = [value for value, _ in self.stops]
+            if len(values) < 2 or values != sorted(values) or len(set(values)) != len(values):
+                raise ValueError(f"Colour mode {self.id!r} needs at least two ascending ramp stops")
+        elif self.kind == "classes":
+            keys = [value for value, _, _ in self.cases]
+            if not keys or len(set(keys)) != len(keys):
+                raise ValueError(f"Colour mode {self.id!r} needs unique class values")
+        else:
+            raise ValueError(f"Colour mode {self.id!r} has unknown kind {self.kind!r}")
+
+    def public(self) -> dict[str, Any]:
+        value: dict[str, Any] = {
+            "id": self.id,
+            "title": self.title,
+            "description": self.description,
+            "property": self.property,
+            "kind": self.kind,
+            "unit": self.unit,
+            "nodata_color": self.nodata_color,
+        }
+        if self.kind == "ramp":
+            value["stops"] = [{"value": at, "color": color} for at, color in self.stops]
+        else:
+            value["cases"] = [{"value": key, "color": color, "label": label} for key, color, label in self.cases]
+        return value
+
+
+@dataclass(frozen=True)
 class MapLayerSpec:
     id: str
     title: str
@@ -71,6 +120,11 @@ class MapLayerSpec:
     # Seismic ``zone_label`` holds bare codes such as "2", "3S" or "2A-3A-3B", so
     # its cases are the digits 1-4 in order: a mixed label takes its most hazardous zone.
     color_match: Optional[tuple[str, tuple[tuple[str, str], ...]]] = None
+    # Optional list of entities the visitor can choose to plot; the first listed (or
+    # ``default_color_mode``) is drawn until they pick another. Replaces ``color_ramp``/
+    # ``color_match`` for the layer, and every mode property must be a tile property.
+    color_modes: tuple[MapLayerColorMode, ...] = ()
+    default_color_mode: str = ""
     # Health checks report whether the serving relation needs a GiST index.
     require_gist_index: bool = True
     # Numeric column (square metres) ranking features by on-screen significance. A tile
@@ -91,8 +145,22 @@ class MapLayerSpec:
     # Keep alternatives explicit and allow-listed just like the primary table.
     fallback_tables: tuple[str, ...] = ()
 
+    def __post_init__(self) -> None:
+        if not self.color_modes:
+            return
+        ids = [mode.id for mode in self.color_modes]
+        if len(set(ids)) != len(ids):
+            raise ValueError(f"Layer {self.id!r} has duplicate colour modes")
+        if self.default_color_mode and self.default_color_mode not in ids:
+            raise ValueError(f"Layer {self.id!r} default colour mode {self.default_color_mode!r} is not defined")
+        missing = sorted({mode.property for mode in self.color_modes} - set(self.properties))
+        if missing:
+            raise ValueError(f"Layer {self.id!r} colour modes use properties not in the tile: {missing}")
+
     def public(self) -> dict[str, Any]:
         value = asdict(self)
+        value["color_modes"] = [mode.public() for mode in self.color_modes]
+        value["default_color_mode"] = (self.default_color_mode or self.color_modes[0].id) if self.color_modes else ""
         value["properties"] = list(self.properties)
         value["unit_levels"] = [{"min_zoom": zoom, "unit_type": unit} for zoom, unit in self.unit_levels]
         value["color_ramp"] = (
@@ -118,6 +186,74 @@ class MapLayerSpec:
         if self.coverage_bounds is not None:
             value["coverage_bounds"] = list(self.coverage_bounds)
         return value
+
+
+# EGMS ground motion (Zornade 100 m summary of Copernicus EGMS L3). The source labels are
+# Italian words ("trascurabile" .. "molto_alto"); the browser shows these English labels,
+# translated by gettext. Velocity bands are on |mm/yr| and match the source's own classes
+# (2, 5, 10 and 20 mm/yr). Risk class is the velocity class, raised one level where the
+# trend is accelerating. Negative vertical velocity means the ground is lowering.
+_EGMS_SEVERITY = ("#7fb8a4", "#f2d35b", "#f19a3e", "#d6452b", "#7a1226")
+_EGMS_COLOR_MODES: tuple[MapLayerColorMode, ...] = (
+    MapLayerColorMode(
+        "risk-class", "Risk class", "risk_class", "classes",
+        description="Overall ground-movement class: vertical speed, raised one level where movement is accelerating.",
+        cases=(
+            ("1", _EGMS_SEVERITY[0], "Negligible"), ("2", _EGMS_SEVERITY[1], "Low"),
+            ("3", _EGMS_SEVERITY[2], "Moderate"), ("4", _EGMS_SEVERITY[3], "High"),
+            ("5", _EGMS_SEVERITY[4], "Very high"),
+        ),
+    ),
+    MapLayerColorMode(
+        "risk-index", "Risk index", "risk_index", "ramp",
+        description="Continuous 0–1 score behind the risk class.",
+        stops=((0, _EGMS_SEVERITY[0]), (0.1, _EGMS_SEVERITY[1]), (0.25, _EGMS_SEVERITY[2]), (0.5, _EGMS_SEVERITY[3]), (1, _EGMS_SEVERITY[4])),
+    ),
+    MapLayerColorMode(
+        "mean-velocity", "Vertical velocity", "mean_velocity", "ramp", unit="mm/yr",
+        description="Average vertical ground speed. Negative values: the ground is lowering (subsidence); positive values: uplift.",
+        stops=(
+            (-50, "#67001f"), (-20, "#b2182b"), (-10, "#d6604d"), (-5, "#f4a582"), (-2, "#fddbc7"),
+            (0, "#f2f2f2"), (2, "#d1e5f0"), (5, "#92c5de"), (10, "#4393c3"),
+        ),
+    ),
+    MapLayerColorMode(
+        "velocity-class", "Velocity class", "velocity_class", "classes",
+        description="Size of the vertical speed in either direction, grouped by mm/yr.",
+        cases=(
+            ("1", _EGMS_SEVERITY[0], "Negligible (< 2 mm/yr)"), ("2", _EGMS_SEVERITY[1], "Low (2–5 mm/yr)"),
+            ("3", _EGMS_SEVERITY[2], "Moderate (5–10 mm/yr)"), ("4", _EGMS_SEVERITY[3], "High (10–20 mm/yr)"),
+            ("5", _EGMS_SEVERITY[4], "Very high (> 20 mm/yr)"),
+        ),
+    ),
+    MapLayerColorMode(
+        "acceleration", "Acceleration", "acceleration", "ramp", unit="mm/yr²",
+        description="Change in vertical speed. Negative values: movement is becoming more downward; positive values: more upward.",
+        stops=((-3, "#762a83"), (-1.5, "#af8dc3"), (-0.5, "#e7d4e8"), (0, "#f7f7f7"), (0.5, "#d9f0d3"), (1.5, "#7fbf7b"), (3, "#1b7837")),
+    ),
+    MapLayerColorMode(
+        "trend", "Trend", "trend", "classes",
+        description="Whether the movement is speeding up, steady or slowing down.",
+        cases=(
+            ("accelerazione", "#d6452b", "Accelerating"), ("stabile", "#9aa7b0", "Stable"),
+            ("decelerazione", "#3b82c4", "Decelerating"),
+        ),
+    ),
+    MapLayerColorMode(
+        "signal-quality", "Signal quality", "signal_quality", "classes",
+        description="How reliable the satellite measurement is in each cell.",
+        cases=(("buona", "#4f9d69", "Good"), ("moderata", "#e0a526", "Moderate"), ("scarsa", "#c0392b", "Poor")),
+    ),
+)
+
+
+def color_mode_strings() -> list[str]:
+    """Every user-facing colour-mode string, for the browser's translation table."""
+    strings: list[str] = []
+    for layer in MAP_LAYERS:
+        for mode in layer.color_modes:
+            strings.extend((mode.title, mode.description, *(label for _, _, label in mode.cases)))
+    return [text for text in dict.fromkeys(strings) if text]
 
 
 # Keep the property lists deliberately small: census and raw-tag columns can
@@ -153,7 +289,7 @@ MAP_LAYERS: tuple[MapLayerSpec, ...] = (
     # unordered per-tile LIMIT silently dropped most of a dense tile (z11 Palermo: 3,000 of
     # 13,879), so the layer starts at z13 where the cap can never truncate.
     # DEPRECATED (2026-10-21): the Zornade EGMS summary is the source; do not build new features on it.
-    MapLayerSpec("surface-subsidence", "Ground movement (EGMS)", "geo_surface_change.egms_subsidenza", "geom", id_column="risk_index", min_zoom=13, max_features=3000, geojson_max_area=4.0, properties=("risk_index", "mean_velocity", "acceleration", "risk_class", "risk_class_label", "velocity_class_label", "signal_quality"), group="risk", color="#c45c2d", z_order=115, fill_opacity=0.25, require_gist_index=False, tile_revision="3"),
+    MapLayerSpec("surface-subsidence", "Ground movement (EGMS)", "geo_surface_change.egms_subsidenza", "geom", id_column="risk_index", min_zoom=13, max_features=3000, geojson_max_area=4.0, properties=("risk_index", "mean_velocity", "acceleration", "risk_class", "risk_class_label", "velocity_class", "velocity_class_label", "trend", "signal_quality"), group="risk", color="#c45c2d", z_order=115, fill_opacity=0.5, line_width=0.4, color_modes=_EGMS_COLOR_MODES, default_color_mode="risk-class", require_gist_index=False, tile_revision="4"),
     MapLayerSpec(
         "landscape-constraints", "Landscape constraints",
         "spatial.protection_area", "geom", min_zoom=8, max_features=3000,

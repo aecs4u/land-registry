@@ -122,6 +122,25 @@
 .map-layer-geometry-controls { margin: 0 0 8px 32px; }
 .map-layer-geometry-controls[hidden] { display: none; }
 .map-layer-geometry-legend { display: flex; flex-wrap: wrap; gap: 14px; color: var(--direct-map-muted); font-size: 12px; margin-bottom: 6px; }
+/* Plot selector and legend for layers with catalog colour modes (e.g. EGMS ground movement). */
+.map-layer-color-mode { margin: 0 0 8px 32px; color: var(--direct-map-muted); font-size: 12px; }
+.map-layer-color-mode[hidden] { display: none; }
+.map-layer-color-mode > label { display: block; margin-bottom: 3px; font-weight: 600; }
+.map-layer-color-mode > select { width: 100%; min-width: 0; padding: 4px 6px; border: 1px solid var(--direct-map-border); border-radius: 5px; background: var(--direct-map-panel); color: var(--direct-map-text); font: inherit; }
+.map-layer-color-legend { margin-top: 8px; }
+.map-layer-color-legend .map-layer-meta, .map-color-legend .map-layer-meta { margin: 6px 0 0; }
+.map-legend-ramp { height: 10px; margin: 0 16px 0 10px; border: 1px solid var(--direct-map-border); border-radius: 3px; }
+.map-legend-ticks { position: relative; height: 16px; margin: 3px 16px 0 10px; font-size: 11px; font-variant-numeric: tabular-nums; }
+.map-legend-ticks span { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
+/* The floating map legend carries the key; the card repeats it only where the card covers that legend. */
+.map-layer-color-legend .map-legend-body { display: none; }
+.map-legend-classes { display: flex; flex-direction: column; gap: 3px; margin: 0; padding: 0; list-style: none; }
+.map-legend-classes li { display: flex; align-items: center; gap: 7px; }
+.map-color-legends { position: absolute; z-index: 3; left: 12px; bottom: 64px; display: flex; flex-direction: column; gap: 8px; width: min(260px, calc(100% - 24px)); }
+.map-color-legends[hidden] { display: none; }
+.map-color-legend { padding: 9px 11px; border: 1px solid var(--direct-map-border); border-radius: 8px; background: var(--direct-map-panel); color: var(--direct-map-text); font-size: 12px; box-shadow: var(--direct-map-shadow); }
+.map-color-legend-heading { display: flex; flex-direction: column; gap: 1px; margin-bottom: 7px; }
+.map-color-legend-heading span { color: var(--direct-map-muted); }
 .map-layer-swatch.is-point { border-radius: 50%; }
 .map-layer-zoom { background: var(--direct-map-panel); border: 1px solid var(--direct-map-border); border-radius: 5px; color: var(--direct-map-text); cursor: pointer; font-size: 12px; padding: 5px 9px; }
 .map-layer-zoom:disabled { cursor: wait; opacity: .6; }
@@ -376,6 +395,9 @@ body.direct-map-page > .direct-map-shell { height: 100vh; flex: 0 0 100vh; }
   .map-mobile-action-bar .shortlist-toggle { margin-left: auto; }
   /* Sit above the full-width attribution bar instead of on top of it. */
   .map-status-pill { left: 12px; bottom: 132px; }
+  /* Clear the Layers/Shortlist bar, and leave the right-hand utility stack free. */
+  .map-color-legends { bottom: 106px; width: min(250px, calc(100% - 84px)); }
+  .map-layer-color-legend .map-legend-body { display: block; }
   /* The shortlist card's desktop position (left column, below the search
      card) has no room on narrow screens. Hide it by default and surface it
      through .shortlist-toggle as a bottom-sheet instead, so the workspace

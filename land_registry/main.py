@@ -38,7 +38,7 @@ from land_registry.routers.cadastral_purchases import router as cadastral_purcha
 from land_registry.routers.api import account_workspace_snapshot, load_account_preferences
 from land_registry.routers.auth import get_current_user_optional
 from land_registry.legal_pages import PAGE_KEYS, build_page
-from land_registry.map_layers import get_map_layer_source, map_layer_catalog
+from land_registry.map_layers import color_mode_strings, get_map_layer_source, map_layer_catalog
 from land_registry.consumer import install_land_registry_consumer
 from land_registry.source_catalog import PARCEL_API_FIELD_CATALOG, SOURCE_CATALOG
 from land_registry.models import UserPreferences
@@ -1089,6 +1089,8 @@ async def serve_direct_map(request: Request, user=Depends(get_current_user_optio
             "Red alert", "Orange alert", "Yellow alert", "No alert", "Unavailable", "Alert area",
             "Administrative", "Administrative boundaries", "Cadastral", "Market", "Risk", "Demographics", "Territory",
             "Opacity", "Fill", "Show CAP labels", "Partial coverage: {layers}", "Zoom in: visible from zoom {n}",
+            "Plot", "Zoom in to level {n} to see this layer.", "Legend",
+            *color_mode_strings(),
             "Outside coverage: {note}", "Up to {n} features per tile", "Default",
             "Administrative statistics are not configured.", "Turn on Sales to load administrative statistics.",
             "No statistics metrics available.", "Coverage not reported", "Approximate data extent",
@@ -1239,6 +1241,22 @@ async def get_omi_market_zone_details_sheet(request: Request, feature_id: int):
         logger.warning("OMI quote history lookup failed for %s/%s: %s", comune, zona, exc)
         quote_payload = {"quotes": [], "source": None, "dataset_version": None}
 
+    quotes = quote_payload.get("quotes") or []
+    quote_source = quote_payload.get("source")
+    dataset_version = quote_payload.get("dataset_version")
+    if not quotes:
+        # Keep the sheet aligned with /omi/valuation, which uses the shared
+        # theme quote table with aget_omi_quotes' latest published quote set.
+        try:
+            valuation_payload = await stats_service.aget_omi_quotes(comune, zona=zona)
+            valuation_quotes = valuation_payload.get("quotes")
+            if isinstance(valuation_quotes, list) and valuation_quotes:
+                quotes = valuation_quotes
+                quote_source = valuation_payload.get("source")
+                dataset_version = valuation_payload.get("dataset_version")
+        except Exception as exc:
+            logger.warning("OMI valuation quote lookup failed for %s/%s: %s", comune, zona, exc)
+
     locale = detect_locale(request)
     gettext = make_gettext(locale)
 
@@ -1252,9 +1270,9 @@ async def get_omi_market_zone_details_sheet(request: Request, feature_id: int):
         _=gettext_with_values,
         locale=locale,
         properties=properties,
-        quotes=quote_payload.get("quotes") or [],
-        source=quote_payload.get("source"),
-        dataset_version=quote_payload.get("dataset_version"),
+        quotes=quotes,
+        source=quote_source,
+        dataset_version=dataset_version,
     )
     return HTMLResponse(html)
 

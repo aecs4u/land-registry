@@ -186,6 +186,7 @@ The dev server runs on **port 8000**. Panel/Bokeh dashboard runs on **port 5006*
 - **Local Cadastral Data**: `/data/catasto/ITALIA/` (auto-detected in development)
 - **S3 Support**: Production mode uses unsigned S3 client for cadastral data
 - **WebGL**: The legacy renderer is optional and not loaded by the canonical map templates
+- **Layer colour modes**: a `MapLayerSpec` can declare `color_modes` (`MapLayerColorMode`: `ramp` over a numeric property or exact-value `classes`) so visitors choose the entity to plot; `/map` shows a "Plot" selector, a floating legend, and keeps the choice in `?color=layer:mode`. Every mode property must be in the layer's `properties`, and new user-facing text needs an Italian `.po` entry (`tests/test_map_layers_contract.py` enforces both). EGMS ground movement (`surface-subsidence`) is the first user.
 
 ## Deployment
 

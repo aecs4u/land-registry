@@ -5658,3 +5658,81 @@ msgstr "Quotazioni OMI per periodo"
 
 msgid "No OMI quotations are available for this zone."
 msgstr "Nessuna quotazione OMI disponibile per questa zona."
+
+msgid "Plot"
+msgstr "Visualizza"
+
+msgid "Legend"
+msgstr "Legenda"
+
+msgid "Zoom in to level {n} to see this layer."
+msgstr "Ingrandisci fino al livello {n} per vedere questo livello."
+
+msgid "Risk class"
+msgstr "Classe di rischio"
+
+msgid "Overall ground-movement class: vertical speed, raised one level where movement is accelerating."
+msgstr "Classe complessiva di movimento del suolo: velocità verticale, aumentata di un livello dove il movimento accelera."
+
+msgid "Risk index"
+msgstr "Indice di rischio"
+
+msgid "Continuous 0–1 score behind the risk class."
+msgstr "Punteggio continuo da 0 a 1 alla base della classe di rischio."
+
+msgid "Vertical velocity"
+msgstr "Velocità verticale"
+
+msgid "Average vertical ground speed. Negative values: the ground is lowering (subsidence); positive values: uplift."
+msgstr "Velocità verticale media del suolo. Valori negativi: il suolo si abbassa (subsidenza); valori positivi: sollevamento."
+
+msgid "Velocity class"
+msgstr "Classe di velocità"
+
+msgid "Size of the vertical speed in either direction, grouped by mm/yr."
+msgstr "Entità della velocità verticale in entrambe le direzioni, raggruppata in mm/anno."
+
+msgid "Change in vertical speed. Negative values: movement is becoming more downward; positive values: more upward."
+msgstr "Variazione della velocità verticale. Valori negativi: il movimento diventa più verso il basso; valori positivi: più verso l'alto."
+
+msgid "Trend"
+msgstr "Tendenza"
+
+msgid "Whether the movement is speeding up, steady or slowing down."
+msgstr "Indica se il movimento accelera, è costante o rallenta."
+
+msgid "How reliable the satellite measurement is in each cell."
+msgstr "Affidabilità della misura satellitare in ciascuna cella."
+
+msgid "Negligible"
+msgstr "Trascurabile"
+
+msgid "Moderate"
+msgstr "Moderato"
+
+msgid "Very high"
+msgstr "Molto alto"
+
+msgid "Negligible (< 2 mm/yr)"
+msgstr "Trascurabile (< 2 mm/anno)"
+
+msgid "Low (2–5 mm/yr)"
+msgstr "Basso (2–5 mm/anno)"
+
+msgid "Moderate (5–10 mm/yr)"
+msgstr "Moderato (5–10 mm/anno)"
+
+msgid "High (10–20 mm/yr)"
+msgstr "Alto (10–20 mm/anno)"
+
+msgid "Very high (> 20 mm/yr)"
+msgstr "Molto alto (> 20 mm/anno)"
+
+msgid "Accelerating"
+msgstr "In accelerazione"
+
+msgid "Decelerating"
+msgstr "In decelerazione"
+
+msgid "Good"
+msgstr "Buona"

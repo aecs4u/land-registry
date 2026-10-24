@@ -40,6 +40,7 @@ from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
+from urllib.parse import urlsplit, urlunsplit
 from xml.etree import ElementTree
 
 from .source_catalog import find_source_catalog_entry
@@ -3807,10 +3808,144 @@ async def aget_omi_quotes(comune: str, zona: Optional[str] = None) -> Dict[str, 
     return await asyncio.to_thread(get_omi_quotes, comune, zona=zona, use_postgres=False)
 
 
+_OMI_POSTGRES_RETRY_AT = 0.0
+
+
+def _omi_postgres_dsn() -> Optional[str]:
+    """Resolve the OMI database DSN used by the shared OMI valuation page."""
+    dsn = os.getenv("OMI_POSTGRES_DSN", "").strip()
+    if not dsn:
+        base_dsn = (
+            os.getenv("STATS_POSTGRES_DSN", "").strip()
+            or os.getenv("CADASTRAL_POSTGRES_DSN", "").strip()
+        )
+        if not base_dsn:
+            return None
+        parsed = urlsplit(base_dsn.replace("postgresql+asyncpg://", "postgresql://", 1))
+        if parsed.scheme not in {"postgres", "postgresql"} or not parsed.netloc:
+            return None
+        dsn = urlunsplit(parsed._replace(path="/omi"))
+    if dsn.startswith("postgresql+asyncpg://"):
+        dsn = dsn.replace("postgresql+asyncpg://", "postgresql://", 1)
+    if not dsn.startswith(("postgres://", "postgresql://")):
+        return None
+    return dsn
+
+
+async def _fetch_omi_postgres_zone_history(comune: str, zona: str) -> Optional[list[dict[str, Any]]]:
+    """Fetch every sale/rent quote period from the OMI star tables.
+
+    ``None`` means the dedicated OMI source could not be queried; an empty list
+    means it answered and has no rows for this municipality and zone.
+    """
+    global _OMI_POSTGRES_RETRY_AT
+    dsn = _omi_postgres_dsn()
+    if not dsn or time.monotonic() < _OMI_POSTGRES_RETRY_AT:
+        return None
+
+    code = (comune or "").strip().upper()
+    zone = (zona or "").strip().upper()
+    if not code or not zone:
+        return []
+
+    if code.isdigit():
+        istat_keys = _omi_istat_keys(code)
+        numeric_code = float(istat_keys[0] if istat_keys else code)
+        candidates: list[tuple[str, Any]] = [
+            ("cod_comune_istat", numeric_code),
+            ("cod_comune_amm", code),
+            ("cod_comune_catastale", code),
+        ]
+    else:
+        candidates = [("cod_comune_amm", code), ("cod_comune_catastale", code)]
+
+    query_template = """
+        SELECT DISTINCT z.anno, z.semestre, z.zona, v.cod_tipologia, v.tipologia,
+               v.stato_conservazione, v.prezzo_min, v.prezzo_max,
+               v.locazione_min, v.locazione_max
+        FROM public.omi_ref_zone AS z
+        JOIN public.omi_fact_quotazioni_valori AS v ON v.zona_id = z.zona_id
+        WHERE z.{code_column} = $1 AND z.zona = $2
+        ORDER BY z.anno, z.semestre, z.zona, v.cod_tipologia, v.stato_conservazione,
+                 v.prezzo_min, v.prezzo_max, v.locazione_min, v.locazione_max
+    """
+    connection = None
+    try:
+        import asyncpg
+
+        connection = await asyncio.wait_for(
+            asyncpg.connect(
+                dsn,
+                timeout=3,
+                command_timeout=12,
+                server_settings={"jit": "off", "statement_timeout": "10000"},
+            ),
+            timeout=4,
+        )
+        rows = []
+        for code_column, code_value in candidates:
+            # Columns come only from the fixed allowlist above.
+            rows = await connection.fetch(
+                query_template.format(code_column=code_column), code_value, zone
+            )
+            if rows:
+                break
+        quotes = []
+        for row in rows:
+            year = int(row["anno"]) if row["anno"] is not None else None
+            semester = int(row["semestre"]) if row["semestre"] is not None else None
+            quotes.append({
+                "zona": row["zona"],
+                "period": f"{year}-S{semester}" if year and semester else None,
+                "anno": year,
+                "semestre": semester,
+                "cod_tipologia": _postgres_scalar(row["cod_tipologia"]),
+                "tipologia": row["tipologia"],
+                "stato_conservazione": str(row["stato_conservazione"] or "").strip().upper(),
+                "prezzo_min": _postgres_scalar(row["prezzo_min"]),
+                "prezzo_max": _postgres_scalar(row["prezzo_max"]),
+                "locazione_min": _omi_postgres_number(row["locazione_min"]),
+                "locazione_max": _omi_postgres_number(row["locazione_max"]),
+            })
+        _OMI_POSTGRES_RETRY_AT = 0.0
+        return quotes
+    except Exception:
+        _OMI_POSTGRES_RETRY_AT = time.monotonic() + 60
+        logger.warning("OMI PostgreSQL history lookup failed for %s/%s", code, zone, exc_info=True)
+        return None
+    finally:
+        if connection is not None:
+            try:
+                await connection.close()
+            except Exception:
+                logger.debug("OMI PostgreSQL connection close failed", exc_info=True)
+
+
+def _omi_postgres_number(value: Any) -> Optional[float]:
+    """Parse OMI PostgreSQL numerics, including source rent strings like ``'10,8'``."""
+    if isinstance(value, str):
+        value = value.strip()
+        if "," in value:
+            value = value.replace(".", "").replace(",", ".")
+    return _number(value)
+
+
 async def aget_omi_zone_quote_history(comune: str, zona: str) -> Dict[str, Any]:
-    """Return all OMI quote periods for one zone, preferring stats PostgreSQL."""
+    """Return all OMI quote periods for one zone, preferring the OMI star database."""
     normalized_comune = (comune or "").strip().upper()
     normalized_zona = (zona or "").strip().upper()
+
+    omi_rows = await _fetch_omi_postgres_zone_history(normalized_comune, normalized_zona)
+    if omi_rows:
+        quotes = _omi_quote_derived_metrics(omi_rows)
+        return {
+            "comune": normalized_comune,
+            "zona": normalized_zona,
+            "quotes": quotes,
+            "dataset_version": _omi_period_dataset_version({"quotes": quotes}),
+            "source": "Agenzia delle Entrate OMI via aecs4u-theme OMI PostgreSQL history",
+        }
+
     source = await _get_async_postgres_source()
     if source is not None and time.monotonic() >= source._retry_at:
         try:
@@ -6519,7 +6654,7 @@ def poi_db_available() -> bool:
 
 def omi_db_available_public() -> bool:
     """True when PostgreSQL or the compatibility OMI store is available."""
-    return postgres_stats_available() or omi_db_available(_omi_sqlite_path())
+    return bool(_omi_postgres_dsn()) or postgres_stats_available() or omi_db_available(_omi_sqlite_path())
 
 
 def _omi_sqlite_path() -> Path:

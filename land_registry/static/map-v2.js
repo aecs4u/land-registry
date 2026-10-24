@@ -70,6 +70,8 @@
     sourceHealthDown: false,
     sourceTileDown: false,
     layerOpacity: new Map(),
+    // layer id -> chosen colour-mode id, for layers whose catalog entry has ``color_modes``.
+    colorModes: new Map(),
     postalLabelsEnabled: false,
     cadastralSheetLabelsEnabled: false,
     parcelPvpMarkers: { points: [], visible: false },
@@ -636,6 +638,8 @@
   // A catalog ``color_ramp`` (numeric) or ``color_match`` (categorical) becomes
   // a data-driven colour expression; otherwise the flat catalog colour is used.
   function layerFillColor(layer, fallback) {
+    const mode = activeColorMode(layer);
+    if (mode) return colorModeExpression(mode);
     const ramp = layer.color_ramp;
     if (ramp?.stops?.length) {
       return ['interpolate', ['linear'], ['to-number', ['get', ramp.property], 0], ...ramp.stops.flatMap((stop) => [Number(stop.value), stop.color])];
@@ -650,6 +654,171 @@
 
   function layerColor(layerId) {
     return catalogLayer(layerId)?.color || '#47758f';
+  }
+
+  // A layer with catalog ``color_modes`` lets the visitor choose the entity to plot.
+  // The choice (else the catalog default) drives the fill expression and the legends.
+  function layerColorModes(layer) {
+    return Array.isArray(layer?.color_modes) ? layer.color_modes : [];
+  }
+
+  function activeColorMode(layer) {
+    const modes = layerColorModes(layer);
+    if (!modes.length) return null;
+    const chosen = state.colorModes.get(layer.id) || layer.default_color_mode;
+    return modes.find((mode) => mode.id === chosen) || modes[0];
+  }
+
+  // Ramps interpolate a numeric property; classes match its exact value. Anything missing
+  // or unlisted takes the mode's no-data colour so unexpected source values stay visible.
+  function colorModeExpression(mode) {
+    const nodata = mode.nodata_color || '#9aa4ad';
+    if (mode.kind === 'ramp') {
+      const value = ['get', mode.property];
+      return ['case', ['==', ['typeof', value], 'number'],
+        ['interpolate', ['linear'], ['to-number', value, 0], ...mode.stops.flatMap((stop) => [Number(stop.value), stop.color])],
+        nodata];
+    }
+    return ['match', ['to-string', ['coalesce', ['get', mode.property], '']],
+      ...mode.cases.flatMap((entry) => [String(entry.value), entry.color]), nodata];
+  }
+
+  function colorModeTitle(mode) {
+    return `${tr(mode.title)}${mode.unit ? ` (${mode.unit})` : ''}`;
+  }
+
+  // Only non-default choices go in the link: ``color=layer:mode,layer:mode``.
+  function requestedColorMode(layer) {
+    const pairs = (new URLSearchParams(window.location.search).get('color') || '').split(',');
+    for (const pair of pairs) {
+      const [layerId, modeId] = pair.split(':');
+      if (layerId === layer.id && layerColorModes(layer).some((mode) => mode.id === modeId)) return modeId;
+    }
+    return null;
+  }
+
+  function writeColorModesUrl() {
+    const params = new URLSearchParams(window.location.search);
+    const pairs = state.catalog
+      .filter((layer) => layerColorModes(layer).length && state.colorModes.has(layer.id))
+      .filter((layer) => state.colorModes.get(layer.id) !== (layer.default_color_mode || layerColorModes(layer)[0].id))
+      .map((layer) => `${layer.id}:${state.colorModes.get(layer.id)}`);
+    if (pairs.length) params.set('color', pairs.join(','));
+    else params.delete('color');
+    const query = params.toString();
+    window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`);
+  }
+
+  function formatLegendNumber(value, signed) {
+    const number = Number(value);
+    const text = number.toLocaleString(numberLocale(), { maximumFractionDigits: 2 });
+    return signed && number > 0 ? `+${text}` : text;
+  }
+
+  // Gradient bar with a tick under every stop (stops are evenly spaced, so a non-linear
+  // scale such as -50..+10 mm/yr stays readable), or one swatch per class.
+  function buildColorLegend(mode) {
+    const body = document.createElement('div');
+    body.className = 'map-legend-body';
+    if (mode.kind === 'ramp') {
+      const signed = mode.stops.some((stop) => Number(stop.value) < 0);
+      const bar = document.createElement('div');
+      bar.className = 'map-legend-ramp';
+      bar.style.background = `linear-gradient(90deg, ${mode.stops.map((stop) => stop.color).join(', ')})`;
+      const ticks = document.createElement('div');
+      ticks.className = 'map-legend-ticks';
+      mode.stops.forEach((stop, index) => {
+        const tick = document.createElement('span');
+        tick.textContent = formatLegendNumber(stop.value, signed);
+        tick.style.left = `${(index / (mode.stops.length - 1)) * 100}%`;
+        ticks.appendChild(tick);
+      });
+      body.append(bar, ticks);
+    } else {
+      const list = document.createElement('ul');
+      list.className = 'map-legend-classes';
+      mode.cases.forEach((entry) => {
+        const item = document.createElement('li');
+        const swatch = document.createElement('i');
+        swatch.className = 'map-layer-swatch';
+        swatch.style.background = entry.color;
+        item.append(swatch, document.createTextNode(tr(entry.label)));
+        list.appendChild(item);
+      });
+      body.appendChild(list);
+    }
+    return body;
+  }
+
+  // The legend and description inside the layer's row in the Layers card.
+  function fillLayerColorLegend(host, layer) {
+    const mode = activeColorMode(layer);
+    if (!host || !mode) return;
+    const description = document.createElement('p');
+    description.className = 'map-layer-meta';
+    description.textContent = tr(mode.description);
+    host.replaceChildren(buildColorLegend(mode), description);
+  }
+
+  function renderLayerColorLegend(layer) {
+    fillLayerColorLegend(document.querySelector(`[data-layer-id="${CSS.escape(layer.id)}"] .map-layer-color-legend`), layer);
+  }
+
+  // Floating legend on the map for every ticked layer with colour modes, so the key
+  // stays visible with the Layers card closed. It also says when the layer needs more zoom.
+  function updateColorLegends() {
+    const stage = document.querySelector('.direct-map-stage');
+    if (!stage) return;
+    const map = state.map || state.fallbackMap;
+    const zoom = map?.getZoom?.() ?? 0;
+    const active = state.catalog
+      .filter((layer) => layerColorModes(layer).length && state.activeLayers?.has(layer.id))
+      .map((layer) => ({ layer, mode: activeColorMode(layer), tooFar: zoom < Number(layer.min_zoom || 0) }));
+    const signature = active.map(({ layer, mode, tooFar }) => `${layer.id}:${mode.id}:${tooFar}`).join('|');
+    let host = $('mapColorLegends');
+    if (!host && !active.length) return;
+    if (!host) {
+      host = document.createElement('aside');
+      host.id = 'mapColorLegends';
+      host.className = 'map-color-legends';
+      host.setAttribute('aria-label', tr('Legend'));
+      stage.appendChild(host);
+    }
+    if (host.dataset.signature === signature) return;
+    host.dataset.signature = signature;
+    host.hidden = !active.length;
+    host.replaceChildren(...active.map(({ layer, mode, tooFar }) => {
+      const card = document.createElement('section');
+      card.className = 'map-color-legend';
+      const heading = document.createElement('div');
+      heading.className = 'map-color-legend-heading';
+      const title = document.createElement('strong');
+      title.textContent = tr(layer.title);
+      const entity = document.createElement('span');
+      entity.textContent = colorModeTitle(mode);
+      heading.append(title, entity);
+      card.append(heading, buildColorLegend(mode));
+      if (tooFar) {
+        const hint = document.createElement('p');
+        hint.className = 'map-layer-meta';
+        hint.textContent = tr('Zoom in to level {n} to see this layer.', { n: Number(layer.min_zoom || 0) });
+        card.appendChild(hint);
+      }
+      return card;
+    }));
+  }
+
+  function applyColorMode(layer, modeId) {
+    if (!layerColorModes(layer).some((mode) => mode.id === modeId)) return;
+    state.colorModes.set(layer.id, modeId);
+    if (state.map) {
+      const color = layerFillColor(layer, layerColor(layer.id));
+      if (state.map.getLayer(`fill-${layer.id}`)) state.map.setPaintProperty(`fill-${layer.id}`, 'fill-color', color);
+      if (state.map.getLayer(`line-${layer.id}`)) state.map.setPaintProperty(`line-${layer.id}`, 'line-color', color);
+    }
+    renderLayerColorLegend(layer);
+    updateColorLegends();
+    writeColorModesUrl();
   }
 
   function layerMetadata(layer) {
@@ -1053,6 +1222,27 @@
       });
       labelControls.append(labelInput, labelText);
     }
+    const colorModes = layerColorModes(layer);
+    const colorModeControls = colorModes.length ? document.createElement('div') : null;
+    if (colorModeControls) {
+      const requested = requestedColorMode(layer);
+      if (requested && !state.colorModes.has(layer.id)) state.colorModes.set(layer.id, requested);
+      colorModeControls.className = 'map-layer-color-mode';
+      colorModeControls.hidden = !input.checked;
+      const selectId = `colorMode-${layer.id}`;
+      const modeLabel = document.createElement('label');
+      modeLabel.htmlFor = selectId;
+      modeLabel.textContent = tr('Plot');
+      const modeSelect = document.createElement('select');
+      modeSelect.id = selectId;
+      colorModes.forEach((mode) => modeSelect.appendChild(new Option(colorModeTitle(mode), mode.id)));
+      modeSelect.value = activeColorMode(layer).id;
+      modeSelect.addEventListener('change', () => applyColorMode(layer, modeSelect.value));
+      const modeLegend = document.createElement('div');
+      modeLegend.className = 'map-layer-color-legend';
+      fillLayerColorLegend(modeLegend, layer);
+      colorModeControls.append(modeLabel, modeSelect, modeLegend);
+    }
     const geometryControls = layer.kind === 'mixed' ? document.createElement('div') : null;
     if (geometryControls) {
       geometryControls.className = 'map-layer-geometry-controls';
@@ -1081,8 +1271,10 @@
       opacity.hidden = !input.checked || !state.map;
       if (labelControls) labelControls.hidden = !input.checked;
       if (geometryControls) geometryControls.hidden = !input.checked;
+      if (colorModeControls) colorModeControls.hidden = !input.checked;
       reorderMapLayers();
       updateParcelZoomAffordance();
+      updateColorLegends();
       writeSelectedLayersUrl();
     });
     // Tiles are capped server-side, so dense areas can omit features; say so.
@@ -1094,6 +1286,7 @@
     item.append(row, badges, opacity);
     if (labelControls) item.appendChild(labelControls);
     if (geometryControls) item.appendChild(geometryControls);
+    if (colorModeControls) item.appendChild(colorModeControls);
     return { item, input };
   }
 
@@ -1132,6 +1325,7 @@
     });
     reorderMapLayers();
     updateParcelZoomAffordance();
+    updateColorLegends();
     updateCoverageStatus();
     writeSelectedLayersUrl();
     syncSelectAll();
@@ -1268,6 +1462,9 @@
     if (opacity) opacity.hidden = !checked || !state.map;
     const geometryControls = input.closest('.map-layer-item')?.querySelector('.map-layer-geometry-controls');
     if (geometryControls) geometryControls.hidden = !checked;
+    const colorModeControls = input.closest('.map-layer-item')?.querySelector('.map-layer-color-mode');
+    if (colorModeControls) colorModeControls.hidden = !checked;
+    updateColorLegends();
   }
 
   function enableAdministrativeSubstitute() {
@@ -1326,6 +1523,7 @@
     const sourceDown = state.sourceHealthDown || state.sourceTileDown;
     const outsideCoverage = !sourceDown && viewportOutside(bounds, estimatedBounds);
     updateLayerBadges();
+    updateColorLegends();
     const note = $('mapHelpNote');
     if (!note) return;
     note.textContent = outsideCoverage
