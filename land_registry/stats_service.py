@@ -1129,6 +1129,83 @@ _POSTGRES_POI_RELATION_SQL = """
     END AS relation
 """
 
+# Eurostat series suitable for the selected municipality's administrative
+# context. The source tables store NUTS-level facts, so the request path only
+# fetches the province (NUTS 3) and region (NUTS 2) codes attached to ISTAT.
+_EUROSTAT_ADMINISTRATIVE_SERIES = (
+    {
+        "relation": "eurostat_nuts3_population", "metric": "population",
+        "title": "Population", "source_dataset": "demo_r_pjanaggr3",
+        "levels": (1, 2, 3), "dimensions": (), "filters": (
+            ("unit", "=", "NR"), ("sex", "=", "T"), ("age", "=", "TOTAL"),
+        ), "unit_label": "persons", "max_rows": 100,
+    },
+    {
+        "relation": "eurostat_regional_gdp", "metric": "gdp",
+        "title": "Regional GDP", "source_dataset": "nama_10r_3gdp",
+        "levels": (1, 2, 3), "dimensions": ("unit",), "filters": (),
+        "max_rows": 160,
+    },
+    {
+        "relation": "eurostat_employment_rate", "metric": "value",
+        "title": "Employment rate (ages 20–64)", "source_dataset": "lfst_r_lfe2emprt",
+        "levels": (1, 2, 3), "dimensions": (), "filters": (
+            ("unit", "=", "PC"), ("sex", "=", "T"), ("age", "=", "Y20-64"),
+        ), "unit_label": "percent", "max_rows": 100,
+    },
+    {
+        "relation": "eurostat_employment", "metric": "value",
+        "title": "Unemployment rate (ages 15–74)", "source_dataset": "lfst_r_lfu3rt",
+        "levels": (1, 2, 3), "dimensions": (), "filters": (
+            ("unit", "=", "PC"), ("sex", "=", "T"), ("age", "=", "Y15-74"),
+            ("isced11", "=", "TOTAL"),
+        ), "unit_label": "percent", "max_rows": 100,
+    },
+    {
+        "relation": "eurostat_migration", "metric": "value",
+        "title": "Net migration plus statistical adjustment", "source_dataset": "demo_r_gind3",
+        "levels": (1, 2, 3), "dimensions": (), "filters": (
+            ("indic_de", "=", "CNMIGRAT"),
+        ), "unit_label": "persons", "max_rows": 100,
+    },
+    {
+        "relation": "eurostat_household_income", "metric": "income",
+        "title": "Net disposable household income per inhabitant", "source_dataset": "nama_10r_2hhinc",
+        "levels": (1, 2, 3), "dimensions": ("unit",), "filters": (
+            ("unit", "ANY", ("EUR_HAB", "PPS_EU27_2020_HAB")),
+            ("direct", "=", "BAL"), ("na_item", "=", "B6N"),
+        ), "max_rows": 100,
+    },
+    {
+        "relation": "eurostat_tourism", "metric": "nights",
+        "title": "Nights spent in tourist accommodation", "source_dataset": "tour_occ_arn2",
+        "levels": (1, 2, 3), "dimensions": (), "filters": (
+            ("unit", "=", "NR"), ("nace_r2", "=", "I551-I553"),
+            ("c_resid", "=", "TOTAL"),
+        ), "unit_label": "nights", "max_rows": 100,
+    },
+    {
+        "relation": "eurostat_construction", "metric": "index",
+        "title": "Construction production index", "source_dataset": "sts_copr_a",
+        "levels": (2,), "dimensions": ("unit", "nace_r2", "s_adj", "indic_bt"),
+        "filters": (), "max_rows": 180,
+    },
+    {
+        "relation": "eurostat_business_demography", "metric": "value",
+        "title": "Business demography by NACE section", "source_dataset": "bd_9pm_r2",
+        "levels": (2,), "dimensions": ("nace_code", "indicator"),
+        "filters": (("nace_code", "~", "^[A-S]$"),), "max_rows": 180,
+    },
+    {
+        "relation": "eurostat_sbs_regional", "metric": "value",
+        "title": "Structural business statistics by NACE section", "source_dataset": "sbs_r_nuts2021",
+        "levels": (2,), "dimensions": ("nace_code", "indicator"), "filters": (
+            ("nace_code", "~", "^[A-S]$"),
+            ("indicator", "ANY", ("LOC_NR", "EMP_LOC_NR", "WAGE_LOC_MEUR")),
+        ), "max_rows": 240,
+    },
+)
+
 
 def _postgres_poi_query(
     relation: str, lat: float, lng: float, radius_km: float, categories: list[str] | None
@@ -3924,6 +4001,42 @@ async def aget_quality_of_life_indicators(
     return await asyncio.to_thread(get_quality_of_life_indicators, cadastral_code)
 
 
+async def aget_quality_of_life_indicators_by_nuts3(
+    nuts3: str,
+) -> Optional[Dict[str, Any]]:
+    """Read provincial BES indicators directly by their NUTS 3 code."""
+    code = str(nuts3 or "").strip().upper()
+    if not re.fullmatch(r"[A-Z]{2}[A-Z0-9]{3}", code):
+        return None
+    source = await _get_async_postgres_source()
+    if source is not None and time.monotonic() >= source._retry_at:
+        try:
+            clustered = await asyncio.wait_for(
+                source.quality_of_life_indicator_clusters(code), timeout=12
+            )
+            if clustered is not None and clustered.get("indicators"):
+                return {
+                    "nuts3": code,
+                    "spatial_resolution": "province",
+                    **clustered,
+                    "source": "ISTAT BES via aecs4u-stats quality_of_life",
+                }
+        except Exception:
+            source._retry_at = time.monotonic() + 60
+            logger.warning("Provincial quality-of-life lookup failed for %s", code, exc_info=True)
+    return await asyncio.to_thread(get_quality_of_life_indicators_by_nuts3, code)
+
+
+async def aget_province_quality_of_life_indicators_by_istat_code(
+    istat_code: str | int,
+) -> Optional[Dict[str, Any]]:
+    """Resolve an ISTAT province key and return its NUTS 3 BES series."""
+    nuts3 = await asyncio.to_thread(get_administrative_area_nuts_code, "province", istat_code)
+    if not nuts3:
+        return None
+    return await aget_quality_of_life_indicators_by_nuts3(nuts3)
+
+
 async def aget_quality_of_life_indicator(
     cadastral_code: str, data_type: str, year: Optional[int] = None
 ) -> Optional[Dict[str, Any]]:
@@ -4018,6 +4131,276 @@ class _PostgresStatsSource(_PostgresPoiSource):
         super().__init__(dsn, max_connections=max_connections)
         self._read_model_ready = False
         self._read_model_lock = threading.Lock()
+        self._eurostat_relation_cache: tuple[set[str], float] | None = None
+        self._eurostat_relation_lock = threading.Lock()
+
+    def _available_eurostat_relations(self, cursor) -> set[str]:
+        cached = self._eurostat_relation_cache
+        if cached is not None and time.monotonic() < cached[1]:
+            return set(cached[0])
+        with self._eurostat_relation_lock:
+            cached = self._eurostat_relation_cache
+            if cached is not None and time.monotonic() < cached[1]:
+                return set(cached[0])
+            names = [series["relation"] for series in _EUROSTAT_ADMINISTRATIVE_SERIES]
+            cursor.execute(
+                """
+                SELECT c.relname
+                FROM pg_class AS c
+                JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                WHERE n.nspname = 'eurostat'
+                  AND c.relname = ANY(%s)
+                  AND c.relkind IN ('r', 'v', 'm', 'f', 'p')
+                """,
+                (names,),
+            )
+            found = {row[0] for row in cursor.fetchall()}
+            self._eurostat_relation_cache = (found, time.monotonic() + (300 if found else 60))
+            return set(found)
+
+    def administrative_area_nuts_code(self, unit_type: str, istat_code: str | int) -> Optional[str]:
+        """Resolve one ISTAT area ID to the corresponding NUTS code."""
+        lookup = {
+            "province": ("uts_code", "nuts3_2021", "nuts3_2024"),
+            "region": ("region_code", "nuts2_2021", "nuts2_2024"),
+            "geographic_area": ("area_code", "nuts1_2021", "nuts1_2024"),
+        }
+        if unit_type not in lookup:
+            return None
+        try:
+            code = int(str(istat_code).strip())
+        except (TypeError, ValueError):
+            return None
+        if code <= 0 or code > 999999:
+            return None
+        code_column, nuts_2021_column, nuts_2024_column = lookup[unit_type]
+        try:
+            with self._connection() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        f"""
+                        SELECT COALESCE({nuts_2021_column}, {nuts_2024_column})
+                        FROM istat.elenco_comuni
+                        WHERE LTRIM({code_column}, '0') = LTRIM(%s::text, '0')
+                        ORDER BY numeric_code
+                        LIMIT 1
+                        """,
+                        (str(code),),
+                    )
+                    row = cursor.fetchone()
+                    return str(row[0]) if row and row[0] else None
+        except Exception as exc:
+            logger.debug("ISTAT NUTS code lookup failed for %s %s: %s", unit_type, code, type(exc).__name__)
+            return None
+
+    def administrative_area_eurostat_details(
+        self, unit_type: str, istat_code: str | int
+    ) -> Optional[Dict[str, Any]]:
+        """Return recent Eurostat series at the selected area's NUTS level."""
+        try:
+            code = int(str(istat_code).strip())
+        except (TypeError, ValueError):
+            return None
+        if code <= 0 or code > 999999:
+            return None
+        if unit_type not in {"municipality", "province", "region", "geographic_area"}:
+            return None
+
+        try:
+            with self._connection() as connection:
+                try:
+                    with connection.cursor() as cursor:
+                        if unit_type == "municipality":
+                            cursor.execute(
+                                """
+                                SELECT name, uts_name, region_name, area_name,
+                                       nuts1_2021, nuts2_2021, nuts3_2021,
+                                       nuts1_2024, nuts2_2024, nuts3_2024
+                                FROM istat.elenco_comuni
+                                WHERE numeric_code = %s
+                                   OR LTRIM(TRIM(code), '0') = LTRIM(%s::text, '0')
+                                ORDER BY CASE WHEN numeric_code = %s THEN 0 ELSE 1 END
+                                LIMIT 1
+                                """,
+                                (code, str(code), code),
+                            )
+                        else:
+                            lookup = {
+                                "province": ("uts_code", "uts_name", "nuts3_2021", "nuts3_2024"),
+                                "region": ("region_code", "region_name", "nuts2_2021", "nuts2_2024"),
+                                "geographic_area": ("area_code", "area_name", "nuts1_2021", "nuts1_2024"),
+                            }
+                            code_column, name_column, nuts_2021_column, nuts_2024_column = lookup[unit_type]
+                            cursor.execute(
+                                f"""
+                                SELECT {name_column} AS name,
+                                       {nuts_2021_column} AS nuts_2021,
+                                       {nuts_2024_column} AS nuts_2024
+                                FROM istat.elenco_comuni
+                                WHERE LTRIM({code_column}, '0') = LTRIM(%s::text, '0')
+                                ORDER BY numeric_code
+                                LIMIT 1
+                                """,
+                                (str(code),),
+                            )
+                        municipality = cursor.fetchone()
+                        if municipality is None:
+                            return None
+                        municipality_columns = [column.name for column in cursor.description]
+                        municipality_values = dict(zip(municipality_columns, municipality))
+                        if unit_type == "municipality":
+                            candidate_areas = (
+                                {
+                                    "nuts_code": municipality_values.get("nuts3_2021") or municipality_values.get("nuts3_2024"),
+                                    "nuts_level": 3,
+                                    "area_type": "Province",
+                                    "name": municipality_values.get("uts_name"),
+                                },
+                                {
+                                    "nuts_code": municipality_values.get("nuts2_2021") or municipality_values.get("nuts2_2024"),
+                                    "nuts_level": 2,
+                                    "area_type": "Region",
+                                    "name": municipality_values.get("region_name"),
+                                },
+                                {
+                                    "nuts_code": municipality_values.get("nuts1_2021") or municipality_values.get("nuts1_2024"),
+                                    "nuts_level": 1,
+                                    "area_type": "Geographic area",
+                                    "name": municipality_values.get("area_name"),
+                                },
+                            )
+                        else:
+                            nuts_level = {"province": 3, "region": 2, "geographic_area": 1}[unit_type]
+                            candidate_areas = ({
+                                "nuts_code": municipality_values.get("nuts_2021") or municipality_values.get("nuts_2024"),
+                                "nuts_level": nuts_level,
+                                "area_type": {"province": "Province", "region": "Region", "geographic_area": "Geographic area"}[unit_type],
+                                "name": municipality_values.get("name"),
+                            },)
+                        areas_by_code = {
+                            str(area["nuts_code"]): area
+                            for area in candidate_areas
+                            if area["nuts_code"] and area["nuts_level"]
+                        }
+                        if not areas_by_code:
+                            return {"available": True, "areas": [], "source": "Eurostat via aecs4u-stats"}
+
+                        available = self._available_eurostat_relations(cursor)
+                        if not available:
+                            return {
+                                "available": False,
+                                "areas": [{
+                                    "nuts_code": nuts_code,
+                                    "nuts_level": area["nuts_level"],
+                                    "level_label": f"NUTS {area['nuts_level']}",
+                                    "area_type": area["area_type"],
+                                    "name": area["name"],
+                                    "datasets": [],
+                                } for nuts_code, area in areas_by_code.items()],
+                                "source": "Eurostat via aecs4u-stats",
+                            }
+
+                        datasets_by_code: dict[str, dict[str, dict[str, Any]]] = {
+                            nuts_code: {} for nuts_code in areas_by_code
+                        }
+                        for series in _EUROSTAT_ADMINISTRATIVE_SERIES:
+                            relation = series["relation"]
+                            if relation not in available:
+                                continue
+                            relevant_codes = [
+                                nuts_code for nuts_code, area in areas_by_code.items()
+                                if area["nuts_level"] in series["levels"]
+                            ]
+                            if not relevant_codes:
+                                continue
+
+                            dimensions = list(series["dimensions"])
+                            partition = ["nuts_code", *dimensions]
+                            select_columns = ["nuts_code", "year", f"{series['metric']} AS value", *dimensions]
+                            result_columns = ["nuts_code", "year", "value", *dimensions]
+                            conditions = ["nuts_code = ANY(%s)"]
+                            params: list[Any] = [relevant_codes]
+                            for column, operator, value in series["filters"]:
+                                if operator == "ANY":
+                                    conditions.append(f"{column} = ANY(%s)")
+                                    params.append(list(value))
+                                else:
+                                    conditions.append(f"{column} {operator} %s")
+                                    params.append(value)
+                            sql = f"""
+                                SELECT {", ".join(result_columns)}
+                                FROM (
+                                    SELECT {", ".join(select_columns)},
+                                           ROW_NUMBER() OVER (
+                                               PARTITION BY {", ".join(partition)}
+                                               ORDER BY year DESC
+                                           ) AS period_rank
+                                    FROM eurostat.{relation}
+                                    WHERE {" AND ".join(conditions)}
+                                ) AS observations
+                                WHERE period_rank <= 6
+                                ORDER BY nuts_code, year DESC
+                                LIMIT {int(series['max_rows'])}
+                            """
+                            cursor.execute("SAVEPOINT municipality_eurostat_series")
+                            try:
+                                cursor.execute(sql, params)
+                                columns = [column.name for column in cursor.description]
+                                rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+                            except Exception as exc:
+                                cursor.execute("ROLLBACK TO SAVEPOINT municipality_eurostat_series")
+                                cursor.execute("RELEASE SAVEPOINT municipality_eurostat_series")
+                                logger.debug("Eurostat series %s is unavailable: %s", relation, type(exc).__name__)
+                                continue
+                            cursor.execute("RELEASE SAVEPOINT municipality_eurostat_series")
+                            for row in rows:
+                                nuts_code = str(row.pop("nuts_code"))
+                                area = areas_by_code.get(nuts_code)
+                                if area is None:
+                                    continue
+                                dimensions_data = {
+                                    key: _postgres_scalar(row[key])
+                                    for key in dimensions
+                                    if row.get(key) is not None
+                                }
+                                dataset = datasets_by_code[nuts_code].setdefault(
+                                    relation,
+                                    {
+                                        "id": relation,
+                                        "title": series["title"],
+                                        "source_dataset": series["source_dataset"],
+                                        "rows": [],
+                                    },
+                                )
+                                unit = dimensions_data.get("unit") or series.get("unit_label")
+                                dataset["rows"].append({
+                                    "year": int(row["year"]) if row.get("year") is not None else None,
+                                    "value": _postgres_scalar(row.get("value")),
+                                    "unit": unit,
+                                    "dimensions": dimensions_data,
+                                })
+
+                        areas = []
+                        for nuts_code, area in areas_by_code.items():
+                            datasets = list(datasets_by_code[nuts_code].values())
+                            areas.append({
+                                "nuts_code": nuts_code,
+                                "nuts_level": area["nuts_level"],
+                                "level_label": f"NUTS {area['nuts_level']}",
+                                "area_type": area["area_type"],
+                                "name": area["name"],
+                                "datasets": datasets,
+                            })
+                        return {
+                            "available": True,
+                            "areas": areas,
+                            "source": "Eurostat via aecs4u-stats PostgreSQL",
+                        }
+                finally:
+                    connection.rollback()
+        except Exception as exc:
+            logger.warning("Eurostat %s lookup failed for ISTAT code %s: %s", unit_type, code, exc)
+            return None
 
     def _ensure_read_model(self) -> bool:
         """Check that the migrated parcel cache exists, without doing DDL.
@@ -6454,6 +6837,35 @@ def _municipality_sqlite_profile(cadastral_code: str) -> Optional[Dict[str, Any]
         }
     except (OSError, KeyError, sqlite3.Error):
         return None
+
+
+def get_municipality_eurostat_details_by_istat_code(
+    istat_code: Any,
+) -> Optional[Dict[str, Any]]:
+    """Read applicable NUTS 1/2/3 Eurostat series from aecs4u-stats PostgreSQL."""
+    return get_administrative_area_eurostat_details("municipality", istat_code)
+
+
+def get_administrative_area_eurostat_details(
+    unit_type: str,
+    istat_code: Any,
+) -> Optional[Dict[str, Any]]:
+    """Read Eurostat series applicable to an ISTAT administrative boundary."""
+    source = _get_postgres_stats_source()
+    if source is None:
+        return None
+    return source.administrative_area_eurostat_details(unit_type, istat_code)
+
+
+def get_administrative_area_nuts_code(
+    unit_type: str,
+    istat_code: Any,
+) -> Optional[str]:
+    """Resolve an ISTAT province, region or Geo Area ID to its NUTS code."""
+    source = _get_postgres_stats_source()
+    if source is None:
+        return None
+    return source.administrative_area_nuts_code(unit_type, istat_code)
 
 
 def get_municipality_details_by_istat_code(istat_code: Any) -> Optional[Dict[str, Any]]:
@@ -10622,6 +11034,78 @@ def get_crime_profile(cadastral_code: str, year: Optional[int] = None) -> Option
         **kpis,
         "crime_types_available": engine.list_crime_types(ref_area=muni["nuts3"]),
         "source": "ISTAT (delitti denunciati) via aecs4u-stats",
+    }
+
+
+def get_quality_of_life_indicators_by_nuts3(nuts3: str) -> Optional[Dict[str, Any]]:
+    """Build provincial BES period tables from the local aecs4u-stats snapshot."""
+    code = str(nuts3 or "").strip().upper()
+    if not re.fullmatch(r"[A-Z]{2}[A-Z0-9]{3}", code):
+        return None
+    rows = [
+        row for row in _istat_bes_rows()
+        if str(row.get("ref_area") or "").strip().upper() == code
+    ]
+    if not rows:
+        return None
+
+    by_indicator: dict[str, list[Dict[str, Any]]] = {}
+    for row in rows:
+        name = " ".join(str(row.get("data_type") or "").split())
+        if name:
+            by_indicator.setdefault(name, []).append(row)
+
+    years_by_label: dict[str, tuple[int, bool]] = {}
+    indicators = []
+    for name, indicator_rows in sorted(by_indicator.items(), key=lambda item: item[0].casefold()):
+        total_rows = [row for row in indicator_rows if str(row.get("sex") or "").upper() == "T"]
+        values = {}
+        for row in total_rows or indicator_rows:
+            period = str(row.get("time_period") or "").strip()
+            if not period:
+                continue
+            edition = " ".join(str(row.get("edition") or "").split())
+            covid = "covid" in edition.casefold()
+            year_label = f"{period} COVID" if covid else (edition or period)
+            raw_value = row.get("value")
+            try:
+                value = float(raw_value) if raw_value not in (None, "") else None
+                if value is not None and value.is_integer():
+                    value = int(value)
+            except (TypeError, ValueError):
+                value = raw_value
+            values[year_label] = {
+                "value": value,
+                "unit": None,
+                "temporal_reference": None,
+            }
+            year_match = re.search(r"\d{4}", period)
+            years_by_label[year_label] = (
+                int(year_match.group()) if year_match else 0,
+                covid,
+            )
+        if values:
+            indicators.append({
+                "name": name,
+                "unit": None,
+                "unit_varies": False,
+                "values": values,
+            })
+
+    years = sorted(years_by_label, key=lambda label: (*years_by_label[label], label))
+    if not indicators:
+        return None
+    return {
+        "nuts3": code,
+        "spatial_resolution": "province",
+        "years": years,
+        "indicators": [indicator["name"] for indicator in indicators],
+        "clusters": [{
+            "key": "quality_of_life",
+            "label": "Quality-of-life indicators",
+            "indicators": indicators,
+        }],
+        "source": "ISTAT BES via aecs4u-stats local snapshot",
     }
 
 

@@ -124,7 +124,10 @@ class MapLayerSpec:
 # be very wide. Map layers should use prepared spatial relations; raw landing
 # relations require bounded, source-filtered map queries.
 MAP_LAYERS: tuple[MapLayerSpec, ...] = (
-    MapLayerSpec("geo-boundaries", "Administrative boundaries", "istat.v_comuni_map", "geom", properties=("id", "geo_unit_id", "canonical_name", "unit_type", "generalization", "source_release"), role="admin-substitute", group="administrative", color="#526b84", z_order=10, fill_opacity=0.075, line_width=1.1, unit_levels=((0, "region"), (8, "province"), (10, "municipality")), require_gist_index=False, tile_revision="istat-2"),
+    MapLayerSpec("geo-boundaries-areas", "Geo Areas", "istat.v_ripartizioni_map", "geom", properties=("id", "geo_unit_id", "canonical_name", "unit_type", "generalization", "source_release"), group="administrative-boundaries", color="#86699a", z_order=8, min_zoom=5, fill_opacity=0.035, line_width=1.2, require_gist_index=False, tile_revision="istat-areas-1"),
+    MapLayerSpec("geo-boundaries", "Regions", "istat.v_regioni_map", "geom", properties=("id", "geo_unit_id", "canonical_name", "unit_type", "generalization", "source_release"), role="admin-substitute", group="administrative-boundaries", color="#526b84", z_order=10, min_zoom=5, fill_opacity=0.045, line_width=1.2, require_gist_index=False, tile_revision="istat-regions-1"),
+    MapLayerSpec("geo-boundaries-provinces", "Provinces", "istat.v_province_map", "geom", properties=("id", "geo_unit_id", "canonical_name", "unit_type", "generalization", "source_release"), group="administrative-boundaries", color="#367891", z_order=11, min_zoom=7, fill_opacity=0.025, line_width=1.0, require_gist_index=False, tile_revision="istat-provinces-1"),
+    MapLayerSpec("geo-boundaries-municipalities", "Municipalities", "istat.v_comuni_map", "geom", properties=("id", "geo_unit_id", "canonical_name", "unit_type", "generalization", "source_release"), group="administrative-boundaries", color="#3d927e", z_order=12, min_zoom=9, fill_opacity=0.015, line_width=0.8, require_gist_index=False, tile_revision="istat-municipalities-1"),
     # Coverage changes as upstream publications are loaded. Do not hard-code a
     # region or a row count here; health() reports the current estimated extent
     # from PostGIS statistics when ANALYZE data is available.
@@ -133,11 +136,11 @@ MAP_LAYERS: tuple[MapLayerSpec, ...] = (
     # viewports can contain tens of thousands of parcels even at z14; keep
     # those reads small enough that a page of clipped geometries stays bounded.
     MapLayerSpec("cadastral-parcels", "Cadastral parcels", "spatial.cadastral_parcel", "geom", min_zoom=14, max_features=10000, size_column="area_sqm", geojson_max_area=0.04, geojson_page_max_area=0.0005, coverage="unknown", properties=("id", "canonical_reference", "national_cadastral_reference", "parcel", "sheet", "municipality_id", "area_sqm", "source_release", "has_visura", "is_auction_sale"), group="cadastral", color="#d97925", z_order=90, fill_opacity=0.04, line_width=0.8, tile_revision="regional-5"),
-    MapLayerSpec("urban-sections", "Cadastral urban sections", "sezioni_urbane.sezioni_urbane", "geom", id_column="OGC_FID", min_zoom=11, coverage="partial", coverage_note="Only municipalities that have urban sections (about 520, such as Rome, Genoa, Verona and Trieste); most of Italy has none", sparse=True, properties=("OGC_FID", "nationalcadastralzoningreference", "administrativeunit", "sezione_urbana"), group="cadastral", color="#2f9aa8", z_order=80, require_gist_index=False),
+    MapLayerSpec("urban-sections", "Cadastral urban sections", "sezioni_urbane.sezioni_urbane", "geom", id_column="OGC_FID", min_zoom=11, coverage="partial", coverage_note="Only municipalities that have urban sections (about 520, such as Rome, Genoa, Verona and Trieste); most of Italy has none", sparse=True, properties=("OGC_FID", "nationalcadastralzoningreference", "administrativeunit", "sezione_urbana"), group="cadastral", color="#7c3aed", z_order=95, fill_opacity=0.13, line_width=2.8, require_gist_index=False),
     # DEPRECATED (2026-10-21): the Zornade-sourced zornade.zornade_zone_omi relation. Keep it serving
     # tiles until a replacement source exists, but do not build new features on it.
-    MapLayerSpec("market-zones", "OMI market zones", "zornade.zornade_zone_omi", "geom", id_column="OGC_FID", min_zoom=10, properties=("OGC_FID", "codcom", "codzona", "zona_descr", "comune_descrizione", "descr_tip_prev", "compr_min", "compr_max"), group="market", color="#7b61a8", z_order=30, require_gist_index=False, tile_revision="2"),
-    MapLayerSpec("postal-zones", "Postal zones", "cap_subcomunali.cap_subcomunali", "geom", id_column="OGC_FID", min_zoom=10, properties=("OGC_FID", "cap", "comune_cap", "comune", "provincia", "regione", "fonte"), group="administrative", color="#8a7a3d", z_order=40, require_gist_index=False, tile_revision="3"),
+    MapLayerSpec("market-zones", "OMI market zones", "zornade.zornade_zone_omi", "geom", id_column="OGC_FID", min_zoom=10, properties=("OGC_FID", "codcom", "codzona", "zona_descr", "comune_descrizione", "descr_tip_prev", "compr_min", "compr_max"), group="cadastral", color="#7b61a8", z_order=30, require_gist_index=False, tile_revision="2"),
+    MapLayerSpec("postal-zones", "Postal zones", "cap_subcomunali.cap_subcomunali", "geom", id_column="OGC_FID", min_zoom=10, properties=("OGC_FID", "cap", "comune_cap", "comune", "provincia", "regione", "fonte"), group="administrative-boundaries", color="#8a7a3d", z_order=40, require_gist_index=False, tile_revision="3"),
     MapLayerSpec("flood-hazard", "Flood hazard areas", "hazards.flood_hazard", "geom", id_column="scenario_code", min_zoom=8, max_features=3000, size_column="area_sqm", properties=("scenario_code", "scenario_label", "area_sqm"), group="risk", color="#2b7bb9", z_order=50, fill_opacity=0.2, require_gist_index=False, tile_revision="3"),
     MapLayerSpec("landslide-hazard", "Landslide hazard areas", "hazards.landslide_hazard", "geom", id_column="hazard_code", min_zoom=8, max_features=3000, size_column="area_sqm", properties=("hazard_code", "hazard_label", "area_sqm"), group="risk", color="#a0522d", z_order=51, fill_opacity=0.2, require_gist_index=False, tile_revision="3"),
     MapLayerSpec("census-sections", "ISTAT census sections", "census.sections", "geom", id_column="sez21_id", source_srid=32632, min_zoom=13, max_features=3000, properties=("sez21_id", "procom", "cod_reg", "pop21", "fam21", "abi21", "edi21"), group="demographics", color="#3f8f73", z_order=60, fill_opacity=0.3, color_ramp=("pop21", ((0, "#e8f4ef"), (50, "#bfe3d2"), (200, "#7fc1a3"), (500, "#3f8f73"), (1500, "#1f5d49"))), fallback_tables=("census_sections.sections",), require_gist_index=False, tile_revision="1"),
@@ -195,7 +198,7 @@ MAP_LAYERS: tuple[MapLayerSpec, ...] = (
             "source_feature_key", "dataset_release_id",
             "geometry_valid_4326", "geometry_repaired",
         ),
-        kind="mixed", group="territory", color="#1f8ea3", z_order=130,
+        kind="mixed", group="cadastral", color="#1f8ea3", z_order=130,
         polygon_color="#e45724", fill_opacity=0.42, line_width=3.0,
         require_gist_index=False, tile_revision="5",
     ),
@@ -233,6 +236,12 @@ _HAZARDS_SOURCE_RELATIONS = {
     "seismic-classification": "public.v_seismic_classification_map",
 }
 _EGMS_SOURCE_RELATIONS = {"surface-subsidence": "public.egms_subsidenza"}
+_ADMIN_BOUNDARY_UNIT_TYPES = {
+    "geo-boundaries": "region",
+    "geo-boundaries-provinces": "province",
+    "geo-boundaries-municipalities": "municipality",
+    "geo-boundaries-areas": "geographic_area",
+}
 
 
 def _istat_boundary_relation() -> str:
@@ -264,6 +273,15 @@ def _istat_boundary_relation() -> str:
                'ISTAT'::text AS source_release,
                geom
         FROM istat.v_comuni_map
+        UNION ALL
+        SELECT (4000000000 + cod_rip)::bigint AS id,
+               cod_rip::bigint AS geo_unit_id,
+               name AS canonical_name,
+               'geographic_area'::text AS unit_type,
+               NULL::text AS generalization,
+               'ISTAT'::text AS source_release,
+               geom
+        FROM istat.v_ripartizioni_map
     )"""
 
 
@@ -921,7 +939,7 @@ class PostgresMapLayerSource:
 
     @staticmethod
     def _query_relation(layer: MapLayerSpec, resolved_relation: str) -> str:
-        if layer.id == "geo-boundaries":
+        if layer.id in _ADMIN_BOUNDARY_UNIT_TYPES:
             return _istat_boundary_relation()
         if layer.id == "solar-potential":
             return _solar_potential_relation()
@@ -1005,11 +1023,8 @@ class PostgresMapLayerSource:
         spatial_filter = f"{geometry_ref} && ST_Expand({source_envelope}, {padding!r})"
         relation = self._query_relation(layer, await self._resolve_relation_for(layer, layer_source))
         level_filter = ""
-        if layer.id == "geo-boundaries":
-            level = next((unit for minimum, unit in layer.unit_levels if z >= minimum), layer.unit_levels[0][1])
-            for minimum, unit in layer.unit_levels:
-                if z >= minimum:
-                    level = unit
+        if layer.id in _ADMIN_BOUNDARY_UNIT_TYPES:
+            level = _ADMIN_BOUNDARY_UNIT_TYPES[layer.id]
             level_filter = " AND t.unit_type = %s"
         truncation_cap: Optional[int] = None
         if layer.kind == "mixed" and z < layer.cluster_below_zoom:
@@ -1296,6 +1311,8 @@ class PostgresMapLayerSource:
             f"ST_Transform(ST_MakeEnvelope({west!r}, {south!r}, {east!r}, {north!r}, 4326), "
             f"{layer.source_srid})"
         )
+        unit_type = _ADMIN_BOUNDARY_UNIT_TYPES.get(layer.id)
+        unit_type_clause = "AND t.unit_type = %s" if unit_type else ""
         sql = f"""
             WITH bounds AS (
                 SELECT ST_MakeEnvelope(%s, %s, %s, %s, 4326) AS web,
@@ -1306,6 +1323,7 @@ class PostgresMapLayerSource:
             FROM {relation} AS t {self._source_join(layer)} CROSS JOIN bounds
             WHERE {self._column_ref('t', layer.geometry_column)} && {source_bbox}
               AND ST_Intersects({self._column_ref('t', layer.geometry_column)}, bounds.source)
+              {unit_type_clause}
               {flag_clause}
             ORDER BY {self._column_ref('t', layer.id_column)}
             LIMIT %s OFFSET %s
@@ -1314,6 +1332,7 @@ class PostgresMapLayerSource:
             rows = await connection.fetch(
                 _asyncpg_sql(sql),
                 west, south, east, north, west, south, east, north,
+                *([unit_type] if unit_type else []),
                 min(max(int(limit), 1), layer.max_features), max(int(offset), 0),
             )
         features = []
@@ -1793,6 +1812,8 @@ class PostgresMapLayerSource:
             f"ST_Transform(ST_SetSRID(ST_Point({float(lng)!r}, {float(lat)!r}), 4326), "
             f"{layer.source_srid})"
         )
+        unit_type = _ADMIN_BOUNDARY_UNIT_TYPES.get(layer.id)
+        unit_type_clause = "AND t.unit_type = %s" if unit_type else ""
         sql = f"""
             WITH click AS (
                 SELECT {point} AS web, {source_point} AS source
@@ -1802,10 +1823,14 @@ class PostgresMapLayerSource:
             FROM {relation} AS t {self._source_join(layer)} CROSS JOIN click
             WHERE {self._column_ref('t', layer.geometry_column)} && {source_point_filter}
               AND ST_Covers({self._column_ref('t', layer.geometry_column)}, click.source)
+              {unit_type_clause}
             LIMIT 1
         """
         async with layer_source.connection() as connection:
-            row = await connection.fetchrow(_asyncpg_sql(sql), float(lng), float(lat), float(lng), float(lat))
+            params = [float(lng), float(lat), float(lng), float(lat)]
+            if unit_type:
+                params.append(unit_type)
+            row = await connection.fetchrow(_asyncpg_sql(sql), *params)
         if not row:
             return None
         values = dict(row)

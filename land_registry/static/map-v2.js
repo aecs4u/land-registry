@@ -30,9 +30,11 @@
     catalog: [],
     selectedReference: null,
     selectedFeature: null,
-    selectedMunicipalityCode: null,
+    selectedAdministrativeAreaKey: null,
     municipalityDetailsRequest: 0,
     municipalityDetailsController: null,
+    municipalityEurostatController: null,
+    municipalityQualityOfLifeController: null,
     selectedMaritimeRowId: null,
     maritimeDetailsRequest: 0,
     maritimeDetailsController: null,
@@ -170,7 +172,7 @@
     // guide remains available through the question-mark button.
     if (!seen && !new URLSearchParams(window.location.search).has('parcel')) open();
   }
-  const LAYER_GROUPS = ['administrative', 'cadastral', 'market', 'risk', 'demographics', 'energy', 'territory'];
+  const LAYER_GROUPS = ['administrative-boundaries', 'administrative', 'cadastral', 'market', 'risk', 'demographics', 'energy', 'territory'];
 
   // Progress belongs to a task, so an older request cannot dismiss a newer
   // one. Quick operations stay invisible; elapsed time is not an estimate.
@@ -1108,7 +1110,10 @@
       section.className = 'map-layer-group';
       section.open = true;
       const summary = document.createElement('summary');
-      summary.textContent = tr(group.charAt(0).toUpperCase() + group.slice(1));
+      const groupTitle = group === 'administrative-boundaries'
+        ? 'Administrative'
+        : group.charAt(0).toUpperCase() + group.slice(1);
+      summary.textContent = tr(groupTitle);
       section.appendChild(summary);
       members.forEach((layer) => {
         const { item, input } = buildLayerItem(layer, initializingLayers);
@@ -1306,6 +1311,8 @@
     }
     const panelOpen = !$('directParcelPanel')?.hidden
       || !$('municipalityDetailPanel')?.hidden
+      || !$('cadastralSheetPanel')?.hidden
+      || !$('cadastralUrbanSectionPanel')?.hidden
       || !$('maritimeConcessionPanel')?.hidden;
     const bounds = map.getBounds?.();
     const parcels = state.catalog.find((layer) => layer.id === 'cadastral-parcels');
@@ -1572,6 +1579,8 @@
   // {unavailable: true}), when /parcel/details answers.
   function renderParcelPanel(feature, enrichment = null) {
     closeMunicipalityDetails();
+    closeCadastralSheetDetails();
+    closeCadastralUrbanSectionDetails();
     closeMaritimeConcessionDetails();
     const props = feature?.properties || {};
     const reference = state.selectedReference || referenceFrom(props) || null;
@@ -1613,16 +1622,22 @@
     $('mapHelpNote').hidden = true;
   }
 
+  // Server filesystem locations (manifest or image paths) mean nothing to a reader and expose the host layout.
+  function isServerFileField(key, value) {
+    return /(?:^|_)paths?$/i.test(String(key || ''))
+      || (typeof value === 'string' && /^\/(?:data|home|mnt|opt|var|srv|tmp)\//.test(value));
+  }
+
   function isHiddenMunicipalityGeometryField(key) {
     return /^(?:boundary|za)[\s_-]*geom(?:etry)?$/i.test(String(key || '').trim());
   }
 
-  function municipalityValueHtml(key, value) {
+  function municipalityValueHtml(key, value, { compact = false } = {}) {
     if (value === null || value === undefined || value === '') return escapeHtml(tr('Not available'));
     if (typeof value === 'boolean') return escapeHtml(value ? tr('Yes') : tr('No'));
     if ((value === 0 || value === 1) && /(?:^|[_\s-])flag$/i.test(String(key || ''))) return escapeHtml(value ? tr('Yes') : tr('No'));
-    if (typeof value === 'number' && Number.isFinite(value) && /population|resident/i.test(String(key || ''))) {
-      return escapeHtml(value.toLocaleString(document.documentElement.lang || undefined));
+    if (typeof value === 'number' && Number.isFinite(value) && /population|resident|area|sqm/i.test(String(key || ''))) {
+      return escapeHtml(value.toLocaleString(document.documentElement.lang || undefined, { maximumFractionDigits: 2 }));
     }
     const url = typeof value === 'string' ? canonicalHttpUrl(value) : null;
     if (url) {
@@ -1635,7 +1650,15 @@
         const label = keyName.replaceAll('_', ' ');
         return `<a class="municipality-detail-image-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer"><img class="municipality-detail-image" src="${escapeHtml(url)}" alt="${escapeHtml(label)}" loading="lazy" decoding="async"></a>`;
       }
-      return `<a class="municipality-detail-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>`;
+      let text = url;
+      if (compact) {
+        try {
+          const parsed = new URL(url);
+          const path = parsed.pathname.replace(/\/$/, '');
+          text = decodeURIComponent(parsed.hostname.replace(/^www\./, '') + (path.split('/').filter(Boolean).pop() ? `/…${path.split('/').pop()}` : ''));
+        } catch (_) { text = url; }
+      }
+      return `<a class="municipality-detail-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(url)}">${escapeHtml(text)}</a>`;
     }
     if (typeof value === 'object') {
       try { return escapeHtml(JSON.stringify(value)); } catch (_) { return escapeHtml(String(value)); }
@@ -1644,12 +1667,22 @@
   }
 
   function municipalityFieldLabel(key) {
+    const label = municipalityFieldEnglishLabel(key);
+    return tr(label);
+  }
+
+  function municipalityFieldEnglishLabel(key) {
+    if (/stemma|coat[\s_-]*of[\s_-]*arms/i.test(String(key || ''))) return 'Coat of arms';
     return String(key || '')
+      .replace(/^ci_/i, '')
       .replaceAll('_', ' ')
       .replace(/\bnuts\s?([123])\b/ig, 'NUTS $1')
       .replace(/\bistat\b/ig, 'ISTAT')
+      .replace(/\binspire\b/ig, 'INSPIRE')
+      .replace(/\blocalid\b/ig, 'local ID')
       .replace(/\bprocom\b/ig, 'PRO_COM')
-      .replace(/\b(?:cap|pec|uts|url|ci)\b/ig, (token) => token.toUpperCase())
+      .replace(/\bsqm\b/ig, 'm²')
+      .replace(/\b(?:cap|pec|uts|url)\b/ig, (token) => token.toUpperCase())
       .replace(/^\w/, (letter) => letter.toUpperCase());
   }
 
@@ -1696,17 +1729,138 @@
 
   function municipalityRecordRows(record) {
     if (!record || typeof record !== 'object') return '';
+    // Same label/value rows as the parcel sheet; fields without a value are left out rather than shown as "Not available".
     const fields = Object.entries(record)
-      .filter(([key]) => !isHiddenMunicipalityGeometryField(key) && !municipalityPeriodField(key))
-      .map(([key, value]) => `<div><dt>${escapeHtml(municipalityFieldLabel(key))}</dt><dd>${municipalityValueHtml(key, value)}</dd></div>`)
+      .filter(([key, value]) => value !== null && value !== undefined && value !== ''
+        && !isHiddenMunicipalityGeometryField(key) && !isServerFileField(key, value) && !municipalityPeriodField(key))
+      .map(([key, value]) => `<div><dt>${escapeHtml(municipalityFieldLabel(key))}</dt><dd>${municipalityValueHtml(key, value, { compact: true })}</dd></div>`)
       .join('');
-    return `${fields ? `<dl class="map-sheet-facts">${fields}</dl>` : ''}${municipalityPeriodTables(record)}`;
+    return `${fields ? `<dl class="parcel-rows">${fields}</dl>` : ''}${municipalityPeriodTables(record)}`;
   }
 
-  function municipalityDetailSection(title, record) {
-    const rows = municipalityRecordRows(record);
-    if (!rows) return '';
-    return `<section class="parcel-section municipality-record-section"><h3 class="parcel-section-title map-sheet-section-title">${escapeHtml(tr(title))}</h3>${rows}</section>`;
+  function isHiddenCadastralSheetField(key, value) {
+    return /^(?:id|municipality_id)$/i.test(String(key || '').trim())
+      || /(?:^|[_\s-])(?:wkb[_-]?)?geom(?:etry)?$/i.test(String(key || '').trim())
+      || isHiddenMunicipalityGeometryField(key)
+      || isServerFileField(key, value);
+  }
+
+  function closeCadastralSheetDetails() {
+    const panel = $('cadastralSheetPanel');
+    if (panel) panel.hidden = true;
+  }
+
+  function closeCadastralUrbanSectionDetails() {
+    const panel = $('cadastralUrbanSectionPanel');
+    if (panel) panel.hidden = true;
+  }
+
+  function loadCadastralSheetDetails(feature) {
+    const properties = feature?.properties || {};
+    closeMunicipalityDetails();
+    closeCadastralUrbanSectionDetails();
+    closeMaritimeConcessionDetails();
+    closeCadastralSheetDetails();
+    state.selectedReference = null;
+    state.selectedFeature = feature;
+    clearSelectedAuctionSaleMarker();
+    window.ParcelPanel?.clear();
+    state.map?.getSource('selected-parcel')?.setData(emptyFeatureCollection());
+    state.map?.getSource('adjacent-parcels')?.setData(emptyFeatureCollection());
+    renderSelectedGeometry(feature);
+    sisterBuildingsOverlay.fetchToken += 1;
+    sisterBuildingsOverlay.records = [];
+    state.map?.getSource('sister-building-parcel')?.setData(emptyFeatureCollection());
+    if ($('sisterBuildingsCount')) $('sisterBuildingsCount').textContent = '';
+    $('directParcelPanel').hidden = true;
+
+    const panel = $('cadastralSheetPanel');
+    const content = $('cadastralSheetContent');
+    const details = Object.fromEntries(Object.entries(properties)
+      .filter(([key, value]) => value !== null && value !== undefined && value !== '' && !isHiddenCadastralSheetField(key, value)));
+    const sheetReference = properties.sheet_reference || '';
+    const municipality = properties.municipality_name || '';
+    const subtitle = [sheetReference, municipality, properties.province, properties.region].filter(Boolean);
+    $('cadastralSheetTitle').textContent = properties.level_name || sheetReference || tr('Cadastral sheet details');
+    $('cadastralSheetSubtitle').textContent = subtitle.join(' · ');
+    const rows = municipalityRecordRows(details);
+    content.innerHTML = rows
+      ? `<section class="parcel-section municipality-record-section"><h3 class="parcel-section-title map-sheet-section-title">${escapeHtml(tr('Cadastral sheet information'))}</h3>${rows}</section>`
+      : `<p class="map-sheet-empty">${escapeHtml(tr('No cadastral sheet details are available.'))}</p>`;
+    content.scrollTop = 0;
+    panel.hidden = false;
+    $('mapHelpNote').hidden = true;
+    writeUrl();
+    updateParcelZoomAffordance();
+    mapStatus(tr('Cadastral sheet selected'));
+  }
+
+  function cadastralUrbanSectionFields(properties, featureId) {
+    const labels = {
+      ogc_fid: 'Map feature ID',
+      nationalcadastralzoningreference: 'National cadastral zoning reference',
+      administrativeunit: 'Municipality code',
+      sezione_urbana: 'Urban section',
+    };
+    const preferredOrder = ['sezione_urbana', 'nationalcadastralzoningreference', 'administrativeunit', 'ogc_fid'];
+    const entries = Object.entries(properties || {}).filter(([key, value]) => (
+      value !== null && value !== undefined && value !== '' && !isHiddenCadastralSheetField(key, value)
+    ));
+    if (!entries.some(([key]) => key.toLowerCase() === 'ogc_fid') && featureId !== null && featureId !== undefined) {
+      entries.push(['OGC_FID', featureId]);
+    }
+    return entries
+      .map((entry, index) => ({ entry, index, order: preferredOrder.indexOf(entry[0].toLowerCase()) }))
+      .sort((left, right) => {
+        const leftOrder = left.order < 0 ? preferredOrder.length : left.order;
+        const rightOrder = right.order < 0 ? preferredOrder.length : right.order;
+        return leftOrder - rightOrder || left.index - right.index;
+      })
+      .map(({ entry: [key, value] }) => {
+        const label = labels[key.toLowerCase()] || municipalityFieldLabel(key);
+        return `<div><dt>${escapeHtml(tr(label))}</dt><dd>${municipalityValueHtml(key, value)}</dd></div>`;
+      })
+      .join('');
+  }
+
+  function loadCadastralUrbanSectionDetails(feature) {
+    const properties = feature?.properties || {};
+    const featureId = feature?.id ?? properties.OGC_FID ?? properties.ogc_fid;
+    closeMunicipalityDetails();
+    closeCadastralSheetDetails();
+    closeCadastralUrbanSectionDetails();
+    closeMaritimeConcessionDetails();
+    state.selectedReference = null;
+    state.selectedFeature = feature;
+    clearSelectedAuctionSaleMarker();
+    window.ParcelPanel?.clear();
+    state.map?.getSource('selected-parcel')?.setData(emptyFeatureCollection());
+    state.map?.getSource('adjacent-parcels')?.setData(emptyFeatureCollection());
+    sisterBuildingsOverlay.fetchToken += 1;
+    sisterBuildingsOverlay.records = [];
+    state.map?.getSource('sister-building-parcel')?.setData(emptyFeatureCollection());
+    if ($('sisterBuildingsCount')) $('sisterBuildingsCount').textContent = '';
+    $('directParcelPanel').hidden = true;
+    renderSelectedGeometry(feature);
+
+    const titleValue = properties.sezione_urbana || properties.nationalcadastralzoningreference;
+    $('cadastralUrbanSectionTitle').textContent = titleValue
+      ? `${tr('Urban section')} ${titleValue}`
+      : tr('Urban section details');
+    $('cadastralUrbanSectionSubtitle').textContent = properties.nationalcadastralzoningreference
+      && properties.nationalcadastralzoningreference !== titleValue
+      ? `${tr('National cadastral zoning reference')}: ${properties.nationalcadastralzoningreference}`
+      : '';
+    const fields = cadastralUrbanSectionFields(properties, featureId);
+    $('cadastralUrbanSectionContent').innerHTML = fields
+      ? `<section class="parcel-section municipality-record-section"><h3 class="parcel-section-title map-sheet-section-title">${escapeHtml(tr('Urban section information'))}</h3><dl class="map-sheet-facts">${fields}</dl></section>`
+      : `<p class="map-sheet-empty">${escapeHtml(tr('No urban section details are available.'))}</p>`;
+    $('cadastralUrbanSectionContent').scrollTop = 0;
+    $('cadastralUrbanSectionPanel').hidden = false;
+    $('mapHelpNote').hidden = true;
+    writeUrl();
+    updateParcelZoomAffordance();
+    mapStatus(tr('Urban section selected'));
   }
 
   function municipalityRecordName(record) {
@@ -1731,62 +1885,540 @@
       .pop() || null;
   }
 
-  function municipalitySummaryHtml(details) {
+  // ---- Administrative sheet: the same structure as the parcel sheet --------------------------
+  // headline strip, section tabs, collapsible icon sections (all theme classes).
+  const ADMINISTRATIVE_LEVELS = {
+    municipality: ['Municipality', 'Selected municipality'],
+    province: ['Province', 'Selected province'],
+    region: ['Region', 'Selected region'],
+    geographic_area: ['Geographic area', 'Selected geographic area'],
+  };
+
+  function setAdministrativeHeader(unitType, title, code) {
+    const [level, eyebrow] = ADMINISTRATIVE_LEVELS[unitType] || ['Administrative area', 'Selected administrative area'];
+    const eyebrowText = $('municipalityDetailEyebrow');
+    if (eyebrowText) eyebrowText.textContent = tr(eyebrow);
+    $('municipalityDetailTitle').textContent = title;
+    $('municipalityDetailSubtitle').textContent = `${tr(level)} · ${tr('ISTAT code')}: ${code}`;
+  }
+
+  function administrativeStripCell(label, value, { scope = '', html = false, key = '' } = {}) {
+    const head = `<span class="map-sheet-strip-label">${escapeHtml(label)}</span>${scope ? `<span class="map-sheet-strip-scope">${escapeHtml(scope)}</span>` : ''}`;
+    const text = value === null || value === undefined || value === '' ? '—' : (html ? value : escapeHtml(String(value)));
+    return `<div class="map-sheet-strip-cell"${key ? ` data-stat="${key}"` : ''}><div class="map-sheet-strip-head">${head}</div><strong class="map-sheet-strip-value">${text}</strong></div>`;
+  }
+
+  function setAdministrativeStrip(cells) {
+    const strip = $('municipalityStatStrip');
+    if (strip) strip.innerHTML = cells.join('');
+  }
+
+  function setAdministrativeStat(key, value) {
+    const target = $('municipalityStatStrip')?.querySelector(`[data-stat="${key}"] .map-sheet-strip-value`);
+    if (target) target.textContent = value;
+  }
+
+  function administrativeSection({ id, icon, title, badge = '', badgeId = '', open = true, body }) {
+    const hasBadge = badge !== '' && badge !== null && badge !== undefined;
+    return `<details class="parcel-section" id="municipality-section-${id}"${open ? ' open' : ''}><summary class="parcel-section-header"><i class="fas fa-${icon}" aria-hidden="true"></i><span class="parcel-section-title">${escapeHtml(title)}</span><span class="parcel-section-badge"${badgeId ? ` id="${badgeId}"` : ''}${hasBadge ? '' : ' hidden'}>${hasBadge ? escapeHtml(String(badge)) : ''}</span></summary><div class="parcel-section-body">${body}</div></details>`;
+  }
+
+  // Section tabs: jump to a section (opening it) and follow the scroll, like the parcel sheet's.
+  function setAdministrativeNav(items) {
+    const nav = $('municipalitySectionNav');
+    const content = $('municipalityDetailContent');
+    if (!nav || !content) return;
+    content.onscroll = null;
+    nav.onclick = null;
+    if (items.length < 2) { nav.innerHTML = ''; return; }
+    nav.innerHTML = items.map((item, index) => `<button type="button" data-target="municipality-section-${item.id}"${index === 0 ? ' aria-current="true"' : ''}>${escapeHtml(item.label)}</button>`).join('');
+    const mark = (target) => nav.querySelectorAll('button').forEach((button) => {
+      if (button.dataset.target === target) button.setAttribute('aria-current', 'true');
+      else button.removeAttribute('aria-current');
+    });
+    nav.onclick = (event) => {
+      const button = event.target.closest('button[data-target]');
+      const section = button && $(button.dataset.target);
+      if (!section) return;
+      section.open = true;
+      const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      section.scrollIntoView({ block: 'start', behavior: reduce ? 'auto' : 'smooth' });
+      mark(button.dataset.target);
+    };
+    let frame = 0;
+    content.onscroll = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        const top = content.getBoundingClientRect().top;
+        let current = items[0].id;
+        items.forEach((item) => {
+          const section = $(`municipality-section-${item.id}`);
+          if (section && section.getBoundingClientRect().top - top <= 40) current = item.id;
+        });
+        mark(`municipality-section-${current}`);
+      });
+    };
+  }
+
+  // Codes and identifiers fold away; names, contacts and the population table stay in view.
+  const MUNICIPALITY_TECHNICAL_FIELD = /^(?:region_code|uts_code|historical_province_code|municipality_progressive|code|area_code|uts_type|numeric_code(?:_.+)?|nuts[123]_.+|ci_wikidata_url)$/i;
+
+  // Already shown in the headline strip.
+  const MUNICIPALITY_STRIP_FIELDS = new Set(['cadastral_code', 'capital_flag', 'is_provincial_capital', 'region_name', 'uts_name', 'province_abbreviation', 'website', 'ci_website']);
+
+  function municipalityRecordHtml(record, omit = new Set()) {
+    if (!record || typeof record !== 'object') return '';
+    const main = {};
+    const technical = {};
+    Object.entries(record).forEach(([key, value]) => {
+      if (omit.has(key) || isHiddenMunicipalityGeometryField(key) || isServerFileField(key, value)) return;
+      (MUNICIPALITY_TECHNICAL_FIELD.test(key) ? technical : main)[key] = value;
+    });
+    const technicalHtml = municipalityRecordRows(technical);
+    return municipalityRecordRows(main)
+      + (technicalHtml ? `<details class="map-sheet-technical"><summary>${escapeHtml(tr('Technical details'))}</summary>${technicalHtml}</details>` : '');
+  }
+
+  function municipalityHierarchyHtml(details) {
+    const groups = [['Province', details?.province], ['Region', details?.region], ['Geographic area', details?.geographic_area]]
+      .map(([label, record]) => [label, municipalityRecordHtml(record)])
+      .filter(([, html]) => html);
+    return {
+      count: groups.length,
+      html: groups.map(([label, html]) => `<h4 class="map-sheet-subhead">${escapeHtml(tr(label))}</h4>${html}`).join(''),
+    };
+  }
+
+  function municipalityStripCells(details) {
     const record = details?.municipality || {};
     const latest = municipalityLatestPopulation(details);
     const capital = record.is_provincial_capital ?? (record.capital_flag === 0 || record.capital_flag === 1 ? record.capital_flag === 1 : undefined);
-    const tiles = [];
-    if (latest) {
-      tiles.push([tr('Residents'), latest.residents.toLocaleString(document.documentElement.lang || undefined), String(latest.year)]);
-    }
-    if (capital === true || capital === false) {
-      tiles.push([tr('Provincial capital'), capital ? tr('Yes') : tr('No'), '']);
-    }
-    if (record.cadastral_code) {
-      tiles.push([tr('Cadastral code'), String(record.cadastral_code), '']);
-    }
-    const website = canonicalHttpUrl(record.website || record.ci_website);
-    if (website) {
-      let host = website;
-      try { host = new URL(website).hostname.replace(/^www\./, ''); } catch (_) { /* keep full URL */ }
-      tiles.push([tr('Website'), `<a class="municipality-detail-link" href="${escapeHtml(website)}" target="_blank" rel="noopener noreferrer">${escapeHtml(host)}</a>`, '', true]);
-    }
     const province = municipalityRecordName(details?.province) || String(record.uts_name || '').trim();
     const abbreviation = String(details?.province?.province_abbreviation || record.province_abbreviation || '').trim();
-    const crumbs = [
-      municipalityRecordName(details?.region) || String(record.region_name || '').trim(),
-      province && abbreviation && abbreviation !== province ? `${province} (${abbreviation})` : province,
-    ].filter(Boolean);
-    const trail = crumbs.length
-      ? `<p class="map-sheet-trail">${crumbs.map((name) => `<span>${escapeHtml(name)}</span>`).join('')}</p>`
-      : '';
-    const stats = tiles.length
-      ? `<div class="map-sheet-stats">${tiles.map(([label, value, hint, isHtml]) => `<div class="map-sheet-stat${isHtml ? ' is-wide' : ''}"><span class="map-sheet-stat-label">${escapeHtml(label)}</span><strong class="map-sheet-stat-value">${isHtml ? value : escapeHtml(value)}</strong>${hint ? `<span class="map-sheet-stat-hint">${escapeHtml(hint)}</span>` : ''}</div>`).join('')}</div>`
-      : '';
-    return trail || stats ? `<div class="map-sheet-summary">${trail}${stats}</div>` : '';
+    const region = municipalityRecordName(details?.region) || String(record.region_name || '').trim();
+    const website = canonicalHttpUrl(record.website || record.ci_website);
+    let host = website;
+    try { if (website) host = new URL(website).hostname.replace(/^www\./, ''); } catch (_) { /* keep full URL */ }
+    return [
+      administrativeStripCell(tr('Residents'), latest ? latest.residents.toLocaleString(numberLocale()) : null, { scope: latest ? String(latest.year) : '' }),
+      administrativeStripCell(tr('Provincial capital'), capital === true ? tr('Yes') : capital === false ? tr('No') : null),
+      administrativeStripCell(tr('Cadastral code'), record.cadastral_code || null),
+      administrativeStripCell(tr('Province'), province ? (abbreviation && abbreviation !== province ? `${province} (${abbreviation})` : province) : null),
+      administrativeStripCell(tr('Region'), region || null),
+      administrativeStripCell(tr('Website'), website ? `<a class="municipality-detail-link" href="${escapeHtml(website)}" target="_blank" rel="noopener noreferrer">${escapeHtml(host)}</a>` : null, { html: Boolean(website) }),
+    ];
+  }
+
+  function municipalityEurostatNumber(value) {
+    if (value === null || value === undefined || value === '') return tr('Not available');
+    const numeric = Number(value);
+    return Number.isFinite(numeric)
+      ? numeric.toLocaleString(document.documentElement.lang || undefined, { maximumFractionDigits: 2 })
+      : municipalityValueHtml('value', value);
+  }
+
+  const MUNICIPALITY_EUROSTAT_CHART_COLORS = [
+    '#176b87', '#d16d2a', '#4c8c5a', '#8a5aa6', '#bd9a26', '#bd526c',
+    '#4f72b8', '#3c918b', '#a45e35', '#6c7c38', '#955a75', '#607d9b',
+  ];
+  const MUNICIPALITY_EUROSTAT_INDICATOR_LABELS = {
+    LOC_NR: 'Local units',
+    EMP_LOC_NR: 'Persons employed in local units',
+    WAGE_LOC_MEUR: 'Wages and salaries',
+    V11951: 'Active enterprises',
+    V11952: 'Enterprise births',
+    V11953: 'Enterprise deaths',
+    CNMIGRAT: 'Net migration plus statistical adjustment',
+  };
+  const MUNICIPALITY_EUROSTAT_INDICATOR_UNITS = {
+    LOC_NR: 'local units',
+    EMP_LOC_NR: 'persons',
+    WAGE_LOC_MEUR: 'MIO_EUR',
+    V11951: 'NR',
+    V11952: 'NR',
+    V11953: 'NR',
+    CNMIGRAT: 'persons',
+  };
+  const MUNICIPALITY_EUROSTAT_UNIT_LABELS = {
+    persons: 'Persons',
+    percent: 'Percent',
+    nights: 'Nights',
+    EUR_HAB: 'EUR per inhabitant',
+    EUR_HAB_EU27_2020: 'EUR per inhabitant (EU27=2020)',
+    MIO_EUR: 'Million EUR',
+    MIO_NAC: 'Million national currency units',
+    MIO_PPS_EU27_2020: 'Million PPS (EU27=2020)',
+    PPS_EU27_2020_HAB: 'PPS per inhabitant (EU27=2020)',
+    PPS_HAB_EU27_2020: 'PPS per inhabitant (EU27=2020)',
+    'local units': 'Local units',
+    NR: 'Count',
+    PC: 'Percent',
+  };
+  let municipalityEurostatViewSequence = 0;
+
+  function municipalityEurostatChartsHtml(chartGroups, periods, idPrefix) {
+    const groups = [...chartGroups.values()].map((group, groupIndex) => {
+      const chartId = `${idPrefix}-chart-${groupIndex}`;
+      return {
+        ...group,
+        id: chartId,
+        series: group.series.map((series, seriesIndex) => ({
+          ...series,
+          id: `${chartId}-series-${seriesIndex}`,
+          points: periods.map((period, index) => {
+            const rawValue = series.values.get(period)?.value;
+            if (rawValue === null || rawValue === undefined || rawValue === '') return null;
+            const value = Number(rawValue);
+            return Number.isFinite(value) ? { period, index, value } : null;
+          }).filter(Boolean),
+        })).filter((series) => series.points.length),
+      };
+    }).filter((group) => group.series.length);
+    if (!groups.length) {
+      return `<p class="map-muted municipality-eurostat-chart-empty">${escapeHtml(tr('No numeric values are available for this chart.'))}</p>`;
+    }
+
+    return `<div class="municipality-eurostat-chart-list">${groups.map((group, groupIndex) => {
+      const values = group.series.flatMap((series) => series.points.map((point) => point.value));
+      let minimum = Math.min(...values);
+      let maximum = Math.max(...values);
+      const span = maximum - minimum;
+      const padding = span > 0 ? span * 0.08 : Math.max(Math.abs(maximum) * 0.08, 1);
+      minimum -= padding;
+      maximum += padding;
+      const width = 640;
+      const height = 270;
+      const plot = { left: 72, right: 18, top: 24, bottom: 42 };
+      const plotWidth = width - plot.left - plot.right;
+      const plotHeight = height - plot.top - plot.bottom;
+      const x = (index) => plot.left + (periods.length <= 1 ? plotWidth / 2 : index * plotWidth / (periods.length - 1));
+      const y = (value) => plot.top + ((maximum - value) / (maximum - minimum)) * plotHeight;
+      const chartId = group.id;
+      const visibleSeriesCount = Math.min(4, group.series.length);
+      const grid = Array.from({ length: 5 }, (_, index) => {
+        const value = maximum - ((maximum - minimum) * index / 4);
+        const yPosition = y(value);
+        return `<g class="municipality-eurostat-chart-grid"><line x1="${plot.left}" y1="${yPosition.toFixed(1)}" x2="${width - plot.right}" y2="${yPosition.toFixed(1)}"></line><text x="${plot.left - 8}" y="${(yPosition + 4).toFixed(1)}" text-anchor="end">${escapeHtml(municipalityEurostatNumber(value))}</text></g>`;
+      }).join('');
+      const labelStep = Math.max(1, Math.ceil((periods.length - 1) / 7));
+      const xLabels = periods.map((period, index) => {
+        if (index !== 0 && index !== periods.length - 1 && index % labelStep !== 0) return '';
+        return `<text class="municipality-eurostat-chart-axis-label" x="${x(index).toFixed(1)}" y="${height - 12}" text-anchor="middle">${escapeHtml(period)}</text>`;
+      }).join('');
+      const seriesHtml = group.series.map((series, seriesIndex) => {
+        const color = MUNICIPALITY_EUROSTAT_CHART_COLORS[seriesIndex % MUNICIPALITY_EUROSTAT_CHART_COLORS.length];
+        let previousPoint = null;
+        const path = series.points.map((point) => {
+          const command = previousPoint && point.index === previousPoint.index + 1 ? 'L' : 'M';
+          previousPoint = point;
+          return `${command}${x(point.index).toFixed(1)},${y(point.value).toFixed(1)}`;
+        }).join(' ');
+        const points = series.points.map((point) => (
+          `<circle cx="${x(point.index).toFixed(1)}" cy="${y(point.value).toFixed(1)}" r="3.5"><title>${escapeHtml(`${series.label} · ${point.period}: ${municipalityEurostatNumber(point.value)}`)}</title></circle>`
+        )).join('');
+        return `<g class="municipality-eurostat-chart-series" data-eurostat-series="${series.id}"${seriesIndex >= visibleSeriesCount ? ' hidden' : ''} style="--series-color:${color}"><path d="${path}"></path>${points}</g>`;
+      }).join('');
+      const choices = group.series.map((series, seriesIndex) => {
+        const color = MUNICIPALITY_EUROSTAT_CHART_COLORS[seriesIndex % MUNICIPALITY_EUROSTAT_CHART_COLORS.length];
+        return `<label class="municipality-eurostat-series-choice" for="${series.id}"><input id="${series.id}" type="checkbox" data-eurostat-series-toggle="${series.id}" data-eurostat-chart-id="${chartId}"${seriesIndex < visibleSeriesCount ? ' checked' : ''}><span class="municipality-eurostat-series-swatch" style="--series-color:${color}" aria-hidden="true"></span><span>${escapeHtml(series.label)}</span></label>`;
+      }).join('');
+      const svgLabel = group.label;
+      return `<figure class="municipality-eurostat-chart"><figcaption>${escapeHtml(group.label)}</figcaption><details class="municipality-eurostat-series-picker"><summary><span>${escapeHtml(tr('Select values to display'))}</span><span class="municipality-eurostat-series-count" data-eurostat-selected-count>${visibleSeriesCount}/${group.series.length}</span></summary><div class="municipality-eurostat-series-options"><div class="municipality-eurostat-series-actions" role="group" aria-label="${escapeHtml(tr('Select values to display'))}"><button type="button" class="secondary-action compact" data-eurostat-series-action="all">${escapeHtml(tr('All'))}</button><button type="button" class="secondary-action compact" data-eurostat-series-action="none">${escapeHtml(tr('Clear'))}</button></div><div class="municipality-eurostat-series-choices">${choices}</div></div></details><p class="map-muted municipality-eurostat-chart-empty municipality-eurostat-chart-empty-selection" data-eurostat-no-series hidden>${escapeHtml(tr('Choose at least one series to display.'))}</p><svg id="${chartId}" data-eurostat-chart="${chartId}" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="${chartId}-title ${chartId}-desc"><title id="${chartId}-title">${escapeHtml(svgLabel)}</title><desc id="${chartId}-desc">${escapeHtml(tr('Eurostat values by period'))}</desc>${grid}<line class="municipality-eurostat-chart-axis" x1="${plot.left}" y1="${plot.top}" x2="${plot.left}" y2="${height - plot.bottom}"></line><line class="municipality-eurostat-chart-axis" x1="${plot.left}" y1="${height - plot.bottom}" x2="${width - plot.right}" y2="${height - plot.bottom}"></line>${xLabels}${seriesHtml}</svg></figure>`;
+    }).join('')}</div>`;
+  }
+
+  function mountMunicipalityEurostatTabs(root) {
+    root?.querySelectorAll('[data-eurostat-tablist]').forEach((tablist) => {
+      const container = tablist.parentElement;
+      const tabs = [...tablist.querySelectorAll('[role="tab"]')];
+      const panels = [...container.querySelectorAll('[role="tabpanel"]')];
+      if (!tabs.length || !panels.length) return;
+
+      const activate = (selectedTab, focus = false) => {
+        tabs.forEach((tab) => {
+          const active = tab === selectedTab;
+          tab.setAttribute('aria-selected', String(active));
+          tab.tabIndex = active ? 0 : -1;
+        });
+        panels.forEach((panel) => {
+          panel.hidden = panel.getAttribute('aria-labelledby') !== selectedTab.id;
+        });
+        if (focus) selectedTab.focus();
+      };
+      tabs.forEach((tab) => tab.addEventListener('click', () => activate(tab)));
+      tablist.addEventListener('keydown', (event) => {
+        const currentIndex = tabs.indexOf(event.target.closest?.('[role="tab"]'));
+        if (currentIndex < 0) return;
+        let nextIndex = currentIndex;
+        if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % tabs.length;
+        else if (event.key === 'ArrowLeft') nextIndex = (currentIndex + tabs.length - 1) % tabs.length;
+        else if (event.key === 'Home') nextIndex = 0;
+        else if (event.key === 'End') nextIndex = tabs.length - 1;
+        else return;
+        event.preventDefault();
+        activate(tabs[nextIndex], true);
+      });
+    });
+  }
+
+  function mountMunicipalityEurostatSeriesControls(root) {
+    const updateFigure = (figure) => {
+      if (!figure) return;
+      const toggles = [...figure.querySelectorAll('[data-eurostat-series-toggle]')];
+      const selected = toggles.filter((input) => input.checked).length;
+      const count = figure.querySelector('[data-eurostat-selected-count]');
+      if (count) count.textContent = `${selected}/${toggles.length}`;
+      const emptyMessage = figure.querySelector('[data-eurostat-no-series]');
+      if (emptyMessage) emptyMessage.hidden = selected > 0;
+    };
+
+    root?.querySelectorAll('[data-eurostat-series-toggle]').forEach((input) => {
+      input.addEventListener('change', () => {
+        const chart = root.querySelector(`[data-eurostat-chart="${input.dataset.eurostatChartId}"]`);
+        const series = chart?.querySelector(`[data-eurostat-series="${input.dataset.eurostatSeriesToggle}"]`);
+        if (series) series.hidden = !input.checked;
+        updateFigure(input.closest('.municipality-eurostat-chart'));
+      });
+    });
+    root?.querySelectorAll('[data-eurostat-series-action]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const figure = button.closest('.municipality-eurostat-chart');
+        const selectAll = button.dataset.eurostatSeriesAction === 'all';
+        figure?.querySelectorAll('[data-eurostat-series-toggle]').forEach((input) => {
+          if (input.checked === selectAll) return;
+          input.checked = selectAll;
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+      });
+    });
+  }
+
+  function municipalityEurostatDatasetHtml(dataset, { unitAsRows = false, open = false } = {}) {
+    const rows = Array.isArray(dataset?.rows) ? dataset.rows : [];
+    if (!rows.length) return '';
+    const title = tr(dataset.title || 'Eurostat series');
+    const entries = rows.map((row) => {
+      const dimensions = row?.dimensions && typeof row.dimensions === 'object' ? row.dimensions : {};
+      const indicator = String(dimensions.indicator || '');
+      const measure = MUNICIPALITY_EUROSTAT_INDICATOR_LABELS[indicator] || dataset.title;
+      const extraDimensions = Object.entries(dimensions)
+        .filter(([key, value]) => key !== 'unit' && key !== 'indicator' && value !== null && value !== undefined && value !== '')
+        .map(([key, value]) => `${tr(municipalityFieldLabel(key))}: ${key === 'nace_code' ? `NACE ${value}` : value}`);
+      const unitCode = indicator === 'LOC_NR' ? 'local units'
+        : indicator === 'EMP_LOC_NR' ? 'persons'
+          : indicator === 'WAGE_LOC_MEUR' ? 'MIO_EUR'
+            : indicator ? '' : String(row?.unit || '');
+      const unitLabel = MUNICIPALITY_EUROSTAT_UNIT_LABELS[unitCode] || unitCode;
+      return {
+        year: row?.year ?? tr('Not available'),
+        measure: [tr(measure), ...extraDimensions].join(' · '),
+        value: municipalityEurostatNumber(row?.value),
+        unit: unitLabel ? tr(unitLabel) : tr('Not available'),
+      };
+    });
+    // The measure repeats the dataset title on every row of a single-measure series: drop the column then.
+    const showMeasure = entries.some((entry) => entry.measure !== title);
+    let tableHtml;
+    let displayedRows = entries.length;
+    if (unitAsRows) {
+      const periods = [...new Set(entries.map((entry) => String(entry.year)))].sort((left, right) => {
+        const leftYear = Number(left);
+        const rightYear = Number(right);
+        return Number.isFinite(leftYear) && Number.isFinite(rightYear)
+          ? leftYear - rightYear
+          : left.localeCompare(right);
+      });
+      const unitRows = new Map();
+      rows.forEach((row) => {
+        const dimensions = row?.dimensions && typeof row.dimensions === 'object' ? row.dimensions : {};
+        const indicator = String(dimensions.indicator || '');
+        const unitCode = String(dimensions.unit || row?.unit || MUNICIPALITY_EUROSTAT_INDICATOR_UNITS[indicator] || '');
+        const unitLabel = MUNICIPALITY_EUROSTAT_UNIT_LABELS[unitCode] || unitCode || tr('Not available');
+        const breakdown = Object.entries(dimensions)
+          .filter(([key, value]) => key !== 'unit' && value !== null && value !== undefined && value !== '')
+          .map(([key, value]) => key === 'indicator'
+            ? tr(MUNICIPALITY_EUROSTAT_INDICATOR_LABELS[String(value)] || String(value))
+            : key === 'nace_code'
+              ? `NACE ${value}`
+              : `${tr(municipalityFieldLabel(key))}: ${value}`);
+        const period = row?.year == null ? tr('Not available') : String(row.year);
+        const rowKey = JSON.stringify([unitCode, ...Object.entries(dimensions).filter(([key]) => key !== 'unit')]);
+        if (!unitRows.has(rowKey)) {
+          unitRows.set(rowKey, { label: [tr(unitLabel), ...breakdown].join(' · '), values: new Map() });
+        }
+        unitRows.get(rowKey).values.set(period, row);
+      });
+      const body = [...unitRows.values()].map((unitRow) => (
+        `<tr><th scope="row">${escapeHtml(unitRow.label)}</th>${periods.map((period) => {
+          const row = unitRow.values.get(period);
+          return `<td class="municipality-eurostat-value">${escapeHtml(row ? municipalityEurostatNumber(row.value) : '—')}</td>`;
+        }).join('')}</tr>`
+      )).join('');
+      displayedRows = unitRows.size;
+      tableHtml = `<div class="municipality-table-wrap"><table class="municipality-data-table"><caption>${escapeHtml(title)}</caption><thead><tr><th scope="col" rowspan="2">${escapeHtml(tr('Unit'))}</th><th scope="colgroup" colspan="${periods.length}">${escapeHtml(tr('Period'))}</th></tr><tr>${periods.map((period) => `<th scope="col">${escapeHtml(period)}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table></div>`;
+    } else {
+      const body = entries.map((entry) => `<tr><th scope="row">${escapeHtml(entry.year)}</th>${showMeasure ? `<td>${escapeHtml(entry.measure)}</td>` : ''}<td class="municipality-eurostat-value">${escapeHtml(entry.value)}</td><td>${escapeHtml(entry.unit)}</td></tr>`).join('');
+      tableHtml = `<div class="municipality-table-wrap"><table class="municipality-data-table"><caption>${escapeHtml(title)}</caption><thead><tr><th scope="col">${escapeHtml(tr('Period'))}</th>${showMeasure ? `<th scope="col">${escapeHtml(tr('Measure'))}</th>` : ''}<th scope="col">${escapeHtml(tr('Value'))}</th><th scope="col">${escapeHtml(tr('Unit'))}</th></tr></thead><tbody>${body}</tbody></table></div>`;
+    }
+    // Collapsed: the section header already lists the series, so a reader opens only what they need.
+    return `<details class="parcel-section municipality-eurostat-dataset"${open ? ' open' : ''}><summary class="parcel-section-header"><span class="parcel-section-title">${escapeHtml(title)}</span><span class="parcel-section-badge">${displayedRows}</span></summary><div class="parcel-section-body">${tableHtml}<p class="map-sheet-source">${escapeHtml(tr('Source'))}: ${escapeHtml(dataset.source_dataset || 'Eurostat')}</p></div></details>`;
+  }
+
+  function municipalityEurostatChartDashboardHtml(areas, idPrefix) {
+    const periods = new Set();
+    const chartGroups = new Map();
+    areas.forEach((area) => {
+      const areaLabel = [area.name, area.nuts_code || area.area_type].filter(Boolean).join(' · ');
+      (Array.isArray(area.datasets) ? area.datasets : []).forEach((dataset) => {
+        (Array.isArray(dataset.rows) ? dataset.rows : []).forEach((row) => {
+          if (row?.year === null || row?.year === undefined || row?.year === '') return;
+          const dimensions = row?.dimensions && typeof row.dimensions === 'object' ? row.dimensions : {};
+          const indicator = String(dimensions.indicator || '');
+          const unitCode = String(dimensions.unit || row?.unit || MUNICIPALITY_EUROSTAT_INDICATOR_UNITS[indicator] || '');
+          const datasetTitle = tr(dataset.title || 'Eurostat series');
+          const groupKey = unitCode || `unknown:${dataset.title || 'Eurostat series'}`;
+          const groupLabel = unitCode
+            ? tr(MUNICIPALITY_EUROSTAT_UNIT_LABELS[unitCode] || unitCode)
+            : datasetTitle;
+          if (!chartGroups.has(groupKey)) chartGroups.set(groupKey, { label: groupLabel, series: new Map() });
+          const group = chartGroups.get(groupKey);
+          const fixedDimensions = Object.entries(dimensions)
+            .filter(([key, value]) => !['unit', 'indicator', 'nace_code', 'nace_r2'].includes(key) && value !== null && value !== undefined && value !== '')
+            .sort(([left], [right]) => left.localeCompare(right));
+          const indicatorLabel = indicator
+            ? tr(MUNICIPALITY_EUROSTAT_INDICATOR_LABELS[indicator] || dataset.title || indicator)
+            : datasetTitle;
+          const dimensionLabels = fixedDimensions.map(([key, value]) => `${tr(municipalityFieldLabel(key))}: ${value}`);
+          const naceDimension = dimensions.nace_code ?? dimensions.nace_r2;
+          const naceLabel = naceDimension === null || naceDimension === undefined || naceDimension === ''
+            ? ''
+            : `NACE ${naceDimension}`;
+          const seriesLabel = [areaLabel, indicatorLabel, ...dimensionLabels, naceLabel].filter(Boolean).join(' · ');
+          const seriesKey = JSON.stringify([
+            areaLabel,
+            dataset.source_dataset || '',
+            dataset.title || '',
+            unitCode,
+            indicator,
+            fixedDimensions,
+            naceDimension ?? '',
+          ]);
+          if (!group.series.has(seriesKey)) {
+            group.series.set(seriesKey, { label: seriesLabel, values: new Map() });
+          }
+          const period = String(row.year);
+          periods.add(period);
+          group.series.get(seriesKey).values.set(period, row);
+        });
+      });
+    });
+    const sortedPeriods = [...periods].sort((left, right) => {
+      const leftYear = Number(left);
+      const rightYear = Number(right);
+      return Number.isFinite(leftYear) && Number.isFinite(rightYear)
+        ? leftYear - rightYear
+        : left.localeCompare(right);
+    });
+    const groupsWithSeries = new Map([...chartGroups].map(([key, group]) => (
+      [key, { ...group, series: [...group.series.values()] }]
+    )));
+    return municipalityEurostatChartsHtml(groupsWithSeries, sortedPeriods, idPrefix);
+  }
+
+  function municipalityEurostatHtml(result, unitType = 'municipality') {
+    if (!result?.available) return `<p class="map-sheet-empty">${escapeHtml(tr('Eurostat data are temporarily unavailable.'))}</p>`;
+    const areas = Array.isArray(result.areas) ? result.areas : [];
+    const renderedAreas = areas.map((area) => {
+      const datasets = (Array.isArray(area.datasets) ? area.datasets : [])
+        .map((dataset, index) => municipalityEurostatDatasetHtml(dataset, {
+          unitAsRows: unitType === 'region',
+          open: index === 0,
+        }))
+        .filter(Boolean);
+      if (!datasets.length) return '';
+      const areaType = tr(area.area_type || 'Administrative area');
+      const level = tr(area.level_label || 'NUTS area');
+      return `<section class="municipality-eurostat-area"><h4 class="municipality-eurostat-area-title"><span>${escapeHtml(areaType)} · ${escapeHtml(level)}</span><small>${escapeHtml(area.name || '')}${area.name ? ' · ' : ''}${escapeHtml(area.nuts_code || '')}</small></h4>${datasets.join('')}</section>`;
+    }).filter(Boolean).join('');
+    if (!renderedAreas) return `<p class="map-sheet-empty">${escapeHtml(tr('No Eurostat series are available for the associated province or region.'))}</p>`;
+    const viewId = `municipality-eurostat-view-${++municipalityEurostatViewSequence}`;
+    const tableTabId = `${viewId}-table-tab`;
+    const chartsTabId = `${viewId}-charts-tab`;
+    const chartsHtml = municipalityEurostatChartDashboardHtml(areas, `${viewId}-charts`);
+    return `<div class="municipality-eurostat-view-switcher"><div class="map-workbench-tabs municipality-eurostat-tabs" role="tablist" aria-label="${escapeHtml(tr('Eurostat views'))}" data-eurostat-tablist><button type="button" role="tab" id="${tableTabId}" aria-selected="true" aria-controls="${viewId}-table-panel">${escapeHtml(tr('Table'))}</button><button type="button" role="tab" id="${chartsTabId}" aria-selected="false" aria-controls="${viewId}-charts-panel" tabindex="-1">${escapeHtml(tr('Charts'))}</button></div><div class="municipality-eurostat-tabpanel" id="${viewId}-table-panel" role="tabpanel" aria-labelledby="${tableTabId}" tabindex="0">${renderedAreas}</div><div class="municipality-eurostat-tabpanel" id="${viewId}-charts-panel" role="tabpanel" aria-labelledby="${chartsTabId}" tabindex="0" hidden>${chartsHtml}</div></div>`;
+  }
+
+  const ADMINISTRATIVE_LOADING = (label) => `<div class="map-sheet-loading" role="status"><span class="map-sheet-loading-bar"></span><span class="visually-hidden">${escapeHtml(label)}</span></div>`;
+
+  function municipalityEurostatSection(unitType = 'municipality') {
+    const scopeNote = unitType === 'municipality'
+      ? tr('These statistics describe the associated NUTS 1, NUTS 2 or NUTS 3 area, not the municipality itself.')
+      : tr('Only Eurostat series available for the selected area are shown.');
+    return {
+      id: 'eurostat',
+      icon: 'chart-line',
+      title: tr('Eurostat'),
+      badgeId: 'municipalityEurostatBadge',
+      // The selected area's own statistics are the sheet's main content; for a municipality they are context.
+      open: unitType !== 'municipality',
+      body: `<p class="map-muted municipality-eurostat-scope-note">${escapeHtml(scopeNote)}</p><div id="municipalityEurostatContent">${ADMINISTRATIVE_LOADING(tr('Loading Eurostat details…'))}</div>`,
+    };
+  }
+
+  function municipalityQualityOfLifeSection() {
+    const qualitySection = window.ParcelPanel?.sections?.find((section) => section.id === 'quality');
+    return {
+      id: 'quality',
+      icon: qualitySection?.icon || 'leaf',
+      title: tr(qualitySection?.title || 'Quality of life'),
+      badgeId: 'municipalityQualityOfLifeBadge',
+      open: true,
+      body: `<p class="map-muted municipality-eurostat-scope-note">${escapeHtml(tr('ISTAT BES quality-of-life indicators are published at province level.'))}</p><div id="municipalityQualityOfLifeContent">${ADMINISTRATIVE_LOADING(tr('Loading quality-of-life indicators…'))}</div>`,
+    };
+  }
+
+  // Latest population and the NUTS code of the selected province or region, from its Eurostat series.
+  function applyAdministrativeEurostatSummary(unitType, result) {
+    const areas = Array.isArray(result?.areas) ? result.areas : [];
+    const seriesCount = areas.reduce((total, area) => total + (Array.isArray(area.datasets) ? area.datasets.filter((dataset) => Array.isArray(dataset.rows) && dataset.rows.length).length : 0), 0);
+    const badge = $('municipalityEurostatBadge');
+    if (badge) { badge.textContent = seriesCount ? String(seriesCount) : ''; badge.hidden = !seriesCount; }
+    if (unitType === 'municipality') return;
+    const area = areas.find((entry) => String(entry.area_type || '').toLowerCase() === unitType) || areas[0];
+    if (!area) return;
+    if (area.nuts_code) setAdministrativeStat('nuts', area.nuts_code);
+    const population = (Array.isArray(area.datasets) ? area.datasets : [])
+      .find((dataset) => /^population/i.test(String(dataset.title || '')) && Array.isArray(dataset.rows) && dataset.rows.length);
+    const latest = population && population.rows
+      .filter((row) => Number.isFinite(Number(row?.value)))
+      .sort((left, right) => Number(left.year) - Number(right.year))
+      .pop();
+    if (latest) setAdministrativeStat('population', `${Number(latest.value).toLocaleString(numberLocale())} · ${latest.year}`);
   }
 
   function renderMunicipalityDetails(details) {
     const content = $('municipalityDetailContent');
-    const sections = [
-      municipalityDetailSection('ISTAT municipality record', details?.municipality),
-      municipalityDetailSection('Province', details?.province),
-      municipalityDetailSection('Region', details?.region),
-      municipalityDetailSection('Geographic area', details?.geographic_area),
-    ].filter(Boolean);
+    const sections = [];
+    const nav = [];
+    const add = (section, label) => { sections.push(administrativeSection(section)); nav.push({ id: section.id, label }); };
+    const recordHtml = municipalityRecordHtml(details?.municipality, MUNICIPALITY_STRIP_FIELDS);
+    if (recordHtml) add({ id: 'record', icon: 'id-card', title: tr('ISTAT municipality record'), body: recordHtml }, tr('Record'));
+    const hierarchy = municipalityHierarchyHtml(details);
+    if (hierarchy.html) add({ id: 'hierarchy', icon: 'sitemap', title: tr('Administrative hierarchy'), badge: hierarchy.count, open: false, body: hierarchy.html }, tr('Hierarchy'));
     const population = Array.isArray(details?.population_history) ? details.population_history : [];
     if (population.length) {
       const keys = [...new Set(population.flatMap((row) => Object.keys(row || {})))].filter((key) => !isHiddenMunicipalityGeometryField(key));
       const headings = keys.map((key) => `<th scope="col">${escapeHtml(municipalityFieldLabel(key))}</th>`).join('');
-      const rows = population.map((record) => `<tr>${keys.map((key) => {
-        return `<td>${municipalityValueHtml(key, record?.[key])}</td>`;
-      }).join('')}</tr>`).join('');
-      sections.push(`<details class="parcel-section"><summary class="parcel-section-header"><span class="parcel-section-title">${escapeHtml(tr('Population history'))}</span><span class="parcel-section-badge">${population.length}</span></summary><div class="parcel-section-body"><div class="municipality-table-wrap"><table class="municipality-data-table"><thead><tr>${headings}</tr></thead><tbody>${rows}</tbody></table></div></div></details>`);
+      const rows = population.map((record) => `<tr>${keys.map((key) => `<td>${municipalityValueHtml(key, record?.[key])}</td>`).join('')}</tr>`).join('');
+      add({ id: 'population', icon: 'users', title: tr('Population history'), badge: population.length, open: false, body: `<div class="municipality-table-wrap"><table class="municipality-data-table"><thead><tr>${headings}</tr></thead><tbody>${rows}</tbody></table></div>` }, tr('Population'));
     }
-    if (details?.source) sections.push(`<p class="map-sheet-source"><i class="fas fa-database" aria-hidden="true"></i><span>${escapeHtml(tr('Source'))}: ${escapeHtml(details.source)}</span></p>`);
-    content.innerHTML = sections.length
-      ? municipalitySummaryHtml(details) + sections.join('')
-      : `<p class="map-sheet-empty">${escapeHtml(tr('No municipality details are available.'))}</p>`;
+    add(municipalityEurostatSection('municipality'), tr('Eurostat'));
+    const empty = recordHtml || hierarchy.html || population.length ? '' : `<p class="map-sheet-empty">${escapeHtml(tr('No municipality details are available.'))}</p>`;
+    const source = details?.source ? `<p class="map-sheet-source"><i class="fas fa-database" aria-hidden="true"></i><span>${escapeHtml(tr('Source'))}: ${escapeHtml(details.source)}</span></p>` : '';
+    setAdministrativeStrip(municipalityStripCells(details));
+    setAdministrativeNav(nav);
+    content.innerHTML = empty + sections.join('') + source;
     content.scrollTop = 0;
   }
 
@@ -1794,12 +2426,20 @@
     state.municipalityDetailsRequest += 1;
     state.municipalityDetailsController?.abort();
     state.municipalityDetailsController = null;
-    state.selectedMunicipalityCode = null;
+    state.municipalityEurostatController?.abort();
+    state.municipalityEurostatController = null;
+    state.municipalityQualityOfLifeController?.abort();
+    state.municipalityQualityOfLifeController = null;
+    state.selectedAdministrativeAreaKey = null;
+    setAdministrativeStrip([]);
+    setAdministrativeNav([]);
     const panel = $('municipalityDetailPanel');
     if (panel) panel.hidden = true;
   }
 
   async function loadMunicipalityDetails(feature) {
+    closeCadastralSheetDetails();
+    closeCadastralUrbanSectionDetails();
     closeMaritimeConcessionDetails();
     const properties = feature?.properties || {};
     if (properties.unit_type !== 'municipality') return;
@@ -1810,10 +2450,13 @@
     if (!Number.isInteger(code) || code <= 0 || code > 999999) return;
 
     state.municipalityDetailsController?.abort();
+    state.municipalityEurostatController?.abort();
+    state.municipalityQualityOfLifeController?.abort();
     const controller = new AbortController();
     const requestId = ++state.municipalityDetailsRequest;
     state.municipalityDetailsController = controller;
-    state.selectedMunicipalityCode = String(code);
+    const areaKey = `municipality:${code}`;
+    state.selectedAdministrativeAreaKey = areaKey;
     state.selectedReference = null;
     state.selectedFeature = feature;
     clearSelectedAuctionSaleMarker();
@@ -1827,8 +2470,9 @@
     if ($('sisterBuildingsCount')) $('sisterBuildingsCount').textContent = '';
     $('directParcelPanel').hidden = true;
     $('municipalityDetailPanel').hidden = false;
-    $('municipalityDetailTitle').textContent = properties.canonical_name || tr('Municipality details');
-    $('municipalityDetailSubtitle').textContent = `${tr('ISTAT code')}: ${code}`;
+    setAdministrativeHeader('municipality', properties.canonical_name || tr('Municipality details'), code);
+    setAdministrativeStrip([]);
+    setAdministrativeNav([]);
     $('municipalityDetailContent').innerHTML = `<div class="map-sheet-loading" role="status"><span class="map-sheet-loading-bar"></span><span class="map-sheet-loading-bar"></span><span class="map-sheet-loading-bar"></span><span class="visually-hidden">${escapeHtml(tr('Loading municipality details…'))}</span></div>`;
     writeUrl();
 
@@ -1839,8 +2483,9 @@
         ? tr('No ISTAT municipality record was found.')
         : tr('Municipality details are temporarily unavailable.'));
       const details = await response.json();
-      if (requestId !== state.municipalityDetailsRequest || state.selectedMunicipalityCode !== String(code)) return;
+      if (requestId !== state.municipalityDetailsRequest || state.selectedAdministrativeAreaKey !== areaKey) return;
       renderMunicipalityDetails(details);
+      void loadAdministrativeAreaEurostatDetails('municipality', code, requestId);
       mapStatus(tr('Municipality selected'));
     } catch (error) {
       if (error.name === 'AbortError' || requestId !== state.municipalityDetailsRequest) return;
@@ -1849,6 +2494,136 @@
     } finally {
       task.finish();
       if (state.municipalityDetailsController === controller) state.municipalityDetailsController = null;
+    }
+  }
+
+  async function loadAdministrativeAreaDetails(feature) {
+    const properties = feature?.properties || {};
+    const unitType = String(properties.unit_type || '');
+    if (!['province', 'region', 'geographic_area'].includes(unitType)) return;
+    const featureId = Number(feature?.id ?? properties.id);
+    const rawCode = properties.geo_unit_id
+      ?? (unitType === 'province' && featureId >= 2000000000 && featureId < 2001000000 ? featureId - 2000000000
+        : unitType === 'region' && featureId >= 1000000000 && featureId < 1001000000 ? featureId - 1000000000
+          : unitType === 'geographic_area' && featureId >= 4000000000 && featureId < 4001000000 ? featureId - 4000000000
+            : null);
+    const code = Number(rawCode);
+    if (!Number.isInteger(code) || code <= 0 || code > 999999) return;
+
+    closeCadastralSheetDetails();
+    closeCadastralUrbanSectionDetails();
+    closeMaritimeConcessionDetails();
+    closeMunicipalityDetails();
+    const requestId = ++state.municipalityDetailsRequest;
+    const areaKey = `${unitType}:${code}`;
+    const controller = new AbortController();
+    state.municipalityDetailsController = controller;
+    state.selectedAdministrativeAreaKey = areaKey;
+    state.selectedReference = null;
+    state.selectedFeature = feature;
+    clearSelectedAuctionSaleMarker();
+    window.ParcelPanel?.clear();
+    if (state.map?.getSource('selected-parcel')) state.map.getSource('selected-parcel').setData(emptyFeatureCollection());
+    state.map?.getSource('adjacent-parcels')?.setData(emptyFeatureCollection());
+    renderSelectedGeometry(feature);
+    sisterBuildingsOverlay.fetchToken += 1;
+    sisterBuildingsOverlay.records = [];
+    state.map?.getSource('sister-building-parcel')?.setData(emptyFeatureCollection());
+    if ($('sisterBuildingsCount')) $('sisterBuildingsCount').textContent = '';
+    $('directParcelPanel').hidden = true;
+    $('municipalityDetailPanel').hidden = false;
+    setAdministrativeHeader(unitType, properties.canonical_name || tr('Administrative area details'), code);
+    const areaSections = [municipalityEurostatSection(unitType)];
+    if (unitType === 'province') areaSections.push(municipalityQualityOfLifeSection());
+    setAdministrativeStrip([
+      administrativeStripCell(tr('ISTAT code'), code),
+      ...(unitType === 'geographic_area' ? [] : [
+        administrativeStripCell(tr('NUTS code'), null, { key: 'nuts' }),
+        administrativeStripCell(tr('Residents'), null, { key: 'population' }),
+      ]),
+    ]);
+    setAdministrativeNav(areaSections.map((section) => ({ id: section.id, label: section.title })));
+    $('municipalityDetailContent').innerHTML = areaSections.map(administrativeSection).join('');
+    writeUrl();
+
+    void loadAdministrativeAreaEurostatDetails(unitType, code, requestId);
+    if (unitType === 'province') void loadProvinceQualityOfLifeDetails(code, requestId);
+    if (state.municipalityDetailsController === controller) state.municipalityDetailsController = null;
+  }
+
+  async function loadAdministrativeAreaEurostatDetails(unitType, code, requestId) {
+    state.municipalityEurostatController?.abort();
+    const controller = new AbortController();
+    state.municipalityEurostatController = controller;
+    const content = $('municipalityEurostatContent');
+    if (!content) return;
+    try {
+      const response = await fetch(`/api/v1/enrichment/administrative-area/${encodeURIComponent(unitType)}/${encodeURIComponent(code)}/eurostat`, { signal: controller.signal });
+      if (!response.ok) throw new Error(tr('Eurostat data are temporarily unavailable.'));
+      const result = await response.json();
+      if (requestId !== state.municipalityDetailsRequest || state.selectedAdministrativeAreaKey !== `${unitType}:${code}`) return;
+      content.innerHTML = municipalityEurostatHtml(result, unitType);
+      mountMunicipalityEurostatTabs(content);
+      mountMunicipalityEurostatSeriesControls(content);
+      applyAdministrativeEurostatSummary(unitType, result);
+    } catch (error) {
+      if (error.name === 'AbortError' || requestId !== state.municipalityDetailsRequest) return;
+      const target = $('municipalityEurostatContent');
+      if (target) {
+        target.innerHTML = `<div class="map-sheet-notice" role="status"><span>${escapeHtml(error.message || tr('Eurostat data are temporarily unavailable.'))}</span><button type="button" class="secondary-action compact">${escapeHtml(tr('Retry'))}</button></div>`;
+        target.querySelector('button')?.addEventListener('click', () => {
+          target.innerHTML = ADMINISTRATIVE_LOADING(tr('Loading Eurostat details…'));
+          void loadAdministrativeAreaEurostatDetails(unitType, code, requestId);
+        }, { once: true });
+      }
+    } finally {
+      if (state.municipalityEurostatController === controller) state.municipalityEurostatController = null;
+    }
+  }
+
+  async function loadProvinceQualityOfLifeDetails(istatCode, requestId) {
+    const content = $('municipalityQualityOfLifeContent');
+    if (!content) return;
+    state.municipalityQualityOfLifeController?.abort();
+    const controller = new AbortController();
+    state.municipalityQualityOfLifeController = controller;
+    try {
+      const qualitySection = window.ParcelPanel?.sections?.find((section) => section.id === 'quality');
+      if (!qualitySection) throw new Error(tr('Quality-of-life indicators are not available.'));
+      const base = `/api/v1/enrichment/quality-of-life/province/istat/${encodeURIComponent(istatCode)}`;
+      const data = await qualitySection.load({
+        cadastralCode: null,
+        qualityOfLifeUrl: base,
+        fetchJson: async (url) => {
+          const response = await fetch(url, { signal: controller.signal });
+          return {
+            ok: response.ok,
+            status: response.status,
+            data: response.ok ? await response.json() : null,
+          };
+        },
+      });
+      if (requestId !== state.municipalityDetailsRequest
+        || state.selectedAdministrativeAreaKey !== `province:${istatCode}`) return;
+      const rendered = qualitySection.render(data, { tr });
+      const source = rendered?.meta?.source
+        ? `<p class="map-sheet-source"><i class="fas fa-database" aria-hidden="true"></i><span>${escapeHtml(tr('Source'))}: ${escapeHtml(rendered.meta.source)}</span></p>`
+        : '';
+      content.innerHTML = `${rendered?.body || ''}${source}`;
+      const badge = $('municipalityQualityOfLifeBadge');
+      if (badge) {
+        badge.textContent = rendered?.badge ? Number(rendered.badge).toLocaleString(numberLocale()) : '';
+        badge.hidden = !rendered?.badge;
+      }
+      qualitySection.bind?.(content);
+    } catch (error) {
+      if (error.name === 'AbortError') return;
+      if (requestId !== state.municipalityDetailsRequest
+        || state.selectedAdministrativeAreaKey !== `province:${istatCode}`) return;
+      const target = $('municipalityQualityOfLifeContent');
+      if (target) target.innerHTML = `<p class="map-sheet-empty">${escapeHtml(error.message || tr('Quality-of-life indicators are not available.'))}</p>`;
+    } finally {
+      if (state.municipalityQualityOfLifeController === controller) state.municipalityQualityOfLifeController = null;
     }
   }
 
@@ -1874,22 +2649,57 @@
     return escapeHtml(String(value));
   }
 
-  function maritimeRecordFieldsHtml(record) {
-    if (!record || typeof record !== 'object') return '';
-    const fields = Object.entries(record).map(([key, value]) => (
+  // Identifiers, hashes, CRS and QA blobs: kept, but folded into "Technical details".
+  const MARITIME_TECHNICAL_FIELD = /^(?:row_id|id|.+_ids?|source_feature_key|layer_kind|crs_.+|geometry_(?:valid|repaired).*|.*(?:sha256|hash|checksum).*|.+_json|qa_.+|loaded_at.*|.+_utc|package_.+)$/i;
+  // Shown as summary tiles (or in the header) instead of repeating them as fact tiles.
+  const MARITIME_SUMMARY_FIELDS = new Set(['geometry_type', 'source_release']);
+
+  function maritimeFactsHtml(entries, record) {
+    const rows = entries.map(([key, value]) => (
       `<div><dt>${escapeHtml(municipalityFieldLabel(key))}</dt><dd>${maritimeRecordValueHtml(key, value, record)}</dd></div>`
     )).join('');
-    return fields ? `<dl class="parcel-rows maritime-record-fields">${fields}</dl>` : '';
+    return rows ? `<dl class="map-sheet-facts">${rows}</dl>` : '';
   }
 
-  function renderMaritimeConcessionDetails(details) {
+  function maritimeRecordFieldsHtml(record, omit = new Set()) {
+    if (!record || typeof record !== 'object') return '';
+    const entries = Object.entries(record).filter(([key, value]) => (
+      !omit.has(key) && !isServerFileField(key, value) && value !== null && value !== undefined && value !== ''
+    ));
+    const technical = entries.filter(([key]) => MARITIME_TECHNICAL_FIELD.test(key));
+    const technicalHtml = technical.length
+      ? `<details class="map-sheet-technical"><summary>${escapeHtml(tr('Technical details'))}</summary>${maritimeFactsHtml(technical, record)}</details>`
+      : '';
+    return maritimeFactsHtml(entries.filter(([key]) => !MARITIME_TECHNICAL_FIELD.test(key)), record) + technicalHtml;
+  }
+
+  function maritimeSummaryHtml(properties, related) {
+    const tiles = [];
+    if (properties.geometry_type) tiles.push([tr('Geometry'), String(properties.geometry_type), '']);
+    const release = properties.source_release || properties.snapshot_id;
+    if (release) tiles.push([tr('Source release'), String(release), '']);
+    if (related) {
+      const count = (name) => (Array.isArray(related[name]) ? related[name].length : 0);
+      tiles.push([tr('Documents'), String(count('online_documents') + count('online_document_matches')), '']);
+      tiles.push([tr('Linked parcels'), String(count('cadastral_parcels')), '']);
+    }
+    if (!tiles.length) return '';
+    return `<div class="map-sheet-summary"><div class="map-sheet-stats">${tiles.map(([label, value]) => (
+      `<div class="map-sheet-stat"><span class="map-sheet-stat-label">${escapeHtml(label)}</span><strong class="map-sheet-stat-value">${escapeHtml(value)}</strong></div>`
+    )).join('')}</div></div>`;
+  }
+
+  function renderMaritimeConcessionDetails(details, { pending = false } = {}) {
     const content = $('maritimeConcessionContent');
     if (!content) return;
     const properties = details?.properties || {};
+    const related = details?.related || {};
     const sections = [];
-    const primary = maritimeRecordFieldsHtml(properties);
+    const summary = maritimeSummaryHtml(properties, pending ? null : related);
+    if (summary) sections.push(summary);
+    const primary = maritimeRecordFieldsHtml(properties, MARITIME_SUMMARY_FIELDS);
     if (primary) {
-      sections.push(`<section class="parcel-section maritime-record-section"><h3 class="parcel-section-title">${escapeHtml(tr('Concession attributes'))}</h3>${primary}</section>`);
+      sections.push(`<section class="parcel-section maritime-record-section"><h3 class="parcel-section-title map-sheet-section-title">${escapeHtml(tr('Concession attributes'))}</h3>${primary}</section>`);
     }
     const relatedLabels = {
       source_concession: 'Source concession record',
@@ -1907,16 +2717,24 @@
       resources: 'Source resources',
       regional_source_audits: 'Regional source audits',
     };
-    Object.entries(details?.related || {}).forEach(([name, records]) => {
+    // Sections without records collapse into one line instead of a stack of empty accordions.
+    const emptyLabels = [];
+    Object.entries(related).forEach(([name, records]) => {
       if (!Array.isArray(records)) return;
+      const label = tr(relatedLabels[name] || municipalityFieldLabel(name));
+      if (!records.length) { emptyLabels.push(label); return; }
       const recordMarkup = records.map((record, index) => (
         `<article class="maritime-related-record"><h4>${escapeHtml(tr('Record {number}', { number: index + 1 }))}</h4>${maritimeRecordFieldsHtml(record)}</article>`
       )).join('');
-      const label = relatedLabels[name] || municipalityFieldLabel(name);
-      sections.push(`<details class="parcel-section maritime-related-section"><summary class="parcel-section-header"><span class="parcel-section-title">${escapeHtml(tr(label))}</span><span class="parcel-section-badge">${records.length}</span></summary><div class="parcel-section-body">${recordMarkup || `<p class="maritime-empty-related">${escapeHtml(tr('No linked records.'))}</p>`}</div></details>`);
+      sections.push(`<details class="parcel-section maritime-related-section"><summary class="parcel-section-header"><span class="parcel-section-title">${escapeHtml(label)}</span><span class="parcel-section-badge">${records.length}</span></summary><div class="parcel-section-body">${recordMarkup}</div></details>`);
     });
-    const source = details?.source || 'aecs4u-stats.agenziademanio';
-    sections.push(`<p class="maritime-source"><i class="fas fa-database" aria-hidden="true"></i><span>${escapeHtml(tr('Source'))}: ${escapeHtml(source)}</span></p>`);
+    if (!pending && emptyLabels.length) {
+      sections.push(`<p class="map-sheet-note">${escapeHtml(tr('No linked records for'))}: ${escapeHtml(emptyLabels.join(', '))}.</p>`);
+    }
+    if (!pending) {
+      const source = details?.source || 'aecs4u-stats.agenziademanio';
+      sections.push(`<p class="map-sheet-source"><i class="fas fa-database" aria-hidden="true"></i><span>${escapeHtml(tr('Source'))}: ${escapeHtml(source)}</span></p>`);
+    }
     content.innerHTML = sections.length
       ? sections.join('')
       : `<p class="map-sheet-empty">${escapeHtml(tr('No concession details are available.'))}</p>`;
@@ -1947,6 +2765,8 @@
     const requestId = ++state.maritimeDetailsRequest;
     state.maritimeDetailsController = controller;
     state.selectedMaritimeRowId = String(featureId);
+    closeCadastralSheetDetails();
+    closeCadastralUrbanSectionDetails();
     closeMunicipalityDetails();
     state.selectedReference = null;
     state.selectedFeature = null;
@@ -1962,13 +2782,13 @@
     if (feature?.geometry) renderSelectedGeometry(feature);
     const identity = properties.admin_label || properties.idconc || `${tr('Feature')} ${featureId}`;
     $('maritimeConcessionTitle').textContent = identity;
-    $('maritimeConcessionSubtitle').textContent = [
-      properties.idconc ? `${tr('Concession ID')}: ${properties.idconc}` : '',
-      properties.geometry_type || properties.layer_kind || '',
-    ].filter(Boolean).join(' · ');
-    renderMaritimeConcessionDetails({ properties, related: {} });
+    // The identifier is already the title unless an administrative label took its place.
+    $('maritimeConcessionSubtitle').textContent = properties.admin_label && properties.idconc
+      ? `${tr('Concession ID')}: ${properties.idconc}`
+      : '';
+    renderMaritimeConcessionDetails({ properties, related: {} }, { pending: true });
     const content = $('maritimeConcessionContent');
-    content.insertAdjacentHTML('beforeend', `<p class="maritime-loading" role="status">${escapeHtml(tr('Loading concession details…'))}</p>`);
+    content.insertAdjacentHTML('beforeend', `<div class="map-sheet-loading maritime-loading" role="status"><span class="map-sheet-loading-bar"></span><span class="map-sheet-loading-bar"></span><span class="visually-hidden">${escapeHtml(tr('Loading concession details…'))}</span></div>`);
     writeUrl();
     updateParcelZoomAffordance();
 
@@ -1987,7 +2807,8 @@
       if (error.name === 'AbortError' || requestId !== state.maritimeDetailsRequest) return;
       const loading = content.querySelector('.maritime-loading');
       if (loading) loading.remove();
-      content.insertAdjacentHTML('beforeend', `<p class="maritime-error" role="status">${escapeHtml(error.message || tr('Concession details are temporarily unavailable.'))}</p>`);
+      content.insertAdjacentHTML('beforeend', `<div class="map-sheet-notice maritime-error" role="status"><span>${escapeHtml(error.message || tr('Concession details are temporarily unavailable.'))}</span><button type="button" class="secondary-action compact">${escapeHtml(tr('Retry'))}</button></div>`);
+      content.querySelector('.maritime-error button')?.addEventListener('click', () => { void loadMaritimeConcessionDetails(layer, feature); });
       mapStatus(error.message || tr('Concession details are temporarily unavailable.'), true);
     } finally {
       task.finish();
@@ -2471,6 +3292,14 @@
   }
 
   function showOverlayFeature(layer, feature, lngLat) {
+    if (layer.id === 'cadastral-sheets') {
+      loadCadastralSheetDetails(feature);
+      return;
+    }
+    if (layer.id === 'urban-sections') {
+      loadCadastralUrbanSectionDetails(feature);
+      return;
+    }
     if (layer.id === 'maritime-concessions') {
       void loadMaritimeConcessionDetails(layer, feature);
       return;
@@ -2530,7 +3359,7 @@
         : '';
       const heading = concession
         ? `${tr('Maritime concession')}${displayProperties.idconc ? ` · ${displayProperties.idconc}` : ''}`
-        : layer.id === 'geo-boundaries' && properties.canonical_name
+        : layer.group === 'administrative-boundaries' && properties.canonical_name
           ? `${properties.unit_type ? `${properties.unit_type}: ` : ''}${properties.canonical_name}`
           : layer.title;
       popup.setHTML(`<strong>${escapeHtml(heading)}</strong><table class="parcel-detail-table"><tbody>${rows || '<tr><td>No feature details</td></tr>'}</tbody></table>${relatedSummary}${related}${documentHint}<small><a href="/data-sources">${escapeHtml(tr('Data sources'))}</a></small>`);
@@ -2572,6 +3401,7 @@
   async function loadParcelByReference(reference, flyTo = true, featureId = null) {
     if (!reference) return null;
     closeMunicipalityDetails();
+    closeCadastralUrbanSectionDetails();
     mapStatus('Loading parcel…');
     const task = beginMapProgress('parcel', 'Loading parcel…');
     try {
@@ -6111,6 +6941,16 @@
     window.ParcelPanel?.mount({ content: $('directParcelContent'), nav: $('parcelSectionNav'), strip: $('parcelStatStrip'), tr });
     $('parcelCloseButton').addEventListener('click', () => { $('directParcelPanel').hidden = true; updateParcelZoomAffordance(); mapStatus(''); });
     $('municipalityDetailClose')?.addEventListener('click', () => { closeMunicipalityDetails(); mapStatus(''); });
+    $('cadastralSheetClose')?.addEventListener('click', () => {
+      closeCadastralSheetDetails();
+      updateParcelZoomAffordance();
+      mapStatus('');
+    });
+    $('cadastralUrbanSectionClose')?.addEventListener('click', () => {
+      closeCadastralUrbanSectionDetails();
+      updateParcelZoomAffordance();
+      mapStatus('');
+    });
     $('maritimeConcessionClose')?.addEventListener('click', () => {
       closeMaritimeConcessionDetails();
       updateParcelZoomAffordance();
@@ -6538,6 +7378,8 @@
     state.map.on('click', (event) => {
       closeLayerStack();
       closeMunicipalityDetails();
+      closeCadastralSheetDetails();
+      closeCadastralUrbanSectionDetails();
       closeMaritimeConcessionDetails();
       updateParcelZoomAffordance();
       if (state.sisterBatch.mode) {
@@ -6577,11 +7419,39 @@
         alsoHere();
         return;
       }
-      const administrativeFeatures = state.map.getLayer('fill-geo-boundaries')
-        ? state.map.queryRenderedFeatures(event.point, { layers: ['fill-geo-boundaries'] }) : [];
-      const municipalityFeature = administrativeFeatures.find((feature) => feature.properties?.unit_type === 'municipality');
-      if (municipalityFeature) {
-        void loadMunicipalityDetails(municipalityFeature);
+      const cadastralEntityStack = stackedOverlayFeatures(event.point)
+        .filter((entry) => ['cadastral-sheets', 'urban-sections'].includes(entry.layer.id));
+      const urbanSectionEntry = cadastralEntityStack.find((entry) => entry.layer.id === 'urban-sections');
+      if (urbanSectionEntry) {
+        if (cadastralEntityStack.length > 1) {
+          showLayerStack(cadastralEntityStack, event.lngLat, tr('Cadastral features at this point'));
+        } else {
+          showOverlayFeature(urbanSectionEntry.layer, urbanSectionEntry.feature, event.lngLat);
+        }
+        return;
+      }
+      const cadastralSheetFeatures = state.map.getLayer('fill-cadastral-sheets')
+        ? state.map.queryRenderedFeatures(event.point, { layers: ['fill-cadastral-sheets'] }) : [];
+      if (cadastralSheetFeatures[0]) {
+        loadCadastralSheetDetails(cadastralSheetFeatures[0]);
+        return;
+      }
+      const administrativeLayers = state.catalog
+        .filter((layer) => layer.group === 'administrative-boundaries')
+        .map((layer) => `fill-${layer.id}`)
+        .filter((layerId) => state.map.getLayer(layerId));
+      const administrativeFeatures = administrativeLayers.length
+        ? state.map.queryRenderedFeatures(event.point, { layers: administrativeLayers }) : [];
+      const unitPriority = { municipality: 0, province: 1, region: 2, geographic_area: 3 };
+      const administrativeFeature = administrativeFeatures
+        .filter((feature) => unitPriority[feature.properties?.unit_type] !== undefined)
+        .sort((left, right) => unitPriority[left.properties.unit_type] - unitPriority[right.properties.unit_type])[0];
+      if (administrativeFeature) {
+        if (administrativeFeature.properties?.unit_type === 'municipality') {
+          void loadMunicipalityDetails(administrativeFeature);
+        } else {
+          void loadAdministrativeAreaDetails(administrativeFeature);
+        }
         return;
       }
       const overlayStack = stackedOverlayFeatures(event.point);

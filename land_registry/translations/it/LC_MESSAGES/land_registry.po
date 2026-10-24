@@ -1227,6 +1227,192 @@ msgstr "Fuori copertura: {note}"
 msgid "Administrative boundaries"
 msgstr "Confini amministrativi"
 
+msgid "Geo Areas"
+msgstr "Ripartizioni geografiche"
+
+msgid "Geographic area"
+msgstr "Ripartizione geografica"
+
+msgid "Administrative area details"
+msgstr "Dettagli dell’area amministrativa"
+
+msgid "Administrative area actions"
+msgstr "Azioni dell’area amministrativa"
+
+msgid "Close administrative area details"
+msgstr "Chiudi i dettagli dell’area amministrativa"
+
+msgid "Selected cadastral sheet"
+msgstr "Foglio catastale selezionato"
+
+msgid "Cadastral sheet details"
+msgstr "Dettagli del foglio catastale"
+
+msgid "Cadastral sheet actions"
+msgstr "Azioni del foglio catastale"
+
+msgid "Close cadastral sheet details"
+msgstr "Chiudi i dettagli del foglio catastale"
+
+msgid "Cadastral sheet information"
+msgstr "Informazioni catastali del foglio"
+
+msgid "No cadastral sheet details are available."
+msgstr "Non sono disponibili dettagli per questo foglio catastale."
+
+msgid "Cadastral sheet selected"
+msgstr "Foglio catastale selezionato"
+
+msgid "Selected urban section"
+msgstr "Sezione urbana selezionata"
+
+msgid "Urban section details"
+msgstr "Dettagli della sezione urbana"
+
+msgid "Urban section actions"
+msgstr "Azioni della sezione urbana"
+
+msgid "Close urban section details"
+msgstr "Chiudi i dettagli della sezione urbana"
+
+msgid "Urban section information"
+msgstr "Informazioni sulla sezione urbana"
+
+msgid "No urban section details are available."
+msgstr "Non sono disponibili dettagli per questa sezione urbana."
+
+msgid "Urban section selected"
+msgstr "Sezione urbana selezionata"
+
+msgid "National cadastral zoning reference"
+msgstr "Riferimento nazionale della zona catastale"
+
+msgid "Municipality code"
+msgstr "Codice del comune"
+
+msgid "Map feature ID"
+msgstr "ID dell'elemento cartografico"
+
+msgid "Cadastral features at this point"
+msgstr "Elementi catastali in questo punto"
+
+msgid "Only Eurostat series available for the selected area are shown."
+msgstr "Sono mostrate solo le serie Eurostat disponibili per l’area selezionata."
+
+msgid "These statistics describe the associated NUTS 1, NUTS 2 or NUTS 3 area, not the municipality itself."
+msgstr "Queste statistiche descrivono l’area NUTS 1, NUTS 2 o NUTS 3 di riferimento, non il comune stesso."
+
+msgid "No Eurostat series are available for the associated province or region."
+msgstr "Non sono disponibili serie Eurostat per la provincia o la regione di riferimento."
+
+msgid "Eurostat data are temporarily unavailable."
+msgstr "I dati Eurostat non sono temporaneamente disponibili."
+
+msgid "Eurostat views"
+msgstr "Viste Eurostat"
+
+msgid "Table"
+msgstr "Tabella"
+
+msgid "Chart"
+msgstr "Grafico"
+
+msgid "Charts"
+msgstr "Grafici"
+
+msgid "Select values to display"
+msgstr "Seleziona i valori da visualizzare"
+
+msgid "Choose at least one series to display."
+msgstr "Seleziona almeno una serie da visualizzare."
+
+msgid "No numeric values are available for this chart."
+msgstr "Non sono disponibili valori numerici per questo grafico."
+
+msgid "Eurostat values by period"
+msgstr "Valori Eurostat per periodo"
+
+msgid "Regional GDP"
+msgstr "PIL regionale"
+
+msgid "Employment rate (ages 20–64)"
+msgstr "Tasso di occupazione (20–64 anni)"
+
+msgid "Unemployment rate (ages 15–74)"
+msgstr "Tasso di disoccupazione (15–74 anni)"
+
+msgid "Net migration plus statistical adjustment"
+msgstr "Saldo migratorio netto più rettifica statistica"
+
+msgid "Net disposable household income per inhabitant"
+msgstr "Reddito disponibile netto delle famiglie per abitante"
+
+msgid "Nights spent in tourist accommodation"
+msgstr "Pernottamenti nelle strutture ricettive"
+
+msgid "Construction production index"
+msgstr "Indice della produzione nelle costruzioni"
+
+msgid "Business demography by NACE section"
+msgstr "Demografia d’impresa per sezione NACE"
+
+msgid "Structural business statistics by NACE section"
+msgstr "Statistiche strutturali sulle imprese per sezione NACE"
+
+msgid "Local units"
+msgstr "Unità locali"
+
+msgid "Persons employed in local units"
+msgstr "Addetti delle unità locali"
+
+msgid "Wages and salaries"
+msgstr "Retribuzioni e salari"
+
+msgid "Active enterprises"
+msgstr "Imprese attive"
+
+msgid "Enterprise births"
+msgstr "Nascite di imprese"
+
+msgid "Enterprise deaths"
+msgstr "Cessazioni di imprese"
+
+msgid "Persons"
+msgstr "Persone"
+
+msgid "Percent"
+msgstr "Percentuale"
+
+msgid "Nights"
+msgstr "Pernottamenti"
+
+msgid "EUR per inhabitant"
+msgstr "EUR per abitante"
+
+msgid "EUR per inhabitant (EU27=2020)"
+msgstr "EUR per abitante (UE-27=2020)"
+
+msgid "Million EUR"
+msgstr "Milioni di EUR"
+
+msgid "Million national currency units"
+msgstr "Milioni di unità di valuta nazionale"
+
+msgid "Million PPS (EU27=2020)"
+msgstr "Milioni di SPA (UE-27=2020)"
+
+msgid "PPS per inhabitant (EU27=2020)"
+msgstr "SPA per abitante (UE-27=2020)"
+
+msgid "Count"
+msgstr "Conteggio"
+
+msgid "Measure"
+msgstr "Misura"
+
+msgid "Unit"
+msgstr "Unità"
+
 msgid "Cadastral sheets"
 msgstr "Fogli catastali"
 
@@ -2538,6 +2724,12 @@ msgstr "Dato a livello provinciale, non specifico di questa particella."
 
 msgid "Province-level indicators ({nuts3})."
 msgstr "Indicatori a livello provinciale ({nuts3})."
+
+msgid "ISTAT BES quality-of-life indicators are published at province level."
+msgstr "Gli indicatori ISTAT BES sulla qualità della vita sono pubblicati a livello provinciale."
+
+msgid "Loading quality-of-life indicators…"
+msgstr "Caricamento degli indicatori sulla qualità della vita…"
 
 msgid "Provincial capital"
 msgstr "Capoluogo di provincia"
@@ -5253,3 +5445,117 @@ msgstr "Stima indicativa calcolata moltiplicando la superficie per l’intervall
 
 msgid "Inserire una superficie e un intervallo OMI valido per calcolare la stima indicativa."
 msgstr "Inserire una superficie e un intervallo OMI valido per calcolare la stima indicativa."
+
+msgid "Selected administrative area"
+msgstr "Area amministrativa selezionata"
+
+msgid "Municipality details"
+msgstr "Dettagli comune"
+
+msgid "Municipality actions"
+msgstr "Azioni sul comune"
+
+msgid "Close municipality details"
+msgstr "Chiudi i dettagli del comune"
+
+msgid "Loading municipality details…"
+msgstr "Caricamento dei dettagli del comune…"
+
+msgid "Municipality selected"
+msgstr "Comune selezionato"
+
+msgid "Municipality details are temporarily unavailable."
+msgstr "I dettagli del comune non sono al momento disponibili."
+
+msgid "No ISTAT municipality record was found."
+msgstr "Nessuna scheda ISTAT trovata per questo comune."
+
+msgid "No municipality details are available."
+msgstr "Nessun dettaglio disponibile per questo comune."
+
+msgid "Population history"
+msgstr "Andamento della popolazione"
+
+msgid "Documents"
+msgstr "Documenti"
+
+msgid "Linked parcels"
+msgstr "Particelle collegate"
+
+msgid "No linked records for"
+msgstr "Nessun record collegato per"
+
+msgid "Municipality data is temporarily unavailable. Zone, hazard and risk values may be missing."
+msgstr "I dati del comune non sono al momento disponibili: potrebbero mancare zona, pericolosità e rischio."
+
+msgid "The OMI zone could not be detected because municipality data is temporarily unavailable: check the selection."
+msgstr "Non è stato possibile rilevare la zona OMI perché i dati del comune non sono al momento disponibili: verifica la selezione."
+
+msgid "Optional"
+msgstr "Facoltativo"
+
+msgid "Municipal"
+msgstr "Comunale"
+
+msgid "Selected municipality"
+msgstr "Comune selezionato"
+
+msgid "Selected province"
+msgstr "Provincia selezionata"
+
+msgid "Selected region"
+msgstr "Regione selezionata"
+
+msgid "Selected geographic area"
+msgstr "Ripartizione geografica selezionata"
+
+msgid "Area sections"
+msgstr "Sezioni dell’area"
+
+msgid "Record"
+msgstr "Scheda"
+
+msgid "Hierarchy"
+msgstr "Gerarchia"
+
+msgid "Administrative hierarchy"
+msgstr "Gerarchia amministrativa"
+
+msgid "NUTS code"
+msgstr "Codice NUTS"
+
+msgid "Eurostat"
+msgstr "Eurostat"
+
+msgid "Italian name"
+msgstr "Nome italiano"
+
+msgid "Other language name"
+msgstr "Nome in altra lingua"
+
+msgid "Area name"
+msgstr "Ripartizione"
+
+msgid "Source as of"
+msgstr "Fonte aggiornata al"
+
+msgid "Latitude"
+msgstr "Latitudine"
+
+msgid "Longitude"
+msgstr "Longitudine"
+
+msgid "CAP"
+msgstr "CAP"
+
+msgid "Fiscal code"
+msgstr "Codice fiscale"
+
+msgid "Coat of arms"
+msgstr "Stemma"
+
+msgid "ISTAT municipality record"
+msgstr "Scheda ISTAT del comune"
+
+msgid "Loading Eurostat details…"
+msgstr "Caricamento dei dati Eurostat…"

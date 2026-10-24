@@ -144,6 +144,21 @@ async def _get_quality_of_life(cadastral_code: str):
     raise HTTPException(status_code=404, detail="No quality-of-life data found")
 
 
+async def _get_province_quality_of_life_by_istat_code(istat_code: str):
+    try:
+        code = int(istat_code)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="ISTAT province code must be numeric") from None
+    if code <= 0 or code > 999999:
+        raise HTTPException(status_code=422, detail="Invalid ISTAT province code")
+    result = await stats_service.aget_province_quality_of_life_indicators_by_istat_code(code)
+    if result is not None:
+        return result
+    if not await stats_service.aquality_of_life_db_available():
+        raise HTTPException(status_code=503, detail="ISTAT BES quality-of-life store unavailable")
+    raise HTTPException(status_code=404, detail="No province-level quality-of-life data found")
+
+
 async def _get_quality_of_life_series(
     cadastral_code: str, data_type: str, year: Optional[int] = None
 ):
@@ -208,6 +223,11 @@ enrichment_router.add_api_route(
 )
 enrichment_router.add_api_route(
     "/crime/{cadastral_code}", _get_crime, methods=["GET"]
+)
+enrichment_router.add_api_route(
+    "/quality-of-life/province/istat/{istat_code}",
+    _get_province_quality_of_life_by_istat_code,
+    methods=["GET"],
 )
 enrichment_router.add_api_route(
     "/quality-of-life/{cadastral_code}",
@@ -307,7 +327,7 @@ async def get_municipality_details_by_istat_code(istat_code: str):
     try:
         code = int(istat_code)
     except (TypeError, ValueError):
-        raise HTTPException(status_code=422, detail="ISTAT municipality code must be numeric") from None
+        raise HTTPException(status_code=422, detail="ISTAT administrative area code must be numeric") from None
     if code <= 0 or code > 999999:
         raise HTTPException(status_code=422, detail="Invalid ISTAT municipality code")
 
@@ -336,6 +356,38 @@ async def get_municipality_details_by_istat_code(istat_code: str):
             detail="ISTAT municipality reference store unavailable",
         )
     raise HTTPException(status_code=404, detail=f"No ISTAT municipality found for code '{code}'")
+
+
+async def _get_administrative_area_eurostat_details(unit_type: str, istat_code: str):
+    try:
+        code = int(istat_code)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="ISTAT administrative area code must be numeric") from None
+    if code <= 0 or code > 999999:
+        raise HTTPException(status_code=422, detail="Invalid ISTAT municipality code")
+    if unit_type not in {"municipality", "province", "region", "geographic_area"}:
+        raise HTTPException(status_code=422, detail="Unsupported ISTAT administrative area type")
+    try:
+        result = await asyncio.wait_for(
+            asyncio.to_thread(stats_service.get_administrative_area_eurostat_details, unit_type, code),
+            timeout=20,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("Eurostat %s lookup timed out for ISTAT code %s", unit_type, code)
+        return {"available": False, "areas": [], "source": "Eurostat via aecs4u-stats"}
+    return result or {"available": False, "areas": [], "source": "Eurostat via aecs4u-stats"}
+
+
+@enrichment_router.get("/administrative-area/{unit_type}/{istat_code}/eurostat")
+async def get_administrative_area_eurostat_details(unit_type: str, istat_code: str):
+    """Return Eurostat series applicable to a selected ISTAT boundary."""
+    return await _get_administrative_area_eurostat_details(unit_type, istat_code)
+
+
+@enrichment_router.get("/municipality/istat/{istat_code}/eurostat")
+async def get_municipality_eurostat_details_by_istat_code(istat_code: str):
+    """Backward-compatible endpoint for a municipality's NUTS 1/2/3 series."""
+    return await _get_administrative_area_eurostat_details("municipality", istat_code)
 
 
 @enrichment_router.get("/land-cover/{national_reference}")

@@ -1087,6 +1087,9 @@
           solarScenarioInput('lifetime_years', 'System lifetime (years)', 25, 1, 50, 1, tr),
         ].join('');
         return {
+          // An optional calculator, not a finding: start closed and let the reader open it.
+          collapsed: true,
+          status: tr('Optional'),
           body: `<form class="parcel-solar-scenario-form">
             <fieldset><legend>${esc(tr('PV system inputs'))}</legend><div class="parcel-solar-input-grid">${pvInputs}</div></fieldset>
             <fieldset><legend>${esc(tr('Financial assumptions'))}</legend><div class="parcel-solar-input-grid">${financialInputs}</div></fieldset>
@@ -2226,8 +2229,9 @@
   }
 
   async function loadQualityOfLifeIndicators(ctx) {
-    if (!ctx.cadastralCode) return null;
-    const base = `${API}/quality-of-life/${encodeURIComponent(ctx.cadastralCode)}`;
+    const base = ctx.qualityOfLifeUrl
+      || (ctx.cadastralCode ? `${API}/quality-of-life/${encodeURIComponent(ctx.cadastralCode)}` : null);
+    if (!base) return null;
     const catalog = await ctx.fetchJson(base);
     if (!catalog.ok) throw Object.assign(new Error('Quality-of-life indicators unavailable'), { status: catalog.status });
     if (!catalog.data) return null;
@@ -2663,11 +2667,11 @@
 
   function stripCell(key, label, options = {}) {
     const meter = options.meter
-      ? '<meter class="parcel-stat-meter" min="0" max="100" value="0" hidden></meter>'
+      ? '<meter class="parcel-stat-meter map-sheet-strip-meter" min="0" max="100" value="0" hidden></meter>'
       : '';
-    // Figures that describe a wider area than the parcel say so under the label.
-    const scope = options.scope ? `<span class="parcel-stat-scope">${esc(options.scope)}</span>` : '';
-    return `<div class="parcel-stat" data-stat="${key}"><span class="parcel-stat-label">${esc(label)}</span>${scope}<strong class="parcel-stat-value"><span data-stat-text>—</span>${meter}</strong></div>`;
+    // Figures that describe a wider area than the parcel say so beside the label.
+    const scope = options.scope ? `<span class="parcel-stat-scope map-sheet-strip-scope">${esc(options.scope)}</span>` : '';
+    return `<div class="parcel-stat map-sheet-strip-cell" data-stat="${key}"><div class="map-sheet-strip-head"><span class="parcel-stat-label map-sheet-strip-label">${esc(label)}</span>${scope}</div><strong class="parcel-stat-value map-sheet-strip-value"><span data-stat-text>—</span>${meter}</strong></div>`;
   }
 
   function sectionShell(section, tr) {
@@ -3097,8 +3101,8 @@
     const area = Core.parcelAreaSqm(made.ctx.props);
     view.statStrip.innerHTML = stripCell('area', area && area.computed ? tr('Area (computed)') : tr('Area'))
       + stripCell('sheet', tr('Sheet')) + stripCell('price', tr('Sale price (OMI)'), { scope: tr('OMI zone') })
-      + stripCell('hazard', tr('Flood / landslide'), { scope: tr('Municipality') }) + stripCell('buildings', tr('OSM footprints'))
-      + stripCell('composite-risk', tr('Risk context'), { meter: true, scope: tr('Municipality') });
+      + stripCell('hazard', tr('Flood / landslide'), { scope: tr('Municipal') }) + stripCell('buildings', tr('OSM footprints'))
+      + stripCell('composite-risk', tr('Risk context'), { meter: true, scope: tr('Municipal') });
     made.ctx.setStat('area', area ? Core.formatArea(area.value) : '—');
     made.ctx.setStat('sheet', String(made.ctx.props.sheet_number ?? made.ctx.props.sheet ?? made.ctx.props.foglio ?? '—'));
     // Roads and waterways are public domain: sale prices, auctions and solar estimates do not apply.
