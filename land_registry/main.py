@@ -10,6 +10,7 @@ import logging
 import os
 import re
 from pathlib import Path
+from types import SimpleNamespace
 import duckdb
 import pandas as pd
 import panel as pn
@@ -89,7 +90,6 @@ if _AUTH_AVAILABLE:
         _LOCAL_AUTH_AVAILABLE = False
 else:
     _LOCAL_AUTH_AVAILABLE = False
-    from types import SimpleNamespace
 
     def get_auth_config():
         return SimpleNamespace(clerk_publishable_key="")
@@ -1207,6 +1207,55 @@ async def serve_omi_valuation_page(
     )
     response.status_code = response_status
     return response
+
+
+@app.get("/api/v1/map/layers/market-zones/{feature_id}/sheet", response_class=HTMLResponse)
+async def get_omi_market_zone_details_sheet(request: Request, feature_id: int):
+    """Render the selected OMI zone and its quote history for the map sheet."""
+    if _theme_setup is None:
+        raise HTTPException(status_code=503, detail="OMI map details require aecs4u-theme")
+
+    source = get_map_layer_source()
+    if not source.available:
+        raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable")
+    try:
+        details = await source.read_feature_details("market-zones", feature_id)
+    except Exception as exc:
+        logger.warning("OMI map detail lookup failed for feature %s: %s", feature_id, exc)
+        raise HTTPException(status_code=503, detail="OMI zone details are temporarily unavailable") from exc
+    if details is None:
+        raise HTTPException(status_code=404, detail="OMI market zone not found")
+
+    properties = details.get("properties") or {}
+    comune = str(properties.get("codcom") or "").strip().upper()
+    zona = str(properties.get("codzona") or "").strip().upper()
+    if not comune or not zona:
+        raise HTTPException(status_code=404, detail="OMI municipality or zone code is missing")
+
+    try:
+        quote_payload = await stats_service.aget_omi_zone_quote_history(comune, zona)
+    except Exception as exc:
+        logger.warning("OMI quote history lookup failed for %s/%s: %s", comune, zona, exc)
+        quote_payload = {"quotes": [], "source": None, "dataset_version": None}
+
+    locale = detect_locale(request)
+    gettext = make_gettext(locale)
+
+    def gettext_with_values(message: str, **values: object) -> str:
+        translated = gettext(message)
+        return translated % values if values else translated
+
+    template = _theme_setup.templates.env.get_template("partials/omi_market_zone_sheet.html")
+    html = template.render(
+        request=SimpleNamespace(state=SimpleNamespace(locale=locale)),
+        _=gettext_with_values,
+        locale=locale,
+        properties=properties,
+        quotes=quote_payload.get("quotes") or [],
+        source=quote_payload.get("source"),
+        dataset_version=quote_payload.get("dataset_version"),
+    )
+    return HTMLResponse(html)
 
 
 _ACCOUNT_LOCALES = (("it", "Italiano"), ("en", "English"))

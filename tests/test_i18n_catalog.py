@@ -65,3 +65,10 @@ def test_italian_catalog_covers_literal_primary_map_strings():
     )
 
     assert not missing, "Add Italian catalog entries for:\n" + "\n".join(missing)
+
+
+def test_browser_translation_map_excludes_the_catalogue_header():
+    # The empty msgid holds the PO metadata; if it reached the browser, the
+    # map's status pill would show it whenever it is cleared with tr('').
+    for locale in ("it", "en"):
+        assert "" not in i18n.translation_map(locale)

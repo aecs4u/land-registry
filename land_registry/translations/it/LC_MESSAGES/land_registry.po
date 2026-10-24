@@ -5559,3 +5559,102 @@ msgstr "Scheda ISTAT del comune"
 
 msgid "Loading Eurostat details…"
 msgstr "Caricamento dei dati Eurostat…"
+
+msgid "Wikipedia URL"
+msgstr "Wikipedia"
+
+msgid "Wikidata URL"
+msgstr "Wikidata"
+
+msgid "Region code"
+msgstr "Codice regione"
+
+msgid "UTS code"
+msgstr "Codice UTS"
+
+msgid "UTS name"
+msgstr "Nome UTS"
+
+msgid "UTS type"
+msgstr "Tipo UTS"
+
+msgid "Historical province code"
+msgstr "Codice provincia storico"
+
+msgid "Municipality progressive"
+msgstr "Progressivo del comune"
+
+msgid "Code"
+msgstr "Codice"
+
+msgid "Area code"
+msgstr "Codice ripartizione"
+
+msgid "Numeric code"
+msgstr "Codice numerico"
+
+msgid "Province abbreviation"
+msgstr "Sigla provincia"
+
+msgid "Region name"
+msgstr "Nome regione"
+
+msgid "Minimum sale value (€/m²)"
+msgstr "Valore di compravendita minimo (€/m²)"
+
+msgid "Maximum sale value (€/m²)"
+msgstr "Valore di compravendita massimo (€/m²)"
+
+msgid "Selected OMI market zone"
+msgstr "Zona di mercato OMI selezionata"
+
+msgid "OMI market zone details"
+msgstr "Dettagli della zona di mercato OMI"
+
+msgid "OMI market zone actions"
+msgstr "Azioni zona di mercato OMI"
+
+msgid "Close OMI market zone details"
+msgstr "Chiudi i dettagli della zona di mercato OMI"
+
+msgid "Loading OMI market zone details…"
+msgstr "Caricamento dei dettagli della zona OMI…"
+
+msgid "OMI market zone details are unavailable."
+msgstr "I dettagli della zona di mercato OMI non sono disponibili."
+
+msgid "OMI market zone not found."
+msgstr "Zona di mercato OMI non trovata."
+
+msgid "OMI details are temporarily unavailable."
+msgstr "I dettagli OMI non sono temporaneamente disponibili."
+
+msgid "OMI market zone selected"
+msgstr "Zona di mercato OMI selezionata"
+
+msgid "OMI zone information"
+msgstr "Informazioni sulla zona OMI"
+
+msgid "Zone description"
+msgstr "Descrizione della zona"
+
+msgid "Property type code"
+msgstr "Codice tipologia"
+
+msgid "Property type description"
+msgstr "Descrizione tipologia"
+
+msgid "Conservation state"
+msgstr "Stato di conservazione"
+
+msgid "Minimum rent value (€/m²/month)"
+msgstr "Canone minimo (€/m²/mese)"
+
+msgid "Maximum rent value (€/m²/month)"
+msgstr "Canone massimo (€/m²/mese)"
+
+msgid "OMI quotations by period"
+msgstr "Quotazioni OMI per periodo"
+
+msgid "No OMI quotations are available for this zone."
+msgstr "Nessuna quotazione OMI disponibile per questa zona."

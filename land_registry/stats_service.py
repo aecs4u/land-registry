@@ -2624,6 +2624,77 @@ class _AsyncPostgresSource:
             "source": "ISTAT municipality profile via aecs4u-stats PostgreSQL",
         }
 
+    async def omi_zone_quote_history(
+        self, cadastral_code: str, zone_code: str
+    ) -> Optional[Dict[str, Any]]:
+        """Read every published OMI quote for one zone from the stats schema."""
+        relations = ("geo.geo_identifier", "spatial.market_zone", "facts.market_quote_fact")
+        if not await self._relations_available(relations):
+            snapshot = await self._zornade_omi_quotes_by_cadastral_code(cadastral_code)
+            if snapshot is None:
+                return None
+            return {
+                **snapshot,
+                "zona": zone_code,
+                "quotes": [
+                    quote for quote in snapshot.get("quotes", [])
+                    if str(quote.get("zona") or "").strip().upper() == zone_code.strip().upper()
+                ],
+            }
+        rows = await self._fetch(
+            """
+            SELECT mz.omi_zone_key, q.period, q.typology, q.condition,
+                   q.price_min, q.price_max, q.rent_min, q.rent_max
+            FROM geo.geo_identifier gi
+            JOIN spatial.market_zone mz ON mz.municipality_id = gi.geo_unit_id
+            JOIN facts.market_quote_fact q ON q.market_zone_id = mz.id
+            WHERE gi.scheme = 'CATASTALE_COMUNE'
+              AND UPPER(gi.code) = UPPER(%s)
+              AND UPPER(mz.omi_zone_key) = UPPER(%s)
+            ORDER BY q.period, q.typology, q.condition
+            """,
+            (cadastral_code.strip().upper(), zone_code.strip().upper()),
+        )
+        if not rows:
+            # The published zone snapshot carries a current quote when the
+            # canonical fact table has not yet been populated for this comune.
+            snapshot = await self._zornade_omi_quotes_by_cadastral_code(cadastral_code)
+            if snapshot is None:
+                return None
+            return {
+                **snapshot,
+                "zona": zone_code,
+                "quotes": [
+                    quote for quote in snapshot.get("quotes", [])
+                    if str(quote.get("zona") or "").strip().upper() == zone_code.strip().upper()
+                ],
+            }
+
+        quotes = []
+        for row in rows:
+            period = str(row["period"] or "")
+            match = re.match(r"^(\d{4})-S(\d)$", period)
+            quotes.append({
+                "zona": row["omi_zone_key"],
+                "period": period,
+                "anno": int(match.group(1)) if match else None,
+                "semestre": int(match.group(2)) if match else None,
+                "cod_tipologia": row["typology"],
+                "tipologia": row["typology"],
+                "stato_conservazione": row["condition"],
+                "prezzo_min": _postgres_scalar(row["price_min"]),
+                "prezzo_max": _postgres_scalar(row["price_max"]),
+                "locazione_min": _postgres_scalar(row["rent_min"]),
+                "locazione_max": _postgres_scalar(row["rent_max"]),
+            })
+        return {
+            "comune": cadastral_code,
+            "zona": zone_code,
+            "quotes": quotes,
+            "dataset_version": _omi_period_dataset_version({"quotes": quotes}),
+            "source": "Agenzia delle Entrate OMI via aecs4u-stats PostgreSQL facts.market_quote_fact",
+        }
+
     async def omi_quotes_by_cadastral_code(self, cadastral_code: str) -> Optional[Dict[str, Any]]:
         if not await self._relations_available((
             "geo.geo_identifier", "spatial.market_zone", "facts.market_quote_fact",
@@ -3734,6 +3805,48 @@ async def aget_omi_quotes(comune: str, zona: Optional[str] = None) -> Dict[str, 
             source._retry_at = time.monotonic() + 60
             logger.warning("Async PostgreSQL OMI lookup failed; using local fallback", exc_info=True)
     return await asyncio.to_thread(get_omi_quotes, comune, zona=zona, use_postgres=False)
+
+
+async def aget_omi_zone_quote_history(comune: str, zona: str) -> Dict[str, Any]:
+    """Return all OMI quote periods for one zone, preferring stats PostgreSQL."""
+    normalized_comune = (comune or "").strip().upper()
+    normalized_zona = (zona or "").strip().upper()
+    source = await _get_async_postgres_source()
+    if source is not None and time.monotonic() >= source._retry_at:
+        try:
+            result = await asyncio.wait_for(
+                source.omi_zone_quote_history(normalized_comune, normalized_zona), timeout=8
+            )
+            if result is not None:
+                quotes = result.get("quotes") if isinstance(result.get("quotes"), list) else []
+                result["quotes"] = _omi_quote_derived_metrics(quotes)
+                result["dataset_version"] = result.get("dataset_version") or _omi_period_dataset_version(result)
+                return result
+        except Exception:
+            source._retry_at = time.monotonic() + 60
+            logger.warning("Async PostgreSQL OMI zone history failed; using local fallback", exc_info=True)
+
+    history_payload = await asyncio.to_thread(get_omi_history, normalized_comune, normalized_zona)
+    quotes = []
+    for row in history_payload.get("history", []):
+        quote = dict(row)
+        year = quote.get("anno")
+        semester = quote.get("semestre")
+        quote["period"] = f"{year}-S{semester}" if year and semester else None
+        quotes.append(quote)
+
+    fallback_source = history_payload.get("source")
+    if not quotes:
+        snapshot = await aget_omi_quotes(normalized_comune, zona=normalized_zona)
+        quotes = snapshot.get("quotes", [])
+        fallback_source = snapshot.get("source") or fallback_source
+    return {
+        "comune": normalized_comune,
+        "zona": normalized_zona,
+        "quotes": _omi_quote_derived_metrics(quotes),
+        "dataset_version": _omi_period_dataset_version({"quotes": quotes}),
+        "source": fallback_source or "Agenzia delle Entrate OMI via aecs4u-stats",
+    }
 
 
 async def aget_omi_zone_at_point(

@@ -38,6 +38,9 @@
     selectedMaritimeRowId: null,
     maritimeDetailsRequest: 0,
     maritimeDetailsController: null,
+    selectedOmiMarketZoneId: null,
+    omiMarketZoneDetailsRequest: 0,
+    omiMarketZoneDetailsController: null,
     selectedAuctionSaleMarker: null,
     savedReference: null,
     searchTimer: null,
@@ -1313,6 +1316,7 @@
       || !$('municipalityDetailPanel')?.hidden
       || !$('cadastralSheetPanel')?.hidden
       || !$('cadastralUrbanSectionPanel')?.hidden
+      || !$('omiMarketZonePanel')?.hidden
       || !$('maritimeConcessionPanel')?.hidden;
     const bounds = map.getBounds?.();
     const parcels = state.catalog.find((layer) => layer.id === 'cadastral-parcels');
@@ -1581,6 +1585,7 @@
     closeMunicipalityDetails();
     closeCadastralSheetDetails();
     closeCadastralUrbanSectionDetails();
+    closeOmiMarketZoneDetails();
     closeMaritimeConcessionDetails();
     const props = feature?.properties || {};
     const reference = state.selectedReference || referenceFrom(props) || null;
@@ -1755,10 +1760,88 @@
     if (panel) panel.hidden = true;
   }
 
+  function closeOmiMarketZoneDetails() {
+    state.omiMarketZoneDetailsRequest += 1;
+    state.omiMarketZoneDetailsController?.abort();
+    state.omiMarketZoneDetailsController = null;
+    state.selectedOmiMarketZoneId = null;
+    const panel = $('omiMarketZonePanel');
+    if (panel) panel.hidden = true;
+  }
+
+  async function loadOmiMarketZoneDetails(layer, feature) {
+    const properties = feature?.properties || {};
+    const featureId = Number(feature?.id ?? properties.OGC_FID ?? properties.ogc_fid);
+    if (!Number.isInteger(featureId) || featureId < 1) {
+      mapStatus(tr('OMI market zone details are unavailable.'), true);
+      return;
+    }
+
+    closeOmiMarketZoneDetails();
+    closeMunicipalityDetails();
+    closeCadastralSheetDetails();
+    closeCadastralUrbanSectionDetails();
+    closeMaritimeConcessionDetails();
+    const controller = new AbortController();
+    const requestId = ++state.omiMarketZoneDetailsRequest;
+    state.omiMarketZoneDetailsController = controller;
+    state.selectedOmiMarketZoneId = String(featureId);
+    state.selectedReference = null;
+    state.selectedFeature = feature;
+    clearSelectedAuctionSaleMarker();
+    window.ParcelPanel?.clear();
+    state.map?.getSource('selected-parcel')?.setData(emptyFeatureCollection());
+    state.map?.getSource('adjacent-parcels')?.setData(emptyFeatureCollection());
+    sisterBuildingsOverlay.fetchToken += 1;
+    sisterBuildingsOverlay.records = [];
+    state.map?.getSource('sister-building-parcel')?.setData(emptyFeatureCollection());
+    if ($('sisterBuildingsCount')) $('sisterBuildingsCount').textContent = '';
+    $('directParcelPanel').hidden = true;
+    renderSelectedGeometry(feature);
+
+    const zone = properties.codzona || properties.zona_descr || tr('OMI market zone details');
+    $('omiMarketZoneTitle').textContent = properties.codzona
+      ? `${tr('OMI zone')} ${properties.codzona}`
+      : zone;
+    $('omiMarketZoneSubtitle').textContent = [properties.comune_descrizione, properties.codcom].filter(Boolean).join(' · ');
+    const panel = $('omiMarketZonePanel');
+    const content = $('omiMarketZoneContent');
+    panel.hidden = false;
+    content.innerHTML = `<div class="map-sheet-loading" role="status"><span class="map-sheet-loading-bar"></span><span class="map-sheet-loading-bar"></span><span class="visually-hidden">${escapeHtml(tr('Loading OMI market zone details…'))}</span></div>`;
+    content.scrollTop = 0;
+    $('mapHelpNote').hidden = true;
+    updateParcelZoomAffordance();
+    mapStatus(tr('Loading OMI market zone details…'));
+
+    const task = beginMapProgress('omi-market-zone-details', 'Loading OMI market zone details…');
+    try {
+      const response = await fetch(`/api/v1/map/layers/market-zones/${encodeURIComponent(featureId)}/sheet`, { signal: controller.signal });
+      if (!response.ok) {
+        throw new Error(response.status === 404
+          ? tr('OMI market zone not found.')
+          : tr('OMI details are temporarily unavailable.'));
+      }
+      const html = await response.text();
+      if (requestId !== state.omiMarketZoneDetailsRequest || state.selectedOmiMarketZoneId !== String(featureId)) return;
+      content.innerHTML = html;
+      content.scrollTop = 0;
+      mapStatus(tr('OMI market zone selected'));
+    } catch (error) {
+      if (error.name === 'AbortError' || requestId !== state.omiMarketZoneDetailsRequest) return;
+      content.innerHTML = `<div class="map-sheet-notice omi-market-zone-error" role="status"><span>${escapeHtml(error.message || tr('OMI details are temporarily unavailable.'))}</span><button type="button" class="secondary-action compact">${escapeHtml(tr('Retry'))}</button></div>`;
+      content.querySelector('.omi-market-zone-error button')?.addEventListener('click', () => { void loadOmiMarketZoneDetails(layer, feature); });
+      mapStatus(error.message || tr('OMI details are temporarily unavailable.'), true);
+    } finally {
+      task.finish();
+      if (state.omiMarketZoneDetailsController === controller) state.omiMarketZoneDetailsController = null;
+    }
+  }
+
   function loadCadastralSheetDetails(feature) {
     const properties = feature?.properties || {};
     closeMunicipalityDetails();
     closeCadastralUrbanSectionDetails();
+    closeOmiMarketZoneDetails();
     closeMaritimeConcessionDetails();
     closeCadastralSheetDetails();
     state.selectedReference = null;
@@ -1828,6 +1911,7 @@
     const featureId = feature?.id ?? properties.OGC_FID ?? properties.ogc_fid;
     closeMunicipalityDetails();
     closeCadastralSheetDetails();
+    closeOmiMarketZoneDetails();
     closeCadastralUrbanSectionDetails();
     closeMaritimeConcessionDetails();
     state.selectedReference = null;
@@ -2440,6 +2524,7 @@
   async function loadMunicipalityDetails(feature) {
     closeCadastralSheetDetails();
     closeCadastralUrbanSectionDetails();
+    closeOmiMarketZoneDetails();
     closeMaritimeConcessionDetails();
     const properties = feature?.properties || {};
     if (properties.unit_type !== 'municipality') return;
@@ -2512,6 +2597,7 @@
 
     closeCadastralSheetDetails();
     closeCadastralUrbanSectionDetails();
+    closeOmiMarketZoneDetails();
     closeMaritimeConcessionDetails();
     closeMunicipalityDetails();
     const requestId = ++state.municipalityDetailsRequest;
@@ -2767,6 +2853,7 @@
     state.selectedMaritimeRowId = String(featureId);
     closeCadastralSheetDetails();
     closeCadastralUrbanSectionDetails();
+    closeOmiMarketZoneDetails();
     closeMunicipalityDetails();
     state.selectedReference = null;
     state.selectedFeature = null;
@@ -3291,7 +3378,21 @@
     layerStackPopup = popup;
   }
 
+  function openAdministrativeFeature(feature) {
+    if (feature.properties?.unit_type === 'municipality') void loadMunicipalityDetails(feature);
+    else void loadAdministrativeAreaDetails(feature);
+  }
+
   function showOverlayFeature(layer, feature, lngLat) {
+    if (layer.group === 'administrative-boundaries'
+        && ['municipality', 'province', 'region', 'geographic_area'].includes(feature?.properties?.unit_type)) {
+      openAdministrativeFeature(feature);
+      return;
+    }
+    if (layer.id === 'market-zones') {
+      void loadOmiMarketZoneDetails(layer, feature);
+      return;
+    }
     if (layer.id === 'cadastral-sheets') {
       loadCadastralSheetDetails(feature);
       return;
@@ -3402,6 +3503,7 @@
     if (!reference) return null;
     closeMunicipalityDetails();
     closeCadastralUrbanSectionDetails();
+    closeOmiMarketZoneDetails();
     mapStatus('Loading parcel…');
     const task = beginMapProgress('parcel', 'Loading parcel…');
     try {
@@ -3865,6 +3967,7 @@
   function clearParcelSelection() {
     closeMunicipalityDetails();
     closeMaritimeConcessionDetails();
+    closeOmiMarketZoneDetails();
     state.selectedReference = null;
     state.selectedFeature = null;
     clearSelectedAuctionSaleMarker();
@@ -6951,6 +7054,11 @@
       updateParcelZoomAffordance();
       mapStatus('');
     });
+    $('omiMarketZoneClose')?.addEventListener('click', () => {
+      closeOmiMarketZoneDetails();
+      updateParcelZoomAffordance();
+      mapStatus('');
+    });
     $('maritimeConcessionClose')?.addEventListener('click', () => {
       closeMaritimeConcessionDetails();
       updateParcelZoomAffordance();
@@ -7380,6 +7488,7 @@
       closeMunicipalityDetails();
       closeCadastralSheetDetails();
       closeCadastralUrbanSectionDetails();
+      closeOmiMarketZoneDetails();
       closeMaritimeConcessionDetails();
       updateParcelZoomAffordance();
       if (state.sisterBatch.mode) {
@@ -7447,11 +7556,21 @@
         .filter((feature) => unitPriority[feature.properties?.unit_type] !== undefined)
         .sort((left, right) => unitPriority[left.properties.unit_type] - unitPriority[right.properties.unit_type])[0];
       if (administrativeFeature) {
-        if (administrativeFeature.properties?.unit_type === 'municipality') {
-          void loadMunicipalityDetails(administrativeFeature);
-        } else {
-          void loadAdministrativeAreaDetails(administrativeFeature);
+        // Boundaries sit on top of every other overlay; without a chooser they
+        // would make zones (e.g. OMI) under them impossible to click.
+        const administrativeLayer = state.catalog
+          .find((layer) => `fill-${layer.id}` === administrativeFeature.layer?.id);
+        const otherOverlays = stackedOverlayFeatures(event.point)
+          .filter((entry) => entry.layer.group !== 'administrative-boundaries');
+        if (administrativeLayer && otherOverlays.length) {
+          showLayerStack(
+            [{ layer: administrativeLayer, feature: administrativeFeature }, ...otherOverlays],
+            event.lngLat,
+            tr('Layers at this point'),
+          );
+          return;
         }
+        openAdministrativeFeature(administrativeFeature);
         return;
       }
       const overlayStack = stackedOverlayFeatures(event.point);

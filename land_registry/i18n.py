@@ -136,7 +136,9 @@ def translation_map(locale: str) -> dict[str, str]:
     return {
         key: value
         for key, value in catalog.items()
-        if isinstance(key, str) and isinstance(value, str) and value and value != key
+        # The empty msgid maps to the catalogue header; sending it would make
+        # the browser's tr('') return the PO metadata.
+        if isinstance(key, str) and key and isinstance(value, str) and value and value != key
     }
 
 

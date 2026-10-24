@@ -498,6 +498,20 @@
       <div id="cadastralUrbanSectionContent" class="parcel-detail-content map-sheet-body" aria-live="polite"></div>
     </aside>
 
+    <aside class="parcel-detail-card parcel-sheet municipality-detail-sheet map-sheet-accent" id="omiMarketZonePanel" aria-labelledby="omiMarketZoneTitle" hidden>
+      <header class="parcel-sheet-header map-sheet-header">
+        <div class="parcel-sheet-heading">
+          <span class="map-eyebrow map-sheet-eyebrow"><i class="fas fa-chart-area" aria-hidden="true"></i>{{ _('Selected OMI market zone') }}</span>
+          <h2 id="omiMarketZoneTitle" class="map-sheet-title">{{ _('OMI market zone details') }}</h2>
+          <p class="parcel-sheet-subtitle map-sheet-pill" id="omiMarketZoneSubtitle"></p>
+        </div>
+        <div class="parcel-sheet-header-actions" aria-label="{{ _('OMI market zone actions') }}">
+          <button type="button" class="map-card-close map-sheet-close" id="omiMarketZoneClose" aria-label="{{ _('Close OMI market zone details') }}">×</button>
+        </div>
+      </header>
+      <div id="omiMarketZoneContent" class="parcel-detail-content map-sheet-body" aria-live="polite"></div>
+    </aside>
+
     <aside class="parcel-detail-card parcel-sheet maritime-concession-sheet map-sheet-accent" id="maritimeConcessionPanel" aria-labelledby="maritimeConcessionTitle" hidden>
       <header class="parcel-sheet-header map-sheet-header">
         <div class="parcel-sheet-heading">

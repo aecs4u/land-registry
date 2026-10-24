@@ -1,0 +1,52 @@
+{% from "components/omi_valuation.html" import omi_quotes_table with context %}
+{% set field_labels = {
+  "codcom": _("Municipality code"),
+  "codzona": _("OMI zone code"),
+  "zona_descr": _("Zone description"),
+  "comune_descrizione": _("Municipality"),
+  "cod_tip_prev": _("Property type code"),
+  "descr_tip_prev": _("Property type"),
+  "descr_tipologia_en": _("Property type description"),
+  "stato_prev": _("Conservation state"),
+  "compr_min": _("Minimum sale value (€/m²)"),
+  "compr_max": _("Maximum sale value (€/m²)"),
+  "loc_min": _("Minimum rent value (€/m²/month)"),
+  "loc_max": _("Maximum rent value (€/m²/month)")
+} %}
+
+<section class="parcel-section municipality-record-section">
+  <h3 class="parcel-section-title map-sheet-section-title">{{ _('OMI zone information') }}</h3>
+  <div class="table-responsive">
+    <table class="table table-sm table-striped align-middle mb-0">
+      <tbody>
+        {% for key, value in properties.items() %}
+          {% set normalized_key = key|lower %}
+          {% if value is not none and value != '' and normalized_key not in ['ogc_fid', 'geom', 'geometry'] and 'geom' not in normalized_key %}
+          <tr>
+            <th scope="row" class="text-nowrap">{{ field_labels.get(key, key|replace('_', ' ')|title) }}</th>
+            <td>{{ value }}</td>
+          </tr>
+          {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="parcel-section municipality-record-section">
+  {{ omi_quotes_table(
+    quotes,
+    title=_('OMI quotations by period'),
+    empty_message=_('No OMI quotations are available for this zone.'),
+    collapsible=False,
+    heading_level=3,
+    css_class='omi-market-zone-quotes'
+  ) }}
+</section>
+
+{% if source or dataset_version %}
+<p class="map-sheet-source">
+  <i class="fas fa-database" aria-hidden="true"></i>
+  <span>{% if source %}{{ _('Source') }}: {{ source }}{% endif %}{% if source and dataset_version %} · {% endif %}{% if dataset_version %}{{ _('Dataset') }}: {{ dataset_version }}{% endif %}</span>
+</p>
+{% endif %}
