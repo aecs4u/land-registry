@@ -8,6 +8,9 @@
 <link rel="preconnect" href="https://unpkg.com" crossorigin />
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" integrity="sha384-MinO0mNliZ3vwppuPOUnGa+iq619pfMhLVUXfC4LHwSCvF9H+6P/KO4Q7qBOYV5V" crossorigin="anonymous" />
 <link rel="stylesheet" href="{{ asset_url('map-v2.css') }}" />
+{# Shared look for the docked detail sheets (aecs4u-theme). A plain link, not the
+   components macro: an older theme install then only loses styling, not the page. #}
+<link rel="stylesheet" href="{{ static_url_path|default('/static/aecs4u-theme') }}/css/components/map_detail_sheet.css{{ theme_asset_v|default('') }}" />
 <link rel="stylesheet" href="{{ asset_url('cadastral-purchases.css') }}" />
 {% endblock %}
 
@@ -415,40 +418,68 @@
     <div class="map-status-pill" id="mapStatus" aria-live="polite"></div>
     {% include 'partials/map_task_progress.html' %}
 
-    <aside class="parcel-detail-card parcel-sheet" id="directParcelPanel" aria-labelledby="directParcelTitle" hidden>
-      <header class="parcel-sheet-header">
+    <aside class="parcel-detail-card parcel-sheet map-sheet-accent" id="directParcelPanel" aria-labelledby="directParcelTitle" hidden>
+      <header class="parcel-sheet-header map-sheet-header">
         <div class="parcel-sheet-heading">
-          <span class="map-eyebrow">{{ _('Selected parcel') }}</span>
-          <h2 id="directParcelTitle">{{ _('Parcel details') }}</h2>
-          <p class="parcel-sheet-subtitle" id="directParcelSubtitle"></p>
+          <span class="map-eyebrow map-sheet-eyebrow"><i class="fas fa-draw-polygon" aria-hidden="true"></i>{{ _('Selected parcel') }}</span>
+          <h2 id="directParcelTitle" class="map-sheet-title">{{ _('Parcel details') }}</h2>
+          <p class="parcel-sheet-subtitle map-sheet-pill" id="directParcelSubtitle"></p>
         </div>
         <div class="parcel-sheet-header-actions" aria-label="{{ _('Parcel actions') }}">
           <button type="button" id="parcelFavoriteButton" class="secondary-action compact parcel-favorite-button" aria-pressed="false" title="{{ _('Add to favourites') }}" aria-label="{{ _('Add to favourites') }}"><span aria-hidden="true">☆</span></button>
           <button type="button" id="parcelShareButton" class="secondary-action compact" title="{{ _('Copy link') }}" aria-label="{{ _('Copy link') }}"><i class="fas fa-link" aria-hidden="true"></i></button>
           <a id="parcelReportLink" class="secondary-action compact" href="/api/v1/enrichment/parcel/dossier/" title="{{ _('Download PDF') }}" aria-label="{{ _('Download PDF') }}" aria-live="polite" aria-busy="false"><i class="fas fa-file-pdf" aria-hidden="true"></i></a>
-          <button type="button" class="map-card-close" id="parcelCloseButton" aria-label="{{ _('Close parcel details') }}">×</button>
+          <button type="button" class="map-card-close map-sheet-close" id="parcelCloseButton" aria-label="{{ _('Close parcel details') }}">×</button>
         </div>
       </header>
       <div class="parcel-stat-strip" id="parcelStatStrip"></div>
       <nav class="parcel-section-nav" id="parcelSectionNav" aria-label="{{ _('Parcel sections') }}"></nav>
       <div id="directParcelContent" class="parcel-detail-content"></div>
-      <div class="parcel-sister-building-controls">
-        <div class="map-live-layer-row">
-          <button type="button" class="map-live-toggle" id="toggleSisterBuildings" aria-pressed="false" aria-describedby="sisterBuildingsStatus"
+      <div class="parcel-detail-actions map-sheet-actions">
+        <div class="map-sheet-actions-primary">
+          <button type="button" id="parcelPurchaseButton" class="secondary-action map-sheet-action-primary">{{ _('Purchase cadastral query') }}</button>
+          <button type="button" id="parcelSaveButton" class="secondary-action">{{ _('Save parcel') }}</button>
+        </div>
+        <div class="map-sheet-actions-secondary">
+          <button type="button" id="parcelAdjacentButton" class="map-sheet-action-link">{{ _('Find adjacent parcels') }}</button>
+          <button type="button" class="map-sheet-action-link" id="toggleSisterBuildings" aria-pressed="false" aria-describedby="sisterBuildingsStatus"
                   title="{{ _('SISTER building records for the selected parcel') }}">
             {{ _('SISTER building records') }} <span id="sisterBuildingsCount"></span>
           </button>
+          <a id="legacyAnalysisLink" class="map-sheet-action-link" href="/map-legacy">{{ _('Open analysis') }}</a>
+          <button type="button" id="parcelClearButton" class="map-sheet-action-link">{{ _('Clear selection') }}</button>
         </div>
-        <div id="sisterBuildingsStatus" class="map-layer-meta" aria-live="polite"></div>
-      </div>
-      <div class="parcel-detail-actions">
-        <button type="button" id="parcelPurchaseButton" class="secondary-action">{{ _('Purchase cadastral query') }}</button>
-        <button type="button" id="parcelSaveButton" class="secondary-action">{{ _('Save parcel') }}</button>
-        <button type="button" id="parcelAdjacentButton" class="secondary-action">{{ _('Find adjacent parcels') }}</button>
-        <button type="button" id="parcelClearButton" class="secondary-action">{{ _('Clear selection') }}</button>
-        <a id="legacyAnalysisLink" class="secondary-action" href="/map-legacy">{{ _('Open analysis') }}</a>
+        <div id="sisterBuildingsStatus" class="map-layer-meta map-sheet-action-status" aria-live="polite"></div>
       </div>
       <div id="parcelAdjacentResults" class="parcel-adjacent-results" aria-live="polite"></div>
+    </aside>
+
+    <aside class="parcel-detail-card parcel-sheet municipality-detail-sheet map-sheet-accent" id="municipalityDetailPanel" aria-labelledby="municipalityDetailTitle" hidden>
+      <header class="parcel-sheet-header map-sheet-header">
+        <div class="parcel-sheet-heading">
+          <span class="map-eyebrow map-sheet-eyebrow"><i class="fas fa-landmark" aria-hidden="true"></i>{{ _('Selected administrative area') }}</span>
+          <h2 id="municipalityDetailTitle" class="map-sheet-title">{{ _('Municipality details') }}</h2>
+          <p class="parcel-sheet-subtitle map-sheet-pill" id="municipalityDetailSubtitle"></p>
+        </div>
+        <div class="parcel-sheet-header-actions" aria-label="{{ _('Municipality actions') }}">
+          <button type="button" class="map-card-close map-sheet-close" id="municipalityDetailClose" aria-label="{{ _('Close municipality details') }}">×</button>
+        </div>
+      </header>
+      <div id="municipalityDetailContent" class="parcel-detail-content map-sheet-body" aria-live="polite"></div>
+    </aside>
+
+    <aside class="parcel-detail-card parcel-sheet maritime-concession-sheet" id="maritimeConcessionPanel" aria-labelledby="maritimeConcessionTitle" hidden>
+      <header class="parcel-sheet-header maritime-sheet-header">
+        <div class="parcel-sheet-heading">
+          <span class="map-eyebrow maritime-eyebrow"><i class="fas fa-anchor" aria-hidden="true"></i>{{ _('Maritime concession') }}</span>
+          <h2 id="maritimeConcessionTitle">{{ _('Maritime concession') }}</h2>
+          <p class="parcel-sheet-subtitle" id="maritimeConcessionSubtitle"></p>
+        </div>
+        <div class="parcel-sheet-header-actions" aria-label="{{ _('Concession actions') }}">
+          <button type="button" class="map-card-close" id="maritimeConcessionClose" aria-label="{{ _('Close concession details') }}">×</button>
+        </div>
+      </header>
+      <div id="maritimeConcessionContent" class="parcel-detail-content" aria-live="polite"></div>
     </aside>
 
     {% include "partials/cadastral_purchases.html" %}

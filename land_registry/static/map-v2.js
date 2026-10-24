@@ -30,6 +30,12 @@
     catalog: [],
     selectedReference: null,
     selectedFeature: null,
+    selectedMunicipalityCode: null,
+    municipalityDetailsRequest: 0,
+    municipalityDetailsController: null,
+    selectedMaritimeRowId: null,
+    maritimeDetailsRequest: 0,
+    maritimeDetailsController: null,
     selectedAuctionSaleMarker: null,
     savedReference: null,
     searchTimer: null,
@@ -1298,7 +1304,9 @@
       if (substitute) state.adminSubstituteUserDisabled.delete(substitute.id);
       releaseAdministrativeSubstitute();
     }
-    const panelOpen = !$('directParcelPanel')?.hidden;
+    const panelOpen = !$('directParcelPanel')?.hidden
+      || !$('municipalityDetailPanel')?.hidden
+      || !$('maritimeConcessionPanel')?.hidden;
     const bounds = map.getBounds?.();
     const parcels = state.catalog.find((layer) => layer.id === 'cadastral-parcels');
     const estimatedBounds = parcels?.estimated_bounds || parcels?.coverage_bounds;
@@ -1563,6 +1571,8 @@
   // called once when a parcel is selected and again, with the read model (or
   // {unavailable: true}), when /parcel/details answers.
   function renderParcelPanel(feature, enrichment = null) {
+    closeMunicipalityDetails();
+    closeMaritimeConcessionDetails();
     const props = feature?.properties || {};
     const reference = state.selectedReference || referenceFrom(props) || null;
     if (enrichment) {
@@ -1601,6 +1611,388 @@
     syncFavoriteButton();
     $('directParcelPanel').hidden = false;
     $('mapHelpNote').hidden = true;
+  }
+
+  function isHiddenMunicipalityGeometryField(key) {
+    return /^(?:boundary|za)[\s_-]*geom(?:etry)?$/i.test(String(key || '').trim());
+  }
+
+  function municipalityValueHtml(key, value) {
+    if (value === null || value === undefined || value === '') return escapeHtml(tr('Not available'));
+    if (typeof value === 'boolean') return escapeHtml(value ? tr('Yes') : tr('No'));
+    if ((value === 0 || value === 1) && /(?:^|[_\s-])flag$/i.test(String(key || ''))) return escapeHtml(value ? tr('Yes') : tr('No'));
+    if (typeof value === 'number' && Number.isFinite(value) && /population|resident/i.test(String(key || ''))) {
+      return escapeHtml(value.toLocaleString(document.documentElement.lang || undefined));
+    }
+    const url = typeof value === 'string' ? canonicalHttpUrl(value) : null;
+    if (url) {
+      const keyName = String(key || '');
+      const imageField = /image|photo|picture|coat[\s_-]*of[\s_-]*arms|stemma|flag/i.test(keyName);
+      let imagePath = '';
+      try { imagePath = new URL(url).pathname; } catch (_) { /* canonicalHttpUrl already validated the URL */ }
+      const imageUrl = imageField || /\.(?:avif|gif|jpe?g|png|svg|webp)$/i.test(imagePath);
+      if (imageUrl) {
+        const label = keyName.replaceAll('_', ' ');
+        return `<a class="municipality-detail-image-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer"><img class="municipality-detail-image" src="${escapeHtml(url)}" alt="${escapeHtml(label)}" loading="lazy" decoding="async"></a>`;
+      }
+      return `<a class="municipality-detail-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>`;
+    }
+    if (typeof value === 'object') {
+      try { return escapeHtml(JSON.stringify(value)); } catch (_) { return escapeHtml(String(value)); }
+    }
+    return escapeHtml(String(value));
+  }
+
+  function municipalityFieldLabel(key) {
+    return String(key || '')
+      .replaceAll('_', ' ')
+      .replace(/\bnuts\s?([123])\b/ig, 'NUTS $1')
+      .replace(/\bistat\b/ig, 'ISTAT')
+      .replace(/\bprocom\b/ig, 'PRO_COM')
+      .replace(/\b(?:cap|pec|uts|url|ci)\b/ig, (token) => token.toUpperCase())
+      .replace(/^\w/, (letter) => letter.toUpperCase());
+  }
+
+  function municipalityPeriodField(key) {
+    const historicalCodes = {
+      numeric_code_110_provinces: ['numeric_code', '2010–2016'],
+      numeric_code_107_provinces: ['numeric_code', '2006–2009'],
+      numeric_code_103_provinces: ['numeric_code', '1995–2005'],
+    };
+    if (historicalCodes[key]) {
+      const [field, period] = historicalCodes[key];
+      return { field, period };
+    }
+    const match = String(key || '').match(/^(.*?)[_-]((?:19|20)\d{2}(?:[_-](?:19|20)\d{2})?)$/);
+    return match ? { field: match[1], period: match[2].replace(/[_-]/g, '–') } : null;
+  }
+
+  function municipalityPeriodTables(record) {
+    const valuesByField = new Map();
+    Object.entries(record || {}).forEach(([key, value]) => {
+      if (isHiddenMunicipalityGeometryField(key)) return;
+      const periodField = municipalityPeriodField(key);
+      if (!periodField) return;
+      if (!valuesByField.has(periodField.field)) valuesByField.set(periodField.field, new Map());
+      valuesByField.get(periodField.field).set(periodField.period, { key, value });
+    });
+    const groupsByPeriods = new Map();
+    valuesByField.forEach((periodValues, field) => {
+      const periods = [...periodValues.keys()].sort((a, b) => Number(a.slice(0, 4)) - Number(b.slice(0, 4)));
+      const signature = periods.join('|');
+      if (!groupsByPeriods.has(signature)) groupsByPeriods.set(signature, { periods, fields: [] });
+      groupsByPeriods.get(signature).fields.push({ field, values: periodValues });
+    });
+    return [...groupsByPeriods.values()].map(({ periods, fields }) => {
+      const headers = fields.map(({ field }) => `<th scope="col">${escapeHtml(municipalityFieldLabel(field))}</th>`).join('');
+      const rows = periods.map((period) => `<tr><th scope="row">${escapeHtml(period)}</th>${fields.map(({ field, values }) => {
+        const entry = values.get(period);
+        return `<td>${municipalityValueHtml(entry?.key || field, entry?.value)}</td>`;
+      }).join('')}</tr>`).join('');
+      const caption = fields.map(({ field }) => municipalityFieldLabel(field)).join(' · ');
+      return `<div class="municipality-table-wrap"><table class="municipality-data-table"><caption>${escapeHtml(caption)}</caption><thead><tr><th scope="col">${escapeHtml(tr('Period'))}</th>${headers}</tr></thead><tbody>${rows}</tbody></table></div>`;
+    }).join('');
+  }
+
+  function municipalityRecordRows(record) {
+    if (!record || typeof record !== 'object') return '';
+    const fields = Object.entries(record)
+      .filter(([key]) => !isHiddenMunicipalityGeometryField(key) && !municipalityPeriodField(key))
+      .map(([key, value]) => `<div><dt>${escapeHtml(municipalityFieldLabel(key))}</dt><dd>${municipalityValueHtml(key, value)}</dd></div>`)
+      .join('');
+    return `${fields ? `<dl class="map-sheet-facts">${fields}</dl>` : ''}${municipalityPeriodTables(record)}`;
+  }
+
+  function municipalityDetailSection(title, record) {
+    const rows = municipalityRecordRows(record);
+    if (!rows) return '';
+    return `<section class="parcel-section municipality-record-section"><h3 class="parcel-section-title map-sheet-section-title">${escapeHtml(tr(title))}</h3>${rows}</section>`;
+  }
+
+  function municipalityRecordName(record) {
+    if (!record || typeof record !== 'object') return '';
+    return String(record.official_name || record.name || record.denomination || record.uts_name || record.region_name || '').trim();
+  }
+
+  function municipalityLatestPopulation(details) {
+    const record = details?.municipality || {};
+    const candidates = [];
+    (Array.isArray(details?.population_history) ? details.population_history : []).forEach((row) => {
+      candidates.push({ year: Number(row?.year), residents: Number(row?.resident_population) });
+    });
+    // The ISTAT/comuni-italiani snapshot stores one column per year (ci_population_2021).
+    Object.entries(record).forEach(([key, value]) => {
+      const match = /^(?:ci_)?population_((?:19|20)\d{2})$/.exec(key);
+      if (match && value !== null && value !== '') candidates.push({ year: Number(match[1]), residents: Number(value) });
+    });
+    return candidates
+      .filter((item) => Number.isFinite(item.year) && Number.isFinite(item.residents))
+      .sort((a, b) => a.year - b.year)
+      .pop() || null;
+  }
+
+  function municipalitySummaryHtml(details) {
+    const record = details?.municipality || {};
+    const latest = municipalityLatestPopulation(details);
+    const capital = record.is_provincial_capital ?? (record.capital_flag === 0 || record.capital_flag === 1 ? record.capital_flag === 1 : undefined);
+    const tiles = [];
+    if (latest) {
+      tiles.push([tr('Residents'), latest.residents.toLocaleString(document.documentElement.lang || undefined), String(latest.year)]);
+    }
+    if (capital === true || capital === false) {
+      tiles.push([tr('Provincial capital'), capital ? tr('Yes') : tr('No'), '']);
+    }
+    if (record.cadastral_code) {
+      tiles.push([tr('Cadastral code'), String(record.cadastral_code), '']);
+    }
+    const website = canonicalHttpUrl(record.website || record.ci_website);
+    if (website) {
+      let host = website;
+      try { host = new URL(website).hostname.replace(/^www\./, ''); } catch (_) { /* keep full URL */ }
+      tiles.push([tr('Website'), `<a class="municipality-detail-link" href="${escapeHtml(website)}" target="_blank" rel="noopener noreferrer">${escapeHtml(host)}</a>`, '', true]);
+    }
+    const province = municipalityRecordName(details?.province) || String(record.uts_name || '').trim();
+    const abbreviation = String(details?.province?.province_abbreviation || record.province_abbreviation || '').trim();
+    const crumbs = [
+      municipalityRecordName(details?.region) || String(record.region_name || '').trim(),
+      province && abbreviation && abbreviation !== province ? `${province} (${abbreviation})` : province,
+    ].filter(Boolean);
+    const trail = crumbs.length
+      ? `<p class="map-sheet-trail">${crumbs.map((name) => `<span>${escapeHtml(name)}</span>`).join('')}</p>`
+      : '';
+    const stats = tiles.length
+      ? `<div class="map-sheet-stats">${tiles.map(([label, value, hint, isHtml]) => `<div class="map-sheet-stat${isHtml ? ' is-wide' : ''}"><span class="map-sheet-stat-label">${escapeHtml(label)}</span><strong class="map-sheet-stat-value">${isHtml ? value : escapeHtml(value)}</strong>${hint ? `<span class="map-sheet-stat-hint">${escapeHtml(hint)}</span>` : ''}</div>`).join('')}</div>`
+      : '';
+    return trail || stats ? `<div class="map-sheet-summary">${trail}${stats}</div>` : '';
+  }
+
+  function renderMunicipalityDetails(details) {
+    const content = $('municipalityDetailContent');
+    const sections = [
+      municipalityDetailSection('ISTAT municipality record', details?.municipality),
+      municipalityDetailSection('Province', details?.province),
+      municipalityDetailSection('Region', details?.region),
+      municipalityDetailSection('Geographic area', details?.geographic_area),
+    ].filter(Boolean);
+    const population = Array.isArray(details?.population_history) ? details.population_history : [];
+    if (population.length) {
+      const keys = [...new Set(population.flatMap((row) => Object.keys(row || {})))].filter((key) => !isHiddenMunicipalityGeometryField(key));
+      const headings = keys.map((key) => `<th scope="col">${escapeHtml(municipalityFieldLabel(key))}</th>`).join('');
+      const rows = population.map((record) => `<tr>${keys.map((key) => {
+        return `<td>${municipalityValueHtml(key, record?.[key])}</td>`;
+      }).join('')}</tr>`).join('');
+      sections.push(`<details class="parcel-section"><summary class="parcel-section-header"><span class="parcel-section-title">${escapeHtml(tr('Population history'))}</span><span class="parcel-section-badge">${population.length}</span></summary><div class="parcel-section-body"><div class="municipality-table-wrap"><table class="municipality-data-table"><thead><tr>${headings}</tr></thead><tbody>${rows}</tbody></table></div></div></details>`);
+    }
+    if (details?.source) sections.push(`<p class="map-sheet-source"><i class="fas fa-database" aria-hidden="true"></i><span>${escapeHtml(tr('Source'))}: ${escapeHtml(details.source)}</span></p>`);
+    content.innerHTML = sections.length
+      ? municipalitySummaryHtml(details) + sections.join('')
+      : `<p class="map-sheet-empty">${escapeHtml(tr('No municipality details are available.'))}</p>`;
+    content.scrollTop = 0;
+  }
+
+  function closeMunicipalityDetails() {
+    state.municipalityDetailsRequest += 1;
+    state.municipalityDetailsController?.abort();
+    state.municipalityDetailsController = null;
+    state.selectedMunicipalityCode = null;
+    const panel = $('municipalityDetailPanel');
+    if (panel) panel.hidden = true;
+  }
+
+  async function loadMunicipalityDetails(feature) {
+    closeMaritimeConcessionDetails();
+    const properties = feature?.properties || {};
+    if (properties.unit_type !== 'municipality') return;
+    const featureId = Number(feature?.id ?? properties.id);
+    const rawCode = properties.geo_unit_id
+      ?? (featureId >= 3000000000 && featureId < 3001000000 ? featureId - 3000000000 : null);
+    const code = Number(rawCode);
+    if (!Number.isInteger(code) || code <= 0 || code > 999999) return;
+
+    state.municipalityDetailsController?.abort();
+    const controller = new AbortController();
+    const requestId = ++state.municipalityDetailsRequest;
+    state.municipalityDetailsController = controller;
+    state.selectedMunicipalityCode = String(code);
+    state.selectedReference = null;
+    state.selectedFeature = feature;
+    clearSelectedAuctionSaleMarker();
+    window.ParcelPanel?.clear();
+    if (state.map?.getSource('selected-parcel')) state.map.getSource('selected-parcel').setData(emptyFeatureCollection());
+    state.map?.getSource('adjacent-parcels')?.setData(emptyFeatureCollection());
+    renderSelectedGeometry(feature);
+    sisterBuildingsOverlay.fetchToken += 1;
+    sisterBuildingsOverlay.records = [];
+    state.map?.getSource('sister-building-parcel')?.setData(emptyFeatureCollection());
+    if ($('sisterBuildingsCount')) $('sisterBuildingsCount').textContent = '';
+    $('directParcelPanel').hidden = true;
+    $('municipalityDetailPanel').hidden = false;
+    $('municipalityDetailTitle').textContent = properties.canonical_name || tr('Municipality details');
+    $('municipalityDetailSubtitle').textContent = `${tr('ISTAT code')}: ${code}`;
+    $('municipalityDetailContent').innerHTML = `<div class="map-sheet-loading" role="status"><span class="map-sheet-loading-bar"></span><span class="map-sheet-loading-bar"></span><span class="map-sheet-loading-bar"></span><span class="visually-hidden">${escapeHtml(tr('Loading municipality details…'))}</span></div>`;
+    writeUrl();
+
+    const task = beginMapProgress('municipality-details', 'Loading municipality details…');
+    try {
+      const response = await fetch(`/api/v1/enrichment/municipality/istat/${encodeURIComponent(code)}`, { signal: controller.signal });
+      if (!response.ok) throw new Error(response.status === 404
+        ? tr('No ISTAT municipality record was found.')
+        : tr('Municipality details are temporarily unavailable.'));
+      const details = await response.json();
+      if (requestId !== state.municipalityDetailsRequest || state.selectedMunicipalityCode !== String(code)) return;
+      renderMunicipalityDetails(details);
+      mapStatus(tr('Municipality selected'));
+    } catch (error) {
+      if (error.name === 'AbortError' || requestId !== state.municipalityDetailsRequest) return;
+      $('municipalityDetailContent').innerHTML = `<p class="map-sheet-empty is-error" role="status">${escapeHtml(error.message || tr('Municipality details are temporarily unavailable.'))}</p>`;
+      mapStatus(error.message || tr('Municipality details are temporarily unavailable.'), true);
+    } finally {
+      task.finish();
+      if (state.municipalityDetailsController === controller) state.municipalityDetailsController = null;
+    }
+  }
+
+  function maritimeRecordValueHtml(key, value, record) {
+    if (value === null || value === undefined || value === '') return escapeHtml(tr('Not available'));
+    if (typeof value === 'boolean') return escapeHtml(value ? tr('Yes') : tr('No'));
+    if (typeof value === 'string') {
+      const url = canonicalHttpUrl(value);
+      if (url) return canonicalFieldHtml(key, url, record);
+      if (/(?:^|_)json$/i.test(String(key || ''))) {
+        try {
+          const parsed = JSON.parse(value);
+          return `<pre class="maritime-json-value">${escapeHtml(JSON.stringify(parsed, null, 2))}</pre>`;
+        } catch (_) { /* keep source text when it is not valid JSON */ }
+      }
+      return escapeHtml(value);
+    }
+    if (typeof value === 'object') {
+      try {
+        return `<pre class="maritime-json-value">${escapeHtml(JSON.stringify(value, null, 2))}</pre>`;
+      } catch (_) { return escapeHtml(String(value)); }
+    }
+    return escapeHtml(String(value));
+  }
+
+  function maritimeRecordFieldsHtml(record) {
+    if (!record || typeof record !== 'object') return '';
+    const fields = Object.entries(record).map(([key, value]) => (
+      `<div><dt>${escapeHtml(municipalityFieldLabel(key))}</dt><dd>${maritimeRecordValueHtml(key, value, record)}</dd></div>`
+    )).join('');
+    return fields ? `<dl class="parcel-rows maritime-record-fields">${fields}</dl>` : '';
+  }
+
+  function renderMaritimeConcessionDetails(details) {
+    const content = $('maritimeConcessionContent');
+    if (!content) return;
+    const properties = details?.properties || {};
+    const sections = [];
+    const primary = maritimeRecordFieldsHtml(properties);
+    if (primary) {
+      sections.push(`<section class="parcel-section maritime-record-section"><h3 class="parcel-section-title">${escapeHtml(tr('Concession attributes'))}</h3>${primary}</section>`);
+    }
+    const relatedLabels = {
+      source_concession: 'Source concession record',
+      source_attributes: 'Original source attributes',
+      source_geometry: 'Source geometry',
+      administrative_assignment: 'Administrative assignment',
+      document_summary: 'Document summary',
+      cadastral_parcels: 'Linked cadastral parcels',
+      document_gaps: 'Document status',
+      online_document_matches: 'Matched documents',
+      online_documents: 'Concession documents',
+      sicily_contracts: 'Sicily contracts',
+      institution_request_targets: 'Requesting institutions',
+      snapshot: 'Snapshot',
+      resources: 'Source resources',
+      regional_source_audits: 'Regional source audits',
+    };
+    Object.entries(details?.related || {}).forEach(([name, records]) => {
+      if (!Array.isArray(records)) return;
+      const recordMarkup = records.map((record, index) => (
+        `<article class="maritime-related-record"><h4>${escapeHtml(tr('Record {number}', { number: index + 1 }))}</h4>${maritimeRecordFieldsHtml(record)}</article>`
+      )).join('');
+      const label = relatedLabels[name] || municipalityFieldLabel(name);
+      sections.push(`<details class="parcel-section maritime-related-section"><summary class="parcel-section-header"><span class="parcel-section-title">${escapeHtml(tr(label))}</span><span class="parcel-section-badge">${records.length}</span></summary><div class="parcel-section-body">${recordMarkup || `<p class="maritime-empty-related">${escapeHtml(tr('No linked records.'))}</p>`}</div></details>`);
+    });
+    const source = details?.source || 'aecs4u-stats.agenziademanio';
+    sections.push(`<p class="maritime-source"><i class="fas fa-database" aria-hidden="true"></i><span>${escapeHtml(tr('Source'))}: ${escapeHtml(source)}</span></p>`);
+    content.innerHTML = sections.length
+      ? sections.join('')
+      : `<p class="map-sheet-empty">${escapeHtml(tr('No concession details are available.'))}</p>`;
+    content.scrollTop = 0;
+  }
+
+  function closeMaritimeConcessionDetails() {
+    const hadSelection = state.selectedMaritimeRowId !== null;
+    state.maritimeDetailsRequest += 1;
+    state.maritimeDetailsController?.abort();
+    state.maritimeDetailsController = null;
+    state.selectedMaritimeRowId = null;
+    const panel = $('maritimeConcessionPanel');
+    if (panel) panel.hidden = true;
+    if (hadSelection && state.map?.getSource('selected-parcel')) {
+      state.map.getSource('selected-parcel').setData(emptyFeatureCollection());
+    }
+  }
+
+  async function loadMaritimeConcessionDetails(layer, feature) {
+    const properties = feature?.properties || {};
+    const rawId = feature?.id ?? properties.row_id ?? properties.id;
+    const featureId = Number(rawId);
+    if (!Number.isInteger(featureId) || featureId < 1) return;
+
+    state.maritimeDetailsController?.abort();
+    const controller = new AbortController();
+    const requestId = ++state.maritimeDetailsRequest;
+    state.maritimeDetailsController = controller;
+    state.selectedMaritimeRowId = String(featureId);
+    closeMunicipalityDetails();
+    state.selectedReference = null;
+    state.selectedFeature = null;
+    clearSelectedAuctionSaleMarker();
+    window.ParcelPanel?.clear();
+    state.map?.getSource('adjacent-parcels')?.setData(emptyFeatureCollection());
+    sisterBuildingsOverlay.fetchToken += 1;
+    sisterBuildingsOverlay.records = [];
+    state.map?.getSource('sister-building-parcel')?.setData(emptyFeatureCollection());
+    if ($('sisterBuildingsCount')) $('sisterBuildingsCount').textContent = '';
+    $('directParcelPanel').hidden = true;
+    $('maritimeConcessionPanel').hidden = false;
+    if (feature?.geometry) renderSelectedGeometry(feature);
+    const identity = properties.admin_label || properties.idconc || `${tr('Feature')} ${featureId}`;
+    $('maritimeConcessionTitle').textContent = identity;
+    $('maritimeConcessionSubtitle').textContent = [
+      properties.idconc ? `${tr('Concession ID')}: ${properties.idconc}` : '',
+      properties.geometry_type || properties.layer_kind || '',
+    ].filter(Boolean).join(' · ');
+    renderMaritimeConcessionDetails({ properties, related: {} });
+    const content = $('maritimeConcessionContent');
+    content.insertAdjacentHTML('beforeend', `<p class="maritime-loading" role="status">${escapeHtml(tr('Loading concession details…'))}</p>`);
+    writeUrl();
+    updateParcelZoomAffordance();
+
+    const task = beginMapProgress('maritime-concession-details', 'Loading concession details…');
+    try {
+      const detailUrl = layer?.detail_url || `/api/v1/map/layers/maritime-concessions/features/{feature_id}`;
+      const response = await fetch(detailUrl.replace('{feature_id}', encodeURIComponent(featureId)), { signal: controller.signal });
+      if (!response.ok) throw new Error(response.status === 404
+        ? tr('No concession record was found.')
+        : tr('Concession details are temporarily unavailable.'));
+      const details = await response.json();
+      if (requestId !== state.maritimeDetailsRequest || state.selectedMaritimeRowId !== String(featureId)) return;
+      renderMaritimeConcessionDetails(details);
+      mapStatus(tr('Maritime concession selected'));
+    } catch (error) {
+      if (error.name === 'AbortError' || requestId !== state.maritimeDetailsRequest) return;
+      const loading = content.querySelector('.maritime-loading');
+      if (loading) loading.remove();
+      content.insertAdjacentHTML('beforeend', `<p class="maritime-error" role="status">${escapeHtml(error.message || tr('Concession details are temporarily unavailable.'))}</p>`);
+      mapStatus(error.message || tr('Concession details are temporarily unavailable.'), true);
+    } finally {
+      task.finish();
+      if (state.maritimeDetailsController === controller) state.maritimeDetailsController = null;
+    }
   }
 
   // Favourites are saved parcels with ``is_favorite`` set, so the shortlist
@@ -2079,6 +2471,10 @@
   }
 
   function showOverlayFeature(layer, feature, lngLat) {
+    if (layer.id === 'maritime-concessions') {
+      void loadMaritimeConcessionDetails(layer, feature);
+      return;
+    }
     const properties = feature?.properties || {};
     const popup = new maplibregl.Popup({ maxWidth: '420px', closeButton: true })
       .setLngLat(lngLat)
@@ -2175,6 +2571,7 @@
 
   async function loadParcelByReference(reference, flyTo = true, featureId = null) {
     if (!reference) return null;
+    closeMunicipalityDetails();
     mapStatus('Loading parcel…');
     const task = beginMapProgress('parcel', 'Loading parcel…');
     try {
@@ -2636,6 +3033,8 @@
   }
 
   function clearParcelSelection() {
+    closeMunicipalityDetails();
+    closeMaritimeConcessionDetails();
     state.selectedReference = null;
     state.selectedFeature = null;
     clearSelectedAuctionSaleMarker();
@@ -3681,6 +4080,7 @@
       east: String(Math.min(180, bounds.getEast())),
       north: String(Math.min(90, bounds.getNorth())),
       limit: String(pageSize),
+      zoom: String(Math.floor(zoom)),
     });
     const controller = new AbortController();
     sisterParcelsOverlay.controller = controller;
@@ -3804,7 +4204,8 @@
     auctionParcelsOverlay.controller?.abort();
     const status = $('auctionParcelsStatus');
     const count = $('auctionParcelsCount');
-    if (map.getZoom() < 14) {
+    const zoom = map.getZoom();
+    if (zoom < 14) {
       state.map?.getSource('auction-listed-parcels')?.setData(emptyFeatureCollection());
       auctionParcelsOverlay.leafletLayer?.remove();
       auctionParcelsOverlay.leafletLayer = null;
@@ -3821,6 +4222,7 @@
       east: String(Math.min(180, bounds.getEast())),
       north: String(Math.min(90, bounds.getNorth())),
       limit: String(pageSize),
+      zoom: String(Math.floor(zoom)),
       // Filtered in the database: without it every parcel page in the view is
       // downloaded (several MB each) only to keep the few auction parcels.
       flag: 'is_auction_sale',
@@ -5475,7 +5877,7 @@
     const bounds = state.map.getBounds();
     const params = new URLSearchParams({
       west: bounds.getWest().toFixed(6), south: bounds.getSouth().toFixed(6),
-      east: bounds.getEast().toFixed(6), north: bounds.getNorth().toFixed(6), limit: String(tableView.pageSize), offset: String((tableView.page - 1) * tableView.pageSize),
+      east: bounds.getEast().toFixed(6), north: bounds.getNorth().toFixed(6), limit: String(tableView.pageSize), offset: String((tableView.page - 1) * tableView.pageSize), zoom: String(Math.floor(state.map.getZoom())),
     });
     const status = $('mapTableStatus');
     if (status) status.textContent = 'Loading…';
@@ -5708,6 +6110,13 @@
     });
     window.ParcelPanel?.mount({ content: $('directParcelContent'), nav: $('parcelSectionNav'), strip: $('parcelStatStrip'), tr });
     $('parcelCloseButton').addEventListener('click', () => { $('directParcelPanel').hidden = true; updateParcelZoomAffordance(); mapStatus(''); });
+    $('municipalityDetailClose')?.addEventListener('click', () => { closeMunicipalityDetails(); mapStatus(''); });
+    $('maritimeConcessionClose')?.addEventListener('click', () => {
+      closeMaritimeConcessionDetails();
+      updateParcelZoomAffordance();
+      writeUrl();
+      mapStatus('');
+    });
     $('layersSelectAll')?.addEventListener('change', (event) => setAllOverlays(event.target.checked));
     // A manual tick on any layer row changes the header state too.
     $('mapLayerList')?.addEventListener('change', syncSelectAll);
@@ -6128,6 +6537,9 @@
     state.map.on('moveend', updateParcelZoomAffordance);
     state.map.on('click', (event) => {
       closeLayerStack();
+      closeMunicipalityDetails();
+      closeMaritimeConcessionDetails();
+      updateParcelZoomAffordance();
       if (state.sisterBatch.mode) {
         const parcelFeatures = state.map.getLayer('fill-cadastral-parcels')
           ? state.map.queryRenderedFeatures(event.point, { layers: ['fill-cadastral-parcels'] }) : [];
@@ -6163,6 +6575,13 @@
       if (features[0]) {
         identifyAtPoint(event.lngLat, features[0]);
         alsoHere();
+        return;
+      }
+      const administrativeFeatures = state.map.getLayer('fill-geo-boundaries')
+        ? state.map.queryRenderedFeatures(event.point, { layers: ['fill-geo-boundaries'] }) : [];
+      const municipalityFeature = administrativeFeatures.find((feature) => feature.properties?.unit_type === 'municipality');
+      if (municipalityFeature) {
+        void loadMunicipalityDetails(municipalityFeature);
         return;
       }
       const overlayStack = stackedOverlayFeatures(event.point);

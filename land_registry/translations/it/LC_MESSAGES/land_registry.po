@@ -1565,6 +1565,63 @@ msgstr "Stato dei documenti"
 msgid "Snapshot"
 msgstr "Istantanea"
 
+msgid "Concession attributes"
+msgstr "Attributi della concessione"
+
+msgid "Source concession record"
+msgstr "Record originale della concessione"
+
+msgid "Original source attributes"
+msgstr "Attributi originali della fonte"
+
+msgid "Source geometry"
+msgstr "Geometria della fonte"
+
+msgid "Administrative assignment"
+msgstr "Attribuzione amministrativa"
+
+msgid "Document summary"
+msgstr "Riepilogo dei documenti"
+
+msgid "Linked cadastral parcels"
+msgstr "Particelle catastali collegate"
+
+msgid "Sicily contracts"
+msgstr "Contratti della Sicilia"
+
+msgid "Requesting institutions"
+msgstr "Enti richiedenti"
+
+msgid "Regional source audits"
+msgstr "Verifiche delle fonti regionali"
+
+msgid "Record {number}"
+msgstr "Record {number}"
+
+msgid "No linked records."
+msgstr "Nessun record collegato."
+
+msgid "No concession details are available."
+msgstr "Non sono disponibili dettagli per questa concessione."
+
+msgid "Loading concession details…"
+msgstr "Caricamento dei dettagli della concessione…"
+
+msgid "Concession details are temporarily unavailable."
+msgstr "I dettagli della concessione non sono temporaneamente disponibili."
+
+msgid "No concession record was found."
+msgstr "Nessun record della concessione trovato."
+
+msgid "Maritime concession selected"
+msgstr "Concessione marittima selezionata"
+
+msgid "Concession actions"
+msgstr "Azioni della concessione"
+
+msgid "Close concession details"
+msgstr "Chiudi i dettagli della concessione"
+
 msgid "No concession documents are linked to this record."
 msgstr "Nessun documento della concessione è collegato a questo record."
 

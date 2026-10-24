@@ -440,9 +440,49 @@ body.direct-map-page > .direct-map-shell { height: 100vh; flex: 0 0 100vh; }
 .parcel-section-nav button[aria-current="true"] { background: var(--direct-map-accent-soft); color: var(--direct-map-accent); font-weight: 600; }
 .parcel-section-nav button:focus-visible { outline: 3px solid var(--direct-map-accent-ring); outline-offset: 1px; }
 .parcel-sheet .parcel-detail-content { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px 16px 14px; }
-.parcel-sister-building-controls { flex: 0 0 auto; padding: 8px 14px; border-top: 1px solid var(--direct-map-border); }
-.parcel-sister-building-controls .map-live-layer-row { width: 100%; }
-.parcel-sister-building-controls .map-layer-meta:empty { display: none; }
+.municipality-detail-sheet .parcel-section > .parcel-section-title { margin: 0 0 8px; }
+.municipality-record-section { padding-top: 16px; padding-bottom: 16px; }
+.municipality-record-section > .parcel-section-title { font-size: 15px; letter-spacing: -0.01em; }
+.municipality-table-wrap { max-width: 100%; margin-top: 10px; overflow-x: auto; border: 1px solid var(--direct-map-border); border-radius: 8px; background: var(--direct-map-panel); }
+.municipality-data-table { width: 100%; min-width: 360px; border-collapse: collapse; color: var(--direct-map-text); font-size: 12px; font-variant-numeric: tabular-nums; }
+.municipality-data-table caption { padding: 9px 11px; color: var(--direct-map-text); background: var(--direct-map-panel); font-size: 12px; font-weight: 700; text-align: left; caption-side: top; }
+.municipality-data-table th, .municipality-data-table td { padding: 8px 10px; border-bottom: 1px solid var(--direct-map-border); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+.municipality-data-table thead th { color: var(--direct-map-muted); background: color-mix(in srgb, var(--direct-map-accent-soft) 55%, var(--direct-map-panel)); font-weight: 700; }
+.municipality-data-table tbody th { color: var(--direct-map-text); background: color-mix(in srgb, var(--direct-map-accent-soft) 24%, var(--direct-map-panel)); font-weight: 700; white-space: nowrap; }
+.municipality-data-table tbody tr:last-child th, .municipality-data-table tbody tr:last-child td { border-bottom: 0; }
+.municipality-data-table tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--direct-map-accent-soft) 16%, var(--direct-map-panel)); }
+.municipality-detail-link { overflow-wrap: anywhere; }
+.municipality-detail-image-link { display: inline-block; max-width: 100%; }
+.municipality-detail-image { display: block; max-width: min(128px, 100%); max-height: 128px; border: 1px solid var(--direct-map-border); border-radius: 6px; object-fit: contain; }
+.maritime-concession-sheet { border-top: 3px solid #1f8ea3; }
+.maritime-sheet-header { align-items: center; padding: 14px 16px 12px; background: linear-gradient(180deg, color-mix(in srgb, #1f8ea3 12%, var(--direct-map-panel)), transparent); }
+.maritime-eyebrow { display: inline-flex; align-items: center; gap: 6px; color: #1f8ea3; }
+.maritime-eyebrow i { font-size: 11px; }
+.maritime-concession-sheet .parcel-sheet-header h2 { margin-top: 4px; font-size: 21px; line-height: 1.2; letter-spacing: -0.015em; }
+.maritime-concession-sheet .parcel-sheet-subtitle { display: inline-block; margin-top: 7px; padding: 2px 9px; border: 1px solid var(--direct-map-border); border-radius: 999px; background: var(--direct-map-panel); font-variant-numeric: tabular-nums; }
+.maritime-concession-sheet .parcel-sheet-subtitle:empty { display: none; }
+.maritime-concession-sheet .map-card-close { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 7px; }
+.maritime-concession-sheet .map-card-close:hover { background: color-mix(in srgb, #1f8ea3 12%, var(--direct-map-panel)); color: var(--direct-map-text); }
+.maritime-concession-sheet .map-card-close:focus-visible { outline: 3px solid var(--direct-map-accent-ring); outline-offset: 1px; }
+.maritime-concession-sheet .parcel-detail-content { padding-top: 12px; scrollbar-width: thin; }
+.maritime-record-section { padding-top: 12px; padding-bottom: 14px; }
+.maritime-record-section > .parcel-section-title { display: flex; align-items: center; gap: 8px; margin: 0 0 9px; font-size: 15px; }
+.maritime-record-section > .parcel-section-title::before { content: ""; width: 4px; height: 14px; border-radius: 2px; background: #1f8ea3; }
+.maritime-record-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 7px; }
+.maritime-record-fields > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 8px 10px; border: 1px solid var(--direct-map-border); border-radius: 8px; background: var(--direct-map-panel); }
+.maritime-record-fields dt { color: var(--direct-map-muted); font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; overflow-wrap: anywhere; }
+.maritime-record-fields dd { margin: 0; min-width: 0; text-align: left; font-size: 12px; overflow-wrap: anywhere; }
+.maritime-record-fields dd a { color: var(--direct-map-accent); overflow-wrap: anywhere; }
+.maritime-json-value { max-height: 260px; margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: inherit; font-size: 11px; }
+.maritime-related-section > .parcel-section-header { padding: 2px 0; }
+.maritime-related-section > .parcel-section-header:hover .parcel-section-title { color: #1f8ea3; }
+.maritime-related-record + .maritime-related-record { margin-top: 11px; padding-top: 11px; border-top: 1px solid var(--direct-map-border); }
+.maritime-related-record h4 { margin: 0 0 7px; color: var(--direct-map-muted); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.maritime-empty-related { margin: 0; color: var(--direct-map-muted); font-size: 12px; }
+.maritime-source { display: flex; align-items: center; gap: 8px; margin: 4px 0 0; padding: 10px 0 0; border-top: 1px solid var(--direct-map-border); color: var(--direct-map-muted); font-size: 12px; }
+.maritime-source i { color: #1f8ea3; opacity: .85; }
+.maritime-loading, .maritime-error { margin: 8px 0 0; padding: 9px 11px; border: 1px solid var(--direct-map-border); border-radius: 8px; color: var(--direct-map-muted); font-size: 12px; }
+.maritime-error { border-color: color-mix(in srgb, #d92d20 45%, var(--direct-map-border)); background: color-mix(in srgb, #d92d20 7%, var(--direct-map-panel)); color: var(--direct-map-text); }
 .parcel-sheet .parcel-detail-actions { margin: 0; padding: 10px 14px; border-top: 1px solid var(--direct-map-border); background: var(--direct-map-panel); }
 .parcel-sheet .parcel-adjacent-results { max-height: 26%; overflow: auto; padding: 0 14px; }
 .parcel-sheet .parcel-adjacent-results:empty { display: none; }
@@ -641,9 +681,6 @@ body.direct-map-page > .direct-map-shell { height: 100vh; flex: 0 0 100vh; }
   .parcel-sheet .parcel-sheet-header, .parcel-sheet .parcel-detail-content { padding-right: 58px; }
   .parcel-sheet .parcel-sheet-header { padding-right: 16px; }
   .parcel-sheet .parcel-stat-strip, .parcel-sheet .parcel-section-nav { margin-right: 52px; }
-  /* One scrollable row keeps the content area usable on a small screen. */
-  .parcel-sheet .parcel-detail-actions { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
-  .parcel-sheet .parcel-detail-actions .secondary-action { flex: 0 0 auto; white-space: nowrap; }
 }
 
 /* Sheet refinements: fixed-height chrome, clear of the Layers button, compact
@@ -715,9 +752,8 @@ body.direct-map-page > .direct-map-shell { height: 100vh; flex: 0 0 100vh; }
   .parcel-sheet .parcel-stat-label { font-size: 11px; }
   .parcel-sheet .parcel-stat-value { font-size: 12px; overflow-wrap: normal; }
   .parcel-sheet .parcel-section-nav { padding: 3px 8px; }
-  .parcel-sheet .parcel-sister-building-controls { padding: 4px 10px; }
   .parcel-sheet .parcel-detail-actions { padding: 6px 10px; }
-  .parcel-sheet .parcel-detail-actions .secondary-action { min-height: 26px; padding: 3px 8px; }
+  .parcel-sheet .parcel-detail-actions .secondary-action { min-height: 30px; padding: 4px 10px; }
 }
 .parcel-sheet .parcel-detail-content { min-height: 140px; }
 @media (min-width: 701px) and (max-width: 1024px) {
@@ -765,5 +801,4 @@ body.direct-map-page > .direct-map-shell { height: 100vh; flex: 0 0 100vh; }
 /* Floating panels are region landmarks inside <main>: an <aside> must be top level. */
 /* Contrast: the current section tab and the SISTER toggle in the dark theme. */
 .parcel-section-nav button[aria-current="true"] { color: var(--direct-map-text); box-shadow: inset 0 -2px 0 var(--direct-map-accent); }
-.parcel-sister-building-controls .map-live-toggle { color: var(--direct-map-text); }
 .map-live-checkbox:has(input:checked) { color: var(--direct-map-text); }

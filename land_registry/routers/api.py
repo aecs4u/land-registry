@@ -67,6 +67,7 @@ from land_registry.map_layers import (
     get_map_layer,
     get_map_layer_source,
     get_map_search_source,
+    geojson_zoom_required,
     map_layer_catalog,
 )
 from land_registry.map_observability import map_metrics
@@ -4812,6 +4813,7 @@ async def get_map_layer_features(
     north: float = Query(..., ge=-90, le=90),
     limit: int = Query(2000, ge=1, le=5000),
     offset: int = Query(0, ge=0, le=1_000_000),
+    zoom: Optional[int] = Query(None, ge=0, le=22),
     flag: Optional[Literal["is_auction_sale"]] = Query(
         None, description="Only features whose boolean flag column is true (filtered in the database)."
     ),
@@ -4823,18 +4825,31 @@ async def get_map_layer_features(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if west >= east or south >= north:
         raise HTTPException(status_code=400, detail="Invalid map bounding box")
-    # Dense point datasets must be viewed through MVT at small scales.  Do
-    # not let a compatibility GeoJSON fallback turn a national viewport into
-    # a sequential scan; an empty collection tells the client to zoom in.
-    if (east - west) * (north - south) > layer.geojson_max_area:
-        return {"type": "FeatureCollection", "features": [], "layer": layer.id, "truncated": False, "zoom_required": layer.min_zoom}
+    # Dense layers use MVT for broad views. Reject oversized GeoJSON viewports
+    # before opening a database connection, and give the client a useful zoom
+    # target when it provides its current level.
+    viewport = (west, south, east, north)
+    zoom_required = geojson_zoom_required(layer, viewport, zoom)
+    if zoom_required is not None:
+        return {"type": "FeatureCollection", "features": [], "layer": layer.id, "truncated": False, "zoom_required": zoom_required}
     source = get_map_layer_source()
     if not source.available:
         raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable")
     page_size = min(limit, layer.max_features)
-    payload = await source.read_geojson(
-        layer.id, (west, south, east, north), min(page_size + 1, layer.max_features + 1), offset, flag=flag
-    )
+    try:
+        payload = await source.read_geojson(
+            layer.id, viewport, min(page_size + 1, layer.max_features + 1), offset,
+            flag=flag, zoom=zoom,
+        )
+    except Exception as exc:
+        if getattr(exc, "sqlstate", None) != "57014":
+            raise
+        logger.warning("Canonical map layer GeoJSON timed out for %s: %s", layer.id, exc)
+        raise HTTPException(
+            status_code=503,
+            detail="Map layer query timed out; zoom in or retry",
+            headers={"Retry-After": "8", "Cache-Control": "no-store"},
+        ) from exc
     features = payload.get("features", [])
     payload["truncated"] = len(features) > page_size
     payload["features"] = features[:page_size]

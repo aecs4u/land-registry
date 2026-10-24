@@ -22,7 +22,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field, ValidationError
 
 from land_registry import stats_service
-from land_registry.map_layers import get_map_layer_source
+from land_registry.map_layers import get_map_layer_source, get_map_search_source
 from land_registry.models import EnrichmentDatasetStatus, SolarEconomicsRequest
 from land_registry.solar_economics import (
     PVGIS_SOURCE_URL,
@@ -299,6 +299,43 @@ async def get_municipality(cadastral_code: str):
             detail=f"No municipality found for cadastral code '{cadastral_code}'",
         )
     return result
+
+
+@enrichment_router.get("/municipality/istat/{istat_code}")
+async def get_municipality_details_by_istat_code(istat_code: str):
+    """Return the complete ISTAT municipality record selected on the map."""
+    try:
+        code = int(istat_code)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="ISTAT municipality code must be numeric") from None
+    if code <= 0 or code > 999999:
+        raise HTTPException(status_code=422, detail="Invalid ISTAT municipality code")
+
+    result = None
+    try:
+        # The map's canonical boundary source is backed by aecs4u-stats. Its
+        # stable ISTAT foreign table carries the full active municipality row.
+        result = await asyncio.wait_for(
+            get_map_search_source().read_istat_municipality_details(code), timeout=6
+        )
+    except Exception as exc:
+        logger.warning("Stats ISTAT municipality lookup failed for %s: %s", code, exc)
+    if result is None:
+        # Keep the installed reference store as a compatibility fallback for
+        # deployments that have not provisioned the Stats-side foreign table.
+        result = await asyncio.to_thread(stats_service.get_municipality_details_by_istat_code, code)
+    if result is not None:
+        return result
+
+    available = stats_service.istat_db_available()
+    if not available:
+        available = await asyncio.to_thread(stats_service.postgres_stats_available)
+    if not available:
+        raise HTTPException(
+            status_code=503,
+            detail="ISTAT municipality reference store unavailable",
+        )
+    raise HTTPException(status_code=404, detail=f"No ISTAT municipality found for code '{code}'")
 
 
 @enrichment_router.get("/land-cover/{national_reference}")

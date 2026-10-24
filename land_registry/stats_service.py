@@ -6456,6 +6456,136 @@ def _municipality_sqlite_profile(cadastral_code: str) -> Optional[Dict[str, Any]
         return None
 
 
+def get_municipality_details_by_istat_code(istat_code: Any) -> Optional[Dict[str, Any]]:
+    """Return every stored ISTAT municipality field and its related records.
+
+    The map boundary key is the numeric ISTAT ``PRO_COM`` code, which is the
+    primary key of ``istat.municipalities``. Read SQLite with ``SELECT *`` so
+    older snapshots still expose every column they contain; when that store is
+    absent, use the aecs4u-stats PostgreSQL engine resolver.
+    """
+    try:
+        code = int(str(istat_code).strip())
+    except (TypeError, ValueError):
+        return None
+    if code <= 0 or code > 999999:
+        return None
+
+    if istat_db_available():
+        connection = None
+        try:
+            path = _istat_sqlite_path()
+            connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            connection.row_factory = sqlite3.Row
+            municipality_row = connection.execute(
+                "SELECT * FROM municipalities WHERE id = ? LIMIT 1", (code,)
+            ).fetchone()
+            if municipality_row is None:
+                return None
+
+            def row_values(row: Any) -> Optional[Dict[str, Any]]:
+                if row is None:
+                    return None
+                values = {key: _postgres_scalar(row[key]) for key in row.keys()}
+                if "is_provincial_capital" in values and values["is_provincial_capital"] is not None:
+                    values["is_provincial_capital"] = bool(values["is_provincial_capital"])
+                return values
+
+            def related_row(table: str, value: Any) -> Optional[Dict[str, Any]]:
+                if value is None:
+                    return None
+                try:
+                    row = connection.execute(
+                        f"SELECT * FROM {table} WHERE id = ? LIMIT 1", (value,)
+                    ).fetchone()
+                except sqlite3.Error:
+                    return None
+                return row_values(row)
+
+            try:
+                population_rows = connection.execute(
+                    "SELECT * FROM municipality_population_stats "
+                    "WHERE municipality_id = ? ORDER BY year",
+                    (code,),
+                ).fetchall()
+            except sqlite3.Error:
+                population_rows = []
+
+            municipality = row_values(municipality_row) or {}
+            return {
+                "source": "ISTAT via aecs4u-stats",
+                "municipality": municipality,
+                "province": related_row("provinces", municipality.get("province_id")),
+                "region": related_row("regions", municipality.get("region_id")),
+                "geographic_area": related_row(
+                    "geographic_areas", municipality.get("geographic_area_id")
+                ),
+                "population_history": [row_values(row) for row in population_rows],
+            }
+        except (OSError, sqlite3.Error) as exc:
+            logger.debug("ISTAT SQLite municipality detail lookup failed for %s: %s", code, exc)
+            return None
+        finally:
+            if connection is not None:
+                connection.close()
+
+    try:
+        from sqlmodel import Session, select
+
+        from aecs4u_stats.istat.models import (
+            IstatGeographicArea,
+            IstatMunicipality,
+            IstatProvince,
+            IstatRegion,
+            MunicipalityPopulationStat,
+        )
+        # This path is reached only when the shared SQLite store is absent;
+        # use the package resolver for its PostgreSQL landing source.
+        from aecs4u_stats.istat.municipalities import _engine
+
+        engine = _engine()
+        if engine is None:
+            return None
+
+        def model_values(model: Any, instance: Any) -> Dict[str, Any]:
+            return {
+                column.name: _postgres_scalar(getattr(instance, column.name, None))
+                for column in model.__table__.columns
+            }
+
+        with Session(engine) as session:
+            municipality = session.get(IstatMunicipality, code)
+            if municipality is None:
+                return None
+            province = session.get(IstatProvince, municipality.province_id)
+            region = session.get(IstatRegion, municipality.region_id)
+            geographic_area = session.get(
+                IstatGeographicArea, municipality.geographic_area_id
+            )
+            population = session.exec(
+                select(MunicipalityPopulationStat)
+                .where(MunicipalityPopulationStat.municipality_id == municipality.id)
+                .order_by(MunicipalityPopulationStat.year)
+            ).all()
+
+            return {
+                "source": "ISTAT via aecs4u-stats",
+                "municipality": model_values(IstatMunicipality, municipality),
+                "province": model_values(IstatProvince, province) if province else None,
+                "region": model_values(IstatRegion, region) if region else None,
+                "geographic_area": (
+                    model_values(IstatGeographicArea, geographic_area)
+                    if geographic_area else None
+                ),
+                "population_history": [
+                    model_values(MunicipalityPopulationStat, row) for row in population
+                ],
+            }
+    except Exception as exc:
+        logger.debug("ISTAT municipality detail lookup failed for %s: %s", code, exc)
+        return None
+
+
 def get_municipality_by_cadastral_code(
     cadastral_code: str,
     *,

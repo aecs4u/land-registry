@@ -136,6 +136,9 @@ available for viewport fallback and popup inspection:
 Dense point data is tile-first. The GeoJSON endpoint refuses overly broad
 viewports and returns an empty collection with the required zoom level rather
 than initiating an unsafe national scan.
+Parcel GeoJSON uses a tighter viewport cap of 0.0005 square degrees because a
+single dense city view can intersect tens of thousands of parcels. Map clients
+send their current zoom so the response can recommend a suitable next level.
 
 Embedded consumers receive the same catalog, health, MVT, and bounded GeoJSON
 endpoints below their configured prefix. Their map uses MVT when
@@ -150,9 +153,20 @@ EPSG:4326 geometries and GiST index on `public.concessions`, without parsing or
 transforming source JSON during tile requests. It also exposes the administrative
 label, source release, and geometry validation/repair flags used in map details.
 Related detail foreign tables map to the database's `agenziademanio.v_*` views.
+The `agenziademanio.concession_details` foreign table maps to
+`agenziademanio.v_concession_details`, a one-row-per-feature detail view that
+merges the original concession record and attributes with its snapshot,
+resource, administrative assignment, document and Sicily-contract records,
+institution targets, and regional source audits. One-to-many source rows are
+aggregated as JSON arrays so a concession stays one detail record. The local
+`concession_parcel_links` crosswalk is added by the land-registry detail API.
 Run `scripts/sql/agenziademanio-map-features.sql` in the source database to
 prepare this view. The view includes polygon footprints and WGS84 point
 records, excluding duplicate point imports in other coordinate systems.
+Run `property-scraper/scripts/repair_agenziademanio_fdw.py` in the source
+repository to create the source-side detail view and link its foreign table.
+`aecs4u-stats/migration/agenziademanio_foreign_views.sql` defines the matching
+Stats foreign table.
 Run `scripts/update_agenziademanio_fdw.py` to create any missing foreign-table
 definitions and refresh the mappings in place.
 

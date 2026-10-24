@@ -124,7 +124,7 @@ def test_regional_reference_lookup_checks_stale_id_hints():
 def test_broad_parcel_viewports_require_zoom_without_scanning_regional_rows():
     source, _, regional = regional_source()
     result = asyncio.run(source.read_geojson("cadastral-parcels", (6.5, 36.3, 18.6, 47.2), 100))
-    assert result == {"type": "FeatureCollection", "features": [], "zoom_required": 14}
+    assert result == {"type": "FeatureCollection", "features": [], "zoom_required": 22}
     assert all("to_regclass" in sql for sql, _ in regional.conn.calls)
 
 

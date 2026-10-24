@@ -27,6 +27,8 @@
   const REQUEST_TIMEOUT_MS = 12000;
   const POST_REQUEST_TIMEOUT_MS = 30000;
   const READ_MODEL_WAIT_MS = 30000;
+  // Transient municipality failures (503/network) are retried before the sheet reports them.
+  const MUNICIPALITY_RETRY_DELAYS_MS = [1000, 2500];
   const LAZY_ROOT_MARGIN = '320px 0px';
   const PVP_RECORD_LIMIT = 8;
   const PVP_NEARBY_DEFAULT_RADIUS_KM = 10;
@@ -853,7 +855,7 @@
         ]);
         if (!quotes.ok) throw Object.assign(new Error('OMI quotes unavailable'), { status: quotes.status });
         const sister = await ctx.sisterParcelRecords();
-        return { ...quotes.data, zone, sister: sister.ok ? sister.data : null };
+        return { ...quotes.data, zone, zoneUnavailable: ctx.municipalityFailed === true, sister: sister.ok ? sister.data : null };
       },
       render: (data, ctx) => {
         const { tr } = ctx;
@@ -889,6 +891,8 @@
           ? `<p class="parcel-callout" data-tone="ok">${esc(tr('OMI zone detected automatically'))}: <strong>${esc(detected)}</strong></p>`
           : detected
             ? `<p class="parcel-callout" data-tone="warn">${esc(tr('Zone {zone} was detected but has no quotes available: select and check an alternative.', { zone: detected }))}</p>`
+            : data.zoneUnavailable
+            ? `<p class="parcel-callout" data-tone="warn">${esc(tr('The OMI zone could not be detected because municipality data is temporarily unavailable: check the selection.'))}</p>`
             : `<p class="parcel-callout" data-tone="muted">${esc(tr('The OMI zone was not detected automatically: check the selection.'))}</p>`;
         const boundaryVintageNote = data.zone && data.zone.boundary_vintage
           ? note(tr('The automatically detected OMI zone uses approximate {vintage} boundary geometry; check the selected zone.', { vintage: data.zone.boundary_vintage }))
@@ -2674,6 +2678,21 @@
     </details>`;
   }
 
+  /** Tell the user that municipality-keyed data is missing because the lookup failed, not because none exists. */
+  function showMunicipalityNotice(ctx) {
+    if (!view.content || view.content.querySelector('.map-sheet-notice')) return;
+    const { tr } = ctx;
+    const notice = root.document.createElement('div');
+    notice.className = 'map-sheet-notice';
+    notice.setAttribute('role', 'status');
+    notice.innerHTML = `<span>${esc(tr('Municipality data is temporarily unavailable. Zone, hazard and risk values may be missing.'))}</span>`
+      + `<button type="button" class="secondary-action compact">${esc(tr('Retry'))}</button>`;
+    notice.querySelector('button').addEventListener('click', () => {
+      if (view.lastShow && ctx.isCurrent()) show(view.lastShow.feature, view.lastShow.options);
+    });
+    view.content.prepend(notice);
+  }
+
   function makeContext(feature, options, tr) {
     const controller = new AbortController();
     const token = ++view.token;
@@ -2751,7 +2770,19 @@
     });
     ctx.municipality = () => ctx.memo('municipality', async () => {
       if (!ctx.cadastralCode) return null;
-      const result = await ctx.fetchJson(`${API}/municipality/${encodeURIComponent(ctx.cadastralCode)}`);
+      const url = `${API}/municipality/${encodeURIComponent(ctx.cadastralCode)}`;
+      const transient = (result) => !result.ok && (result.status === 0 || result.status >= 500);
+      let result = await ctx.fetchJson(url);
+      for (const delay of MUNICIPALITY_RETRY_DELAYS_MS) {
+        if (!transient(result) || !ctx.isCurrent()) break;
+        await new Promise((resolve) => root.setTimeout(resolve, delay));
+        if (!ctx.isCurrent()) break;
+        result = await ctx.fetchJson(url);
+      }
+      if (transient(result) && ctx.isCurrent()) {
+        ctx.municipalityFailed = true;
+        showMunicipalityNotice(ctx);
+      }
       return result.ok ? result.data : null;
     });
     ctx.zoneMatch = () => ctx.memo('zone', async () => {
@@ -3059,6 +3090,7 @@
     view.pending = new Map();
     view.metadata = new Map();
     view.sections = new Map();
+    view.lastShow = { feature, options };
     const made = makeContext(feature, options, tr);
     view.controller = made.controller;
     view.ctx = made.ctx;
@@ -3111,6 +3143,7 @@
     disconnectObservers();
     view.token += 1;
     view.ctx = null;
+    view.lastShow = null;
     if (view.content) view.content.innerHTML = '';
     if (view.statStrip) view.statStrip.innerHTML = '';
   }

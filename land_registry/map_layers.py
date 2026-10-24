@@ -37,6 +37,7 @@ class MapLayerSpec:
     min_zoom: int = 5
     max_features: int = 2000
     geojson_max_area: float = 250.0
+    geojson_page_max_area: Optional[float] = None
     coverage: str = "full"
     coverage_note: str = ""
     # True when features exist only in parts of the layer's extent (for example urban
@@ -128,7 +129,10 @@ MAP_LAYERS: tuple[MapLayerSpec, ...] = (
     # region or a row count here; health() reports the current estimated extent
     # from PostGIS statistics when ANALYZE data is available.
     MapLayerSpec("cadastral-sheets", "Cadastral sheets", "spatial.cadastral_sheet", "geom", min_zoom=10, max_features=3000, geojson_max_area=4.0, coverage="unknown", properties=("id", "sheet_reference", "municipality_id", "level", "level_name", "area_sqm", "source_release"), group="cadastral", color="#1976a8", z_order=70, tile_revision="regional-2"),
-    MapLayerSpec("cadastral-parcels", "Cadastral parcels", "spatial.cadastral_parcel", "geom", min_zoom=14, max_features=10000, size_column="area_sqm", geojson_max_area=0.04, coverage="unknown", properties=("id", "canonical_reference", "national_cadastral_reference", "parcel", "sheet", "municipality_id", "area_sqm", "source_release", "has_visura", "is_auction_sale"), group="cadastral", color="#d97925", z_order=90, fill_opacity=0.04, line_width=0.8, tile_revision="regional-5"),
+    # GeoJSON is reserved for close inspection and overlays. Dense urban
+    # viewports can contain tens of thousands of parcels even at z14; keep
+    # those reads small enough that a page of clipped geometries stays bounded.
+    MapLayerSpec("cadastral-parcels", "Cadastral parcels", "spatial.cadastral_parcel", "geom", min_zoom=14, max_features=10000, size_column="area_sqm", geojson_max_area=0.04, geojson_page_max_area=0.0005, coverage="unknown", properties=("id", "canonical_reference", "national_cadastral_reference", "parcel", "sheet", "municipality_id", "area_sqm", "source_release", "has_visura", "is_auction_sale"), group="cadastral", color="#d97925", z_order=90, fill_opacity=0.04, line_width=0.8, tile_revision="regional-5"),
     MapLayerSpec("urban-sections", "Cadastral urban sections", "sezioni_urbane.sezioni_urbane", "geom", id_column="OGC_FID", min_zoom=11, coverage="partial", coverage_note="Only municipalities that have urban sections (about 520, such as Rome, Genoa, Verona and Trieste); most of Italy has none", sparse=True, properties=("OGC_FID", "nationalcadastralzoningreference", "administrativeunit", "sezione_urbana"), group="cadastral", color="#2f9aa8", z_order=80, require_gist_index=False),
     # DEPRECATED (2026-10-21): the Zornade-sourced zornade.zornade_zone_omi relation. Keep it serving
     # tiles until a replacement source exists, but do not build new features on it.
@@ -188,13 +192,33 @@ MAP_LAYERS: tuple[MapLayerSpec, ...] = (
         properties=(
             "row_id", "idconc", "admin_label", "layer_kind", "geometry_type",
             "crs_original", "snapshot_id", "source_release",
+            "source_feature_key", "dataset_release_id",
             "geometry_valid_4326", "geometry_repaired",
         ),
         kind="mixed", group="territory", color="#1f8ea3", z_order=130,
         polygon_color="#e45724", fill_opacity=0.42, line_width=3.0,
-        require_gist_index=False, tile_revision="4",
+        require_gist_index=False, tile_revision="5",
     ),
 )
+
+
+def geojson_zoom_required(
+    layer: MapLayerSpec,
+    bbox: tuple[float, float, float, float],
+    current_zoom: Optional[int] = None,
+) -> Optional[int]:
+    """Return an approximate zoom that brings this viewport under its GeoJSON area cap."""
+    west, south, east, north = bbox
+    area = max(0.0, east - west) * max(0.0, north - south)
+    max_area = layer.geojson_page_max_area or layer.geojson_max_area
+    if area <= max_area:
+        return None
+    base_zoom = layer.min_zoom if current_zoom is None else min(int(current_zoom), 22)
+    additional_levels = 0
+    while area > max_area and additional_levels < 22:
+        area /= 4
+        additional_levels += 1
+    return min(22, max(layer.min_zoom, base_zoom + additional_levels))
 
 _BY_ID = {layer.id: layer for layer in MAP_LAYERS}
 _PROTECTION_LAYER_TYPES = {
@@ -1243,6 +1267,7 @@ class PostgresMapLayerSource:
         limit: int,
         offset: int = 0,
         flag: Optional[str] = None,
+        zoom: Optional[int] = None,
     ) -> dict[str, Any]:
         """Read a bounded GeoJSON page; ``flag`` keeps only rows where that boolean column is true.
 
@@ -1256,9 +1281,10 @@ class PostgresMapLayerSource:
         if layer_source is None:
             return {"type": "FeatureCollection", "features": []}
         west, south, east, north = (float(value) for value in bbox)
-        if (east - west) * (north - south) > layer.geojson_max_area:
-            return {"type": "FeatureCollection", "features": [], "zoom_required": layer.min_zoom}
         properties = self._properties_for(layer, layer_source)
+        zoom_required = geojson_zoom_required(layer, (west, south, east, north), zoom)
+        if zoom_required is not None:
+            return {"type": "FeatureCollection", "features": [], "zoom_required": zoom_required}
         columns = self._source_columns(layer, properties)
         relation = self._query_relation(layer, await self._resolve_relation_for(layer, layer_source))
         flag_clause = ""
@@ -1320,12 +1346,13 @@ class PostgresMapLayerSource:
             return {"available": False, "type": "FeatureCollection", "features": []}
 
         west, south, east, north = (float(value) for value in bbox)
-        if (east - west) * (north - south) > layer.geojson_max_area:
+        zoom_required = geojson_zoom_required(layer, (west, south, east, north))
+        if zoom_required is not None:
             return {
                 "available": True,
                 "type": "FeatureCollection",
                 "features": [],
-                "zoom_required": layer.min_zoom,
+                "zoom_required": zoom_required,
             }
 
         relation = self._query_relation(layer, await self._resolve_relation_for(layer, parcel_source))
@@ -2063,6 +2090,7 @@ class PostgresMapLayerSource:
             }
             if layer_id != "maritime-concessions":
                 return result
+            result["source"] = "aecs4u-stats.agenziademanio"
 
             async def related_rows(sql: str, *params: Any) -> list[dict[str, Any]]:
                 try:
@@ -2075,47 +2103,169 @@ class PostgresMapLayerSource:
 
             snapshot_id = row.get("snapshot_id")
             idconc = row.get("idconc")
-            if snapshot_id is None or idconc is None:
+            source_row_id = row.get("row_id") or feature_id
+            if snapshot_id is None:
                 return result
             source_schema = relation.split(".", 1)[0]
-            result["related"]["document_gaps"] = await related_rows(
-                "select gap_id, source_row_id, idconc, institution_key, document_type, "
-                "document_description, status, evidence, checked_at "
-                f"from {source_schema}.document_gaps "
-                "where source_row_id = %s order by gap_id",
-                feature_id,
-            )
-            matches = await related_rows(
-                "select match_id, document_url, idconc, match_type, confidence, evidence, "
-                "extraction_status, extracted_text_chars, page_count, checked_at "
-                f"from {source_schema}.online_document_matches "
-                "where snapshot_id = %s and idconc = %s order by match_id",
+            details = None
+            try:
+                detail_row = await connection.fetchrow(
+                    _asyncpg_sql(
+                        "select details from agenziademanio.concession_details "
+                        "where snapshot_id = %s and row_id = %s limit 1"
+                    ),
+                    snapshot_id,
+                    source_row_id,
+                )
+                if detail_row:
+                    details = detail_row.get("details")
+                    if isinstance(details, str):
+                        details = json.loads(details)
+            except Exception as exc:
+                # Older Stats installations still expose the component foreign
+                # tables; keep them usable while the merged detail view rolls out.
+                log.debug("Merged concession detail view unavailable: %s", exc)
+
+            if isinstance(details, dict):
+                result["related"] = {}
+                for key in (
+                    "source_concession", "source_attributes", "source_geometry",
+                    "snapshot", "resources", "administrative_assignment",
+                    "document_summary", "document_gaps", "sicily_contracts",
+                    "online_document_matches", "online_documents",
+                    "institution_request_targets", "regional_source_audits",
+                ):
+                    value = details.get(key)
+                    if value is None:
+                        continue
+                    result["related"][key] = value if isinstance(value, list) else [value]
+            else:
+                result["related"]["document_gaps"] = await related_rows(
+                    "select * "
+                    f"from {source_schema}.document_gaps "
+                    "where source_row_id = %s order by gap_id",
+                    source_row_id,
+                )
+                result["related"]["sicily_contracts"] = await related_rows(
+                    "select * "
+                    f"from {source_schema}.sicily_contracts "
+                    "where source_row_id = %s order by row_id",
+                    source_row_id,
+                )
+                matches = await related_rows(
+                    "select * "
+                    f"from {source_schema}.online_document_matches "
+                    "where snapshot_id = %s and idconc = %s order by match_id",
+                    snapshot_id,
+                    idconc,
+                ) if idconc is not None else []
+                result["related"]["online_document_matches"] = matches
+                urls = [item["document_url"] for item in matches if item.get("document_url")]
+                institution_keys = sorted({
+                    str(item["institution_key"])
+                    for group in (
+                        result["related"]["document_gaps"],
+                        result["related"]["sicily_contracts"],
+                    )
+                    for item in group
+                    if item.get("institution_key")
+                })
+                result["related"]["institution_request_targets"] = await related_rows(
+                    "select * "
+                    f"from {source_schema}.institution_request_targets "
+                    "where snapshot_id = %s and institution_key = any(%s::text[]) "
+                    "order by institution_key",
+                    snapshot_id,
+                    institution_keys,
+                ) if institution_keys else []
+                result["related"]["online_documents"] = await related_rows(
+                    "select * "
+                    f"from {source_schema}.online_documents "
+                    "where snapshot_id = %s "
+                    "and (document_url = any(%s::text[]) or institution_key = any(%s::text[])) "
+                    "order by institution_key, document_url",
+                    snapshot_id,
+                    urls,
+                    institution_keys,
+                ) if urls or institution_keys else []
+                result["related"]["snapshot"] = await related_rows(
+                    "select * "
+                    f"from {source_schema}.snapshots where snapshot_id = %s",
+                    snapshot_id,
+                )
+                result["related"]["resources"] = await related_rows(
+                    "select * "
+                    f"from {source_schema}.resources "
+                    "where snapshot_id = %s order by resource_id",
+                    snapshot_id,
+                )
+                result["related"]["regional_source_audits"] = await related_rows(
+                    "select * "
+                    f"from {source_schema}.regional_source_audits "
+                    "where snapshot_id = %s order by region_name, source_url",
+                    snapshot_id,
+                )
+
+            # Spatial parcel links are computed and stored locally in Stats;
+            # they are not part of the remote Agenzia source database.
+            result["related"]["cadastral_parcels"] = await related_rows(
+                "select * from agenziademanio.concession_parcel_links "
+                "where snapshot_id = %s and concession_row_id = %s "
+                "order by canonical_reference, parcel_id",
                 snapshot_id,
-                idconc,
-            )
-            result["related"]["online_document_matches"] = matches
-            urls = [item["document_url"] for item in matches if item.get("document_url")]
-            result["related"]["online_documents"] = await related_rows(
-                "select source_page_url, document_url, title, document_kind, status, "
-                "content_type, local_path, size_bytes, sha256, discovered_at, "
-                f"downloaded_at, error from {source_schema}.online_documents "
-                "where snapshot_id = %s and document_url = any(%s::text[]) "
-                "order by document_url",
-                snapshot_id,
-                urls,
-            ) if urls else []
-            result["related"]["snapshot"] = await related_rows(
-                "select snapshot_id, package_id, reference_date, status, manifest_path, loaded_at_utc "
-                f"from {source_schema}.snapshots where snapshot_id = %s",
-                snapshot_id,
-            )
-            result["related"]["resources"] = await related_rows(
-                "select resource_id, kind, resource_title, requested_url, final_url, "
-                f"size_bytes, sha256, qa_json from {source_schema}.resources "
-                "where snapshot_id = %s order by resource_id",
-                snapshot_id,
+                source_row_id,
             )
             return result
+
+    async def read_istat_municipality_details(
+        self, istat_code: str | int
+    ) -> Optional[dict[str, Any]]:
+        """Read the full Stats-side ISTAT municipality serving view.
+
+        ``istat.elenco_comuni`` is the stable foreign table over the active
+        ``istat.istat_comuni.elenco_comuni`` release. Match both the text code
+        and its numeric representation because map boundaries expose PRO_COM
+        without leading zeroes while the source preserves the official code.
+        """
+        if self.connection_source is None:
+            return None
+        try:
+            code = str(int(str(istat_code).strip()))
+        except (TypeError, ValueError):
+            return None
+        if not code.isdigit() or int(code) <= 0 or int(code) > 999999:
+            return None
+
+        sql = """
+            SELECT t.*
+            FROM istat.elenco_comuni AS t
+            WHERE ltrim(trim(t.code), '0') = ltrim(%s::text, '0')
+               OR t.numeric_code = %s
+            ORDER BY CASE WHEN t.code = %s THEN 0 ELSE 1 END
+            LIMIT 1
+        """
+        async with self.connection_source.connection() as connection:
+            row = await connection.fetchrow(_asyncpg_sql(sql), code, int(code), code)
+        if row is None:
+            return None
+
+        municipality = _json_row(row)
+
+        def related_record(keys: tuple[str, ...]) -> Optional[dict[str, Any]]:
+            values = {key: municipality[key] for key in keys if key in municipality}
+            return values if any(value is not None and value != "" for value in values.values()) else None
+
+        return {
+            "source": "aecs4u-stats.istat.elenco_comuni",
+            "municipality": municipality,
+            "province": related_record((
+                "uts_code", "uts_name", "uts_type", "province_abbreviation",
+                "nuts3_2021", "nuts3_2024",
+            )),
+            "region": related_record(("region_code", "region_name", "nuts2_2021", "nuts2_2024")),
+            "geographic_area": related_record(("area_code", "area_name")),
+            "population_history": [],
+        }
 
     async def search_municipalities(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
         """Search the canonical ISTAT municipality map relation.

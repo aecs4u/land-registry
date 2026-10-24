@@ -22,6 +22,7 @@ SERVER = "agenziademanio_source"
 LOCAL_SCHEMA = "agenziademanio"
 FOREIGN_TABLE_MAPPINGS = {
     "concessions": ("agenziademanio", "v_concession_map_features"),
+    "concession_details": ("agenziademanio", "v_concession_details"),
     "document_gaps": ("agenziademanio", "v_document_gaps"),
     "institution_request_targets": ("agenziademanio", "v_institution_request_targets"),
     "online_document_matches": ("agenziademanio", "v_online_document_matches"),
