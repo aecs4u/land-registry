@@ -2632,15 +2632,21 @@ class _AsyncPostgresSource:
         if await self._relations_available(omi_relations):
             code = (cadastral_code or "").strip().upper()
             zone = (zone_code or "").strip().upper()
+            istat_keys = _omi_istat_keys(code)
             if code.isdigit():
-                istat_keys = _omi_istat_keys(code)
                 candidates: list[tuple[str, Any]] = [
                     ("cod_comune_istat", float(istat_keys[0] if istat_keys else code)),
                     ("cod_comune_amm", code),
                     ("cod_comune_catastale", code),
                 ]
             else:
-                candidates = [("cod_comune_amm", code), ("cod_comune_catastale", code)]
+                candidates = []
+                if istat_keys:
+                    candidates.append(("cod_comune_istat", float(istat_keys[0])))
+                candidates.extend([
+                    ("cod_comune_amm", code),
+                    ("cod_comune_catastale", code),
+                ])
 
             query_template = """
                 SELECT z.anno, z.semestre, z.zona, v.cod_tipologia, v.tipologia,
@@ -2765,15 +2771,21 @@ class _AsyncPostgresSource:
         omi_relations = ("omi.omi_ref_zone", "omi.omi_fact_quotazioni_valori")
         if await self._relations_available(omi_relations):
             code = (cadastral_code or "").strip().upper()
+            istat_keys = _omi_istat_keys(code)
             if code.isdigit():
-                istat_keys = _omi_istat_keys(code)
                 candidates: list[tuple[str, Any]] = [
                     ("cod_comune_istat", float(istat_keys[0] if istat_keys else code)),
                     ("cod_comune_amm", code),
                     ("cod_comune_catastale", code),
                 ]
             else:
-                candidates = [("cod_comune_amm", code), ("cod_comune_catastale", code)]
+                candidates = []
+                if istat_keys:
+                    candidates.append(("cod_comune_istat", float(istat_keys[0])))
+                candidates.extend([
+                    ("cod_comune_amm", code),
+                    ("cod_comune_catastale", code),
+                ])
 
             query_template = """
                 WITH latest_period AS (
@@ -3974,6 +3986,13 @@ async def aget_omi_zone_quote_history(comune: str, zona: str) -> Dict[str, Any]:
                 result["quotes"] = _omi_quote_history_derived_metrics(quotes)
                 result["dataset_version"] = result.get("dataset_version") or _omi_period_dataset_version(result)
                 return result
+        except asyncio.TimeoutError:
+            source._retry_at = time.monotonic() + 60
+            logger.warning(
+                "Async PostgreSQL OMI zone history timed out for %s/%s; using local fallback",
+                normalized_comune,
+                normalized_zona,
+            )
         except Exception:
             source._retry_at = time.monotonic() + 60
             logger.warning("Async PostgreSQL OMI zone history failed; using local fallback", exc_info=True)
