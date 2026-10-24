@@ -40,7 +40,6 @@ from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
-from urllib.parse import urlsplit, urlunsplit
 from xml.etree import ElementTree
 
 from .source_catalog import find_source_catalog_entry
@@ -2628,7 +2627,73 @@ class _AsyncPostgresSource:
     async def omi_zone_quote_history(
         self, cadastral_code: str, zone_code: str
     ) -> Optional[Dict[str, Any]]:
-        """Read every published OMI quote for one zone from the stats schema."""
+        """Read OMI history from the stats FDW, then its canonical snapshot."""
+        omi_relations = ("omi.omi_ref_zone", "omi.omi_fact_quotazioni_valori")
+        if await self._relations_available(omi_relations):
+            code = (cadastral_code or "").strip().upper()
+            zone = (zone_code or "").strip().upper()
+            if code.isdigit():
+                istat_keys = _omi_istat_keys(code)
+                candidates: list[tuple[str, Any]] = [
+                    ("cod_comune_istat", float(istat_keys[0] if istat_keys else code)),
+                    ("cod_comune_amm", code),
+                    ("cod_comune_catastale", code),
+                ]
+            else:
+                candidates = [("cod_comune_amm", code), ("cod_comune_catastale", code)]
+
+            query_template = """
+                SELECT z.anno, z.semestre, z.zona, v.cod_tipologia, v.tipologia,
+                       v.stato_conservazione, v.prezzo_min, v.prezzo_max,
+                       v.locazione_min, v.locazione_max
+                FROM omi.omi_ref_zone AS z
+                JOIN omi.omi_fact_quotazioni_valori AS v ON v.zona_id = z.zona_id
+                WHERE z.{code_column} = %s AND z.zona = %s
+                ORDER BY z.anno, z.semestre, v.cod_tipologia, v.stato_conservazione
+            """
+            history_rows = []
+            for code_column, code_value in candidates:
+                # The identifier is selected from the fixed allowlist above.
+                history_rows = await self._fetch(
+                    query_template.format(code_column=code_column), (code_value, zone)
+                )
+                if history_rows:
+                    break
+
+            if history_rows:
+                quotes = []
+                seen: set[tuple[Any, ...]] = set()
+                for row in history_rows:
+                    year = int(row["anno"]) if row["anno"] is not None else None
+                    semester = int(row["semestre"]) if row["semestre"] is not None else None
+                    unique_key = (
+                        year, semester, row["zona"], row["cod_tipologia"], row["stato_conservazione"],
+                        row["prezzo_min"], row["prezzo_max"], row["locazione_min"], row["locazione_max"],
+                    )
+                    if unique_key in seen:
+                        continue
+                    seen.add(unique_key)
+                    quotes.append({
+                        "zona": row["zona"],
+                        "period": f"{year}-S{semester}" if year and semester else None,
+                        "anno": year,
+                        "semestre": semester,
+                        "cod_tipologia": _postgres_scalar(row["cod_tipologia"]),
+                        "tipologia": row["tipologia"],
+                        "stato_conservazione": str(row["stato_conservazione"] or "").strip().upper(),
+                        "prezzo_min": _postgres_scalar(row["prezzo_min"]),
+                        "prezzo_max": _postgres_scalar(row["prezzo_max"]),
+                        "locazione_min": _omi_postgres_number(row["locazione_min"]),
+                        "locazione_max": _omi_postgres_number(row["locazione_max"]),
+                    })
+                return {
+                    "comune": code,
+                    "zona": zone,
+                    "quotes": quotes,
+                    "dataset_version": _omi_period_dataset_version({"quotes": quotes}),
+                    "source": "Agenzia delle Entrate OMI via aecs4u-stats.omi foreign tables",
+                }
+
         relations = ("geo.geo_identifier", "spatial.market_zone", "facts.market_quote_fact")
         if not await self._relations_available(relations):
             snapshot = await self._zornade_omi_quotes_by_cadastral_code(cadastral_code)
@@ -2697,6 +2762,82 @@ class _AsyncPostgresSource:
         }
 
     async def omi_quotes_by_cadastral_code(self, cadastral_code: str) -> Optional[Dict[str, Any]]:
+        omi_relations = ("omi.omi_ref_zone", "omi.omi_fact_quotazioni_valori")
+        if await self._relations_available(omi_relations):
+            code = (cadastral_code or "").strip().upper()
+            if code.isdigit():
+                istat_keys = _omi_istat_keys(code)
+                candidates: list[tuple[str, Any]] = [
+                    ("cod_comune_istat", float(istat_keys[0] if istat_keys else code)),
+                    ("cod_comune_amm", code),
+                    ("cod_comune_catastale", code),
+                ]
+            else:
+                candidates = [("cod_comune_amm", code), ("cod_comune_catastale", code)]
+
+            query_template = """
+                WITH latest_period AS (
+                    SELECT z.anno, z.semestre
+                    FROM omi.omi_ref_zone AS z
+                    JOIN omi.omi_fact_quotazioni_valori AS v ON v.zona_id = z.zona_id
+                    WHERE z.{code_column} = %s
+                    ORDER BY z.anno DESC, z.semestre DESC
+                    LIMIT 1
+                )
+                SELECT z.anno, z.semestre, z.zona, v.cod_tipologia, v.tipologia,
+                       v.stato_conservazione, v.prezzo_min, v.prezzo_max,
+                       v.locazione_min, v.locazione_max
+                FROM omi.omi_ref_zone AS z
+                JOIN omi.omi_fact_quotazioni_valori AS v ON v.zona_id = z.zona_id
+                JOIN latest_period AS latest
+                  ON latest.anno = z.anno AND latest.semestre = z.semestre
+                WHERE z.{code_column} = %s
+                ORDER BY z.zona, v.cod_tipologia, v.stato_conservazione
+            """
+            quote_rows = []
+            for code_column, code_value in candidates:
+                # Column names are selected from the fixed allowlist above.
+                quote_rows = await self._fetch(
+                    query_template.format(code_column=code_column), (code_value, code_value)
+                )
+                if quote_rows:
+                    break
+
+            if quote_rows:
+                quotes = []
+                seen: set[tuple[Any, ...]] = set()
+                for row in quote_rows:
+                    year = int(row["anno"]) if row["anno"] is not None else None
+                    semester = int(row["semestre"]) if row["semestre"] is not None else None
+                    unique_key = (
+                        year, semester, row["zona"], row["cod_tipologia"],
+                        row["stato_conservazione"], row["prezzo_min"], row["prezzo_max"],
+                        row["locazione_min"], row["locazione_max"],
+                    )
+                    if unique_key in seen:
+                        continue
+                    seen.add(unique_key)
+                    quotes.append({
+                        "zona": row["zona"],
+                        "period": f"{year}-S{semester}" if year and semester else None,
+                        "anno": year,
+                        "semestre": semester,
+                        "cod_tipologia": _postgres_scalar(row["cod_tipologia"]),
+                        "tipologia": row["tipologia"],
+                        "stato_conservazione": str(row["stato_conservazione"] or "").strip().upper(),
+                        "prezzo_min": _postgres_scalar(row["prezzo_min"]),
+                        "prezzo_max": _postgres_scalar(row["prezzo_max"]),
+                        "locazione_min": _omi_postgres_number(row["locazione_min"]),
+                        "locazione_max": _omi_postgres_number(row["locazione_max"]),
+                    })
+                return {
+                    "comune": code,
+                    "zona": None,
+                    "quotes": quotes,
+                    "dataset_version": _omi_period_dataset_version({"quotes": quotes}),
+                    "source": "Agenzia delle Entrate OMI via aecs4u-stats.omi foreign tables",
+                }
+
         if not await self._relations_available((
             "geo.geo_identifier", "spatial.market_zone", "facts.market_quote_fact",
         )):
@@ -3808,121 +3949,8 @@ async def aget_omi_quotes(comune: str, zona: Optional[str] = None) -> Dict[str, 
     return await asyncio.to_thread(get_omi_quotes, comune, zona=zona, use_postgres=False)
 
 
-_OMI_POSTGRES_RETRY_AT = 0.0
-
-
-def _omi_postgres_dsn() -> Optional[str]:
-    """Resolve the OMI database DSN used by the shared OMI valuation page."""
-    dsn = os.getenv("OMI_POSTGRES_DSN", "").strip()
-    if not dsn:
-        base_dsn = (
-            os.getenv("STATS_POSTGRES_DSN", "").strip()
-            or os.getenv("CADASTRAL_POSTGRES_DSN", "").strip()
-        )
-        if not base_dsn:
-            return None
-        parsed = urlsplit(base_dsn.replace("postgresql+asyncpg://", "postgresql://", 1))
-        if parsed.scheme not in {"postgres", "postgresql"} or not parsed.netloc:
-            return None
-        dsn = urlunsplit(parsed._replace(path="/omi"))
-    if dsn.startswith("postgresql+asyncpg://"):
-        dsn = dsn.replace("postgresql+asyncpg://", "postgresql://", 1)
-    if not dsn.startswith(("postgres://", "postgresql://")):
-        return None
-    return dsn
-
-
-async def _fetch_omi_postgres_zone_history(comune: str, zona: str) -> Optional[list[dict[str, Any]]]:
-    """Fetch every sale/rent quote period from the OMI star tables.
-
-    ``None`` means the dedicated OMI source could not be queried; an empty list
-    means it answered and has no rows for this municipality and zone.
-    """
-    global _OMI_POSTGRES_RETRY_AT
-    dsn = _omi_postgres_dsn()
-    if not dsn or time.monotonic() < _OMI_POSTGRES_RETRY_AT:
-        return None
-
-    code = (comune or "").strip().upper()
-    zone = (zona or "").strip().upper()
-    if not code or not zone:
-        return []
-
-    if code.isdigit():
-        istat_keys = _omi_istat_keys(code)
-        numeric_code = float(istat_keys[0] if istat_keys else code)
-        candidates: list[tuple[str, Any]] = [
-            ("cod_comune_istat", numeric_code),
-            ("cod_comune_amm", code),
-            ("cod_comune_catastale", code),
-        ]
-    else:
-        candidates = [("cod_comune_amm", code), ("cod_comune_catastale", code)]
-
-    query_template = """
-        SELECT DISTINCT z.anno, z.semestre, z.zona, v.cod_tipologia, v.tipologia,
-               v.stato_conservazione, v.prezzo_min, v.prezzo_max,
-               v.locazione_min, v.locazione_max
-        FROM public.omi_ref_zone AS z
-        JOIN public.omi_fact_quotazioni_valori AS v ON v.zona_id = z.zona_id
-        WHERE z.{code_column} = $1 AND z.zona = $2
-        ORDER BY z.anno, z.semestre, z.zona, v.cod_tipologia, v.stato_conservazione,
-                 v.prezzo_min, v.prezzo_max, v.locazione_min, v.locazione_max
-    """
-    connection = None
-    try:
-        import asyncpg
-
-        connection = await asyncio.wait_for(
-            asyncpg.connect(
-                dsn,
-                timeout=3,
-                command_timeout=12,
-                server_settings={"jit": "off", "statement_timeout": "10000"},
-            ),
-            timeout=4,
-        )
-        rows = []
-        for code_column, code_value in candidates:
-            # Columns come only from the fixed allowlist above.
-            rows = await connection.fetch(
-                query_template.format(code_column=code_column), code_value, zone
-            )
-            if rows:
-                break
-        quotes = []
-        for row in rows:
-            year = int(row["anno"]) if row["anno"] is not None else None
-            semester = int(row["semestre"]) if row["semestre"] is not None else None
-            quotes.append({
-                "zona": row["zona"],
-                "period": f"{year}-S{semester}" if year and semester else None,
-                "anno": year,
-                "semestre": semester,
-                "cod_tipologia": _postgres_scalar(row["cod_tipologia"]),
-                "tipologia": row["tipologia"],
-                "stato_conservazione": str(row["stato_conservazione"] or "").strip().upper(),
-                "prezzo_min": _postgres_scalar(row["prezzo_min"]),
-                "prezzo_max": _postgres_scalar(row["prezzo_max"]),
-                "locazione_min": _omi_postgres_number(row["locazione_min"]),
-                "locazione_max": _omi_postgres_number(row["locazione_max"]),
-            })
-        _OMI_POSTGRES_RETRY_AT = 0.0
-        return quotes
-    except Exception:
-        _OMI_POSTGRES_RETRY_AT = time.monotonic() + 60
-        logger.warning("OMI PostgreSQL history lookup failed for %s/%s", code, zone, exc_info=True)
-        return None
-    finally:
-        if connection is not None:
-            try:
-                await connection.close()
-            except Exception:
-                logger.debug("OMI PostgreSQL connection close failed", exc_info=True)
-
-
 def _omi_postgres_number(value: Any) -> Optional[float]:
-    """Parse OMI PostgreSQL numerics, including source rent strings like ``'10,8'``."""
+    """Parse OMI FDW numerics, including source rent strings like ``'10,8'``."""
     if isinstance(value, str):
         value = value.strip()
         if "," in value:
@@ -3935,17 +3963,6 @@ async def aget_omi_zone_quote_history(comune: str, zona: str) -> Dict[str, Any]:
     normalized_comune = (comune or "").strip().upper()
     normalized_zona = (zona or "").strip().upper()
 
-    omi_rows = await _fetch_omi_postgres_zone_history(normalized_comune, normalized_zona)
-    if omi_rows:
-        quotes = _omi_quote_derived_metrics(omi_rows)
-        return {
-            "comune": normalized_comune,
-            "zona": normalized_zona,
-            "quotes": quotes,
-            "dataset_version": _omi_period_dataset_version({"quotes": quotes}),
-            "source": "Agenzia delle Entrate OMI via aecs4u-theme OMI PostgreSQL history",
-        }
-
     source = await _get_async_postgres_source()
     if source is not None and time.monotonic() >= source._retry_at:
         try:
@@ -3954,7 +3971,7 @@ async def aget_omi_zone_quote_history(comune: str, zona: str) -> Dict[str, Any]:
             )
             if result is not None:
                 quotes = result.get("quotes") if isinstance(result.get("quotes"), list) else []
-                result["quotes"] = _omi_quote_derived_metrics(quotes)
+                result["quotes"] = _omi_quote_history_derived_metrics(quotes)
                 result["dataset_version"] = result.get("dataset_version") or _omi_period_dataset_version(result)
                 return result
         except Exception:
@@ -3978,7 +3995,7 @@ async def aget_omi_zone_quote_history(comune: str, zona: str) -> Dict[str, Any]:
     return {
         "comune": normalized_comune,
         "zona": normalized_zona,
-        "quotes": _omi_quote_derived_metrics(quotes),
+        "quotes": _omi_quote_history_derived_metrics(quotes),
         "dataset_version": _omi_period_dataset_version({"quotes": quotes}),
         "source": fallback_source or "Agenzia delle Entrate OMI via aecs4u-stats",
     }
@@ -6654,7 +6671,7 @@ def poi_db_available() -> bool:
 
 def omi_db_available_public() -> bool:
     """True when PostgreSQL or the compatibility OMI store is available."""
-    return bool(_omi_postgres_dsn()) or postgres_stats_available() or omi_db_available(_omi_sqlite_path())
+    return postgres_stats_available() or omi_db_available(_omi_sqlite_path())
 
 
 def _omi_sqlite_path() -> Path:
@@ -7704,6 +7721,36 @@ def _omi_quote_derived_metrics(quotes: list[dict]) -> list[dict]:
                 "gross_rental_yield_model_version": "omi-gross-rental-yield-v1",
                 "zone_percentile_pct": round(percentile, 1) if percentile is not None else None,
                 "zone_percentile_comparable_zones": len(values),
+                "zone_percentile_minimum_comparable_zones": 5,
+                "zone_percentile_model_version": "omi-zone-percentile-midrank-v1",
+            },
+        })
+    return annotated
+
+
+def _omi_quote_history_derived_metrics(quotes: list[dict]) -> list[dict]:
+    """Attach per-period rental yields without comparing years as separate zones."""
+    annotated = []
+    for quote in quotes:
+        low = _number(quote.get("prezzo_min"))
+        high = _number(quote.get("prezzo_max"))
+        midpoint = (low + high) / 2 if low is not None and high is not None and low > 0 and high >= low else None
+        rent_low = _number(quote.get("locazione_min"))
+        rent_high = _number(quote.get("locazione_max"))
+        rent_midpoint = (
+            (rent_low + rent_high) / 2
+            if rent_low is not None and rent_high is not None and rent_low >= 0 and rent_high >= rent_low
+            else None
+        )
+        yield_pct = (rent_midpoint * 12 / midpoint * 100) if midpoint and rent_midpoint is not None else None
+        annotated.append({
+            **quote,
+            "derived_metrics": {
+                "gross_rental_yield_pct": round(yield_pct, 2) if yield_pct is not None else None,
+                "gross_rental_yield_model_version": "omi-gross-rental-yield-v1",
+                # A single-zone history cannot support a within-comune percentile.
+                "zone_percentile_pct": None,
+                "zone_percentile_comparable_zones": 0,
                 "zone_percentile_minimum_comparable_zones": 5,
                 "zone_percentile_model_version": "omi-zone-percentile-midrank-v1",
             },

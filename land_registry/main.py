@@ -5,6 +5,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.gzip import GZipMiddleware
+import html as html_lib
 import json
 import logging
 import os
@@ -1260,6 +1261,8 @@ async def get_omi_market_zone_details_sheet(request: Request, feature_id: int):
     locale = detect_locale(request)
     gettext = make_gettext(locale)
 
+    quote_groups = _omi_market_zone_quote_groups(quotes, gettext, locale)
+
     def gettext_with_values(message: str, **values: object) -> str:
         translated = gettext(message)
         return translated % values if values else translated
@@ -1271,10 +1274,236 @@ async def get_omi_market_zone_details_sheet(request: Request, feature_id: int):
         locale=locale,
         properties=properties,
         quotes=quotes,
+        quote_groups=quote_groups,
         source=quote_source,
         dataset_version=dataset_version,
     )
     return HTMLResponse(html)
+
+
+def _omi_market_zone_quote_groups(quotes, gettext, locale: str) -> list[dict]:
+    """Prepare property-type tabs and accessible history charts for one OMI zone."""
+    groups: dict[str, dict] = {}
+    for quote in quotes:
+        code = str(quote.get("cod_tipologia") or quote.get("cod_tip_prev") or "").strip()
+        name = str(
+            quote.get("tipologia")
+            or quote.get("descr_tipologia_en")
+            or quote.get("descr_tip_prev")
+            or ""
+        ).strip()
+        if code and code != "0":
+            key = f"code:{code.casefold()}"
+        elif name and name != "0":
+            key = f"name:{name.casefold()}"
+        else:
+            key = "unknown"
+        if key not in groups:
+            label = name if name and name != "0" else code
+            if not label or label == "0":
+                label = gettext("Property type not specified")
+            groups[key] = {"key": key, "label": label, "quotes": []}
+        groups[key]["quotes"].append(quote)
+
+    return [
+        {
+            **group,
+            "charts": _omi_market_zone_quote_charts(group["quotes"], gettext, locale),
+        }
+        for group in groups.values()
+    ]
+
+
+def _omi_market_zone_quote_charts(quotes, gettext, locale: str) -> list[str]:
+    """Render sale and rent ranges on their respective primary and secondary axes."""
+    palette = ("#17798b", "#b54708", "#067647", "#6941c6", "#c11574", "#344054", "#1570ef", "#8a4b08")
+    chart_title = gettext("Sale and rent ranges by period")
+
+    def numeric(value):
+        if value is None or isinstance(value, bool) or value == "":
+            return None
+        try:
+            return stats_service._omi_postgres_number(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+    def period_for(quote):
+        year, semester = quote.get("anno"), quote.get("semestre")
+        try:
+            year, semester = int(year), int(semester)
+        except (TypeError, ValueError):
+            match = re.fullmatch(r"\s*(\d{4})\s*[-/]?\s*[Ss]?([12])\s*", str(quote.get("period") or ""))
+            if not match:
+                return None
+            year, semester = int(match.group(1)), int(match.group(2))
+        if year < 1900 or semester not in (1, 2):
+            return None
+        return (year, semester)
+
+    def number_label(value, decimals):
+        rendered = f"{value:,.{decimals}f}"
+        if locale == "it":
+            return rendered.replace(",", "§").replace(".", ",").replace("§", ".")
+        return rendered
+
+    state_rows: dict[str, dict[tuple[int, int], dict[str, tuple[float, float]]]] = {}
+    for quote in quotes:
+        period = period_for(quote)
+        if period is None:
+            continue
+        state = str(quote.get("stato_conservazione") or "").strip() or gettext("Not specified")
+        period_values = state_rows.setdefault(state, {}).setdefault(period, {})
+        for metric, low_key, high_key in (
+            ("sale", "prezzo_min", "prezzo_max"),
+            ("rent", "locazione_min", "locazione_max"),
+        ):
+            low, high = numeric(quote.get(low_key)), numeric(quote.get(high_key))
+            if low is not None and high is not None and 0 <= low <= high:
+                period_values[metric] = (low, high)
+
+    state_rows = {
+        state: {period: values for period, values in rows.items() if values}
+        for state, rows in state_rows.items()
+        if any(rows.values())
+    }
+    periods = sorted({period for rows in state_rows.values() for period in rows})
+    sale_ranges = [values["sale"] for rows in state_rows.values() for values in rows.values() if "sale" in values]
+    rent_ranges = [values["rent"] for rows in state_rows.values() for values in rows.values() if "rent" in values]
+    if not periods:
+        has_values = any(
+            numeric(quote.get(key)) is not None
+            for quote in quotes
+            for key in ("prezzo_min", "prezzo_max", "locazione_min", "locazione_max")
+        )
+        message = "Quotation period data are not available for this chart." if has_values else "No OMI quotation values are available for this chart."
+        return [f'<p class="map-sheet-empty omi-zone-chart-empty">{html_lib.escape(gettext(message))}</p>']
+
+    def value_scale(ranges):
+        if not ranges:
+            return 0.0, 1.0
+        data_min = min(low for low, _ in ranges)
+        data_max = max(high for _, high in ranges)
+        spread = data_max - data_min
+        margin = spread * 0.12 if spread else max(abs(data_max) * 0.12, 1.0)
+        scale_min = max(0.0, data_min - margin)
+        scale_max = data_max + margin
+        return scale_min, scale_max if scale_max > scale_min else scale_min + 1.0
+
+    sale_min, sale_max = value_scale(sale_ranges)
+    rent_min, rent_max = value_scale(rent_ranges)
+    width, height = 680, 270
+    left, right, top, bottom = 78, 78, 18, 46
+    plot_width, plot_height = width - left - right, height - top - bottom
+    x_inset = min(12.0, plot_width / 4)
+
+    def x_position(index):
+        inner_width = plot_width - 2 * x_inset
+        return left + x_inset + (inner_width / 2 if len(periods) == 1 else index * inner_width / (len(periods) - 1))
+
+    def y_position(value, scale_min, scale_max):
+        return top + (scale_max - value) * plot_height / (scale_max - scale_min)
+
+    svg_parts = [
+        f'<figure class="omi-zone-chart"><figcaption>{html_lib.escape(chart_title)}</figcaption>',
+        f'<svg viewBox="0 0 {width} {height}" role="img" aria-label="{html_lib.escape(chart_title, quote=True)}">',
+        f'<title>{html_lib.escape(chart_title)}</title>',
+        f'<desc>{html_lib.escape(gettext("The primary axis shows sale price; the secondary axis shows rent."))}</desc>',
+    ]
+    for tick in range(5):
+        ratio = tick / 4
+        y = top + ratio * plot_height
+        sale_value = sale_max - (sale_max - sale_min) * ratio
+        rent_value = rent_max - (rent_max - rent_min) * ratio
+        sale_tick = number_label(sale_value, 0) if sale_ranges else "—"
+        rent_tick = number_label(rent_value, 2) if rent_ranges else "—"
+        svg_parts.append(
+            f'<g class="omi-zone-chart-grid"><line x1="{left}" y1="{y:.1f}" x2="{width - right}" y2="{y:.1f}" />'
+            f'<text x="{left - 8}" y="{y + 4:.1f}" text-anchor="end">{sale_tick}</text>'
+            f'<text x="{width - right + 8}" y="{y + 4:.1f}" text-anchor="start">{rent_tick}</text></g>'
+        )
+    svg_parts.append(
+        f'<line class="omi-zone-chart-axis" x1="{left}" y1="{top}" x2="{left}" y2="{height - bottom}" />'
+        f'<line class="omi-zone-chart-axis" x1="{width - right}" y1="{top}" x2="{width - right}" y2="{height - bottom}" />'
+        f'<line class="omi-zone-chart-axis" x1="{left}" y1="{height - bottom}" x2="{width - right}" y2="{height - bottom}" />'
+        f'<text class="omi-zone-chart-axis-label" transform="translate(8 {top + plot_height / 2:.1f}) rotate(-90)" text-anchor="middle">{html_lib.escape(gettext("Sale price (€/m²)"))}</text>'
+        f'<text class="omi-zone-chart-axis-label" transform="translate({width - 8} {top + plot_height / 2:.1f}) rotate(90)" text-anchor="middle">{html_lib.escape(gettext("Rent (€/m² per month)"))}</text>'
+    )
+    label_step = max(1, (len(periods) - 1 + 7) // 8)
+    for index, (year, semester) in enumerate(periods):
+        if index and index != len(periods) - 1 and index % label_step:
+            continue
+        svg_parts.append(
+            f'<text class="omi-zone-chart-period" x="{x_position(index):.1f}" y="{height - 12}" text-anchor="middle">{year} S{semester}</text>'
+        )
+
+    states = list(state_rows)
+    series_count = max(1, len(states) * 2)
+    series_spacing = min(10.0, 20.0 / series_count)
+    metric_specs = (("sale", sale_min, sale_max, 0), ("rent", rent_min, rent_max, 2))
+    for state_index, state in enumerate(states):
+        color = palette[state_index % len(palette)]
+        rows = state_rows[state]
+        for metric_index, (metric, scale_min, scale_max, decimals) in enumerate(metric_specs):
+            if not any(metric in values for values in rows.values()):
+                continue
+            offset_index = state_index * 2 + metric_index
+            offset = (offset_index - (series_count - 1) / 2) * series_spacing
+            midpoint_points, marks = [], []
+            for period_index, period in enumerate(periods):
+                values = rows.get(period, {})
+                if metric not in values:
+                    continue
+                low, high = values[metric]
+                x = x_position(period_index) + offset
+                y_low = y_position(low, scale_min, scale_max)
+                y_high = y_position(high, scale_min, scale_max)
+                y_mid = y_position((low + high) / 2, scale_min, scale_max)
+                midpoint_points.append((period_index, x, y_mid))
+                period_text = f"{period[0]} S{period[1]}"
+                metric_label = gettext("Sale price (€/m²)") if metric == "sale" else gettext("Rent (€/m² per month)")
+                tooltip = f"{period_text} · {state} · {metric_label}: {number_label(low, decimals)}–{number_label(high, decimals)}"
+                mark = (
+                    f'<g class="omi-zone-chart-range omi-zone-chart-{metric}"><title>{html_lib.escape(tooltip)}</title>'
+                    f'<line x1="{x:.1f}" y1="{y_high:.1f}" x2="{x:.1f}" y2="{y_low:.1f}" />'
+                    f'<line x1="{x - 3:.1f}" y1="{y_high:.1f}" x2="{x + 3:.1f}" y2="{y_high:.1f}" />'
+                    f'<line x1="{x - 3:.1f}" y1="{y_low:.1f}" x2="{x + 3:.1f}" y2="{y_low:.1f}" />'
+                )
+                marker = (
+                    f'<circle cx="{x:.1f}" cy="{y_mid:.1f}" r="3.1" />'
+                    if metric == "sale"
+                    else f'<rect x="{x - 2.6:.1f}" y="{y_mid - 2.6:.1f}" width="5.2" height="5.2" />'
+                )
+                marks.append(mark + marker + "</g>")
+            path_segments, previous_index = [], None
+            for period_index, x, y in midpoint_points:
+                command = "L" if previous_index is not None and period_index == previous_index + 1 else "M"
+                path_segments.append(f"{command}{x:.1f},{y:.1f}")
+                previous_index = period_index
+            path_data = " ".join(path_segments)
+            marks_html = "".join(marks)
+            svg_parts.append(
+                f'<g class="omi-zone-chart-series omi-zone-chart-{metric}" style="--series-color:{color}">'
+                f'<title>{html_lib.escape(state)} · {html_lib.escape(metric_label)}</title>'
+                f'<path d="{path_data}" />{marks_html}</g>'
+            )
+
+    svg_parts.append("</svg><ul class=\"omi-zone-chart-legend omi-zone-chart-state-legend\">")
+    for state_index, state in enumerate(states):
+        color = palette[state_index % len(palette)]
+        svg_parts.append(
+            f'<li style="--series-color:{color}"><span aria-hidden="true"></span>{html_lib.escape(state)}</li>'
+        )
+    svg_parts.append("</ul><ul class=\"omi-zone-chart-legend omi-zone-chart-metric-legend\">")
+    if sale_ranges:
+        svg_parts.append(
+            f'<li><span class="omi-zone-chart-sale-key" aria-hidden="true"></span>{html_lib.escape(gettext("Sale price (€/m²)"))}</li>'
+        )
+    if rent_ranges:
+        svg_parts.append(
+            f'<li><span class="omi-zone-chart-rent-key" aria-hidden="true"></span>{html_lib.escape(gettext("Rent (€/m² per month)"))}</li>'
+        )
+    svg_parts.append("</ul></figure>")
+    return ["".join(svg_parts)]
 
 
 _ACCOUNT_LOCALES = (("it", "Italiano"), ("en", "English"))

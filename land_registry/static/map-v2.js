@@ -2022,6 +2022,7 @@
       const html = await response.text();
       if (requestId !== state.omiMarketZoneDetailsRequest || state.selectedOmiMarketZoneId !== String(featureId)) return;
       content.innerHTML = html;
+      mountOmiMarketZoneTabs(content);
       content.scrollTop = 0;
       mapStatus(tr('OMI market zone selected'));
     } catch (error) {
@@ -2441,6 +2442,41 @@
         event.preventDefault();
         activate(tabs[nextIndex], true);
       });
+    });
+  }
+
+  function mountOmiMarketZoneTabs(root) {
+    root?.querySelectorAll('[data-omi-tablist]').forEach((tablist) => {
+      const container = tablist.parentElement;
+      const tabs = [...tablist.querySelectorAll('[role="tab"]')];
+      const panels = [...container.children].filter((child) => child.getAttribute('role') === 'tabpanel');
+      if (!tabs.length || !panels.length) return;
+
+      const activate = (selectedTab, focus = false) => {
+        tabs.forEach((tab) => {
+          const active = tab === selectedTab;
+          tab.setAttribute('aria-selected', String(active));
+          tab.tabIndex = active ? 0 : -1;
+        });
+        panels.forEach((panel) => {
+          panel.hidden = panel.getAttribute('aria-labelledby') !== selectedTab.id;
+        });
+        if (focus) selectedTab.focus();
+      };
+      tabs.forEach((tab) => tab.addEventListener('click', () => activate(tab)));
+      tablist.addEventListener('keydown', (event) => {
+        const currentIndex = tabs.indexOf(event.target.closest?.('[role="tab"]'));
+        if (currentIndex < 0) return;
+        let nextIndex = currentIndex;
+        if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % tabs.length;
+        else if (event.key === 'ArrowLeft') nextIndex = (currentIndex + tabs.length - 1) % tabs.length;
+        else if (event.key === 'Home') nextIndex = 0;
+        else if (event.key === 'End') nextIndex = tabs.length - 1;
+        else return;
+        event.preventDefault();
+        activate(tabs[nextIndex], true);
+      });
+      activate(tabs.find((tab) => tab.getAttribute('aria-selected') === 'true') || tabs[0]);
     });
   }
 

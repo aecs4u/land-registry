@@ -5659,6 +5659,24 @@ msgstr "Quotazioni OMI per periodo"
 msgid "No OMI quotations are available for this zone."
 msgstr "Nessuna quotazione OMI disponibile per questa zona."
 
+msgid "Property type not specified"
+msgstr "Tipologia non specificata"
+
+msgid "Quotation views"
+msgstr "Viste delle quotazioni"
+
+msgid "Sale and rent ranges by period"
+msgstr "Intervalli di vendita e locazione per periodo"
+
+msgid "The primary axis shows sale price; the secondary axis shows rent."
+msgstr "L'asse principale mostra il prezzo di vendita; l'asse secondario mostra il canone di locazione."
+
+msgid "Quotation period data are not available for this chart."
+msgstr "I periodi delle quotazioni non sono disponibili per questo grafico."
+
+msgid "No OMI quotation values are available for this chart."
+msgstr "Non sono disponibili valori delle quotazioni OMI per questo grafico."
+
 msgid "Plot"
 msgstr "Visualizza"
 

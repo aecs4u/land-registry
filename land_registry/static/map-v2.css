@@ -504,6 +504,37 @@ body.direct-map-page > .direct-map-shell { height: 100vh; flex: 0 0 100vh; }
 .municipality-eurostat-chart-empty-selection { padding: 6px 8px; border-radius: 6px; background: color-mix(in srgb, var(--direct-map-accent-soft) 55%, var(--direct-map-panel)); }
 .municipality-eurostat-value { text-align: right !important; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .municipality-eurostat-dataset .map-sheet-source { margin: 7px 2px 0; color: var(--direct-map-muted); font-size: 11px; }
+.omi-market-zone-type-tabs, .omi-market-zone-view-tabs { overflow-x: auto; }
+.omi-market-zone-type-tabs button, .omi-market-zone-view-tabs button { flex: 0 0 auto; white-space: nowrap; }
+.omi-market-zone-type-tabs button:focus-visible, .omi-market-zone-view-tabs button:focus-visible { outline: 3px solid var(--direct-map-accent-ring); outline-offset: 1px; }
+.omi-market-zone-type-panel[hidden], .omi-market-zone-view-panel[hidden] { display: none; }
+.omi-market-zone-type-title { margin: 2px 0 8px; color: var(--direct-map-text); font-size: 13px; }
+.omi-market-zone-view-switcher { margin-top: 8px; }
+.omi-market-zone-table-wrap { border: 1px solid var(--direct-map-border); border-radius: 8px; background: var(--direct-map-panel); }
+.omi-market-zone-table-wrap table { min-width: 440px; color: var(--direct-map-text); font-size: 12px; font-variant-numeric: tabular-nums; }
+.omi-market-zone-table-wrap thead th { color: var(--direct-map-muted); }
+.omi-market-zone-charts { display: block; max-width: 100%; overflow-x: auto; }
+.omi-zone-chart { width: 100%; min-width: 520px; margin: 0; padding: 10px; border: 1px solid var(--direct-map-border); border-radius: 8px; background: var(--direct-map-panel); }
+.omi-zone-chart + .omi-zone-chart { margin-top: 12px; }
+.omi-zone-chart figcaption { margin: 0 0 5px; color: var(--direct-map-text); font-size: 12px; font-weight: 700; }
+.omi-zone-chart svg { display: block; width: 100%; height: auto; overflow: visible; color: var(--direct-map-muted); font-family: inherit; font-size: 10px; }
+.omi-zone-chart-grid line { stroke: var(--direct-map-border); stroke-dasharray: 3 4; stroke-width: 1; }
+.omi-zone-chart-grid text, .omi-zone-chart-period { fill: var(--direct-map-muted); }
+.omi-zone-chart-axis-label { fill: var(--direct-map-muted); font-size: 10px; }
+.omi-zone-chart-axis { stroke: var(--direct-map-muted); stroke-width: 1; }
+.omi-zone-chart-series { --series-color: var(--direct-map-accent); }
+.omi-zone-chart-series path { fill: none; stroke: var(--series-color); stroke-linecap: round; stroke-linejoin: round; stroke-width: 2; }
+.omi-zone-chart-series.omi-zone-chart-rent path { stroke-dasharray: 5 4; }
+.omi-zone-chart-range line { stroke: var(--series-color); stroke-width: 1.5; }
+.omi-zone-chart-range circle { fill: var(--series-color); stroke: var(--direct-map-panel); stroke-width: 1.4; }
+.omi-zone-chart-range rect { fill: var(--series-color); stroke: var(--direct-map-panel); stroke-width: 1.2; }
+.omi-zone-chart-legend { display: flex; flex-wrap: wrap; gap: 5px 12px; margin: 6px 0 0; padding: 0; list-style: none; color: var(--direct-map-muted); font-size: 10px; }
+.omi-zone-chart-legend li { display: inline-flex; align-items: center; gap: 5px; }
+.omi-zone-chart-legend li span { width: 9px; height: 9px; border-radius: 50%; background: var(--series-color); }
+.omi-zone-chart-metric-legend { padding-top: 6px; border-top: 1px solid var(--direct-map-border); }
+.omi-zone-chart-metric-legend li span { width: 16px; height: 0; border-top: 2px solid currentColor; border-radius: 0; background: none; }
+.omi-zone-chart-metric-legend .omi-zone-chart-rent-key { border-top-style: dashed; }
+.omi-zone-chart-empty { margin: 0; }
 .municipality-detail-link { overflow-wrap: anywhere; }
 .municipality-detail-image-link { display: inline-block; max-width: 100%; }
 .municipality-detail-image { display: block; max-width: min(128px, 100%); max-height: 128px; border: 1px solid var(--direct-map-border); border-radius: 6px; object-fit: contain; }
