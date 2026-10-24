@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 430 96" role="img" aria-labelledby="logo-title logo-description">
+  <title id="logo-title">Land Registry</title>
+  <desc id="logo-description">Land Registry wordmark with a cadastral parcel map symbol.</desc>
+  <g aria-hidden="true">
+    <rect x="7" y="7" width="82" height="82" rx="17" fill="#1a5490"/>
+    <path fill="#fff" d="M20 20h22v22H20zM51 20h25v22H51zM20 52h27v24H20zM56 52h20v24H56z"/>
+    <path fill="#28a745" d="M23 23h16v16H23zM54 23h19v16H54zM23 55h21v18H23zM59 55h14v14H59z"/>
+  </g>
+  <text x="110" y="62" fill="#173f5f" font-family="Inter, 'Segoe UI', Arial, sans-serif" font-size="42" font-weight="600" letter-spacing="-1.1">Land Registry</text>
+</svg>

@@ -96,7 +96,7 @@ else:
 
 # Import aecs4u-theme (optional)
 try:
-    from aecs4u_theme import setup_theme_from_env
+    from aecs4u_theme import ThemeConfig, setup_theme
     _THEME_AVAILABLE = True
 except ImportError:
     _THEME_AVAILABLE = False
@@ -617,7 +617,7 @@ if _AUTH_AVAILABLE:
 else:
     logger.warning("aecs4u-auth not installed - running without authentication")
 
-# Setup theme using aecs4u-theme — reads AECS4U_SITE_NAME, THEME_PRIMARY_COLOR etc. from env
+# Set this app's brand name and read the remaining aecs4u-theme settings from env.
 _theme_setup = None
 if _THEME_AVAILABLE:
     # templates_dir points at a directory containing ONLY the theme templates we
@@ -625,8 +625,9 @@ if _THEME_AVAILABLE:
     # ships its own base.html and landing.html, and putting our templates first
     # in the search path would silently shadow them for theme-rendered pages.
     _theme_overrides_dir = Path(__file__).parent / "templates" / "theme_overrides"
-    _theme_setup = setup_theme_from_env(
+    _theme_setup = setup_theme(
         app,
+        config=ThemeConfig(site_name="Land Registry"),
         static_url_path="/static/aecs4u-theme",
         templates_dir=_theme_overrides_dir,
     )
