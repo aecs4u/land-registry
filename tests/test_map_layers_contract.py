@@ -22,11 +22,14 @@ def test_catalog_covers_every_allow_listed_spatial_relation():
     # sources) instead of the former canonical ``facts``/``serving`` relations.
     tables = {layer.table for layer in MAP_LAYERS}
     assert {
+        "istat.v_ripartizioni_map",
+        "istat.v_regioni_map",
+        "istat.v_province_map",
         "istat.v_comuni_map",
         "spatial.cadastral_parcel",
         "spatial.cadastral_sheet",
         "sezioni_urbane.sezioni_urbane",
-        "zornade.zornade_zone_omi",
+        "zornade.omi_market_zone_map",
         "cap_subcomunali.cap_subcomunali",
         "hazards.flood_hazard",
         "hazards.landslide_hazard",
@@ -152,7 +155,7 @@ def test_mvt_query_is_allowlisted_and_attribute_bearing():
     source = PostgresMapLayerSource(_ConnectionSource(connection))
 
     assert asyncio.run(source.read_mvt("market-zones", 12, 2100, 1500)) == b"mvt"
-    assert "zornade.zornade_zone_omi" in connection.sql
+    assert "zornade.omi_market_zone_map" in connection.sql
     assert '"codzona"' in connection.sql
     assert "ST_AsMVT" in connection.sql
     assert "%s" not in connection.sql and "$2::text" in connection.sql
@@ -537,7 +540,10 @@ async def test_search_pool_is_warmed_ahead_of_first_query():
 def test_catalog_carries_presentation_fields_for_the_layers_card():
     from land_registry.map_layers import MAP_LAYERS, map_layer_catalog
 
-    groups = {"administrative", "cadastral", "market", "risk", "demographics", "territory", "energy"}
+    groups = {
+        "administrative", "administrative-boundaries", "cadastral", "market",
+        "risk", "demographics", "territory", "energy",
+    }
     catalog = map_layer_catalog()
     assert {layer["group"] for layer in catalog} <= groups
     for layer in catalog:
@@ -548,15 +554,16 @@ def test_catalog_carries_presentation_fields_for_the_layers_card():
     assert len({layer.color for layer in drawn}) == len(drawn)
 
 
-def test_boundary_zoom_ladder_and_mixed_geometry_are_catalog_data():
-    from land_registry.map_layers import get_map_layer
+def test_boundary_levels_are_separate_layers_with_an_increasing_zoom_ladder():
+    from land_registry.map_layers import _ADMIN_BOUNDARY_UNIT_TYPES, get_map_layer
 
-    ladder = get_map_layer("geo-boundaries").public()["unit_levels"]
-    assert ladder == [
-        {"min_zoom": 0, "unit_type": "region"},
-        {"min_zoom": 8, "unit_type": "province"},
-        {"min_zoom": 10, "unit_type": "municipality"},
-    ]
+    # Each administrative level is its own layer (one prepared view each), so
+    # the zoom ladder is the layers' min_zoom values, not a per-layer list.
+    by_unit = {unit: get_map_layer(layer_id) for layer_id, unit in _ADMIN_BOUNDARY_UNIT_TYPES.items()}
+    assert set(by_unit) == {"region", "province", "municipality", "geographic_area"}
+    assert all(layer.group == "administrative-boundaries" for layer in by_unit.values())
+    assert by_unit["region"].min_zoom < by_unit["province"].min_zoom < by_unit["municipality"].min_zoom
+    assert get_map_layer("geo-boundaries").public()["unit_levels"] == []
     assert get_map_layer("maritime-concessions").kind == "mixed"
 
 
@@ -755,3 +762,33 @@ def test_dense_layers_have_caps_that_fit_their_measured_worst_tiles():
     census = get_map_layer("census-sections")
     assert census.min_zoom >= 13 and census.max_features >= 1875  # Rome z13
     assert get_map_layer("cadastral-parcels").size_column == "area_sqm"
+
+
+def test_feature_details_quote_mixed_case_id_column():
+    # OGR-imported layers key on "OGC_FID"; unquoted, Postgres folds it to
+    # ogc_fid and the detail lookup fails.
+    connection = _Connection(row={"OGC_FID": 26937, "codcom": "H501"})
+    source = PostgresMapLayerSource(_ConnectionSource(connection))
+
+    result = asyncio.run(source.read_feature_details("market-zones", 26937))
+
+    assert result["id"] == 26937
+    assert 't."OGC_FID" = $1' in connection.sql
+    assert connection.params == (26937,)
+
+
+def test_market_zones_prefer_the_indexed_copy_and_fall_back_to_the_foreign_table():
+    # The foreign OMI table cannot be indexed and made every tile a 3-6 s remote
+    # scan. The layer reads the local copy when it exists.
+    layer = get_map_layer("market-zones")
+    assert layer.table == "zornade.omi_market_zone_map"
+    assert layer.fallback_tables == ("zornade.zornade_zone_omi",)
+
+    class _MissingCopy(_Connection):
+        async def fetchval(self, sql, *params):
+            self._record(sql, params)
+            return None if params == ("zornade.omi_market_zone_map",) else params[0]
+
+    source = PostgresMapLayerSource(_ConnectionSource(_MissingCopy()))
+    relation = asyncio.run(source._resolve_relation_for(layer, source._source_for(layer)))
+    assert relation == "zornade.zornade_zone_omi"

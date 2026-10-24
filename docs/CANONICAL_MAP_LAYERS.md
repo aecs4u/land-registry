@@ -66,8 +66,12 @@ multiple imported polygon parts with the same reference share that ID.
 > sources is unchanged in `source_catalog.py`.
 
 Map layers use the consolidated `aecs4u-stats` relations directly: municipal,
-province, and region boundaries from `istat.v_*_map`; OMI zones from
-`zornade.zornade_zone_omi`; urban sections from `sezioni_urbane.sezioni_urbane`;
+province, and region boundaries from `istat.v_*_map`; OMI zones from the
+indexed local copy `zornade.omi_market_zone_map` (created by
+`scripts/sql/map-market-zones-local-copy.sql`, falling back to the foreign table
+`zornade.zornade_zone_omi`, which is ~1000x slower per tile; refresh the copy with
+`REFRESH MATERIALIZED VIEW CONCURRENTLY zornade.omi_market_zone_map` after the
+source is reloaded); urban sections from `sezioni_urbane.sezioni_urbane`;
 postal areas from the `cap_subcomunali.cap_subcomunali` view over
 `geo_postal.cap_subcomunali`; and EGMS data from `geo_surface_change`.
 Flood, landslide, MPS04, and seismic-classification tiles connect directly to

@@ -11,7 +11,8 @@ cannot run inside a transaction or a multi-statement batch).
 
 Every script here is safe to re-run. Scripts that change data or touch other
 databases are deliberately not in the list; run them by hand:
-``map-parcel-field-backfill.sql`` (bulk UPDATE) and
+``map-parcel-field-backfill.sql`` (bulk UPDATE),
+``map-market-zones-local-copy.sql`` (copies the OMI zones, ~300 MB) and
 ``pvp-enriched-modelview-map-view.sql`` and
 ``pvp-enriched-modelview-map-points.sql`` and
 ``solar-map-foreign-tables.sql`` (foreign data wrapper setup).
