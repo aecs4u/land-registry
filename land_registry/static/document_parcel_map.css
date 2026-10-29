@@ -231,3 +231,57 @@
         height: 58vh;
     }
 }
+
+/* Clusters of overview markers (parcels / sheets close at the current zoom, or sharing one position) */
+.document-map-cluster-icon {
+    background: transparent;
+    border: 0;
+}
+
+.document-map-cluster {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 3px solid rgba(255, 255, 255, .9);
+    border-radius: 50%;
+    background: #0d6efd;
+    box-shadow: 0 0 0 2px rgba(13, 110, 253, .35), 0 1px 4px rgba(0, 0, 0, .45);
+    color: #fff;
+    font-weight: 700;
+    font-size: .8rem;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.document-map-cluster--sheet {
+    background: #0284c7;
+    box-shadow: 0 0 0 2px rgba(2, 132, 199, .35), 0 1px 4px rgba(0, 0, 0, .45);
+}
+
+.document-map-cluster--parcel-fallback {
+    background: #ea580c;
+    box-shadow: 0 0 0 2px rgba(234, 88, 12, .35), 0 1px 4px rgba(0, 0, 0, .45);
+}
+
+.document-map-cluster-place {
+    position: absolute;
+    left: 50%;
+    top: 100%;
+    margin-top: 2px;
+    transform: translateX(-50%);
+    padding: 0 .4rem;
+    border-radius: .6rem;
+    background: rgba(255, 255, 255, .92);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, .25);
+    color: #1f2937;
+    font-size: .68rem;
+    font-weight: 600;
+    white-space: nowrap;
+    pointer-events: none;
+}
+
+.document-map-cluster-list {
+    max-height: 14rem;
+    overflow: auto;
+    font-size: .78rem;
+}
