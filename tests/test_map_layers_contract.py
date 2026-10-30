@@ -508,6 +508,7 @@ def test_municipality_search_selects_a_resolved_name():
 async def test_map_search_runs_parcel_lookup_on_reserved_search_pool():
     # On the shared tile pool the lookup waited behind tile rendering and the
     # 2 s timeout returned 503 even though the indexed query takes milliseconds.
+    from fastapi import Response
     from land_registry.routers import api as api_module
 
     tile_source = MagicMock(available=True)
@@ -518,7 +519,7 @@ async def test_map_search_runs_parcel_lookup_on_reserved_search_pool():
     }])
     with patch.object(api_module, "get_map_layer_source", return_value=tile_source), \
          patch.object(api_module, "get_map_search_source", return_value=search_source):
-        result = await api_module.search_map("L781B016200.14", 10)
+        result = await api_module.search_map(Response(), query="L781B016200.14", limit=10)
 
     search_source.search_parcels_by_reference.assert_awaited_once_with("L781B016200.14", 10)
     tile_source.search_parcels_by_reference.assert_not_awaited()

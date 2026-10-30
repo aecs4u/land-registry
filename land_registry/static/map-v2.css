@@ -96,6 +96,8 @@
 .basemap-options label:has(input:checked) { border-color: var(--direct-map-accent); color: var(--direct-map-accent); background: var(--direct-map-accent-soft); }
 .map-layer-list { display: grid; gap: 6px; margin-top: 8px; }
 .map-layer-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.map-layer-filter { box-sizing: border-box; width: 100%; min-height: 38px; margin: 8px 0; padding: 7px 9px; border: 1px solid var(--direct-map-border); border-radius: 6px; background: var(--direct-map-panel); color: var(--direct-map-text); font: inherit; }
+.map-layer-filter:focus-visible { outline: 3px solid var(--direct-map-accent-ring); outline-offset: 2px; }
 .map-layer-select-all { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; }
 .map-layer-select-all input { margin: 0; cursor: pointer; }
 .map-layer-select-all input:disabled { cursor: default; }
@@ -314,7 +316,7 @@
 .map-status-pill.is-error { color: #b42318; border-color: #e5a39e; }
 /* An empty live region must not render as a stray blank pill. */
 .map-status-pill:empty { display: none; }
-.map-task-progress { position: absolute; z-index: 8; left: 50%; bottom: 18px; transform: translateX(-50%); width: min(420px, calc(100% - 140px)); padding: 10px 13px; border: 1px solid var(--direct-map-border); border-radius: 8px; background: var(--direct-map-panel); color: var(--direct-map-text); box-shadow: var(--direct-map-shadow); pointer-events: none; }
+.map-task-progress { position: absolute; z-index: 8; left: 50%; bottom: 54px; transform: translateX(-50%); width: min(420px, calc(100% - 140px)); padding: 10px 13px; border: 1px solid var(--direct-map-border); border-radius: 8px; background: var(--direct-map-panel); color: var(--direct-map-text); box-shadow: var(--direct-map-shadow); pointer-events: none; }
 .map-task-progress[hidden] { display: none; }
 .map-task-progress-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 13px; }
 #mapTaskProgressElapsed { flex: none; color: var(--direct-map-muted); font-variant-numeric: tabular-nums; }
@@ -324,7 +326,7 @@
 .map-task-progress-detail { color: var(--direct-map-muted); font-size: 12px; margin-top: 5px; }
 @keyframes map-task-progress-slide { from { transform: translateX(-110%); } to { transform: translateX(300%); } }
 @media (prefers-reduced-motion: reduce) { .map-task-progress-fill { transition: none; } .map-task-progress-track.is-indeterminate .map-task-progress-fill { animation: none; width: 100%; opacity: .5; } }
-@media (max-width: 700px) { .map-task-progress { left: 12px; right: 60px; bottom: 132px; width: auto; transform: none; } }
+@media (max-width: 700px) { .map-task-progress { left: 12px; right: 60px; bottom: calc(52vh + 22px); width: auto; transform: none; } }
 .map-source-banner { position: absolute; z-index: 3; top: 76px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; max-width: min(560px, calc(100% - 24px)); padding: 8px 12px; border: 1px solid #e5a39e; border-radius: 8px; background: var(--direct-map-panel); color: #b42318; font-size: 13px; box-shadow: var(--direct-map-shadow); }
 .map-source-banner[hidden] { display: none; }
 .map-source-banner .secondary-action { flex: none; }
@@ -434,6 +436,7 @@ body.direct-map-page > .direct-map-shell { height: 100vh; flex: 0 0 100vh; }
  * sticky action bar. Sections are filled by static/parcel-panel.js. */
 .parcel-detail-card.parcel-sheet { top: 12px; right: 65px; bottom: 12px; width: clamp(380px, 36vw, 540px); max-height: none; padding: 0; display: flex; flex-direction: column; overflow: hidden; }
 .parcel-detail-card.parcel-sheet[hidden] { display: none; }
+.parcel-sheet-drag-handle, .parcel-sheet-expand { display: none; }
 .parcel-sheet-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; padding: 14px 16px 10px; border-bottom: 1px solid var(--direct-map-border); }
 .parcel-sheet-heading { min-width: 0; }
 .parcel-sheet-header-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 5px; }
@@ -450,7 +453,7 @@ body.direct-map-page > .direct-map-shell { height: 100vh; flex: 0 0 100vh; }
 .parcel-stat[data-level="low"] .parcel-stat-value { color: color-mix(in srgb, #067647 70%, var(--direct-map-text)); }
 .parcel-section-nav { display: flex; gap: 4px; padding: 6px 10px; overflow-x: auto; border-bottom: 1px solid var(--direct-map-border); scrollbar-width: thin; }
 .parcel-section-nav:empty { display: none; }
-.parcel-section-nav button { flex: 0 0 auto; border: 0; border-radius: 6px; background: transparent; color: var(--direct-map-muted); cursor: pointer; font: inherit; font-size: 13px; min-height: 28px; padding: 5px 10px; }
+.parcel-section-nav button { flex: 0 0 auto; border: 0; border-radius: 6px; background: transparent; color: var(--direct-map-muted); cursor: pointer; font: inherit; font-size: 13px; min-height: 32px; padding: 5px 10px; }
 .parcel-section-nav button:hover { color: var(--direct-map-text); }
 .parcel-section-nav button[aria-current="true"] { background: var(--direct-map-accent-soft); color: var(--direct-map-accent); font-weight: 600; }
 .parcel-section-nav button:focus-visible { outline: 3px solid var(--direct-map-accent-ring); outline-offset: 1px; }
@@ -557,7 +560,7 @@ body.direct-map-page > .direct-map-shell { height: 100vh; flex: 0 0 100vh; }
 
 .parcel-section { padding: 13px 0; border-bottom: 1px solid var(--direct-map-border); scroll-margin-top: 4px; }
 .parcel-section:last-child { border-bottom: 0; }
-.parcel-section-header { display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; }
+.parcel-section-header { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 5px 0; cursor: pointer; list-style: none; }
 .parcel-section-header::-webkit-details-marker { display: none; }
 .parcel-section-header:focus-visible { outline: 3px solid var(--direct-map-accent-ring); outline-offset: 3px; border-radius: 3px; }
 .parcel-section-header i { width: 18px; color: var(--direct-map-accent); text-align: center; }
@@ -567,6 +570,7 @@ body.direct-map-page > .direct-map-shell { height: 100vh; flex: 0 0 100vh; }
 .parcel-section-badge { border: 1px solid var(--direct-map-border); border-radius: 999px; color: var(--direct-map-muted); font-size: 12px; line-height: 1.4; padding: 0 8px; }
 .parcel-section-body { margin-top: 8px; }
 .parcel-section-footer { margin-top: 8px; }
+.map-sheet-action-link { display: inline-flex; align-items: center; min-height: 32px; padding: 4px 5px; }
 .parcel-section[data-state="empty"] .parcel-section-title { color: var(--direct-map-muted); }
 .parcel-section-status { color: var(--direct-map-muted); font-size: 11px; font-weight: 500; white-space: nowrap; }
 .parcel-section-status[data-kind="risk-score"] { border: 1px solid var(--direct-map-border); border-radius: 999px; padding: 2px 7px; color: var(--direct-map-text); font-variant-numeric: tabular-nums; }
@@ -588,6 +592,17 @@ body.direct-map-page > .direct-map-shell { height: 100vh; flex: 0 0 100vh; }
 .parcel-coverage-tab[aria-selected="true"] { background: var(--direct-map-panel); box-shadow: 0 1px 3px rgb(0 0 0 / 12%); color: var(--direct-map-accent); font-weight: 700; }
 .parcel-coverage-tab:focus-visible { outline: 3px solid var(--direct-map-accent-ring); outline-offset: 1px; }
 .parcel-coverage-panel[hidden] { display: none; }
+.parcel-coverage-group { border-top: 1px solid var(--direct-map-border); }
+.parcel-coverage-group > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 36px; padding: 4px 2px; color: var(--direct-map-text); cursor: pointer; font-size: 12px; font-weight: 700; }
+.parcel-coverage-group-count { color: var(--direct-map-muted); font-variant-numeric: tabular-nums; }
+.parcel-unavailable-group { margin: 0 0 8px; border: 1px solid var(--direct-map-border); border-radius: 8px; background: var(--direct-map-surface); }
+.parcel-unavailable-group[hidden], .parcel-section[hidden] { display: none !important; }
+.parcel-unavailable-group > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 40px; padding: 6px 10px; color: var(--direct-map-muted); cursor: pointer; font-size: 12px; font-weight: 700; }
+.parcel-unavailable-count { display: inline-grid; min-width: 24px; min-height: 24px; place-items: center; border-radius: 999px; background: var(--direct-map-panel); color: var(--direct-map-text); font-variant-numeric: tabular-nums; }
+.parcel-unavailable-list { display: grid; gap: 4px; max-height: 260px; margin: 0; padding: 0 8px 8px; overflow: auto; list-style: none; }
+.parcel-unavailable-list button { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-height: 40px; padding: 7px 9px; border: 1px solid var(--direct-map-border); border-radius: 6px; background: var(--direct-map-panel); color: var(--direct-map-text); cursor: pointer; font: inherit; text-align: left; }
+.parcel-unavailable-list button:hover, .parcel-unavailable-list button:focus-visible { border-color: var(--direct-map-accent); }
+.parcel-unavailable-list small { flex: 0 0 auto; color: var(--direct-map-muted); font-size: 11px; }
 .parcel-database-list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
 .parcel-database-item { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px dashed var(--direct-map-border); }
 .parcel-database-item:last-child { border-bottom: 0; }
@@ -841,7 +856,7 @@ body.direct-map-page > .direct-map-shell { height: 100vh; flex: 0 0 100vh; }
   .map-search-privacy a { display: inline-block; padding: 8px 4px; }
   .map-card-close, .parcel-sheet-header-actions .secondary-action { min-width: 40px; min-height: 40px; }
 }
-@media (max-height: 640px) {
+@media (max-height: 640px) and (pointer: fine) {
   .map-round-button { width: 34px; height: 34px; }
 }
 
@@ -858,3 +873,32 @@ body.direct-map-page > .direct-map-shell { height: 100vh; flex: 0 0 100vh; }
 /* Contrast: the current section tab and the SISTER toggle in the dark theme. */
 .parcel-section-nav button[aria-current="true"] { color: var(--direct-map-text); box-shadow: inset 0 -2px 0 var(--direct-map-accent); }
 .map-live-checkbox:has(input:checked) { color: var(--direct-map-text); }
+.secondary-action[hidden] { display: none !important; }
+
+.direct-map-stage:has(.map-task-progress:not([hidden])) .map-status-pill { display: none; }
+
+/* Audit 2026-10-29: keep the selected parcel visible and make the sheet easier to use. */
+@media (min-width: 701px) and (max-width: 1024px) {
+  .direct-map-stage:has(#directParcelPanel:not([hidden])) .map-search-card { width: clamp(100px, calc(100% - 572px), 320px); }
+  .direct-map-stage:has(#directParcelPanel:not([hidden])) .map-task-progress {
+    left: calc((100% - min(480px, calc(100% - 90px)) - 60px) / 2);
+    width: min(300px, calc(100% - min(480px, calc(100% - 90px)) - 100px));
+  }
+}
+@media (max-width: 700px) {
+  .parcel-detail-card.parcel-sheet { height: min(52vh, 500px); max-height: calc(100% - 24px); transition: height .2s ease; }
+  .parcel-detail-card.parcel-sheet.is-expanded { height: min(82vh, 740px); }
+  .parcel-sheet-header { position: relative; display: block; padding-top: 12px; }
+  .parcel-sheet-header-actions { position: absolute; top: 12px; right: 12px; justify-content: flex-end; }
+  .parcel-sheet-drag-handle { display: block; width: 42px; height: 4px; margin: 0 auto 6px; border-radius: 99px; background: var(--direct-map-muted); opacity: .55; cursor: ns-resize; touch-action: none; }
+  .parcel-sheet-expand { display: inline-grid !important; }
+  .parcel-section-nav { scrollbar-width: none; mask-image: linear-gradient(90deg, #000 0%, #000 calc(100% - 20px), transparent 100%); }
+  .parcel-section-nav::-webkit-scrollbar { display: none; }
+  .map-task-progress { bottom: 132px; }
+  .direct-map-stage:has(#directParcelPanel:not([hidden])) .map-task-progress { bottom: calc(52vh + 22px); }
+  .direct-map-stage:has(#directParcelPanel.is-expanded:not([hidden])) .map-task-progress { bottom: calc(82vh + 18px); }
+}
+@media (pointer: coarse) {
+  .parcel-section-nav button, .parcel-section-header { min-height: 44px; }
+  .map-sheet-action-link { display: inline-flex; align-items: center; min-height: 44px; padding: 6px 5px; }
+}

@@ -503,7 +503,9 @@
         const quotes = _validOmiQuotes(data, zoneMatch);
         if (!quotes.length) return _emptyState('Le quotazioni OMI disponibili non contengono intervalli di compravendita validi.');
         const area = _parcelAreaSqm(feature);
-        const defaultArea = area && area <= 10000 ? Math.round(area) : '';
+        // Parcel geometry is land area, not a building's commercial floor
+        // area. Never prefill it into an OMI building-value estimate.
+        const defaultArea = '';
         const largeParcelNotice = area > 10000
             ? `<div class="enrichment-empty text-muted">La particella misura ${_formatNumber(area)} m²: inserire la superficie commerciale del fabbricato da stimare.</div>`
             : '';
@@ -529,7 +531,7 @@
             ${boundaryVintageNotice}
             <div class="omi-controls">
                 <label for="omiQuoteSelect">Zona e tipologia OMI</label>
-                <select id="omiQuoteSelect" class="tool-select">${options}</select>
+                <select id="omiQuoteSelect" class="tool-select"><option value="" selected>Selezionare zona e tipologia OMI</option>${options}</select>
                 <label for="omiEstimateArea">Superficie utilizzata nella stima (m²)</label>
                 <input id="omiEstimateArea" class="tool-input" type="number" min="1" step="1" value="${defaultArea}" placeholder="es. 100">
             </div>
@@ -537,7 +539,7 @@
             <div id="omiSelectedQuote" class="omi-selected-quote"></div>
             <div id="omiEstimateResult" class="omi-estimate"></div>
             <div class="enrichment-empty text-muted omi-disclaimer">Stima indicativa: superficie × intervallo OMI selezionato. Non è una perizia, non considera consistenza commerciale, stato reale o corretta zona OMI. Per fabbricati inserire la superficie commerciale, non necessariamente l'area della particella.</div>
-            <div id="omiHistory" class="omi-history"><div class="enrichment-loading"><span class="spinner-border spinner-border-sm" role="status"></span><span>Caricamento storico…</span></div></div>
+            <div id="omiHistory" class="omi-history"><div class="enrichment-empty text-muted">Selezionare una quotazione per consultare lo storico.</div></div>
             ${_sourceFootnote(data.source)}
         `;
     }
@@ -599,7 +601,9 @@
         let estimateRequestToken = 0;
 
         function selectedQuote() {
-            return quotes[Number(select.value)] || quotes[0];
+            if (select.value === '') return null;
+            const index = Number(select.value);
+            return Number.isInteger(index) ? quotes[index] || null : null;
         }
 
         function quotePeriod(quote) {
@@ -650,7 +654,8 @@
         function scheduleServerEstimate(quote, area) {
             const token = ++estimateRequestToken;
             if (estimateTimer) clearTimeout(estimateTimer);
-            if (!Number.isFinite(area) || area <= 0) return;
+            estimateTimer = null;
+            if (!quote || !Number.isFinite(area) || area <= 0) return;
             estimateTimer = setTimeout(async () => {
                 const result = await _postJson('/api/v1/enrichment/omi/estimate', {
                     comune: cadastralCode,
@@ -671,6 +676,14 @@
 
         function updateEstimate() {
             const quote = selectedQuote();
+            if (!quote) {
+                estimateRequestToken += 1;
+                if (estimateTimer) clearTimeout(estimateTimer);
+                estimateTimer = null;
+                quoteEl.innerHTML = '<div class="enrichment-empty text-muted">Selezionare zona e tipologia OMI per consultare la quotazione.</div>';
+                estimateEl.innerHTML = '<span>Selezionare una quotazione OMI e inserire la superficie commerciale dell’immobile.</span>';
+                return;
+            }
             const range = _estimateOmiRange(quote, areaInput.value);
             const saleBenchmark = quoteBenchmark(quote);
             quoteEl.innerHTML = `
@@ -685,6 +698,10 @@
         async function updateHistory() {
             const quote = selectedQuote();
             const token = ++omiHistoryToken;
+            if (!quote) {
+                historyEl.innerHTML = '<div class="enrichment-empty text-muted">Selezionare una quotazione per consultare lo storico.</div>';
+                return;
+            }
             historyEl.innerHTML = '<div class="enrichment-loading"><span class="spinner-border spinner-border-sm" role="status"></span><span>Caricamento storico…</span></div>';
             const params = new URLSearchParams({ comune: cadastralCode, zona: quote.zona || '' });
             if (quote.cod_tipologia != null) params.set('cod_tipologia', quote.cod_tipologia);

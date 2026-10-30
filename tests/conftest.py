@@ -2,6 +2,7 @@ import pytest
 import tempfile
 import json
 import os
+from types import SimpleNamespace
 from unittest.mock import patch, Mock
 from fastapi.testclient import TestClient
 import geopandas as gpd
@@ -22,12 +23,29 @@ except ImportError:
     MOTO_AVAILABLE = False
 
 from land_registry.main import app
+from land_registry.routers.auth import get_current_user, get_current_user_optional
 from land_registry.s3_storage import S3Settings, S3Storage
 
 
 @pytest.fixture
 def client():
     """FastAPI test client."""
+    return TestClient(app)
+
+
+@pytest.fixture
+def authenticated_client(monkeypatch):
+    """Test client with a synthetic signed-in user for private page checks."""
+    user = SimpleNamespace(
+        id="pytest-user",
+        email="pytest@example.test",
+        first_name="Pytest",
+        last_name="User",
+        full_name="Pytest User",
+        image_url=None,
+    )
+    monkeypatch.setitem(app.dependency_overrides, get_current_user_optional, lambda: user)
+    monkeypatch.setitem(app.dependency_overrides, get_current_user, lambda: user)
     return TestClient(app)
 
 

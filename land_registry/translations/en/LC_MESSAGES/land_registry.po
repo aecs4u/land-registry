@@ -19,6 +19,18 @@ msgstr "Land Registry"
 msgid "Land Registry Viewer"
 msgstr "Land Registry Viewer"
 
+msgid "Explore cadastral parcels in an interactive attribute table."
+msgstr "Explore cadastral parcels in an interactive attribute table."
+
+msgid "Review parcels adjacent to the selected cadastral parcel."
+msgstr "Review parcels adjacent to the selected cadastral parcel."
+
+msgid "Use drawing and zoning tools with cadastral map data."
+msgstr "Use drawing and zoning tools with cadastral map data."
+
+msgid "Illustrated map of cadastral parcels in Italy"
+msgstr "Illustrated map of cadastral parcels in Italy"
+
 msgid "Highlight auction sales"
 msgstr "Highlight auction sales"
 
@@ -1239,3 +1251,12 @@ msgstr "Indicative estimate calculated by multiplying the area by the selected O
 
 msgid "Inserire una superficie e un intervallo OMI valido per calcolare la stima indicativa."
 msgstr "Enter an area and a valid OMI range to calculate the indicative estimate."
+
+msgid "Sections with no parcel data"
+msgstr "Sections with no parcel data"
+
+msgid "No data"
+msgstr "No data"
+
+msgid "Open {section}"
+msgstr "Open {section}"

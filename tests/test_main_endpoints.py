@@ -12,6 +12,7 @@ Covers:
 """
 
 import json
+import struct
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
@@ -23,6 +24,7 @@ from shapely.geometry import Polygon
 
 from land_registry.main import app
 from land_registry.dependencies import _map_state
+from land_registry.routers.auth import get_current_user_optional
 
 
 @contextmanager
@@ -45,9 +47,39 @@ def client():
     return TestClient(app, follow_redirects=False)
 
 
+def test_panel_websocket_origins_include_configured_public_origin(monkeypatch):
+    from land_registry import main
+
+    monkeypatch.setattr(main.app_settings, "port", 8123)
+    monkeypatch.setattr(main.app_settings, "public_base_url", "https://registry.example.test")
+    origins = main._panel_websocket_origins()
+
+    assert "127.0.0.1:8123" in origins
+    assert "localhost:8123" in origins
+    assert "registry.example.test" in origins
+
+
+def test_panel_websocket_origins_preserve_public_nonstandard_port(monkeypatch):
+    from land_registry import main
+
+    monkeypatch.setattr(main.app_settings, "public_base_url", "https://registry.example.test:8443/app")
+    assert "registry.example.test:8443" in main._panel_websocket_origins()
+
+
 @pytest.fixture
-def following_client():
-    """Client that follows redirects."""
+def following_client(monkeypatch):
+    """Signed-in client that follows redirects for private page content tests."""
+    from types import SimpleNamespace
+
+    user = SimpleNamespace(
+        id="pytest-user",
+        email="pytest@example.test",
+        first_name="Pytest",
+        last_name="User",
+        full_name="Pytest User",
+        image_url=None,
+    )
+    monkeypatch.setitem(app.dependency_overrides, get_current_user_optional, lambda: user)
     return TestClient(app, follow_redirects=True)
 
 
@@ -129,13 +161,36 @@ class TestLandingPage:
             assert stale not in html, stale
         assert 'href="/map"' in html and 'href="/data-sources"' in html
 
+    def test_public_landing_has_a_crawler_friendly_raster_preview(self, following_client):
+        html = following_client.get("/landing").text
+        assert 'property="og:image:type" content="image/png"' in html
+        assert 'name="twitter:card" content="summary_large_image"' in html
+        assert "/static/land-registry-social.png?v=" in html
+        response = following_client.get("/static/land-registry-social.png")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("image/png")
+        assert response.content.startswith(b"\x89PNG\r\n\x1a\n")
+        width, height = struct.unpack(">II", response.content[16:24])
+        assert (width, height) == (1200, 630)
+
 
 class TestNotFoundPage:
-    def test_browsers_get_a_styled_page(self, client):
+    def test_browsers_get_a_styled_page(self, client, monkeypatch):
+        from types import SimpleNamespace
+
+        async def signed_in_user(request):
+            return SimpleNamespace(id="pytest-user", email="pytest@example.test")
+
+        monkeypatch.setattr("land_registry.main.get_current_user_optional", signed_in_user)
         response = client.get("/no-such-page", headers={"accept": "text/html,application/xhtml+xml"})
         assert response.status_code == 404
         assert "text/html" in response.headers["content-type"]
         assert "<h1>" in response.text and 'href="/map"' in response.text
+
+    def test_signed_out_browser_is_sent_to_login(self, client):
+        response = client.get("/no-such-page", headers={"accept": "text/html,application/xhtml+xml"})
+        assert response.status_code == 302
+        assert response.headers["location"].startswith("/auth/login?next=")
 
     def test_api_and_json_clients_keep_the_json_body(self, client):
         assert client.get("/no-such-page").json() == {"detail": "Not Found"}

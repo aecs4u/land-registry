@@ -647,7 +647,7 @@ def test_sync_poi_lookup_uses_available_relation_or_local_fallback(monkeypatch, 
 
 @pytest.mark.asyncio
 async def test_municipality_endpoint_reports_backoff_as_unavailable_not_missing(monkeypatch):
-    from fastapi import HTTPException
+    from fastapi import HTTPException, Response
 
     from land_registry.routers import enrichment
 
@@ -667,11 +667,46 @@ async def test_municipality_endpoint_reports_backoff_as_unavailable_not_missing(
     monkeypatch.setattr(stats_service, "aget_municipality_by_cadastral_code", missing)
 
     with pytest.raises(HTTPException) as healthy:
-        await enrichment.get_municipality("ZZZZ")
+        await enrichment.get_municipality("ZZZZ", Response())
     assert healthy.value.status_code == 404
 
     source._retry_at = stats_service.time.monotonic() + 30
     with pytest.raises(HTTPException) as backing_off:
-        await enrichment.get_municipality("H501")
+        await enrichment.get_municipality("H501", Response())
     assert backing_off.value.status_code == 503
     assert 1 <= int(backing_off.value.headers["Retry-After"]) <= 30
+
+
+@pytest.mark.asyncio
+async def test_municipality_endpoint_bounds_lookup_and_uses_stale_cache_on_errors(monkeypatch):
+    import asyncio
+
+    from fastapi import HTTPException, Response
+
+    from land_registry.routers import enrichment
+
+    profile = {"name": "Roma", "cadastral_code": "H501"}
+    monkeypatch.setattr(enrichment, "_municipality_cache", {
+        "H501": (enrichment.time.monotonic(), profile),
+    })
+    monkeypatch.setattr(stats_service, "istat_db_available", lambda: True)
+
+    async def failing_lookup(_code):
+        raise RuntimeError("reference store unavailable")
+
+    monkeypatch.setattr(stats_service, "aget_municipality_by_cadastral_code", failing_lookup)
+    stale_response = Response()
+    assert await enrichment.get_municipality("H501", stale_response) == profile
+    assert stale_response.headers["X-Data-Stale"] == "true"
+    assert "stale" in stale_response.headers["Warning"]
+
+    async def hanging_lookup(_code):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(enrichment, "_MUNICIPALITY_LOOKUP_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(stats_service, "aget_municipality_by_cadastral_code", hanging_lookup)
+    enrichment._municipality_cache.clear()
+    with pytest.raises(HTTPException) as unavailable:
+        await enrichment.get_municipality("H501", Response())
+    assert unavailable.value.status_code == 503
+    assert unavailable.value.headers["Retry-After"] == "5"

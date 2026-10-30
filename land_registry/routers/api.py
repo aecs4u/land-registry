@@ -9,7 +9,7 @@ from botocore import UNSIGNED
 from botocore.config import Config
 from fastapi import APIRouter, Body, UploadFile, File, HTTPException, Depends, Query, Path as ApiPath, Request
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.security import HTTPBearer
 import geopandas as gpd
 from io import BytesIO
@@ -22,6 +22,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from pydantic import BaseModel, ConfigDict, ValidationError
 import tempfile
+import time
 from typing import Dict, Any, List, Literal, Optional
 import hashlib
 import sqlite3
@@ -416,6 +417,17 @@ class SisterBatchSelectionRequest(BaseModel):
 # ============================================================================
 
 api_router = APIRouter()
+_MAP_SEARCH_CACHE_TTL = 5 * 60
+_map_search_cache: dict[tuple[str, int], tuple[float, dict[str, Any]]] = {}
+
+
+def _stale_map_search(query: str, limit: int, response: Response) -> dict[str, Any] | None:
+    cached = _map_search_cache.get((query.casefold(), limit))
+    if cached is None or time.monotonic() - cached[0] > _MAP_SEARCH_CACHE_TTL:
+        return None
+    response.headers["X-Data-Stale"] = "true"
+    response.headers["Warning"] = '110 - "Response is stale during a map-search outage"'
+    return cached[1]
 
 # Authentication utilities
 security = HTTPBearer()
@@ -669,7 +681,7 @@ async def upload_qpkg(file: UploadFile = File(...)):
 
 
 @api_router.post("/generate-map/")
-async def generate_map(file: UploadFile = File(...)):
+async def generate_map(file: UploadFile = File(...), _user=Depends(get_current_user)):
     """Generate map HTML from QPKG, GPKG, or FlatGeobuf file"""
     if not any(file.filename.endswith(ext) for ext in _UPLOAD_EXTENSIONS):
         raise HTTPException(status_code=400, detail="File must be a QPKG, GPKG, or FGB file")
@@ -4540,7 +4552,11 @@ def get_datashader_service():
 # ============================================================================
 
 @api_router.get("/map/search")
-async def search_map(query: str = Query(..., min_length=2, max_length=120), limit: int = Query(20, ge=1, le=50)):
+async def search_map(
+    response: Response,
+    query: str = Query(..., min_length=2, max_length=120),
+    limit: int = Query(20, ge=1, le=50),
+):
     """Search stable parcel references and canonical municipality profiles.
 
     Place-name search is deliberately backed by the allow-listed profile
@@ -4561,9 +4577,15 @@ async def search_map(query: str = Query(..., min_length=2, max_length=120), limi
             matches = await asyncio.wait_for(search_source.search_parcels_by_reference(lookup_reference, limit), timeout=2.0)
         except asyncio.TimeoutError as exc:
             logger.warning("Map canonical parcel search timed out")
+            stale = _stale_map_search(normalized, limit, response)
+            if stale is not None:
+                return stale
             raise HTTPException(status_code=503, detail="Parcel search temporarily unavailable") from exc
         except Exception as exc:
             logger.warning("Map canonical parcel search failed: %s", exc)
+            stale = _stale_map_search(normalized, limit, response)
+            if stale is not None:
+                return stale
             raise HTTPException(status_code=503, detail="Parcel search temporarily unavailable") from exc
         for item in matches:
             reference = item.get("canonical_reference") or item.get("national_cadastral_reference")
@@ -4652,12 +4674,21 @@ async def search_map(query: str = Query(..., min_length=2, max_length=120), limi
             )
         except asyncio.TimeoutError as exc:
             logger.warning("Map municipality search timed out")
+            stale = _stale_map_search(normalized, limit, response)
+            if stale is not None:
+                return stale
             raise HTTPException(status_code=503, detail="Municipality search temporarily unavailable") from exc
         except Exception as exc:
             logger.warning("Map municipality search failed: %s", exc)
+            stale = _stale_map_search(normalized, limit, response)
+            if stale is not None:
+                return stale
             raise HTTPException(status_code=503, detail="Municipality search temporarily unavailable") from exc
 
     if not source.available and not parcel_results:
+        stale = _stale_map_search(normalized, limit, response)
+        if stale is not None:
+            return stale
         # An empty 200 here reads as "no match"; the client must be able to
         # tell an unavailable source from a search that found nothing.
         raise HTTPException(
@@ -4666,7 +4697,7 @@ async def search_map(query: str = Query(..., min_length=2, max_length=120), limi
             headers={"Retry-After": "5", "Cache-Control": "no-store"},
         )
 
-    return {
+    payload = {
         "query": normalized,
         "results": parcel_results + [
             {
@@ -4678,6 +4709,11 @@ async def search_map(query: str = Query(..., min_length=2, max_length=120), limi
         ],
         "source": "aecs4u-stats canonical map source",
     }
+    _map_search_cache[(normalized.casefold(), limit)] = (time.monotonic(), payload)
+    if len(_map_search_cache) > 512:
+        oldest = min(_map_search_cache, key=lambda key: _map_search_cache[key][0])
+        _map_search_cache.pop(oldest, None)
+    return payload
 
 @api_router.get("/map/layers")
 async def get_map_layers():

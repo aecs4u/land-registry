@@ -30,6 +30,18 @@ function makeCtx(overrides = {}) {
 }
 const section = (id) => Panel.sections.find((item) => item.id === id);
 
+test('coverage items are grouped by availability while retaining every block row', () => {
+  const blocks = Object.fromEntries(Panel.coverageBlocks.map(([name], index) => [
+    name,
+    { available: index % 2 === 0 },
+  ]));
+  const result = section('coverage').render({ blocks }, makeCtx());
+  assert.equal((result.body.match(/class="parcel-coverage-group"/g) || []).length, 2);
+  assert.equal((result.body.match(/<dt>/g) || []).length, Panel.coverageBlocks.length);
+  assert.match(result.body, /class="parcel-coverage-group-count">11</);
+  assert.match(result.body, /class="parcel-coverage-group-count">10</);
+});
+
 // ---- Core ------------------------------------------------------------------
 
 test('formatters use Italian number formatting and tolerate missing values', () => {

@@ -228,9 +228,12 @@
           <span>{{ _('All') }}</span>
         </label>
       </div>
+      <label class="visually-hidden" for="mapLayerFilter">{{ _('Filter layers') }}</label>
+      <input type="search" id="mapLayerFilter" class="map-layer-filter" placeholder="{{ _('Filter layers') }}" autocomplete="off">
       <div id="mapLayerList" class="map-layer-list">
         <p class="map-muted">{{ _('Loading layer catalog…') }}</p>
       </div>
+      <p class="map-muted" id="mapLayerFilterEmpty" hidden>{{ _('No layers match this search.') }}</p>
       <p class="map-muted map-layer-meta maritime-layer-disclosure">{{ _('MIT/SID snapshot; published coverage may be incomplete. Orange polygons are concession footprints; blue points are point records. A marker is hidden when its matching footprint is drawable in the same tile. Use “Zoom to polygons” to move the map to available footprints.') }}</p>
       <p class="map-muted map-layer-meta solar-layer-disclosure">{{ _('Solar potential is aggregated by municipality from the Zornade PV model. Shading represents the share of assessed roof area with high suitability; values are estimates, not a permit or engineering assessment.') }}</p>
       <div id="mapCoverageStatus" class="map-coverage-status" aria-live="polite"></div>
@@ -426,6 +429,7 @@
           <p class="parcel-sheet-subtitle map-sheet-pill" id="directParcelSubtitle"></p>
         </div>
         <div class="parcel-sheet-header-actions" aria-label="{{ _('Parcel actions') }}">
+          <button type="button" id="parcelSheetExpandButton" class="secondary-action compact parcel-sheet-expand" aria-expanded="false" aria-controls="directParcelPanel" aria-label="{{ _('Expand parcel details') }}" title="{{ _('Expand parcel details') }}"><i class="fas fa-expand-alt" aria-hidden="true"></i></button>
           <button type="button" id="parcelFavoriteButton" class="secondary-action compact parcel-favorite-button" aria-pressed="false" title="{{ _('Add to favourites') }}" aria-label="{{ _('Add to favourites') }}"><span aria-hidden="true">☆</span></button>
           <button type="button" id="parcelShareButton" class="secondary-action compact" title="{{ _('Copy link') }}" aria-label="{{ _('Copy link') }}"><i class="fas fa-link" aria-hidden="true"></i></button>
           <a id="parcelReportLink" class="secondary-action compact" href="/api/v1/enrichment/parcel/dossier/" title="{{ _('Download PDF') }}" aria-label="{{ _('Download PDF') }}" aria-live="polite" aria-busy="false"><i class="fas fa-file-pdf" aria-hidden="true"></i></a>
@@ -540,6 +544,7 @@
           <button type="button" class="map-card-close" id="mapWelcomeClose" aria-label="{{ _('Close map guide') }}">×</button>
         </header>
         <p id="mapWelcomeIntro">{{ _('A quick guide to finding parcels and exploring map data.') }}</p>
+        <p><a href="/data-sources">{{ _('Data sources and reuse') }}</a></p>
         <div class="map-welcome-steps" aria-live="polite" aria-atomic="true">
           <section data-map-tour-step>
             <h3>{{ _('Find a place or parcel') }}</h3>

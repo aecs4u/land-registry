@@ -879,15 +879,24 @@ class PostgresMapLayerSource:
         for source in sources.values():
             await source.close()
 
-    async def health(self) -> list[dict[str, Any]]:
-        """Return relation/index readiness and estimated extents for map layers."""
+    async def health(self, layer_ids: Optional[set[str]] = None) -> list[dict[str, Any]]:
+        """Return relation/index readiness for all layers or a selected subset.
+
+        Readiness probes can request only the layers required for the app's
+        core workflow, so a slow optional source cannot make the whole service
+        look unavailable.
+        """
+        selected_layers = [
+            layer for layer in MAP_LAYERS
+            if layer_ids is None or layer.id in layer_ids
+        ]
         if not self.available:
             return [{
                 "id": layer.id, "available": False,
                 "schema": layer.table.split(".", 1)[0],
                 "schema_exists": None, "database_name": None,
                 "source_database": "aecs4u-stats",
-            } for layer in MAP_LAYERS]
+            } for layer in selected_layers]
         checks = []
         sql = _asyncpg_sql("""
             WITH relation AS (
@@ -941,7 +950,7 @@ class PostgresMapLayerSource:
                    ST_YMax(Box3D(geom)) AS north
             FROM wgs84
         """
-        for layer in MAP_LAYERS:
+        for layer in selected_layers:
             schema = layer.table.split(".", 1)[0]
             source_database = "aecs4u-stats"
             try:

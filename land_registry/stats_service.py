@@ -3453,15 +3453,36 @@ class _AsyncPostgresSource:
         procom_key = int(procom)
         srid = self._census_srid_cache.get(procom_key)
         if srid is None:
-            srid_row = await self._fetchrow(
-                f"""
-                SELECT ST_SRID(geom) AS srid
-                FROM {relation}
-                WHERE procom = %s AND geom IS NOT NULL
-                LIMIT 1
-                """,
-                (procom_key,),
-            )
+            schema, table = relation.split(".", 1)
+            try:
+                # The row-based SRID lookup can force a full scan of the
+                # national census foreign table. Its PostGIS catalog entry
+                # carries the same SRID without reading census geometries.
+                srid_row = await self._fetchrow(
+                    """
+                    SELECT srid
+                    FROM public.geometry_columns
+                    WHERE f_table_schema = %s
+                      AND f_table_name = %s
+                      AND f_geometry_column = 'geom'
+                    """,
+                    (schema, table),
+                )
+            except Exception:
+                logger.debug("Census geometry metadata lookup failed", exc_info=True)
+                srid_row = None
+            if srid_row is None or srid_row["srid"] is None or int(srid_row["srid"]) <= 0:
+                # Keep compatibility with old/unregistered relations whose
+                # geometry column does not expose its SRID in the catalog.
+                srid_row = await self._fetchrow(
+                    f"""
+                    SELECT ST_SRID(geom) AS srid
+                    FROM {relation}
+                    WHERE procom = %s AND geom IS NOT NULL
+                    LIMIT 1
+                    """,
+                    (procom_key,),
+                )
             if srid_row is None or srid_row["srid"] is None:
                 return None
             srid = int(srid_row["srid"])

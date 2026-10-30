@@ -38,29 +38,90 @@ def test_ready_503_when_source_not_configured(client):
     with patch("land_registry.main.get_map_layer_source", return_value=_source(available=False)):
         response = client.get("/ready")
     assert response.status_code == 503
-    assert response.json()["status"] == "unavailable"
+    body = response.json()
+    assert body["status"] == "unavailable"
+    assert body["components"]["canonical_map"] == {"status": "degraded", "required": True}
+    assert "canonical_map" in body["degraded_components"]
+    assert body["components"]["map_search"]["required"] is False
     assert response.headers["cache-control"] == "no-store"
 
 
 def test_ready_503_when_source_unreachable(client):
     with patch("land_registry.main.get_map_layer_source", return_value=_source(health_error=ConnectionError("db down"))):
-        assert client.get("/ready").status_code == 503
+        response = client.get("/ready")
+    assert response.status_code == 503
+    body = response.json()
+    assert body["reason"] == "map source unreachable"
+    assert body["components"]["canonical_map"]["status"] == "degraded"
+    assert body["components"]["municipality_reference"]["required"] is False
+    assert "canonical_map" in body["degraded_components"]
+
+
+def test_ready_returns_without_waiting_for_health_task_cancellation(client, monkeypatch):
+    source = _source()
+
+    async def hanging_health(*, layer_ids):
+        await asyncio.Event().wait()
+
+    source.health = hanging_health
+    monkeypatch.setattr("land_registry.main._READY_MAP_HEALTH_TIMEOUT_SECONDS", 0.01)
+    with patch("land_registry.main.get_map_layer_source", return_value=source):
+        response = client.get("/ready")
+
+    assert response.status_code == 503
+    assert response.json()["reason"] == "map source unreachable"
+
+
+@pytest.mark.asyncio
+async def test_ready_cancels_map_check_when_request_is_cancelled(monkeypatch):
+    from land_registry.main import readiness_check
+
+    source = _source()
+    health_started = asyncio.Event()
+    health_cancelled = asyncio.Event()
+
+    async def hanging_health(*, layer_ids):
+        health_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            health_cancelled.set()
+
+    source.health = hanging_health
+    monkeypatch.setattr("land_registry.main.get_map_layer_source", lambda: source)
+    request_task = asyncio.create_task(readiness_check())
+    await asyncio.wait_for(health_started.wait(), timeout=1)
+    request_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await request_task
+    await asyncio.wait_for(health_cancelled.wait(), timeout=1)
 
 
 def test_ready_503_when_no_layer_available(client):
-    layers = [{"id": "a", "available": False}, {"id": "b", "available": False}]
+    layers = [{"id": "cadastral-parcels", "available": False}, {"id": "flood", "available": False}]
     with patch("land_registry.main.get_map_layer_source", return_value=_source(layers=layers)):
         assert client.get("/ready").status_code == 503
 
 
 def test_ready_200_and_lists_missing_layers_when_partly_available(client):
-    layers = [{"id": "a", "available": True}, {"id": "b", "available": False}]
-    with patch("land_registry.main.get_map_layer_source", return_value=_source(layers=layers)):
+    layers = [{"id": "cadastral-parcels", "available": True}, {"id": "flood", "available": False}]
+    source = _source(layers=layers)
+    with patch("land_registry.main.get_map_layer_source", return_value=source):
         response = client.get("/ready")
     assert response.status_code == 200
     body = response.json()
     assert body["layers_available"] == 1
-    assert body["layers_unavailable"] == ["b"]
+    assert body["layers_unavailable"] == []
+    assert body["layers_required"] == ["cadastral-parcels"]
+    source.health.assert_awaited_once_with(layer_ids={"cadastral-parcels"})
+
+
+def test_ready_503_when_an_unrelated_layer_is_available_but_parcels_are_missing(client):
+    layers = [{"id": "flood", "available": True}]
+    with patch("land_registry.main.get_map_layer_source", return_value=_source(layers=layers)):
+        response = client.get("/ready")
+    assert response.status_code == 503
+    assert response.json()["layers_required_unavailable"] == ["cadastral-parcels"]
 
 
 # --- search -----------------------------------------------------------------
@@ -77,15 +138,15 @@ def test_search_503_instead_of_empty_200_when_source_down(client):
 
 
 @pytest.mark.parametrize("path", ["/privacy", "/terms", "/help", "/contact", "/notifications"])
-def test_footer_pages_exist(client, path):
-    response = client.get(path)
+def test_footer_pages_exist(authenticated_client, path):
+    response = authenticated_client.get(path)
     assert response.status_code == 200
     assert "<h1>" in response.text
 
 
-def test_contact_email_comes_from_environment(client, monkeypatch):
+def test_contact_email_comes_from_environment(authenticated_client, monkeypatch):
     monkeypatch.setenv("LEGAL_CONTACT_EMAIL", "privacy@example.test")
-    assert "privacy@example.test" in client.get("/contact").text
+    assert "privacy@example.test" in authenticated_client.get("/contact").text
 
 
 # --- sign-out -----------------------------------------------------------------

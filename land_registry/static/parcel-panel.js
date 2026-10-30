@@ -421,12 +421,21 @@
       radius_km: String(radiusKm), limit: String(PVP_RECORD_LIMIT),
     });
     const result = await ctx.fetchJson(`/api/v1/sales/nearby-points?${query}`);
-    if (!result.ok) return { points: [], source: null, error: true };
+    if (!result.ok) {
+      const retryAfterSec = Math.max(0, Math.min(300, Number(result.retryAfter) || 0));
+      return {
+        points: [], source: null, error: true,
+        pending: result.status === 503 && retryAfterSec > 0,
+        retryAfterSec,
+      };
+    }
     return {
       points: pvpMapPoints(result.data),
       source: result.data && result.data.source,
       count: Number(result.data && result.data.count) || 0,
       error: false,
+      pending: false,
+      retryAfterSec: 0,
     };
   }
 
@@ -463,8 +472,13 @@
         }
         publishNearbyPvpMarkers([], false);
         if (count) count.hidden = true;
-        summary.textContent = ctx.tr('Nearby auction sales are unavailable.');
-        list.innerHTML = `${note(ctx.tr('Nearby auction sales are unavailable.'))}<button class="parcel-retry" type="button">${esc(ctx.tr('Retry'))}</button>`;
+        summary.textContent = resultData.nearbyPending
+          ? ctx.tr('Loading · retry after {n}s', { n: resultData.retryAfterSec })
+          : ctx.tr('Unavailable');
+        const message = resultData.nearbyPending
+          ? ctx.tr('Sales data is still loading. Try again shortly.')
+          : ctx.tr('Nearby auction sales are unavailable.');
+        list.innerHTML = `${note(message)}<button class="parcel-retry" type="button">${esc(ctx.tr('Retry'))}</button>`;
         list.querySelector('.parcel-retry')?.addEventListener('click', () => search(radiusKm), { once: true });
         return;
       }
@@ -519,6 +533,8 @@
         nearbyCount: result.count,
         nearbySource: result.source,
         nearbyError: result.error,
+        nearbyPending: result.pending,
+        retryAfterSec: result.retryAfterSec,
       };
       await update(radiusKm, displayedData, token, true);
     };
@@ -898,7 +914,10 @@
           ? note(tr('The automatically detected OMI zone uses approximate {vintage} boundary geometry; check the selected zone.', { vintage: data.zone.boundary_vintage }))
           : '';
         const selectable = quotes.slice(0, 80);
-        const optionHtml = (quote, index) => `<option value="${index}">${esc(`${tr('Zone')} ${Core.omiQuoteLabel(quote, tr)}`)}</option>`;
+        // The property type is parcel-specific too; a known zone alone is
+        // not enough to choose a quote, even when only one row is available.
+        const initialQuoteIndex = -1;
+        const optionHtml = (quote, index) => `<option value="${index}"${index === initialQuoteIndex ? ' selected' : ''}>${esc(`${tr('Zone')} ${Core.omiQuoteLabel(quote, tr)}`)}</option>`;
         // validOmiQuotes puts the detected zone's quotes first, so they form a
         // contiguous prefix and the option values stay indexes into ``selectable``.
         const detectedCount = detectedHasQuotes
@@ -921,7 +940,7 @@
           body: `${zoneNotice}${boundaryVintageNote}${quoteOverflowNote}
             <div class="parcel-form">
               <label for="parcelOmiQuote">${esc(tr('OMI zone and property type'))}</label>
-              <select id="parcelOmiQuote" class="parcel-input">${options}</select>
+              <select id="parcelOmiQuote" class="parcel-input">${initialQuoteIndex < 0 ? `<option value="" selected>${esc(tr('Choose an OMI zone and property type'))}</option>` : ''}${options}</select>
               <label for="parcelOmiArea">${esc(tr('Surface used for the estimate (m²)'))}</label>
               <input id="parcelOmiArea" class="parcel-input" type="number" inputmode="decimal" min="1" step="1" value="${esc(initial.value)}" placeholder="${esc(tr('e.g. 100'))}">
             </div>
@@ -959,6 +978,8 @@
           nearbyCount: nearbyResult && nearbyResult.count || 0,
           nearbySource: nearbyResult && nearbyResult.source,
           nearbyError: Boolean(ctx.centroid && (!nearbyResult || nearbyResult.error)),
+          nearbyPending: Boolean(nearbyResult && nearbyResult.pending),
+          retryAfterSec: Number(nearbyResult && nearbyResult.retryAfterSec) || 0,
           centroid: ctx.centroid,
         };
       },
@@ -1000,7 +1021,7 @@
               <summary id="parcelPvpNearbySummary" aria-live="polite"></summary>
               <div id="parcelPvpNearbyList" class="parcel-pvp-nearby-list" aria-live="polite"></div>
             </details>
-            ${data.nearbyError ? note(tr('Nearby auction sales are unavailable.')) : note(tr('Distance is measured in a straight line from the parcel centre. Some sale locations are approximate.'))}`
+            ${note(tr('Distance is measured in a straight line from the parcel centre. Some sale locations are approximate.'))}`
           : note(tr('The parcel location is not available, so nearby auctions cannot be calculated.'));
         return {
           badge: Number((data && data.nearbyCount) ?? nearby.length),
@@ -1222,10 +1243,11 @@
         if (!hazard) return;
         const levelLabel = { high: tr('High'), medium: tr('Medium'), low: tr('Low') }[hazard.level];
         const driver = hazard.driver === 'flood' ? tr('Flood hazard (P3)') : tr('Landslide hazard (P4)');
-        ctx.setStat('hazard', `${levelLabel} · ${Core.formatNumber(hazard.pct, 1)}%`, {
-          level: hazard.level,
-          title: `${driver}: ${Core.formatNumber(hazard.pct, 1)}% ${tr('of the area')}. ${tr('Highest class of the municipal flood and landslide shares; it describes the municipality, not this parcel, and is not a risk score.')}`,
-        });
+        const hazardContext = `${driver}: ${Core.formatNumber(hazard.pct, 1)}% ${tr('of the area')}. ${tr('Highest class of the municipal flood and landslide shares; it describes the municipality, not this parcel, and is not a risk score.')}`;
+        const statOptions = Core.publicDomainKind(ctx.props)
+          ? { title: hazardContext }
+          : { level: hazard.level, title: hazardContext };
+        ctx.setStat('hazard', `${levelLabel} · ${Core.formatNumber(hazard.pct, 1)}%`, statOptions);
       },
     },
 
@@ -2080,28 +2102,38 @@
         const available = profileUnavailable
           ? null
           : COVERAGE_BLOCKS.filter(([name]) => (blocks[name] || {}).available === true).length;
+        const coverageRows = profileUnavailable || !Object.keys(blocks).length
+          ? []
+          : COVERAGE_BLOCKS.map(([name, label]) => {
+            const block = blocks[name] || {};
+            const coverage = block.coverage ?? block.coverage_status;
+            const partial = block.available === true && coverage === 'partial';
+            const unknownCoverage = block.available === true && coverage === 'unknown';
+            const status = block.available !== true
+              ? badge('unknown', tr('Not available'))
+              : unknownCoverage
+                ? badge('unknown', tr('Coverage unknown'))
+                : partial
+                  ? badge('medium', tr('Partial coverage'))
+                  : badge('low', tr('Available'));
+            // Readable provider name in the row; table and dataset identifiers stay in the tooltip.
+            const friendly = Core.friendlySource([block.source, block.dataset_version].filter(Boolean).join(' · '));
+            const source = friendly.label ? tr(friendly.label) : '';
+            const technical = friendly.technical.length ? ` title="${esc(friendly.technical.join(', '))}"` : '';
+            return {
+              available: block.available === true,
+              row: [tr(label), `${status}${source ? `<small class="parcel-coverage-source"${technical}>${esc(source)}</small>` : ''}`],
+            };
+          });
+        const coverageGroups = [
+          { label: tr('Available'), items: coverageRows.filter((item) => item.available) },
+          { label: tr('Not available'), items: coverageRows.filter((item) => !item.available) },
+        ].filter((group) => group.items.length);
         const profileBody = profileUnavailable
           ? note(tr('The parcel data profile is temporarily unavailable.'))
           : !Object.keys(blocks).length
             ? note(tr('No data profile has been built for this parcel yet.'))
-            : `${rows(COVERAGE_BLOCKS.map(([name, label]) => {
-              const block = blocks[name] || {};
-              const coverage = block.coverage ?? block.coverage_status;
-              const partial = block.available === true && coverage === 'partial';
-              const unknownCoverage = block.available === true && coverage === 'unknown';
-              const status = block.available !== true
-                ? badge('unknown', tr('Not available'))
-                : unknownCoverage
-                  ? badge('unknown', tr('Coverage unknown'))
-                : partial
-                  ? badge('medium', tr('Partial coverage'))
-                  : badge('low', tr('Available'));
-              // Readable provider name in the row; table and dataset identifiers stay in the tooltip.
-              const friendly = Core.friendlySource([block.source, block.dataset_version].filter(Boolean).join(' · '));
-              const source = friendly.label ? tr(friendly.label) : '';
-              const technical = friendly.technical.length ? ` title="${esc(friendly.technical.join(', '))}"` : '';
-              return [tr(label), `${status}${source ? `<small class="parcel-coverage-source"${technical}>${esc(source)}</small>` : ''}`];
-            }))}${note(tr('This table reports the parcel read model only. Separately loaded sections may contain data even when the corresponding block is not available. Missing data are never shown as zero.'))}`;
+            : `${coverageGroups.map((group) => `<details class="parcel-coverage-group"><summary><span>${esc(group.label)}</span><span class="parcel-coverage-group-count">${group.items.length}</span></summary>${rows(group.items.map((item) => item.row))}</details>`).join('')}${note(tr('This table reports the parcel read model only. Separately loaded sections may contain data even when the corresponding block is not available. Missing data are never shown as zero.'))}`;
         return {
           badge: available === null ? undefined : `${available}/${COVERAGE_BLOCKS.length}`,
           body: `<div class="parcel-coverage-tabs" role="tablist" aria-label="${esc(tr('Data coverage views'))}">
@@ -2526,7 +2558,7 @@
     let estimateTimer = null;
     let estimateToken = 0;
     let historyToken = 0;
-    const current = () => quotes[Number(select.value)] || quotes[0];
+    const current = () => select.value === '' ? null : (quotes[Number(select.value)] || null);
     const alive = () => ctx.isCurrent();
 
     function showUnitEstimates() {
@@ -2545,6 +2577,11 @@
 
     function showQuote() {
       const quote = current();
+      if (!quote) {
+        quoteRows.innerHTML = note(tr('Choose an OMI zone and property type to see the quote.'));
+        ctx.setStat('price', '—');
+        return;
+      }
       const benchmark = Core.quoteBenchmark(allValidQuotes, quote);
       const metrics = quote.derived_metrics || {};
       const yieldPct = Core.toNumber(metrics.gross_rental_yield_pct);
@@ -2569,6 +2606,14 @@
 
     function showEstimate() {
       const quote = current();
+      if (!quote) {
+        estimateToken += 1;
+        clearTimeout(estimateTimer);
+        if (estimateWaiter) estimateWaiter();
+        estimateWaiter = null;
+        estimate.innerHTML = `<span>${esc(tr('Choose an OMI quote to estimate a value.'))}</span>`;
+        return Promise.resolve();
+      }
       const range = Core.estimateOmiRange(quote, areaInput.value);
       estimate.innerHTML = range
         ? `<span>${esc(tr('Indicative value'))}</span><strong>${esc(Core.formatCurrency(range.min))} – ${esc(Core.formatCurrency(range.max))}</strong><small>${esc(tr('Local preview'))}</small>`
@@ -2616,6 +2661,10 @@
     async function showHistory() {
       const quote = current();
       const token = ++historyToken;
+      if (!quote) {
+        history.innerHTML = note(tr('Choose an OMI quote to see its history.'));
+        return;
+      }
       history.innerHTML = `<p class="parcel-note">${esc(tr('Loading history…'))}</p>`;
       const query = new URLSearchParams({ comune: ctx.cadastralCode, zona: quote.zona || '' });
       if (quote.cod_tipologia != null) query.set('cod_tipologia', quote.cod_tipologia);
@@ -2662,6 +2711,7 @@
     readModel: undefined, readModelWaiters: [], sections: new Map(), data: new Map(),
     pending: new Map(), metadata: new Map(), navigationTab: null, navigationTimer: null,
     navigationTargetSection: null,
+    unavailableSections: new Map(), revealedSections: new Set(), unavailableList: null, unavailableGroup: null,
     navigationListenersBound: false,
   };
 
@@ -2675,7 +2725,7 @@
   }
 
   function sectionShell(section, tr) {
-    return `<details class="parcel-section" id="parcel-section-${section.id}" data-section="${section.id}" data-tab="${section.tab}" data-state="idle" aria-labelledby="parcel-section-${section.id}-title" aria-busy="false" open>
+    return `<details class="parcel-section" id="parcel-section-${section.id}" data-section="${section.id}" data-tab="${section.tab}" data-state="idle" aria-labelledby="parcel-section-${section.id}-title" aria-busy="false">
       <summary class="parcel-section-header"><i class="fas fa-${section.icon}" aria-hidden="true"></i><span class="parcel-section-title" id="parcel-section-${section.id}-title">${esc(tr(section.title))}</span><span class="parcel-section-status" hidden></span><span class="parcel-section-badge" hidden></span></summary>
       <div class="parcel-section-body"></div>
       <div class="parcel-section-footer" hidden></div>
@@ -2694,6 +2744,15 @@
     notice.querySelector('button').addEventListener('click', () => {
       if (view.lastShow && ctx.isCurrent()) show(view.lastShow.feature, view.lastShow.options);
     });
+    view.content.prepend(notice);
+  }
+
+  function showMunicipalityStaleNotice(ctx) {
+    if (!view.content || view.content.querySelector('.map-sheet-notice')) return;
+    const notice = root.document.createElement('div');
+    notice.className = 'map-sheet-notice';
+    notice.setAttribute('role', 'status');
+    notice.textContent = ctx.tr('Showing cached municipality data from the last 15 minutes.');
     view.content.prepend(notice);
   }
 
@@ -2742,7 +2801,13 @@
           const response = await fetch(url, { signal: request.signal, headers: { Accept: 'application/json' } });
           let data = null;
           try { data = await response.json(); } catch (_) { /* non-JSON error body */ }
-          return { ok: response.ok, status: response.status, data };
+          return {
+            ok: response.ok,
+            status: response.status,
+            retryAfter: response.headers.get('Retry-After'),
+            stale: response.headers.get('X-Data-Stale') === 'true',
+            data,
+          };
         } catch (_) {
           return { ok: false, status: 0, data: null };
         } finally { clearTimeout(timer); }
@@ -2777,6 +2842,7 @@
       const url = `${API}/municipality/${encodeURIComponent(ctx.cadastralCode)}`;
       const transient = (result) => !result.ok && (result.status === 0 || result.status >= 500);
       let result = await ctx.fetchJson(url);
+      if (result.ok && result.stale && ctx.isCurrent()) showMunicipalityStaleNotice(ctx);
       for (const delay of MUNICIPALITY_RETRY_DELAYS_MS) {
         if (!transient(result) || !ctx.isCurrent()) break;
         await new Promise((resolve) => root.setTimeout(resolve, delay));
@@ -2826,9 +2892,9 @@
   }
 
   /**
-   * Header status and initial collapse. A coverage gap (``unavailable``) or a
-   * low-signal card (``collapsed``) starts closed with its status in the header,
-   * unless it is the deep-link target.
+   * Header status and initial collapse. Coverage gaps, empty sections, and
+   * low-signal cards start closed with their status in the header, unless they
+   * are the deep-link target.
    */
   function markCoverage(el, sectionId, result, tr) {
     const statusText = result.unavailable ? tr('Not available') : (result.status || '');
@@ -2841,7 +2907,40 @@
     }
     if (result.unavailable) el.dataset.coverage = 'unavailable';
     else delete el.dataset.coverage;
-    if ((result.unavailable || result.collapsed) && view.navigationTargetSection !== sectionId) el.open = false;
+    if ((result.unavailable || result.empty || result.collapsed) && view.navigationTargetSection !== sectionId) el.open = false;
+
+    const shouldGroup = (result.unavailable || result.empty)
+      && view.navigationTargetSection !== sectionId
+      && !view.revealedSections.has(sectionId);
+    if (shouldGroup) {
+      const entry = view.sections.get(sectionId);
+      const title = entry ? tr(entry.section.title) : sectionId;
+      view.unavailableSections.set(sectionId, {
+        title,
+        status: result.unavailable ? tr('Not available') : tr('No data'),
+      });
+      el.hidden = true;
+    } else if (view.unavailableSections.delete(sectionId)) {
+      el.hidden = false;
+    }
+    renderUnavailableGroup(tr);
+  }
+
+  function renderUnavailableGroup(tr = view.tr) {
+    if (!view.unavailableGroup || !view.unavailableList || !tr) return;
+    const entries = [...view.unavailableSections.entries()];
+    view.unavailableGroup.hidden = entries.length === 0;
+    view.unavailableGroup.querySelector('.parcel-unavailable-count').textContent = String(entries.length);
+    view.unavailableList.innerHTML = entries.map(([id, item]) => `<li><button type="button" data-restore-section="${esc(id)}" aria-label="${esc(tr('Open {section}', { section: item.title }))}"><span>${esc(item.title)}</span><small>${esc(item.status)}</small></button></li>`).join('');
+  }
+
+  function revealGroupedSection(sectionId) {
+    const entry = view.sections.get(sectionId);
+    if (!entry) return null;
+    entry.el.hidden = false;
+    view.revealedSections.add(sectionId);
+    if (view.unavailableSections.delete(sectionId)) renderUnavailableGroup();
+    return entry;
   }
 
   async function loadSection(section, el, ctx) {
@@ -2998,8 +3097,13 @@
   }
 
   function navigateToTab(tabId, { updateHash = false, pushHash = false, behavior = 'auto' } = {}) {
-    const first = view.content && view.content.querySelector(`.parcel-section[data-tab="${tabId}"]`);
+    const candidates = view.content
+      ? [...view.content.querySelectorAll(`.parcel-section[data-tab="${tabId}"]`)]
+      : [];
+    const first = candidates.find((section) => tabId !== 'value' || section.dataset.section === 'omi') || candidates[0];
     if (!first) return false;
+    revealGroupedSection(first.dataset.section);
+    first.open = true;
     if (behavior === 'smooth') setNavigationIntent(tabId);
     else clearNavigationIntent();
     if (typeof first.scrollIntoView === 'function') first.scrollIntoView({ block: 'start', behavior });
@@ -3010,8 +3114,9 @@
   }
 
   function navigateToSection(sectionId) {
-    const entry = view.sections.get(sectionId);
+    const entry = revealGroupedSection(sectionId);
     if (!entry) return false;
+    entry.el.open = true;
     setNavigationIntent(entry.section.tab, sectionId);
     updateSectionHash(sectionId);
     if (typeof entry.el.scrollIntoView === 'function') {
@@ -3063,6 +3168,10 @@
     view.tr = tr || ((key, values) => Core.translate((k) => k, key, values));
     view.mounted = true;
     if (!view.navigationListenersBound && typeof content.addEventListener === 'function') {
+      content.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-restore-section]');
+        if (button && content.contains(button)) navigateToSection(button.dataset.restoreSection);
+      });
       content.addEventListener('scrollend', releaseNavigationLock);
       content.addEventListener('wheel', clearNavigationIntent, { passive: true });
       content.addEventListener('touchstart', clearNavigationIntent, { passive: true });
@@ -3094,6 +3203,8 @@
     view.pending = new Map();
     view.metadata = new Map();
     view.sections = new Map();
+    view.unavailableSections = new Map();
+    view.revealedSections = new Set();
     view.lastShow = { feature, options };
     const made = makeContext(feature, options, tr);
     view.controller = made.controller;
@@ -3107,6 +3218,8 @@
     made.ctx.setStat('sheet', String(made.ctx.props.sheet_number ?? made.ctx.props.sheet ?? made.ctx.props.foglio ?? '—'));
     // Roads and waterways are public domain: sale prices, auctions and solar estimates do not apply.
     const domain = Core.publicDomainKind(made.ctx.props);
+    const purchaseButton = root.document.getElementById('parcelPurchaseButton');
+    if (purchaseButton) purchaseButton.hidden = Boolean(domain);
     const sections = domain ? SECTIONS.filter((section) => !PUBLIC_DOMAIN_HIDDEN.has(section.id)) : SECTIONS;
     renderNav(tr, sections);
     const domainNote = domain
@@ -3114,12 +3227,23 @@
         ? tr('Public road parcel: valuation, auction and solar sections do not apply.')
         : tr('Public water parcel: valuation, auction and solar sections do not apply.'))}</p>`
       : '';
-    view.content.innerHTML = domainNote + sections.map((section) => sectionShell(section, tr)).join('');
+    view.content.innerHTML = domainNote
+      + `<details class="parcel-unavailable-group" hidden><summary><span>${esc(tr('Sections with no parcel data'))}</span><span class="parcel-unavailable-count">0</span></summary><ul class="parcel-unavailable-list"></ul></details>`
+      + sections.map((section) => sectionShell(section, tr)).join('');
+    view.unavailableGroup = view.content.querySelector('.parcel-unavailable-group');
+    view.unavailableList = view.content.querySelector('.parcel-unavailable-list');
     sections.forEach((section) => {
       view.sections.set(section.id, { section, el: view.content.querySelector(`#parcel-section-${section.id}`) });
     });
     view.content.scrollTop = 0;
     setActiveTab(sections[0].tab);
+    const initialSection = sections.find((section) => section.tab === sections[0].tab && section.id === 'omi')
+      || sections.find((section) => section.tab === sections[0].tab);
+    const initialElement = initialSection && view.content.querySelector(`#parcel-section-${initialSection.id}`);
+    if (initialElement) {
+      initialElement.open = true;
+      view.revealedSections.add(initialSection.id);
+    }
     observeSections(made.ctx);
     restoreTabFromHash();
   }
@@ -3148,6 +3272,10 @@
     view.token += 1;
     view.ctx = null;
     view.lastShow = null;
+    view.unavailableSections = new Map();
+    view.revealedSections = new Set();
+    view.unavailableGroup = null;
+    view.unavailableList = null;
     if (view.content) view.content.innerHTML = '';
     if (view.statStrip) view.statStrip.innerHTML = '';
   }

@@ -8,13 +8,21 @@
   <meta property="og:type" content="website" />
   <meta property="og:title" content="{{ _('Land Registry Viewer') }}" />
   <meta property="og:description" content="{{ _('Search Italian municipalities and cadastral parcels on one map, see the data around them and download a parcel dossier.') }}" />
+  <meta property="og:url" content="{{ public_base_url }}/landing" />
+  <meta property="og:image" content="{{ public_base_url }}{{ asset_url('land-registry-social.png') }}" />
+  <meta property="og:image:type" content="image/png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="{{ _('Illustrated map of cadastral parcels in Italy') }}" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="canonical" href="{{ public_base_url }}/landing" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.0/css/all.min.css">
   <link rel="stylesheet" href="{{ asset_url('css/pages/landing.css') }}">
 </head>
 <body>
 
   <nav class="landing-nav" aria-label="{{ _('Main') }}">
-    <a class="brand" href="/">
+    <a class="brand" href="/landing">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" height="22" style="margin-right:4px" aria-hidden="true">
         <rect fill="#1a5490" width="32" height="32" rx="4"/>
         <path fill="#fff" d="M6 8h8v6H6zM16 8h10v6H16zM6 16h10v8H6zM18 16h8v8h-8z"/>

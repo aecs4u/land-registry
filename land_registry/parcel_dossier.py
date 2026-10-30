@@ -19,10 +19,13 @@ does the I/O; ``render_dossier_pdf`` compiles the Typst template with ``aecs4u-d
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
+from contextvars import ContextVar
 import logging
 import re
+import time
 import uuid
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -32,6 +35,9 @@ from land_registry import parcel_dossier_svg as svg
 from land_registry.source_catalog import SourceCatalogEntry, find_source_catalog_entry
 
 log = logging.getLogger(__name__)
+_source_timing_collector: ContextVar[dict[str, float] | None] = ContextVar(
+    "parcel_dossier_source_timings", default=None
+)
 
 TEMPLATES_DIR = Path(__file__).parent / "documents"
 TEMPLATE_NAME = "parcel_dossier"
@@ -661,11 +667,34 @@ def representative_point(geometry: Any) -> tuple[float, float] | None:
 
 async def _safe(awaitable: Awaitable[Any], name: str, timeout: float = SOURCE_TIMEOUT_SECONDS) -> Any:
     """Await one source; a failing or slow source degrades to ``None`` and never fails the report."""
+    started = time.perf_counter()
     try:
-        return await asyncio.wait_for(awaitable, timeout=timeout)
+        result = await asyncio.wait_for(awaitable, timeout=timeout)
     except Exception as exc:  # noqa: BLE001
-        log.warning("Dossier source %s unavailable: %s", name, exc)
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        collector = _source_timing_collector.get()
+        if collector is not None:
+            collector[name] = elapsed_ms
+        log.warning("Dossier source %s unavailable after %.0f ms: %s", name, elapsed_ms, exc)
         return None
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    collector = _source_timing_collector.get()
+    if collector is not None:
+        collector[name] = elapsed_ms
+    if elapsed_ms >= 500:
+        log.info("Dossier source timing source=%s elapsed_ms=%.0f", name, elapsed_ms)
+    return result
+
+
+@contextmanager
+def collect_source_timings() -> Iterator[dict[str, float]]:
+    """Collect source durations for one report request, including child tasks."""
+    timings: dict[str, float] = {}
+    token = _source_timing_collector.set(timings)
+    try:
+        yield timings
+    finally:
+        _source_timing_collector.reset(token)
 
 
 async def gather_inputs(
@@ -682,9 +711,103 @@ async def gather_inputs(
     geometry = parcel.get("geometry")
     code = str(props.get("municipality_code") or reference.split("_", 1)[0] or "").strip().upper()
     point = representative_point(geometry)
-    municipality = await _safe(stats_service.aget_municipality_by_cadastral_code(code), "municipality") if code else None
+    feature_region = str(
+        props.get("region") or props.get("REGIONE") or props.get("region_name") or ""
+    ).strip()
+    feature_nuts3 = str(props.get("nuts3") or props.get("NUTS3") or "").strip().upper()
+    if not re.fullmatch(r"[A-Z]{2}[A-Z0-9]{3}", feature_nuts3):
+        feature_nuts3 = ""
+
+    async def protection_constraints() -> Any:
+        if not geometry:
+            return {"status": "unavailable", "reason": "parcel_geometry_unavailable"}
+        from land_registry.map_layers import get_map_layer_source
+
+        return await _safe(
+            get_map_layer_source().read_protection_constraints(geometry),
+            "protection-constraints",
+        )
+
+    def start_region_detail_sources(region_context: dict[str, Any] | None) -> dict[str, asyncio.Task[Any]]:
+        # These CPU/disk lookups need the selected feature geometry and its
+        # region. The canonical feature often carries that region already, so
+        # start them before the slower municipality enrichment request.
+        return {
+            "land_cover": asyncio.create_task(_safe(
+                asyncio.to_thread(stats_service.get_land_cover_for_feature, parcel, region_context),
+                "land-cover",
+            )),
+            "terrain": asyncio.create_task(_safe(
+                asyncio.to_thread(stats_service.get_terrain_for_feature, parcel, region_context),
+                "terrain",
+            )),
+            "building_footprints": asyncio.create_task(_safe(
+                asyncio.to_thread(stats_service.get_building_footprints_for_feature, parcel, region_context),
+                "building-footprints",
+            )),
+            "anncsu_addresses": asyncio.create_task(_safe(
+                asyncio.to_thread(stats_service.get_anncsu_addresses_for_feature, parcel, region_context, code),
+                "anncsu-addresses",
+            )),
+        }
+
+    region_detail_tasks = (
+        start_region_detail_sources({"region": feature_region})
+        if geometry and feature_region else None
+    )
+
+    # These lookups need only the parcel point, geometry, or cadastral code.
+    # Start them before waiting for the municipality so their latency overlaps
+    # that lookup instead of extending the dossier's critical path.
+    municipality_task = asyncio.create_task(
+        _safe(stats_service.aget_municipality_by_cadastral_code(code), "municipality") if code else _none()
+    )
+    census_task = asyncio.create_task(
+        _safe(stats_service.aget_census_section_at_point(point[0], point[1], cadastral_code=code), "census")
+        if point else _none()
+    )
+    income_task = asyncio.create_task(_safe(stats_service.aget_income_profile(code), "income") if code else _none())
+    mps04_task = asyncio.create_task(
+        _safe(stats_service.aget_mps04_pga_at_point(*point), "mps04") if point else _none()
+    )
+    hazards_task = asyncio.create_task(
+        _safe(stats_service.aget_parcel_hazard_intersections(geometry), "hazards") if geometry else _none()
+    )
+    subsidence_task = asyncio.create_task(
+        _safe(stats_service.aget_parcel_subsidence_intersections(geometry), "subsidence") if geometry else _none()
+    )
+    coastal_task = asyncio.create_task(
+        _safe(stats_service.aget_parcel_coastal_erosion(geometry), "coastal-erosion", timeout=12)
+        if geometry else _none()
+    )
+    protection_task = asyncio.create_task(protection_constraints())
+    nightlights_task = asyncio.create_task(
+        _safe(stats_service.aget_parcel_nightlights(geometry), "nightlights") if geometry else _none()
+    )
+    quality_of_life_task = (
+        asyncio.create_task(_safe(
+            stats_service.aget_quality_of_life_indicators_by_nuts3(feature_nuts3),
+            "quality-of-life",
+            timeout=15,
+        ))
+        if feature_nuts3 else None
+    )
+
+    municipality = await municipality_task
     province_name = (municipality or {}).get("province") or props.get("province") or ""
     istat = (municipality or {}).get("istat_code") or (municipality or {}).get("procom")
+    if quality_of_life_task is None:
+        nuts3 = (municipality or {}).get("nuts3")
+        quality_of_life_task = asyncio.create_task(
+            _safe(
+                stats_service.aget_quality_of_life_indicators_by_nuts3(str(nuts3)),
+                "quality-of-life",
+                timeout=15,
+            )
+            if nuts3 else _none()
+        )
+    if geometry and region_detail_tasks is None:
+        region_detail_tasks = start_region_detail_sources(municipality)
     solar_profile_task = asyncio.create_task(
         _safe(stats_service.aget_municipality_solar_potential(str(istat)), "municipal-solar")
         if istat else _none()
@@ -711,21 +834,6 @@ async def gather_inputs(
         if not risks.get("seismic"):
             risks["seismic"] = await _safe(stats_service.aget_seismic_by_istat_code(istat), "seismic")
         return risks
-
-    async def census() -> Any:
-        if not point:
-            return None
-        return await _safe(stats_service.aget_census_section_at_point(point[0], point[1], cadastral_code=code), "census")
-
-    async def protection_constraints() -> Any:
-        if not geometry:
-            return {"status": "unavailable", "reason": "parcel_geometry_unavailable"}
-        from land_registry.map_layers import get_map_layer_source
-
-        return await _safe(
-            get_map_layer_source().read_protection_constraints(geometry),
-            "protection-constraints",
-        )
 
     async def parcel_solar_scenario() -> dict[str, Any] | None:
         if solar_scenario is None:
@@ -767,36 +875,24 @@ async def gather_inputs(
 
     results = await asyncio.gather(
         omi(),
-        census(),
-        _safe(stats_service.aget_income_profile(code), "income") if code else _none(),
+        census_task,
+        income_task,
         risks_with_seismic() if istat else _none(),
-        _safe(stats_service.aget_mps04_pga_at_point(*point), "mps04") if point else _none(),
-        _safe(stats_service.aget_parcel_hazard_intersections(geometry), "hazards") if geometry else _none(),
-        _safe(stats_service.aget_parcel_subsidence_intersections(geometry), "subsidence") if geometry else _none(),
-        _safe(stats_service.aget_parcel_coastal_erosion(geometry), "coastal-erosion", timeout=12) if geometry else _none(),
-        protection_constraints(),
-        _safe(stats_service.aget_parcel_nightlights(geometry), "nightlights") if geometry else _none(),
-        _safe(
-            asyncio.to_thread(stats_service.get_land_cover_for_feature, parcel, municipality),
-            "land-cover",
-        ) if geometry else _none(),
-        _safe(
-            asyncio.to_thread(stats_service.get_terrain_for_feature, parcel, municipality),
-            "terrain",
-        ) if geometry else _none(),
-        _safe(
-            asyncio.to_thread(stats_service.get_building_footprints_for_feature, parcel, municipality),
-            "building-footprints",
-        ) if geometry else _none(),
+        mps04_task,
+        hazards_task,
+        subsidence_task,
+        coastal_task,
+        protection_task,
+        nightlights_task,
+        region_detail_tasks["land_cover"] if region_detail_tasks else _none(),
+        region_detail_tasks["terrain"] if region_detail_tasks else _none(),
+        region_detail_tasks["building_footprints"] if region_detail_tasks else _none(),
         _safe(
             stats_service.aget_buildings_for_parcel(reference, cadastral_code=code, municipality=municipality), "buildings"
         ),
-        _safe(
-            asyncio.to_thread(stats_service.get_anncsu_addresses_for_feature, parcel, municipality, code),
-            "anncsu-addresses",
-        ) if geometry else _none(),
+        region_detail_tasks["anncsu_addresses"] if region_detail_tasks else _none(),
         solar_profile_task,
-        _safe(stats_service.aget_quality_of_life_indicators(code), "quality-of-life", timeout=15) if code else _none(),
+        quality_of_life_task,
         _safe(parcel_solar_scenario(), "parcel-solar-scenario", timeout=18)
         if solar_scenario is not None else _none(),
     )

@@ -1,15 +1,30 @@
 """HTML Authentication pages for Land Registry — rendered via aecs4u-theme templates."""
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from jinja2 import ChoiceLoader, FileSystemLoader, PrefixLoader, TemplateNotFound
 
 from land_registry.config import auth_settings
 from land_registry.i18n import contextvar_gettext as _cvgt
 from land_registry.i18n import detect_locale as _get_locale
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _auth_asset_url(relative_path: str) -> str:
+    """Version a local auth asset so the app's static cache can be immutable."""
+    normalized = str(relative_path or "").strip().lstrip("/")
+    path = Path(__file__).parent.parent / "static" / normalized
+    try:
+        metadata = path.stat()
+        version = f"{metadata.st_mtime_ns:x}-{metadata.st_size:x}"
+    except OSError:
+        version = "0"
+    return f"/static/{normalized}?v={version}"
 
 try:
     import aecs4u_theme
@@ -23,10 +38,27 @@ try:
     _template_dirs = [str(Path(aecs4u_theme.__file__).parent / "templates")]
     if _theme_overrides_dir.exists():
         _template_dirs.insert(0, str(_theme_overrides_dir))
+    _theme_templates_dir = Path(aecs4u_theme.__file__).parent / "templates"
     _templates = Jinja2Templates(directory=_template_dirs)
+    # Expose the theme's own pages under a prefix so an override can extend the
+    # page it shadows (a template cannot extend itself by name).
+    _templates.env.loader = ChoiceLoader(
+        [_templates.env.loader, PrefixLoader({"aecs4u_theme": FileSystemLoader(str(_theme_templates_dir))})]
+    )
+    # Theme releases differ: older ones ship auth/{login,register}_base.html and
+    # expect apps to extend them; newer ones make auth/{login,register}.html the
+    # canonical page. Resolve the parent from what is installed so a theme
+    # upgrade cannot turn the sign-in pages into a 500.
+    for _page in ("login", "register"):
+        _templates.env.globals[f"theme_auth_{_page}_parent"] = (
+            f"aecs4u_theme/auth/{_page}_base.html"
+            if (_theme_templates_dir / "auth" / f"{_page}_base.html").exists()
+            else f"aecs4u_theme/auth/{_page}.html"
+        )
     _templates.env.filters["clerk_appearance"] = _clerk_appearance_filter
     _templates.env.globals["_"] = _cvgt
     _templates.env.globals["get_locale"] = _get_locale
+    _templates.env.globals["asset_url"] = _auth_asset_url
     _THEME_AVAILABLE = True
 except ImportError:
     _templates = None
@@ -72,7 +104,13 @@ def _theme_response(template_name: str, ctx: dict):
     if not _THEME_AVAILABLE or _templates is None:
         from fastapi import HTTPException
         raise HTTPException(status_code=503, detail="Auth UI unavailable — aecs4u-theme not installed")
-    return _templates.TemplateResponse(ctx["request"], template_name, ctx)
+    try:
+        return _templates.TemplateResponse(ctx["request"], template_name, ctx)
+    except TemplateNotFound as exc:
+        # A theme/template mismatch must not surface as a debug traceback.
+        logger.error("auth_template_missing", extra={"template": exc.name})
+        from fastapi import HTTPException
+        raise HTTPException(status_code=503, detail="Sign-in is temporarily unavailable") from exc
 
 
 def _already_signed_in(request: Request) -> bool:

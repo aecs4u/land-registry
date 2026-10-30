@@ -3,11 +3,11 @@
   auth/login.html: link this repo's /static/css/auth.css so .btn-gradient and
   .btn-modern on the submit button actually resolve (design audit finding B3).
 #}
-{% extends "auth/register_base.html" %}
+{% extends theme_auth_register_parent %}
 
 {% block auth_extra_head %}
   {{ super() }}
-  <link rel="stylesheet" href="/static/css/auth.css" />
+  <link rel="stylesheet" href="{{ asset_url('css/auth.css') }}" />
 {% endblock %}
 
 {% block extra_js %}
@@ -19,7 +19,7 @@
      data-register-post-url="{{ register_post_url | default('/auth/register') }}"
      data-password-strength-label="{{ _('Password strength') }}"
      hidden></div>
-<script src="/static/auth-register-form.js"></script>
+<script src="{{ asset_url('auth-register-form.js') }}"></script>
 {% endblock %}
 
 {% block cookie_consent %}{% endblock %}

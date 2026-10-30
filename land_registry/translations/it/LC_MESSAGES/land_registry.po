@@ -19,6 +19,18 @@ msgstr "Catasto"
 msgid "Land Registry Viewer"
 msgstr "Visualizzatore del Catasto"
 
+msgid "Explore cadastral parcels in an interactive attribute table."
+msgstr "Esplora le particelle catastali in una tabella attributi interattiva."
+
+msgid "Review parcels adjacent to the selected cadastral parcel."
+msgstr "Consulta le particelle confinanti con una particella catastale selezionata."
+
+msgid "Use drawing and zoning tools with cadastral map data."
+msgstr "Usa gli strumenti di disegno e zonizzazione con i dati catastali."
+
+msgid "Illustrated map of cadastral parcels in Italy"
+msgstr "Mappa illustrata delle particelle catastali italiane"
+
 msgid "Toggle dark mode"
 msgstr "Attiva/disattiva tema scuro"
 
@@ -3744,7 +3756,7 @@ msgid "Search a municipality or parcel"
 msgstr "Cerca un comune o una particella"
 
 msgid "Search municipality or parcel reference"
-msgstr "Cerca un comune o il riferimento della particella"
+msgstr "Cerca comune o particella"
 
 msgid "Interactive cadastral map"
 msgstr "Mappa catastale interattiva"
@@ -5754,3 +5766,51 @@ msgstr "In decelerazione"
 
 msgid "Good"
 msgstr "Buona"
+
+msgid "Sections with no parcel data"
+msgstr "Sezioni senza dati della particella"
+
+msgid "No data"
+msgstr "Nessun dato"
+
+msgid "Open {section}"
+msgstr "Apri la sezione {section}"
+
+msgid "Choose an OMI quote to estimate a value."
+msgstr "Seleziona una quotazione OMI per stimare un valore."
+
+msgid "Choose an OMI quote to see its history."
+msgstr "Seleziona una quotazione OMI per visualizzarne lo storico."
+
+msgid "Choose an OMI zone and property type"
+msgstr "Scegli una zona OMI e una tipologia immobiliare"
+
+msgid "Choose an OMI zone and property type to see the quote."
+msgstr "Scegli una zona OMI e una tipologia immobiliare per visualizzare la quotazione."
+
+msgid "Loading · retry after {n}s"
+msgstr "Caricamento · riprova tra {n}s"
+
+msgid "Needs configuration"
+msgstr "Richiede configurazione"
+
+msgid "Sales data is still loading. Try again shortly."
+msgstr "I dati delle vendite sono ancora in caricamento. Riprova tra poco."
+
+msgid "Showing cached municipality data from the last 15 minutes."
+msgstr "Sono mostrati i dati comunali in cache degli ultimi 15 minuti."
+
+msgid "Showing recent search results while the service recovers."
+msgstr "Sono mostrati i risultati di ricerca recenti mentre il servizio si ripristina."
+
+msgid "Unavailable"
+msgstr "Non disponibile"
+
+msgid "Filter layers"
+msgstr "Filtra i livelli"
+
+msgid "No layers match this search."
+msgstr "Nessun livello corrisponde a questa ricerca."
+
+msgid "Expand parcel details"
+msgstr "Espandi i dettagli della particella"

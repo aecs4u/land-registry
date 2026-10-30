@@ -271,6 +271,8 @@ class TestPanelServerSettings:
 
         assert "127.0.0.1:8000" in settings.panel_websocket_origins
         assert "localhost:8000" in settings.panel_websocket_origins
+        assert "127.0.0.1:8011" in settings.panel_websocket_origins
+        assert "localhost:8011" in settings.panel_websocket_origins
 
     def test_panel_routes(self):
         """Test Panel routes default to /dashboard."""

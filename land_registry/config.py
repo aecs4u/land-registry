@@ -24,6 +24,7 @@ class AppSettings(BaseSettings):
     app_name: str = "Land Registry Viewer"
     app_version: str = "1.0.0"
     debug: bool = False
+    public_base_url: Optional[str] = None
 
     # Server settings
     host: str = "0.0.0.0"
@@ -308,7 +309,9 @@ class PanelServerSettings(BaseSettings):
         "127.0.0.1:8000",
         "localhost:8000",
         "127.0.0.1:8001",
-        "localhost:8001"
+        "localhost:8001",
+        "127.0.0.1:8011",
+        "localhost:8011",
     ]
 
     # Health check settings
@@ -424,6 +427,13 @@ else:
         app_settings.debug = True
     else:
         cadastral_settings.use_local_files = False
+
+
+# The Starlette debug page prints source lines and absolute server paths, so it
+# must never be served from a deployed service, whatever the auto-detection
+# above concluded. Cloud Run always sets K_SERVICE.
+if os.getenv("K_SERVICE") or os.getenv("ENVIRONMENT") == "production":
+    app_settings.debug = False
 
 
 def get_cadastral_data_root() -> Optional[str]:

@@ -3,6 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="{{ page_description }}" />
     <title>{{ title }}</title>
     <style>
       :root { color-scheme: light dark; font: 16px/1.55 system-ui, sans-serif; }
@@ -34,7 +35,9 @@
         const mount = document.getElementById('panelMount');
         const fallback = document.getElementById('panelFallback');
         const update = () => {
-          if (mount.querySelector('.bk-root, .pn-root')) fallback.hidden = true;
+          if (mount.querySelector('.bk-root, .pn-root, [class*="bk-panel-models-layout-"]')) {
+            fallback.hidden = true;
+          }
         };
         update();
         const observer = new MutationObserver(update);

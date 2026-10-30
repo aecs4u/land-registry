@@ -296,8 +296,100 @@ def test_quality_of_life_section_shows_latest_annual_provincial_edition_only():
 
 
 @pytest.mark.asyncio
+async def test_gather_inputs_starts_independent_sources_before_municipality_finishes(monkeypatch):
+    import asyncio
+
+    from land_registry import stats_service
+    from land_registry import map_layers
+
+    municipality_finished = asyncio.Event()
+    income_started = asyncio.Event()
+    quality_started = asyncio.Event()
+    region_sources_started = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    region_source_count = 0
+    income_overlapped = []
+    region_sources_overlapped = []
+    qol_overlapped = []
+
+    async def municipality_lookup(_code):
+        await asyncio.wait_for(
+            asyncio.gather(
+                income_started.wait(), quality_started.wait(), region_sources_started.wait()
+            ),
+            timeout=10,
+        )
+        municipality_finished.set()
+        return {"name": "Palermo", "province": "Palermo", "region": "Sicilia", "istat_code": "082053"}
+
+    async def income_lookup(_code):
+        income_overlapped.append(not municipality_finished.is_set())
+        income_started.set()
+        return None
+
+    async def quality_of_life_lookup(_nuts3):
+        qol_overlapped.append(not municipality_finished.is_set())
+        quality_started.set()
+        return None
+
+    def local_region_lookup(*_args):
+        def record_started():
+            nonlocal region_source_count
+            region_sources_overlapped.append(not municipality_finished.is_set())
+            region_source_count += 1
+            if region_source_count == 4:
+                region_sources_started.set()
+
+        loop.call_soon_threadsafe(record_started)
+        return None
+
+    class MapSource:
+        async def read_protection_constraints(self, _geometry):
+            return None
+
+    monkeypatch.setattr(stats_service, "aget_municipality_by_cadastral_code", municipality_lookup)
+    monkeypatch.setattr(stats_service, "aget_income_profile", income_lookup)
+    monkeypatch.setattr(stats_service, "aget_municipality_solar_potential", AsyncMock(return_value=None))
+    monkeypatch.setattr(stats_service, "get_environmental_risks", lambda *_: {"seismic": {"zone": 4}})
+    for name in (
+        "aget_census_section_at_point",
+        "aget_mps04_pga_at_point",
+        "aget_seismic_by_istat_code",
+        "aget_parcel_hazard_intersections",
+        "aget_parcel_subsidence_intersections",
+        "aget_parcel_coastal_erosion",
+        "aget_parcel_nightlights",
+        "aget_omi_zone_at_point",
+    ):
+        monkeypatch.setattr(stats_service, name, AsyncMock(return_value=None))
+    monkeypatch.setattr(stats_service, "aget_buildings_for_parcel", AsyncMock(return_value=None))
+    monkeypatch.setattr(stats_service, "aget_quality_of_life_indicators_by_nuts3", quality_of_life_lookup)
+    for name in (
+        "get_land_cover_for_feature",
+        "get_terrain_for_feature",
+        "get_building_footprints_for_feature",
+        "get_anncsu_addresses_for_feature",
+    ):
+        monkeypatch.setattr(stats_service, name, local_region_lookup)
+    monkeypatch.setattr(map_layers, "get_map_layer_source", lambda: MapSource())
+
+    parcel = _parcel(nuts3="ITG12")
+    await pd.gather_inputs(REFERENCE, parcel)
+
+    assert income_overlapped == [True]
+    assert qol_overlapped == [True]
+    assert len(region_sources_overlapped) == 4
+    assert all(region_sources_overlapped)
+
+
+@pytest.mark.asyncio
 async def test_gather_inputs_fetches_solar_for_the_resolved_istat_municipality(monkeypatch):
     from land_registry import stats_service
+    from land_registry import map_layers
+
+    class MapSource:
+        async def read_protection_constraints(self, _geometry):
+            return None
 
     municipality = {
         "name": "Palermo",
@@ -305,6 +397,7 @@ async def test_gather_inputs_fetches_solar_for_the_resolved_istat_municipality(m
         "province_sigla": "PA",
         "region": "Sicilia",
         "istat_code": "082053",
+        "nuts3": "ITG12",
     }
     solar = {
         "available": True,
@@ -329,14 +422,23 @@ async def test_gather_inputs_fetches_solar_for_the_resolved_istat_municipality(m
     monkeypatch.setattr(stats_service, "aget_parcel_coastal_erosion", AsyncMock(return_value=None))
     monkeypatch.setattr(stats_service, "aget_parcel_nightlights", AsyncMock(return_value=None))
     monkeypatch.setattr(stats_service, "aget_buildings_for_parcel", AsyncMock(return_value=None))
+    for name in (
+        "get_land_cover_for_feature",
+        "get_terrain_for_feature",
+        "get_building_footprints_for_feature",
+        "get_anncsu_addresses_for_feature",
+    ):
+        monkeypatch.setattr(stats_service, name, lambda *_: None)
+    monkeypatch.setattr(map_layers, "get_map_layer_source", lambda: MapSource())
     qol_lookup = AsyncMock(return_value=None)
-    monkeypatch.setattr(stats_service, "aget_quality_of_life_indicators", qol_lookup)
+    monkeypatch.setattr(stats_service, "aget_quality_of_life_indicators_by_nuts3", qol_lookup)
 
     inputs = await pd.gather_inputs(REFERENCE, _parcel())
 
     assert inputs["solar"] == solar
     solar_lookup.assert_awaited_once_with("082053")
-    qol_lookup.assert_awaited_once_with("G273")
+    municipality_lookup.assert_awaited_once_with("G273")
+    qol_lookup.assert_awaited_once_with("ITG12")
 
 
 def test_source_register_lists_each_provider_once_with_versions_not_invented():

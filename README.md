@@ -317,6 +317,8 @@ The Panel/Bokeh dashboard provides interactive Tabulator tables. It runs as a se
 | `PANEL_PANEL_HEALTH_CHECK_TIMEOUT` | `5.0` | HTTP timeout for each health check |
 | `PANEL_PANEL_SHOW` | `false` | Open Panel in browser automatically |
 
+Panel's WebSocket allowlist includes the common local app ports and the origin from `LAND_REGISTRY_PUBLIC_BASE_URL`. For another app origin, set `PANEL_PANEL_WEBSOCKET_ORIGINS` to a JSON array of host-and-port values, for example `["registry.example.com", "localhost:8011"]`. Restart the Panel server after changing this allowlist.
+
 ### Troubleshooting Panel
 
 **Panel tables show blank / connection refused**

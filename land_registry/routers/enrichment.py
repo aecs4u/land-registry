@@ -17,11 +17,12 @@ from typing import Annotated, Dict, List, Literal, Optional
 
 from aecs4u_stats.osm.config import POI_CATEGORIES
 from aecs4u_stats.web import enrichment as _aecs4u_stats_enrichment
-from fastapi import APIRouter, HTTPException, Path, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field, ValidationError
 
 from land_registry import stats_service
+from land_registry.routers.auth import get_current_user
 from land_registry.map_layers import get_map_layer_source, get_map_search_source
 from land_registry.models import EnrichmentDatasetStatus, SolarEconomicsRequest
 from land_registry.solar_economics import (
@@ -34,6 +35,9 @@ from land_registry.solar_economics import (
 
 enrichment_router = APIRouter()
 logger = logging.getLogger(__name__)
+_MUNICIPALITY_CACHE_TTL = 15 * 60
+_MUNICIPALITY_LOOKUP_TIMEOUT_SECONDS = 8
+_municipality_cache: dict[str, tuple[float, dict]] = {}
 
 
 class ParcelReportSection(BaseModel):
@@ -292,23 +296,66 @@ async def get_enrichment_status():
 
 
 @enrichment_router.get("/municipality/{cadastral_code}")
-async def get_municipality(cadastral_code: str):
+async def get_municipality(cadastral_code: str, response: Response):
     """
     Municipality profile by catasto comune code (e.g. ``C773`` → Civitavecchia):
     ISTAT hierarchy (province, region, NUTS), coordinates, postal code and
     resident-population history.
     """
-    if not (stats_service.istat_db_available() or stats_service.postgres_stats_available()):
+    cache_key = cadastral_code.upper()
+    cached = _municipality_cache.get(cache_key)
+
+    def stale_cached_profile() -> dict | None:
+        if cached and time.monotonic() - cached[0] <= _MUNICIPALITY_CACHE_TTL:
+            response.headers["X-Data-Stale"] = "true"
+            response.headers["Warning"] = '110 - "Response is stale during a reference-store outage"'
+            return cached[1]
+        return None
+
+    try:
+        store_available = stats_service.istat_db_available() or stats_service.postgres_stats_available()
+    except Exception as exc:
+        logger.warning("Municipality store availability check failed for %s: %s", cache_key, exc)
+        stale = stale_cached_profile()
+        if stale is not None:
+            return stale
+        raise HTTPException(
+            status_code=503,
+            detail="Municipality reference store temporarily unavailable",
+            headers={"Retry-After": "5", "Cache-Control": "no-store"},
+        ) from exc
+
+    if not store_available:
+        stale = stale_cached_profile()
+        if stale is not None:
+            return stale
         raise HTTPException(
             status_code=503,
             detail="ISTAT reference store not built. Run the aecs4u-stats import pipeline.",
         )
-    result = await stats_service.aget_municipality_by_cadastral_code(cadastral_code)
+    try:
+        result = await asyncio.wait_for(
+            stats_service.aget_municipality_by_cadastral_code(cadastral_code),
+            timeout=_MUNICIPALITY_LOOKUP_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
+        logger.warning("Municipality lookup failed for %s: %s", cache_key, exc)
+        stale = stale_cached_profile()
+        if stale is not None:
+            return stale
+        raise HTTPException(
+            status_code=503,
+            detail="Municipality reference store temporarily unavailable",
+            headers={"Retry-After": "5", "Cache-Control": "no-store"},
+        ) from exc
     if result is None:
         # A PostgreSQL failure puts the source in a short backoff and the local
         # fallback may not exist; that is "unavailable", not "no such municipality".
         retry_after = await stats_service.apostgres_retry_after()
         if retry_after:
+            stale = stale_cached_profile()
+            if stale is not None:
+                return stale
             raise HTTPException(
                 status_code=503,
                 detail="Municipality reference store temporarily unavailable",
@@ -318,6 +365,10 @@ async def get_municipality(cadastral_code: str):
             status_code=404,
             detail=f"No municipality found for cadastral code '{cadastral_code}'",
         )
+    _municipality_cache[cache_key] = (time.monotonic(), result)
+    if len(_municipality_cache) > 1024:
+        oldest = min(_municipality_cache, key=lambda key: _municipality_cache[key][0])
+        _municipality_cache.pop(oldest, None)
     return result
 
 
@@ -626,6 +677,7 @@ async def get_poi_map(
     lng: float = Query(..., ge=-180, le=180),
     radius_km: float = Query(2.0, gt=0, le=25),
     categories: Optional[str] = Query(None),
+    _user=Depends(get_current_user),
 ):
     """Small embeddable Leaflet POI map used by the direct-map explorer."""
     data = await stats_service.aget_pois_near(

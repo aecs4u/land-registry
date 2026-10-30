@@ -35,8 +35,8 @@
         <!-- Language selector -->
         <div class="nav-lang-selector">
           <select id="langSelect" aria-label="Language" onchange="changeLang(this.value)" title="{{ _('Language') }}" autocomplete="off">
-            <option value="it" {% if request.state.lr_locale == 'it' %}selected{% endif %}>🇮🇹 IT</option>
-            <option value="en" {% if request.state.lr_locale == 'en' %}selected{% endif %}>🇬🇧 EN</option>
+            <option value="it" {% if request.state.lr_locale == 'it' %}selected{% endif %}>🇮🇹 Italiano</option>
+            <option value="en" {% if request.state.lr_locale == 'en' %}selected{% endif %}>🇬🇧 English</option>
           </select>
         </div>
 
@@ -361,7 +361,7 @@
     &#8250;
   </button>
 
-  <div class="main-content">
+  <main class="main-content" id="legacy-main-content">
     <!-- View Toggle Buttons -->
     <div class="view-toggle">
       <button id="mapViewBtn" class="active" onclick="showMapView()" aria-controls="mapView" aria-pressed="true">
@@ -708,7 +708,6 @@
             </p>
           </div>
           {% endif %}
-          <div class="legacy-map-watermark" aria-hidden="true"><span>DEPRECATED</span></div>
         </div>
       </div>
     </div>
@@ -912,7 +911,7 @@
     </div>
     <article id="parcelReportContent" class="parcel-report-sheet"></article>
   </div>
-</div>
+</main>
 
 
 {% endblock %} {% block data_scripts %}

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -89,17 +90,29 @@ async def build_parcel_dossier(
 ) -> Response:
     from land_registry.routers import enrichment
 
+    total_started = time.perf_counter()
+    timings: dict[str, float] = {}
+    phase_started = time.perf_counter()
     try:
         parcel = await enrichment.get_parcel_by_reference(national_reference, id=feature_id)
     except HTTPException:
         raise
+    timings["parcel_lookup_ms"] = (time.perf_counter() - phase_started) * 1000
     locale = detect_locale(request)
+    phase_started = time.perf_counter()
     neighbours = await _neighbour_geometries(national_reference, feature_id)
-    inputs = await parcel_dossier.gather_inputs(
-        national_reference, parcel, neighbours=neighbours, solar_scenario=solar_scenario
-    )
+    timings["neighbours_ms"] = (time.perf_counter() - phase_started) * 1000
+    phase_started = time.perf_counter()
+    with parcel_dossier.collect_source_timings() as source_timings:
+        inputs = await parcel_dossier.gather_inputs(
+            national_reference, parcel, neighbours=neighbours, solar_scenario=solar_scenario
+        )
+    timings["sources_ms"] = (time.perf_counter() - phase_started) * 1000
     report_id = parcel_dossier.new_report_id()
+    phase_started = time.perf_counter()
     saved = await _saved_parcel_for(user, national_reference)
+    timings["saved_entry_ms"] = (time.perf_counter() - phase_started) * 1000
+    phase_started = time.perf_counter()
     variables, files = parcel_dossier.build_dossier(
         inputs,
         locale=locale,
@@ -107,17 +120,38 @@ async def build_parcel_dossier(
         page_url=parcel_dossier.map_url(str(request.base_url), national_reference),
         saved=saved,
     )
+    timings["assembly_ms"] = (time.perf_counter() - phase_started) * 1000
+    phase_started = time.perf_counter()
     try:
         pdf_bytes = await parcel_dossier.render_dossier_pdf(variables, files)
     except Exception as exc:  # noqa: BLE001 - surface a stable error instead of a stack trace
         log.exception("Parcel dossier compilation failed for %s", national_reference)
         raise HTTPException(status_code=503, detail="The parcel dossier could not be generated") from exc
+    timings["render_ms"] = (time.perf_counter() - phase_started) * 1000
+    timings["total_ms"] = (time.perf_counter() - total_started) * 1000
+    log.info(
+        "Parcel dossier timing report_id=%s timings_ms=%s pdf_bytes=%d",
+        report_id,
+        {name: round(value) for name, value in timings.items()},
+        len(pdf_bytes),
+    )
+    server_timing_metrics = [
+        f"{name.removesuffix('_ms').replace('_', '-')};dur={value:.1f}"
+        for name, value in timings.items()
+    ]
+    server_timing_metrics.extend(
+        f"source-{name.replace('_', '-')};dur={value:.1f}"
+        for name, value in source_timings.items()
+        if value >= 100
+    )
+    server_timing = ", ".join(server_timing_metrics)
     return Response(
         pdf_bytes,
         media_type="application/pdf",
         headers={
             "Content-Disposition": 'attachment; filename="parcel-dossier.pdf"',
             "X-Report-ID": report_id,
+            "Server-Timing": server_timing,
         },
     )
 

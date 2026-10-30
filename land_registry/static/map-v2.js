@@ -43,6 +43,7 @@
     omiMarketZoneDetailsController: null,
     selectedAuctionSaleMarker: null,
     savedReference: null,
+    basemapUserSelected: false,
     searchTimer: null,
     searchRequest: 0,
     searchController: null,
@@ -183,6 +184,7 @@
   // one. Quick operations stay invisible; elapsed time is not an estimate.
   const mapTasks = new Map();
   let mapTaskTimer = null;
+  let deferredMapStatus = null;
 
   function renderMapProgress() {
     const panel = $('mapTaskProgress');
@@ -224,10 +226,27 @@
         task.cleanup?.();
         task.cleanup = null;
         if (task.current()) mapTasks.delete(key);
-        if (!mapTasks.size) { clearInterval(mapTaskTimer); mapTaskTimer = null; }
+        if (!mapTasks.size) {
+          clearInterval(mapTaskTimer);
+          mapTaskTimer = null;
+        }
         renderMapProgress();
+        if (!mapTasks.size && deferredMapStatus) {
+          const pending = deferredMapStatus;
+          deferredMapStatus = null;
+          presentMapStatus(pending.message, pending.error);
+        }
       },
     };
+    if (!mapTasks.size) {
+      clearTimeout(state.statusTimer);
+      const status = $('mapStatus');
+      if (status) {
+        status.textContent = '';
+        status.classList.remove('is-error');
+      }
+      deferredMapStatus = null;
+    }
     mapTasks.set(key, task);
     if (mapTaskTimer === null) mapTaskTimer = setInterval(renderMapProgress, 250);
     renderMapProgress();
@@ -369,16 +388,30 @@
     toggle?.addEventListener('click', () => requestAnimationFrame(syncMapNavigationAccessibility));
   }
 
-  const mapStatus = (message, error = false) => {
+  function presentMapStatus(displayedMessage, error = false) {
     const element = $('mapStatus');
     if (!element) return;
-    const displayedMessage = typeof message === 'string' ? tr(message) : message;
     clearTimeout(state.statusTimer);
     element.textContent = displayedMessage || '';
     element.classList.toggle('is-error', error);
     if (displayedMessage && !error) {
       state.statusTimer = setTimeout(() => { if (element.textContent === displayedMessage) element.textContent = ''; }, 4000);
     }
+  }
+
+  const mapStatus = (message, error = false) => {
+    const element = $('mapStatus');
+    if (!element) return;
+    const displayedMessage = typeof message === 'string' ? tr(message) : message;
+    clearTimeout(state.statusTimer);
+    if (mapTasks.size) {
+      deferredMapStatus = displayedMessage ? { message: displayedMessage, error } : null;
+      element.textContent = '';
+      element.classList.remove('is-error');
+      return;
+    }
+    deferredMapStatus = null;
+    presentMapStatus(displayedMessage, error);
   };
 
   // One persistent notice for "the data source is down", instead of per-layer
@@ -461,7 +494,8 @@
     params.set('lat', center.lat.toFixed(6));
     params.set('lng', center.lng.toFixed(6));
     params.set('zoom', map.getZoom().toFixed(2));
-    params.set('basemap', currentBasemap());
+    if (state.basemapUserSelected) params.set('basemap', currentBasemap());
+    else params.delete('basemap');
     if (state.activeLayers !== null) {
       params.set('layers', [...state.activeLayers].sort().join(','));
     }
@@ -475,7 +509,8 @@
 
   function writeBasemapUrl() {
     const params = new URLSearchParams(window.location.search);
-    params.set('basemap', currentBasemap());
+    if (state.basemapUserSelected) params.set('basemap', currentBasemap());
+    else params.delete('basemap');
     window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}${window.location.hash}`);
   }
 
@@ -822,19 +857,14 @@
   }
 
   function layerMetadata(layer) {
-    const coverage = Array.isArray(layer.estimated_bounds)
-      ? tr('Approximate data extent')
-      : layer.coverage === 'partial'
-        ? `${tr('Partial coverage')}${layer.coverage_note ? ` · ${tr(layer.coverage_note)}` : ''}`
-        : layer.coverage === 'unknown'
-          ? `${tr('Coverage not reported')}${layer.coverage_note ? ` · ${tr(layer.coverage_note)}` : ''}`
-          : `${tr('From zoom')} ${layer.min_zoom || 0}`;
-    const freshness = (layer.properties || []).includes('source_release')
-      ? tr('Source version shown in feature details')
-      : tr('Source date not reported');
-    // The catalog's ``source`` names the serving database (an infrastructure detail), not the
-    // data provider, so it is not part of the line people read; providers are on /data-sources.
-    return `${coverage} · ${freshness}`;
+    const details = [];
+    if (Array.isArray(layer.estimated_bounds)) details.push(tr('Approximate data extent'));
+    else if (layer.coverage === 'partial') {
+      details.push(`${tr('Partial coverage')}${layer.coverage_note ? ` · ${tr(layer.coverage_note)}` : ''}`);
+    }
+    const minZoom = Number(layer.min_zoom);
+    if (Number.isFinite(minZoom) && minZoom > 6) details.push(`${tr('From zoom')} ${minZoom}`);
+    return details.join(' · ');
   }
 
   function layerSourceId(layer) { return `source-${layer.id}`; }
@@ -1176,6 +1206,7 @@
     const item = document.createElement('div');
     item.className = 'map-layer-item';
     item.dataset.layerId = layer.id;
+    item.dataset.searchText = `${tr(layer.title)} ${tr(layer.group || '')}`.toLocaleLowerCase();
     const row = document.createElement('label');
     row.className = 'map-layer-row';
     const input = document.createElement('input');
@@ -1279,9 +1310,10 @@
     });
     // Tiles are capped server-side, so dense areas can omit features; say so.
     const cap = layer.max_features ? ` · ${tr('Up to {n} features per tile', { n: Number(layer.max_features).toLocaleString(numberLocale()) })}` : '';
-    row.title = `${layerMetadata(layer)}${cap}`;
+    const metadata = layerMetadata(layer);
+    row.title = [metadata, cap].filter(Boolean).join('');
     const copy = document.createElement('span');
-    copy.innerHTML = `<strong><i class="map-layer-swatch" style="background:${layerColor(layer.id)}"></i>${escapeHtml(tr(layer.title))}</strong><small class="map-layer-meta">${escapeHtml(layerMetadata(layer))}</small>`;
+    copy.innerHTML = `<strong><i class="map-layer-swatch" style="background:${layerColor(layer.id)}"></i>${escapeHtml(tr(layer.title))}</strong><small class="map-layer-meta"${metadata ? '' : ' hidden'}>${escapeHtml(metadata)}</small>`;
     row.append(input, copy);
     item.append(row, badges, opacity);
     if (labelControls) item.appendChild(labelControls);
@@ -1571,9 +1603,10 @@
         // state; drop the provenance text so the row says only that.
         if (payload.available === false) meta.textContent = tr('Temporarily unavailable');
         else if (health.available && catalogLayer?.coverage === 'partial') meta.textContent = catalogLayer ? layerMetadata(catalogLayer) : tr('Partial coverage');
-        else if (health.available) meta.textContent = `Available${metadata}`;
-        else if (health.relation_exists === false) meta.textContent = `Not available${metadata}`;
-        else meta.textContent = `Needs configuration${metadata}`;
+        else if (health.available) meta.textContent = `${tr('Available')}${metadata}`;
+        else if (health.relation_exists === false) meta.textContent = `${tr('Not available')}${metadata}`;
+        else meta.textContent = `${tr('Needs configuration')}${metadata}`;
+        meta.hidden = !meta.textContent;
         // Health is advisory: checks can fail independently, and readiness
         // requirements such as a spatial index do not necessarily mean the
         // map layer cannot be drawn. Keep catalog controls selectable and
@@ -3749,7 +3782,7 @@
         let detail = ''; try { detail = (await response.json()).detail || ''; } catch (_) { /* non-JSON API error */ }
         if (response.status === 409) {
           $('mapSearchInput').value = reference;
-          mapStatus(detail || 'This reference matches multiple parcel polygons. Choose one from the results.', true);
+          mapStatus(detail || 'This reference matches multiple parcel polygons. Choose one from the results.');
           submitSearch(reference, true);
           return null;
         }
@@ -3763,21 +3796,50 @@
       state.tileErrors.clear();
       renderSelectedGeometry(feature);
       renderSelectedAuctionSaleMarker(feature);
+      renderParcelPanel(feature);
       state.map?.getSource('adjacent-parcels')?.setData({ type: 'FeatureCollection', features: [] });
       const adjacentResults = $('parcelAdjacentResults');
       if (adjacentResults) adjacentResults.innerHTML = '';
-      if (flyTo && state.map) {
+      if (state.map) {
         const bounds = Array.isArray(feature.bbox)
           ? new maplibregl.LngLatBounds([feature.bbox[0], feature.bbox[1]], [feature.bbox[2], feature.bbox[3]])
           : featureBounds(feature);
-        if (bounds) state.map.fitBounds(bounds, { padding: 80, maxZoom: 19 });
+        if (bounds && flyTo) {
+          const sheet = $('directParcelPanel');
+          const sheetRect = sheet && !sheet.hidden ? sheet.getBoundingClientRect() : null;
+          const bottomSheet = window.matchMedia('(max-width: 700px)').matches;
+          state.map.fitBounds(bounds, {
+            padding: {
+              top: 70,
+              right: !bottomSheet && sheetRect ? sheetRect.width + 85 : 80,
+              bottom: bottomSheet && sheetRect ? sheetRect.height + 70 : 70,
+              left: 70,
+            },
+            maxZoom: 19,
+          });
+        } else if (bounds) {
+          const container = state.map.getContainer().getBoundingClientRect();
+          const sheet = $('directParcelPanel');
+          const rect = sheet && !sheet.hidden ? sheet.getBoundingClientRect() : null;
+          const center = bounds.getCenter();
+          const point = state.map.project(center);
+          const targetX = rect && rect.left > container.left
+            ? (container.left + rect.left) / 2 - container.left
+            : container.width / 2;
+          const targetY = rect && rect.top > container.top && window.matchMedia('(max-width: 700px)').matches
+            ? (container.top + rect.top) / 2 - container.top
+            : container.height / 2;
+          // MapLibre's panBy moves the map content opposite to the supplied
+          // screen offset. Use point - target so the selected parcel moves
+          // into the unobscured area beside or above the sheet.
+          state.map.panBy([point.x - targetX, point.y - targetY], { duration: 350 });
+        }
       } else if (flyTo && state.fallbackMap && Array.isArray(feature.bbox)) {
         state.fallbackMap.fitBounds(
           [[feature.bbox[1], feature.bbox[0]], [feature.bbox[3], feature.bbox[2]]],
           { padding: [30, 30], maxZoom: 19 },
         );
       }
-      renderParcelPanel(feature);
       writeUrl();
       mapStatus('Parcel selected');
       loadParcelEnrichment(state.selectedReference, feature);
@@ -3810,6 +3872,8 @@
   }
 
   async function identifyAtPoint(lngLat, renderedFeature = null) {
+    closeSearchSuggestions();
+    $('mapSearchInput').value = '';
     const reference = renderedFeature && referenceFrom(renderedFeature.properties);
     if (reference) return loadParcelByReference(reference, false, Number(renderedFeature.properties?.id));
     const params = new URLSearchParams({ lat: String(lngLat.lat), lng: String(lngLat.lng) });
@@ -3850,8 +3914,15 @@
     });
   }
 
-  function chooseSearchResult(result) {
+  function closeSearchSuggestions() {
     renderSearchResults([]);
+    state.searchActiveIndex = -1;
+    const status = $('mapSearchStatus');
+    if (status) status.textContent = '';
+  }
+
+  function chooseSearchResult(result) {
+    closeSearchSuggestions();
     $('mapSearchInput').value = result.label;
     if (result.kind === 'parcel') { $('mapSearchInput').focus(); loadParcelByReference(result.reference, true, result.id ?? null); return; }
     const profile = result.municipality || result;
@@ -4149,6 +4220,7 @@
       // A 503 means the canonical source is down, which is not "no match":
       // say so, and still let an explicit search fall back to place names.
       const serviceDown = !response.ok;
+      const staleSearch = !serviceDown && response.headers.get('X-Data-Stale') === 'true';
       const payload = serviceDown ? {} : await response.json();
       if (requestId !== state.searchRequest) return;
       let results = payload.results || [];
@@ -4174,9 +4246,22 @@
         }
       }
       if (requestId !== state.searchRequest) return;
+      const seenResults = new Set();
+      results = results.filter((result) => {
+        const key = result.kind === 'parcel' && result.id != null
+          ? `parcel:${result.id}`
+          : result.kind === 'municipality' && (result.istat_code || result.code)
+            ? `municipality:${result.istat_code || result.code}`
+            : `${result.kind || ''}:${String(result.label || '').trim().toLocaleLowerCase()}:${result.lat || result.latitude || ''}:${result.lon || result.longitude || ''}`;
+        if (seenResults.has(key)) return false;
+        seenResults.add(key);
+        return true;
+      });
       state.searchActiveIndex = results.length ? 0 : -1;
       renderSearchResults(results);
-      $('mapSearchStatus').textContent = results.length ? '' : (!serviceDown ? (explicit ? 'No result' : (state.sourceHealthDown ? 'Municipality and parcel search is unavailable — press Enter to search places' : 'No municipality or parcel match — press Enter to search places')) : 'Search service unavailable; try again.');
+      $('mapSearchStatus').textContent = results.length
+        ? (staleSearch ? tr('Showing recent search results while the service recovers.') : '')
+        : (!serviceDown ? (explicit ? 'No result' : (state.sourceHealthDown ? 'Municipality and parcel search is unavailable — press Enter to search places' : 'No municipality or parcel match — press Enter to search places')) : 'Search service unavailable; try again.');
     } catch (error) {
       // A newer search superseding this one is silent; a timeout is not.
       if (error.name === 'AbortError' && !(timedOut && requestId === state.searchRequest)) return;
@@ -7120,7 +7205,7 @@
     });
     $('mapSearchInput').addEventListener('keydown', (event) => {
       const options = [...$('mapSearchResults').querySelectorAll('.map-search-result')];
-      if (event.key === 'Escape') { renderSearchResults([]); state.searchActiveIndex = -1; return; }
+      if (event.key === 'Escape') { closeSearchSuggestions(); return; }
       if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && options.length) {
         event.preventDefault();
         const direction = event.key === 'ArrowDown' ? 1 : -1;
@@ -7129,6 +7214,17 @@
         $('mapSearchInput').setAttribute('aria-activedescendant', options[state.searchActiveIndex].id);
       }
     });
+    document.addEventListener('click', (event) => {
+      const languageLink = event.target.closest('a[href*="lang="]');
+      if (!languageLink) return;
+      const destination = new URL(languageLink.href, window.location.href);
+      const language = destination.searchParams.get('lang');
+      if (destination.origin !== window.location.origin || !language) return;
+      event.preventDefault();
+      const current = new URL(window.location.href);
+      current.searchParams.set('lang', language);
+      window.location.assign(`${current.pathname}${current.search}${current.hash}`);
+    }, true);
     $('mapSearchInput').addEventListener('input', () => { clearTimeout(state.searchTimer); state.searchTimer = setTimeout(() => submitSearch($('mapSearchInput').value), SEARCH_DEBOUNCE_MS); });
     $('locateButton').addEventListener('click', locate);
     $('shareButton').addEventListener('click', copyLink);
@@ -7277,6 +7373,35 @@
     });
     window.ParcelPanel?.mount({ content: $('directParcelContent'), nav: $('parcelSectionNav'), strip: $('parcelStatStrip'), tr });
     $('parcelCloseButton').addEventListener('click', () => { $('directParcelPanel').hidden = true; updateParcelZoomAffordance(); mapStatus(''); });
+    const sheet = $('directParcelPanel');
+    const sheetExpandButton = $('parcelSheetExpandButton');
+    const setSheetExpanded = (expanded) => {
+      sheet.classList.toggle('is-expanded', expanded);
+      sheetExpandButton?.setAttribute('aria-expanded', String(expanded));
+      sheetExpandButton?.setAttribute('aria-label', tr(expanded ? 'Collapse parcel details' : 'Expand parcel details'));
+      sheetExpandButton?.setAttribute('title', tr(expanded ? 'Collapse parcel details' : 'Expand parcel details'));
+      requestAnimationFrame(() => state.map?.resize());
+    };
+    sheetExpandButton?.addEventListener('click', () => setSheetExpanded(!sheet.classList.contains('is-expanded')));
+    const dragHandle = sheet.querySelector('.parcel-sheet-drag-handle');
+    let dragStartY = null;
+    dragHandle?.addEventListener('pointerdown', (event) => {
+      if (!window.matchMedia('(max-width: 700px)').matches) return;
+      dragStartY = event.clientY;
+      dragHandle.setPointerCapture?.(event.pointerId);
+      event.preventDefault();
+    });
+    dragHandle?.addEventListener('pointerup', (event) => {
+      if (dragStartY === null) return;
+      const delta = dragStartY - event.clientY;
+      dragStartY = null;
+      if (Math.abs(delta) < 32) return;
+      setSheetExpanded(delta > 0);
+    });
+    dragHandle?.addEventListener('pointercancel', () => { dragStartY = null; });
+    sheet.addEventListener('transitionend', (event) => {
+      if (event.propertyName === 'height') state.map?.resize();
+    });
     $('municipalityDetailClose')?.addEventListener('click', () => { closeMunicipalityDetails(); mapStatus(''); });
     $('cadastralSheetClose')?.addEventListener('click', () => {
       closeCadastralSheetDetails();
@@ -7302,6 +7427,23 @@
     $('layersSelectAll')?.addEventListener('change', (event) => setAllOverlays(event.target.checked));
     // A manual tick on any layer row changes the header state too.
     $('mapLayerList')?.addEventListener('change', syncSelectAll);
+    $('mapLayerFilter')?.addEventListener('input', (event) => {
+      const query = event.target.value.trim().toLocaleLowerCase();
+      let shown = 0;
+      document.querySelectorAll('#mapLayerList .map-layer-group').forEach((group) => {
+        let groupShown = 0;
+        group.querySelectorAll('.map-layer-item').forEach((item) => {
+          const match = !query || item.dataset.searchText.includes(query);
+          item.hidden = !match;
+          if (match) groupShown += 1;
+        });
+        group.hidden = groupShown === 0;
+        if (query && groupShown) group.open = true;
+        shown += groupShown;
+      });
+      const empty = $('mapLayerFilterEmpty');
+      if (empty) empty.hidden = shown > 0;
+    });
     $('layersCloseButton').addEventListener('click', () => { $('mapLayersCard').hidden = true; $('layersToggle').setAttribute('aria-expanded', 'false'); });
     const basemapToggle = $('basemapToggle');
     const basemapPopover = $('mapBasemapPopover');
@@ -7342,6 +7484,7 @@
       if (!card.hidden) setBasemapPickerOpen(false);
     });
     $('basemapEngineSelect').addEventListener('change', (event) => {
+      state.basemapUserSelected = true;
       switchBasemap(event.target.value);
       setBasemapPickerOpen(false);
       basemapToggle.focus();
@@ -7378,7 +7521,7 @@
         document.body.classList.toggle('direct-map-dark', state.dark);
         $('themeToggle')?.setAttribute('aria-pressed', String(state.dark));
         const basemap = currentBasemap();
-        if (['light', 'dark'].includes(basemap) && basemap !== (state.dark ? 'dark' : 'light')) {
+        if (!state.basemapUserSelected && basemap !== (state.dark ? 'dark' : 'light')) {
           const selector = $('basemapEngineSelect');
           if (selector) selector.value = state.dark ? 'dark' : 'light';
           if (state.map || state.fallbackMap) switchBasemap(state.dark ? 'dark' : 'light');
@@ -7619,6 +7762,10 @@
     }
     state.preferences = await loadPreferences();
     const restored = urlState();
+    state.basemapUserSelected = Boolean(
+      restored.basemap
+      || (BASEMAPS.includes(state.preferences?.default_basemap) && state.preferences.default_basemap),
+    );
     const basemap = restored.basemap || (BASEMAPS.includes(state.preferences?.default_basemap) ? state.preferences.default_basemap : (document.documentElement.getAttribute('data-bs-theme') === 'dark' ? 'dark' : DEFAULT_BASEMAP));
     if (Array.isArray(state.preferences?.default_layers)) state.defaultLayers = new Set(state.preferences.default_layers);
     if (restored.layers !== null) state.defaultLayers = new Set(restored.layers);
@@ -7660,16 +7807,62 @@
     window.addEventListener('resize', () => state.map?.resize());
     state.map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), 'bottom-right');
     state.map.addControl(new maplibregl.FullscreenControl(), 'bottom-right');
-    state.map.on('load', () => {
-      state.tilesLoading = true;
-      if (!mapTasks.has('map-tiles')) beginMapProgress('map-tiles', 'Loading map tiles…');
-      mapStatus('Loading map tiles…');
+    let initialMapLoadHandled = false;
+    let initialMapLoadPoll = null;
+    const initialMapLoadPollDeadline = performance.now() + 30000;
+    const finishInitialTileLoad = () => {
+      if (!state.tilesLoading) return;
+      state.tilesLoading = false;
+      mapTasks.get('map-tiles')?.finish();
+      // Sparse layers can only tell "nothing here" from "not drawn yet" once tiles have settled.
+      // updateLayerBadges only rewrites a hint's text, so this does not re-render the map.
+      if (state.activeLayers?.size) updateLayerBadges();
+      if (!state.mapReadyAnnounced && !state.tileErrors.size && !restored.invalidView && !restored.parcel) {
+        state.mapReadyAnnounced = true;
+        mapStatus('Map ready');
+      } else if ($('mapStatus')?.textContent === 'Loading map tiles…') {
+        mapStatus('');
+      }
+      updateParcelZoomAffordance();
+      updateTruncationNote();
+    };
+    const finishInitialMapLoad = () => {
+      if (initialMapLoadHandled) return;
+      initialMapLoadHandled = true;
+      const mapAlreadySettled = Boolean(state.map?.loaded());
+      state.tilesLoading = !mapAlreadySettled;
+      if (!mapAlreadySettled) {
+        if (!mapTasks.has('map-tiles')) beginMapProgress('map-tiles', 'Loading map tiles…');
+        mapStatus('Loading map tiles…');
+      }
       void finishMapInit(restored);
-    });
+    };
+    const pollInitialMapLoad = () => {
+      initialMapLoadPoll = null;
+      if (state.map?.loaded()) {
+        if (!initialMapLoadHandled) finishInitialMapLoad();
+        finishInitialTileLoad();
+      }
+      if ((!initialMapLoadHandled || state.tilesLoading) && performance.now() < initialMapLoadPollDeadline) {
+        scheduleInitialMapLoadPoll();
+      }
+    };
+    const scheduleInitialMapLoadPoll = () => {
+      if (initialMapLoadPoll === null && performance.now() < initialMapLoadPollDeadline) {
+        initialMapLoadPoll = setTimeout(pollInitialMapLoad, 250);
+      }
+    };
+    state.map.on('load', finishInitialMapLoad);
+    // Some browsers can reach the loaded state without delivering MapLibre's
+    // load/idle events while the page is under heavy scheduling pressure.
+    // Bound this fallback so a stalled tile request cannot poll forever.
+    if (state.map.loaded()) finishInitialMapLoad();
+    scheduleInitialMapLoadPoll();
     state.map.on('dataloading', (event) => {
       if (event.dataType !== 'source' || !event.tile) return;
       state.tilesLoading = true;
       if (!mapTasks.has('map-tiles')) beginMapProgress('map-tiles', 'Loading map tiles…');
+      scheduleInitialMapLoadPoll();
     });
     state.map.on('sourcedata', (event) => {
       // Only a tile that actually loaded counts as recovery. setTiles() itself
@@ -7685,22 +7878,7 @@
     // on every 'idle' formed a render loop (the affordance update touches
     // layer layout, which re-renders and idles again) and overwrote every
     // other status message with "Map ready" within a frame.
-    state.map.on('idle', () => {
-      if (!state.tilesLoading) return;
-      state.tilesLoading = false;
-      mapTasks.get('map-tiles')?.finish();
-      // Sparse layers can only tell "nothing here" from "not drawn yet" once tiles have settled.
-      // updateLayerBadges only rewrites a hint's text, so this does not re-render the map.
-      if (state.activeLayers?.size) updateLayerBadges();
-      if (!state.mapReadyAnnounced && !state.tileErrors.size && !restored.invalidView && !restored.parcel) {
-        state.mapReadyAnnounced = true;
-        mapStatus('Map ready');
-      } else if ($('mapStatus')?.textContent === 'Loading map tiles…') {
-        mapStatus('');
-      }
-      updateParcelZoomAffordance();
-      updateTruncationNote();
-    });
+    state.map.on('idle', finishInitialTileLoad);
     // MapLibre never re-requests a tile that failed (e.g. a cold-cache 503),
     // which left silent holes in overlays; retry the source and say so.
     state.map.on('error', (event) => {

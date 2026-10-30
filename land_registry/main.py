@@ -1,23 +1,30 @@
 from bokeh.embed import server_document
 from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.gzip import GZipMiddleware
+import asyncio
+import base64
+import gzip
+import hashlib
 import html as html_lib
+from html.parser import HTMLParser
 import json
 import logging
 import os
 import re
+import secrets
+import threading
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import quote, urlsplit
 import duckdb
 import pandas as pd
 import panel as pn
 from typing import Optional
-import asyncio
-import threading
 from tornado.ioloop import IOLoop
 
 from land_registry.cadastral_utils import load_cadastral_structure, get_cadastral_stats
@@ -35,11 +42,13 @@ from land_registry.routers.api_keys import router as api_keys_router
 from land_registry.routers.auth_pages import router as auth_pages_router
 from land_registry.routers.enrichment import enrichment_router
 from land_registry.routers.parcel_dossier import parcel_dossier_router
+from land_registry.cadastral_purchases import is_purchase_admin
 from land_registry.routers.cadastral_purchases import router as cadastral_purchases_router
 from land_registry.routers.api import account_workspace_snapshot, load_account_preferences
 from land_registry.routers.auth import get_current_user_optional
 from land_registry.legal_pages import PAGE_KEYS, build_page
 from land_registry.map_layers import color_mode_strings, get_map_layer_source, map_layer_catalog
+from land_registry.service_health import ServiceHealthMiddleware, service_health_snapshot
 from land_registry.consumer import install_land_registry_consumer
 from land_registry.source_catalog import PARCEL_API_FIELD_CATALOG, SOURCE_CATALOG
 from land_registry.models import UserPreferences
@@ -65,6 +74,12 @@ if _AUTH_AVAILABLE:
         configure_user_integration,
         set_password_verify_callback,
     )
+    from aecs4u_auth.middleware import SecurityHeadersMiddleware
+
+    # The shared middleware's default still permits eval-based script loading.
+    # Keep its existing inline compatibility for the legacy templates while
+    # removing eval from every page served by this app.
+    SecurityHeadersMiddleware.DEFAULT_CSP = SecurityHeadersMiddleware.DEFAULT_CSP.replace(" 'unsafe-eval'", "")
     try:
         # Newer aecs4u-auth versions re-export this factory at package level;
         # older compatible versions keep it in the local router module.
@@ -114,6 +129,13 @@ logging.basicConfig(
 logging.getLogger("datashader.compiler").setLevel(logging.WARNING)
 logging.getLogger("numba").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
+_READY_MAP_HEALTH_TIMEOUT_SECONDS = 3
+
+
+def _consume_health_task_exception(task: asyncio.Task) -> None:
+    """Retrieve a cancelled readiness task's eventual exception without logging noise."""
+    if not task.cancelled():
+        task.exception()
 
 # Panel server configuration (from settings)
 PANEL_HOST = panel_settings.panel_host
@@ -130,6 +152,59 @@ PANEL_MAPPING_TABLE_URL = get_panel_url(panel_settings.panel_mapping_table_route
 _panel_server = None  # Will hold the Bokeh Server instance
 _panel_thread: Optional[threading.Thread] = None
 _panel_ioloop: Optional[IOLoop] = None
+_panel_probe_cache: tuple[float, bool] = (0.0, False)
+
+
+def _panel_websocket_origins() -> list[str]:
+    """Return configured app origins that the embedded Panel server may trust."""
+    origins = list(panel_settings.panel_websocket_origins)
+    origins.extend([
+        f"{PANEL_HOST}:{app_settings.port}",
+        f"localhost:{app_settings.port}",
+        f"{PANEL_HOST}:{PANEL_PORT}",
+        f"localhost:{PANEL_PORT}",
+    ])
+
+    # The app may be published behind a proxy on a host or port different
+    # from LAND_REGISTRY_PORT. Trust only that configured public origin; do not
+    # infer WebSocket access from arbitrary incoming Host headers.
+    public_url = (app_settings.public_base_url or "").strip()
+    if public_url:
+        try:
+            parsed = urlsplit(public_url)
+            if parsed.scheme in {"http", "https"} and parsed.hostname:
+                hostname = parsed.hostname.lower()
+                if ":" in hostname and not hostname.startswith("["):
+                    hostname = f"[{hostname}]"
+                default_port = 443 if parsed.scheme == "https" else 80
+                origin = hostname if parsed.port in {None, default_port} else f"{hostname}:{parsed.port}"
+                origins.append(origin)
+        except ValueError:
+            logger.warning("Ignoring invalid public base URL for Panel WebSocket origins")
+
+    return list(dict.fromkeys(origin for origin in origins if origin))
+
+
+async def _panel_embed_available() -> bool:
+    """Check the optional local Panel endpoint with a short cached probe."""
+    global _panel_probe_cache
+    now = asyncio.get_running_loop().time()
+    if now - _panel_probe_cache[0] < 5:
+        return _panel_probe_cache[1]
+    if not app_settings.debug:
+        _panel_probe_cache = (now, False)
+        return False
+    try:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=0.4, follow_redirects=False) as client:
+            response = await client.get(PANEL_BASE_URL)
+        available = 200 <= response.status_code < 400
+    except Exception as exc:
+        logger.debug("Panel endpoint probe failed: %s", exc)
+        available = False
+    _panel_probe_cache = (asyncio.get_running_loop().time(), available)
+    return available
 _panel_already_running = False  # Track if we're reusing an existing server
 
 
@@ -157,15 +232,7 @@ def _run_panel_server_blocking():
     try:
         logger.info(f"Starting Panel server on {PANEL_HOST}:{PANEL_PORT}")
 
-        # Build websocket origins list including main app port and Panel server itself
-        websocket_origins = list(panel_settings.panel_websocket_origins)
-        websocket_origins.extend([
-            f"{PANEL_HOST}:{app_settings.port}",
-            f"localhost:{app_settings.port}",
-            # Panel server must allow connections from itself
-            f"{PANEL_HOST}:{PANEL_PORT}",
-            f"localhost:{PANEL_PORT}"
-        ])
+        websocket_origins = _panel_websocket_origins()
 
         # Create a new IOLoop for this thread
         _panel_ioloop = IOLoop(make_current=True)
@@ -271,6 +338,13 @@ async def lifespan(app: FastAPI):
 
     # ========== STARTUP ==========
     logger.info(f"Starting {app_settings.app_name} v{app_settings.app_version}")
+    # Compile the small, commonly visited static-page templates before the
+    # first request so their cold response does not pay the Jinja load cost.
+    try:
+        for template_name in ("legal.html", "not_found.html", "landing.html"):
+            templates.env.get_template(template_name)
+    except Exception:
+        logger.warning("Static page templates could not be preloaded", exc_info=True)
 
     # Initialize the repository-owned PostgreSQL application tables only when
     # the existing deployment explicitly enables Neon. SQLite remains the
@@ -447,6 +521,9 @@ app = FastAPI(
     version=app_settings.app_version,
     debug=app_settings.debug,
     lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
     swagger_ui_parameters={
         "docExpansion": "none",
         "defaultModelsExpandDepth": -1,
@@ -486,6 +563,7 @@ class _CadastralTileCorpMiddleware:
 
 
 app.add_middleware(_CadastralTileCorpMiddleware)
+app.add_middleware(ServiceHealthMiddleware)
 
 
 class _StaticCacheMiddleware:
@@ -549,6 +627,202 @@ class _MapPermissionsPolicyMiddleware:
         await self.app(scope, receive, send)
 
 
+class _InlineEventHandlerCollector(HTMLParser):
+    """Collect exact, rendered inline event-handler source strings."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.handlers: set[str] = set()
+
+    def handle_starttag(self, tag, attrs):
+        for name, value in attrs:
+            if name and name.lower().startswith("on") and value is not None:
+                self.handlers.add(value)
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+
+
+class _HtmlScriptPolicyMiddleware:
+    """Nonce inline scripts and allow only the rendered event-handler hashes.
+
+    Legacy templates use inline event attributes. CSP's ``unsafe-hashes`` lets
+    those exact, template-authored handlers keep working without granting
+    arbitrary inline script execution. HTML is buffered so compressed and
+    streaming template responses receive a matching body and policy.
+    """
+
+    _SCRIPT_TAG = re.compile(
+        rb"(<script\b)(?![^>]*\bnonce\s*=)(?![^>]*\bsrc\s*=)([^>]*>)",
+        re.IGNORECASE,
+    )
+    _PANEL_TABLE_PATHS = {"/map_table", "/adjacency_table", "/mapping_table"}
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        nonce = base64.b64encode(secrets.token_bytes(16)).decode("ascii")
+        scope.setdefault("state", {})["csp_nonce"] = nonce
+        response_start = None
+        response_body: list[bytes] = []
+
+        async def send_wrapper(message):
+            nonlocal response_start, response_body
+            if message["type"] == "http.response.start":
+                content_type = next(
+                    (value.lower() for key, value in message.get("headers", []) if key.lower() == b"content-type"),
+                    b"",
+                )
+                if b"text/html" not in content_type:
+                    await send(message)
+                    return
+                response_start = message
+                response_body = []
+                return
+
+            if message["type"] == "http.response.body" and response_start is not None:
+                response_body.append(message.get("body", b""))
+                if message.get("more_body", False):
+                    return
+
+                headers = list(response_start.get("headers", []))
+                values = {key.lower(): value for key, value in headers}
+                encoded_body = b"".join(response_body)
+                encoding = values.get(b"content-encoding", b"").lower()
+                try:
+                    body = gzip.decompress(encoded_body) if encoding == b"gzip" else encoded_body
+                    source = body.decode("utf-8")
+                    # Panel's Tabulator renderer is a ReactiveHTML widget and
+                    # Panel currently compiles its renderer with new Function.
+                    # Keep that compatibility permission on the authenticated
+                    # table pages only, and only when the response embeds the
+                    # live Panel autoloader. Public pages and Panel-down
+                    # fallbacks retain the strict script policy.
+                    allow_panel_eval = (
+                        scope.get("path") in self._PANEL_TABLE_PATHS
+                        and b"/autoload.js" in body
+                    )
+                    collector = _InlineEventHandlerCollector()
+                    collector.feed(source)
+                    hashes = {
+                        "'sha256-" + base64.b64encode(hashlib.sha256(handler.encode("utf-8")).digest()).decode("ascii") + "'"
+                        for handler in collector.handlers
+                    }
+                    body = self._SCRIPT_TAG.sub(
+                        lambda match: match.group(1) + b' nonce="' + nonce.encode("ascii") + b'"' + match.group(2),
+                        body,
+                    )
+                    for index, (key, value) in enumerate(headers):
+                        if key.lower() == b"content-security-policy":
+                            headers[index] = (
+                                key,
+                                self._strict_script_policy(
+                                    value, nonce, hashes, allow_panel_eval=allow_panel_eval
+                                ).encode("latin-1"),
+                            )
+                    if encoding == b"gzip":
+                        body = gzip.compress(body, mtime=0)
+                except (UnicodeDecodeError, OSError, EOFError, ValueError) as exc:
+                    logger.error("Could not apply HTML script policy: %s", exc)
+                    await send(response_start)
+                    await send({"type": "http.response.body", "body": encoded_body, "more_body": False})
+                    response_start = None
+                    response_body = []
+                    return
+
+                headers = [
+                    (key, value)
+                    for key, value in headers
+                    if key.lower() not in {b"content-length", b"etag", b"content-md5"}
+                ]
+                headers.append((b"content-length", str(len(body)).encode("ascii")))
+                response_start = dict(response_start)
+                response_start["headers"] = headers
+                await send(response_start)
+                await send({"type": "http.response.body", "body": body, "more_body": False})
+                response_start = None
+                response_body = []
+                return
+
+            await send(message)
+
+        await self.app(scope, receive, send_wrapper)
+
+    @staticmethod
+    def _strict_script_policy(
+        policy: bytes,
+        nonce: str,
+        hashes: set[str],
+        *,
+        allow_panel_eval: bool = False,
+    ) -> str:
+        """Remove blanket inline permission and scope Panel's eval need to its table embeds."""
+        directives = [item.strip() for item in policy.decode("latin-1").split(";") if item.strip()]
+        result: list[str] = []
+        found_script_src = False
+        found_script_attr = False
+        hash_sources = sorted(hashes)
+
+        def keep_source(source: str) -> bool:
+            parsed = urlsplit(source)
+            host = (parsed.hostname or "").lower()
+            if host not in {"127.0.0.1", "localhost", "::1"}:
+                return True
+            panel_host = PANEL_HOST.lower()
+            panel_origins = {
+                f"http://{panel_host}:{PANEL_PORT}", f"ws://{panel_host}:{PANEL_PORT}",
+                f"http://localhost:{PANEL_PORT}", f"ws://localhost:{PANEL_PORT}",
+            }
+            return bool(app_settings.debug and source.rstrip("/") in panel_origins)
+
+        for directive in directives:
+            parts = directive.split()
+            name = parts[0].lower()
+            if name in {"script-src", "script-src-elem"}:
+                sources = [
+                    item for item in parts[1:]
+                    if item not in {"'unsafe-inline'", "'unsafe-eval'"}
+                    and not item.startswith("'nonce-")
+                    and keep_source(item)
+                ]
+                sources.insert(1 if sources and sources[0] == "'self'" else 0, f"'nonce-{nonce}'")
+                if allow_panel_eval and name == "script-src":
+                    sources.append("'unsafe-eval'")
+                result.append(" ".join([parts[0], *sources]))
+                found_script_src = found_script_src or name == "script-src"
+            elif name == "connect-src":
+                result.append(" ".join([parts[0], *(item for item in parts[1:] if keep_source(item))]))
+            elif name == "script-src-attr":
+                sources = [item for item in parts[1:] if item != "'unsafe-inline'"]
+                if hash_sources:
+                    if "'unsafe-hashes'" not in sources:
+                        sources.append("'unsafe-hashes'")
+                    sources.extend(token for token in hash_sources if token not in sources)
+                else:
+                    sources = ["'none'"]
+                result.append(" ".join([parts[0], *sources]))
+                found_script_attr = True
+            else:
+                result.append(directive)
+
+        if not found_script_src:
+            sources = ["'self'", f"'nonce-{nonce}'", *hash_sources]
+            if allow_panel_eval:
+                sources.append("'unsafe-eval'")
+            result.append(" ".join(["script-src", *sources]))
+        if not found_script_attr:
+            result.append(
+                " ".join(["script-src-attr", "'unsafe-hashes'", *hash_sources])
+                if hash_sources else "script-src-attr 'none'"
+            )
+        return "; ".join(result)
+
+
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
 app.add_middleware(MapMetricsMiddleware, metrics=map_metrics)
 
@@ -582,6 +856,11 @@ if _AUTH_AVAILABLE:
     )
     if _auth_db_url:
         _auth_config_kwargs["database_url"] = _auth_db_url
+    _panel_csp_connect = []
+    _panel_csp_script = []
+    if app_settings.debug:
+        _panel_csp_connect = [f"http://{_panel_origin}", f"ws://{_panel_origin}"]
+        _panel_csp_script = [f"http://{_panel_origin}"]
     setup_auth(
         app,
         config=AuthConfig(**_auth_config_kwargs),
@@ -590,8 +869,7 @@ if _AUTH_AVAILABLE:
         setup_exception_handlers=True,
         security_headers_csp_extend={
             "connect-src": [
-                f"http://{_panel_origin}",
-                f"ws://{_panel_origin}",
+                *_panel_csp_connect,
                 "https://nominatim.openstreetmap.org",
                 # MapLibre fetches basemap raster tiles with fetch(), so the
                 # tile hosts must be allowed here, not only under img-src.
@@ -601,7 +879,7 @@ if _AUTH_AVAILABLE:
                 "https://mt1.google.com",
                 "https://cartodb-basemaps-a.global.ssl.fastly.net",
             ],
-            "script-src": [f"http://{_panel_origin}"],
+            "script-src": _panel_csp_script,
         },
     )
     # AUTH_MODE=clerk_and_local: accept either a Clerk session or a local
@@ -646,13 +924,19 @@ if _THEME_AVAILABLE:
 else:
     logger.warning("aecs4u-theme not installed - running without theme package")
 
+def _sidebar_enabled(user) -> bool:
+    """The theme's left sidebar is shown to admin users only."""
+    return user is not None and is_purchase_admin(user)
+
+
 # Locale detection middleware (cookie → Accept-Language → default 'it')
 app.add_middleware(LocaleMiddleware)
 
-# This must be registered after setup_auth() and the other middleware: Starlette
-# places later registrations outermost, allowing this narrow map exception to
-# replace aecs4u-auth's global geolocation deny policy on the response.
+# Register map-specific policy middleware after setup_auth() and the other
+# middleware: Starlette places later registrations outermost, so each can set
+# its narrow response policy after aecs4u-auth adds the global headers.
 app.add_middleware(_MapPermissionsPolicyMiddleware)
+app.add_middleware(_HtmlScriptPolicyMiddleware)
 
 # Include HTML auth pages (login/register forms) at /auth prefix
 # These provide GET endpoints for browser-accessible pages
@@ -743,6 +1027,61 @@ templates.env.globals["_"] = contextvar_gettext
 # locale is passed per-request in template context (set by each route handler)
 
 
+async def _require_private_template(request: Request, user=Depends(get_current_user_optional)) -> None:
+    """Redirect signed-out visitors to login before rendering a private page."""
+    if user is not None:
+        return
+    target = request.url.path
+    if request.url.query:
+        target = f"{target}?{request.url.query}"
+    next_url = quote(target, safe="/")
+    raise HTTPException(
+        status_code=302,
+        detail="Authentication required",
+        headers={"Location": f"/auth/login?next={next_url}"},
+    )
+
+
+@app.get("/openapi.json", include_in_schema=False, dependencies=[Depends(_require_private_template)])
+async def private_openapi_schema():
+    return JSONResponse(app.openapi())
+
+
+@app.get("/docs", response_class=HTMLResponse, include_in_schema=False, dependencies=[Depends(_require_private_template)])
+async def private_swagger_docs():
+    return get_swagger_ui_html(openapi_url="/openapi.json", title=f"{app.title} - API")
+
+
+@app.get("/redoc", response_class=HTMLResponse, include_in_schema=False, dependencies=[Depends(_require_private_template)])
+async def private_redoc_docs():
+    return get_redoc_html(openapi_url="/openapi.json", title=f"{app.title} - ReDoc")
+
+
+@app.get("/robots.txt", include_in_schema=False)
+async def robots_txt(request: Request):
+    base_url = (app_settings.public_base_url or str(request.base_url)).rstrip("/")
+    return PlainTextResponse(
+        "User-agent: *\nDisallow: /\nAllow: /landing\nAllow: /static/\n"
+        f"Sitemap: {base_url}/sitemap.xml\n",
+        media_type="text/plain",
+    )
+
+
+@app.get("/sitemap.xml", include_in_schema=False)
+async def sitemap_xml(request: Request):
+    base_url = (app_settings.public_base_url or str(request.base_url)).rstrip("/")
+    landing_url = html_lib.escape(f"{base_url}/landing", quote=True)
+    return Response(
+        content=(
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+            f"<url><loc>{landing_url}</loc></url>"
+            "</urlset>"
+        ),
+        media_type="application/xml",
+    )
+
+
 def _asset_version(relative_path: str) -> str:
     """Cache-busting token for one static file, derived from its mtime.
 
@@ -787,11 +1126,10 @@ if _theme_setup is not None:
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
-    from fastapi.responses import RedirectResponse
     # aecs4u-theme's icons/favicon.png 404s in this environment; the app's
     # own cadastral-icon SVG (already used as tabulator.html's inline
     # favicon) is a real, always-available asset in this repo.
-    return RedirectResponse(url="/static/favicon.svg", status_code=301)
+    return FileResponse(Path(__file__).parent / "static" / "favicon.svg", media_type="image/svg+xml")
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -810,32 +1148,73 @@ async def readiness_check():
     """
     source = get_map_layer_source()
     headers = {"Cache-Control": "no-store"}
+    required_ids = {"cadastral-parcels"}
+
+    def unavailable(reason: str) -> JSONResponse:
+        components = service_health_snapshot()
+        components["canonical_map"] = {"status": "degraded", "required": True}
+        degraded_components = sorted(
+            name for name, component in components.items()
+            if component["status"] == "degraded"
+        )
+        return JSONResponse(
+            {
+                "status": "unavailable",
+                "service": "land-registry",
+                "reason": reason,
+                "components": components,
+                "degraded_components": degraded_components,
+            },
+            status_code=503,
+            headers=headers,
+        )
+
     if not source.available:
-        return JSONResponse(
-            {"status": "unavailable", "service": "land-registry", "reason": "map source not configured"},
-            status_code=503,
-            headers=headers,
-        )
+        return unavailable("map source not configured")
+    health_task = None
     try:
-        layers = await asyncio.wait_for(source.health(), timeout=3)
-    except Exception as exc:  # timeout, connection refused, auth failure...
-        logger.warning("Readiness check failed: %s", exc)
-        return JSONResponse(
-            {"status": "unavailable", "service": "land-registry", "reason": "map source unreachable"},
-            status_code=503,
-            headers=headers,
+        health_task = asyncio.create_task(source.health(layer_ids=required_ids))
+        completed, _ = await asyncio.wait(
+            {health_task}, timeout=_READY_MAP_HEALTH_TIMEOUT_SECONDS
         )
-    available = {layer["id"] for layer in layers if layer.get("available")}
-    unavailable = sorted(layer["id"] for layer in layers if not layer.get("available"))
-    # A configured source with unrelated layers online is not ready to serve
-    # the application's core cadastral workflow. Keep this tied to catalog
-    # entries so small test/fallback sources can still report their own status.
-    required_ids = {"cadastral-parcels"} & {layer["id"] for layer in layers}
+        if not completed:
+            health_task.cancel()
+            health_task.add_done_callback(_consume_health_task_exception)
+            logger.warning(
+                "Readiness check exceeded %.1f seconds", _READY_MAP_HEALTH_TIMEOUT_SECONDS
+            )
+            return unavailable("map source unreachable")
+        layers = health_task.result()
+    except asyncio.CancelledError:
+        if health_task is not None and not health_task.done():
+            health_task.cancel()
+            health_task.add_done_callback(_consume_health_task_exception)
+        raise
+    except Exception as exc:  # connection refused, auth failure, query error...
+        logger.warning("Readiness check failed: %s", exc)
+        return unavailable("map source unreachable")
+    required_layers = [layer for layer in layers if layer.get("id") in required_ids]
+    available = {layer["id"] for layer in required_layers if layer.get("available")}
+    unavailable = sorted(layer["id"] for layer in required_layers if not layer.get("available"))
+    # Readiness means the application's core cadastral workflow can answer.
+    # Other published layers may be optional, but a healthy unrelated layer
+    # cannot stand in for the parcel source.
     missing_required = sorted(required_ids - available)
-    ready = bool(available) and not missing_required
+    ready = not missing_required
+    components = service_health_snapshot()
+    components["canonical_map"] = {
+        "status": "available" if ready else "degraded",
+        "required": True,
+    }
+    degraded_components = sorted(
+        name for name, component in components.items()
+        if component["status"] == "degraded"
+    )
     body = {
         "status": "ready" if ready else "unavailable",
         "service": "land-registry",
+        "components": components,
+        "degraded_components": degraded_components,
         "layers_available": len(available),
         "layers_unavailable": unavailable,
         "layers_required": sorted(required_ids),
@@ -1042,7 +1421,7 @@ async def _serve_legacy_map_shell(request: Request):
     return templates.TemplateResponse(request, "index.html", context)
 
 
-@app.get("/map", response_class=HTMLResponse)
+@app.get("/map", response_class=HTMLResponse, dependencies=[Depends(_require_private_template)])
 async def serve_map_shell(request: Request, user=Depends(get_current_user_optional)):
     """Serve the direct map as the primary experience.
 
@@ -1059,7 +1438,7 @@ async def serve_map_shell(request: Request, user=Depends(get_current_user_option
     return await serve_direct_map(request, user)
 
 
-@app.get("/map-legacy", response_class=HTMLResponse)
+@app.get("/map-legacy", response_class=HTMLResponse, dependencies=[Depends(_require_private_template)])
 async def serve_legacy_map_shell(request: Request):
     """Serve the Folium/upload compatibility map explicitly."""
     return await _serve_legacy_map_shell(request)
@@ -1096,6 +1475,11 @@ async def serve_direct_map(request: Request, user=Depends(get_current_user_optio
             "Administrative statistics are not configured.", "Turn on Sales to load administrative statistics.",
             "No statistics metrics available.", "Coverage not reported", "Approximate data extent",
             "Outside the estimated data extent; coverage may vary.", "Map table moved into the map.",
+            "Filter layers", "No layers match this search.", "Showing recent search results while the service recovers.",
+            "Showing cached municipality data from the last 15 minutes.",
+            "Collapse parcel details", "Expand parcel details", "Loading · retry after {n}s",
+            "Sales data is still loading. Try again shortly.", "Nearby auction sales are unavailable.",
+            "Unavailable", "Available", "Not available", "Needs configuration",
             "This table is not available in the current map. Use the parcel analysis tools instead.",
             *(layer["title"] for layer in map_layer_catalog()),
         )
@@ -1103,6 +1487,7 @@ async def serve_direct_map(request: Request, user=Depends(get_current_user_optio
     context = {
         "_": gettext,
         "locale": locale,
+        "public_base_url": (app_settings.public_base_url or str(request.base_url)).rstrip("/"),
         "i18n_strings": i18n_strings,
         "carto_enabled": map_generator.controls_manager.settings.carto_enabled,
         "carto_api_key": map_generator.controls_manager.settings.carto_api_key,
@@ -1129,12 +1514,14 @@ async def serve_direct_map(request: Request, user=Depends(get_current_user_optio
         # The direct map is the first map surface migrated to the shared
         # aecs4u-theme shell. The legacy route intentionally keeps the app's
         # original template stack for upload/analysis compatibility.
-        return _theme_setup.render("map_v2.html", request, user=user, **context)
+        return _theme_setup.render(
+            "map_v2.html", request, user=user, sidebar_enabled=_sidebar_enabled(user), **context,
+        )
     context["request"] = request
     return templates.TemplateResponse(request, "map_v2.html", context)
 
 
-@app.get("/map/embed", response_class=HTMLResponse)
+@app.get("/map/embed", response_class=HTMLResponse, dependencies=[Depends(_require_private_template)])
 async def serve_embedded_cadastral_map(request: Request, user=Depends(get_current_user_optional)):
     """Preview the reusable cadastral-map component used by sibling apps."""
     if _theme_setup is None:
@@ -1143,12 +1530,18 @@ async def serve_embedded_cadastral_map(request: Request, user=Depends(get_curren
         "map_embed.html",
         request,
         user=user,
+        sidebar_enabled=_sidebar_enabled(user),
         api_base="/land-registry/api",
         static_base="/land-registry/static",
     )
 
 
-@app.get("/omi/valuation", response_class=HTMLResponse, name="omi_valuation")
+@app.get(
+    "/omi/valuation",
+    response_class=HTMLResponse,
+    name="omi_valuation",
+    dependencies=[Depends(_require_private_template)],
+)
 async def serve_omi_valuation_page(
     request: Request,
     comune: Optional[str] = None,
@@ -1198,6 +1591,7 @@ async def serve_omi_valuation_page(
         "omi_valuation.html",
         request,
         user=user,
+        sidebar_enabled=_sidebar_enabled(user),
         _=gettext,
         locale=locale,
         page_title=gettext("OMI valuation by zone"),
@@ -1213,7 +1607,11 @@ async def serve_omi_valuation_page(
     return response
 
 
-@app.get("/api/v1/map/layers/market-zones/{feature_id}/sheet", response_class=HTMLResponse)
+@app.get(
+    "/api/v1/map/layers/market-zones/{feature_id}/sheet",
+    response_class=HTMLResponse,
+    dependencies=[Depends(_require_private_template)],
+)
 async def get_omi_market_zone_details_sheet(request: Request, feature_id: int):
     """Render the selected OMI zone and its quote history for the map sheet."""
     if _theme_setup is None:
@@ -1543,6 +1941,7 @@ async def _render_account_page(request: Request, user, template_name: str, title
         template_name,
         request,
         user=user,
+        sidebar_enabled=_sidebar_enabled(user),
         _=gettext,
         locale=locale,
         page_title=gettext(title),
@@ -1551,7 +1950,7 @@ async def _render_account_page(request: Request, user, template_name: str, title
     )
 
 
-@app.get("/profile", response_class=HTMLResponse)
+@app.get("/profile", response_class=HTMLResponse, dependencies=[Depends(_require_private_template)])
 async def account_profile(request: Request, user=Depends(get_current_user_optional)):
     """Account identity plus a summary of the user's parcel shortlist."""
     workspace = await account_workspace_snapshot(user.id) if user else {}
@@ -1560,7 +1959,7 @@ async def account_profile(request: Request, user=Depends(get_current_user_option
     )
 
 
-@app.get("/settings", response_class=HTMLResponse)
+@app.get("/settings", response_class=HTMLResponse, dependencies=[Depends(_require_private_template)])
 async def account_settings(request: Request, user=Depends(get_current_user_optional)):
     """Language, map defaults, privacy and sign-in settings."""
     preferences = await load_account_preferences(user.id) if user else None
@@ -1597,10 +1996,17 @@ def _make_info_page(key: str):
 
 # The footer, cookie banner and header link to these; they used to 404.
 for _page_key in PAGE_KEYS:
-    app.add_api_route(f"/{_page_key}", _make_info_page(_page_key), methods=["GET"], response_class=HTMLResponse, include_in_schema=False)
+    app.add_api_route(
+        f"/{_page_key}",
+        _make_info_page(_page_key),
+        methods=["GET"],
+        response_class=HTMLResponse,
+        include_in_schema=False,
+        dependencies=[Depends(_require_private_template)],
+    )
 
 
-@app.get("/data-sources", response_class=HTMLResponse)
+@app.get("/data-sources", response_class=HTMLResponse, dependencies=[Depends(_require_private_template)])
 async def data_sources_page(request: Request):
     """Publish provider attribution plus parcel-API field methodology and freshness."""
     gettext = make_gettext(detect_locale(request))
@@ -1660,13 +2066,15 @@ async def data_sources_page(request: Request):
     return templates.TemplateResponse(request, "data_sources.html", context)
 
 
-@app.get("/map_table")
+@app.get("/map_table", dependencies=[Depends(_require_private_template)])
 async def show_map_table(request: Request):
     """
     Display map table using Panel.
     Uses configured Panel route from settings (currently points to main dashboard).
     """
     try:
+        if not await _panel_embed_available():
+            raise RuntimeError("Panel is unavailable or not browser-accessible")
         tabulator = await asyncio.to_thread(server_document, PANEL_MAP_TABLE_URL)
     except Exception as exc:
         logger.warning("Panel map table could not be embedded: %s", exc)
@@ -1674,19 +2082,22 @@ async def show_map_table(request: Request):
     return templates.TemplateResponse(request, "tabulator.html", {
         "tabulator": tabulator,
         "title": f"{contextvar_gettext('Map Table')} - {contextvar_gettext('Land Registry Viewer')}",
+        "page_description": contextvar_gettext("Explore cadastral parcels in an interactive attribute table."),
         "replacement_url": "/map?panel=table&notice=table",
         "replacement_label": contextvar_gettext("Open the map attribute table"),
         "fallback_message": contextvar_gettext("The table service did not connect. The map now has a built-in attribute table."),
     })
 
 
-@app.get("/adjacency_table")
+@app.get("/adjacency_table", dependencies=[Depends(_require_private_template)])
 async def show_adjacency_table(request: Request):
     """
     Display adjacency analysis table using Panel.
     Uses configured Panel route from settings (currently points to main dashboard).
     """
     try:
+        if not await _panel_embed_available():
+            raise RuntimeError("Panel is unavailable or not browser-accessible")
         tabulator = await asyncio.to_thread(server_document, PANEL_ADJACENCY_TABLE_URL)
     except Exception as exc:
         logger.warning("Panel adjacency table could not be embedded: %s", exc)
@@ -1694,19 +2105,22 @@ async def show_adjacency_table(request: Request):
     return templates.TemplateResponse(request, "tabulator.html", {
         "tabulator": tabulator,
         "title": f"{contextvar_gettext('Adjacency Table')} - {contextvar_gettext('Land Registry Viewer')}",
+        "page_description": contextvar_gettext("Review parcels adjacent to the selected cadastral parcel."),
         "replacement_url": "/map?notice=adjacency",
         "replacement_label": contextvar_gettext("Open cadastral map"),
         "fallback_message": contextvar_gettext("Select a parcel to find adjacent parcels from its details panel."),
     })
 
 
-@app.get("/mapping_table")
+@app.get("/mapping_table", dependencies=[Depends(_require_private_template)])
 async def show_mapping_table(request: Request):
     """
     Display mapping/drawing table using Panel.
     Uses configured Panel route from settings (currently points to main dashboard).
     """
     try:
+        if not await _panel_embed_available():
+            raise RuntimeError("Panel is unavailable or not browser-accessible")
         tabulator = await asyncio.to_thread(server_document, PANEL_MAPPING_TABLE_URL)
     except Exception as exc:
         logger.warning("Panel mapping table could not be embedded: %s", exc)
@@ -1714,6 +2128,7 @@ async def show_mapping_table(request: Request):
     return templates.TemplateResponse(request, "tabulator.html", {
         "tabulator": tabulator,
         "title": f"{contextvar_gettext('Mapping Table')} - {contextvar_gettext('Land Registry Viewer')}",
+        "page_description": contextvar_gettext("Use drawing and zoning tools with cadastral map data."),
         "replacement_url": "/map-legacy?view=mapping",
         "replacement_label": contextvar_gettext("Open drawing and zone tools"),
         "fallback_message": contextvar_gettext("The mapping table is part of the file and drawing workspace."),
@@ -1736,6 +2151,13 @@ async def not_found_handler(request: Request, exc: Exception):
     detail = getattr(exc, "detail", "Not Found")
     wants_html = "text/html" in request.headers.get("accept", "")
     if wants_html and not request.url.path.startswith(("/api", "/static", "/docs", "/redoc", "/openapi")):
+        user = await get_current_user_optional(request)
+        if user is None:
+            target = request.url.path
+            if request.url.query:
+                target = f"{target}?{request.url.query}"
+            next_url = quote(target, safe="/")
+            return RedirectResponse(url=f"/auth/login?next={next_url}", status_code=302)
         locale = detect_locale(request)
         return templates.TemplateResponse(
             request, "not_found.html", {"_": make_gettext(locale), "locale": locale}, status_code=404,
@@ -1755,12 +2177,13 @@ async def landing_page(request: Request):
     return templates.TemplateResponse(request, "landing.html", {
         "_": make_gettext(locale),
         "locale": locale,
+        "public_base_url": (app_settings.public_base_url or str(request.base_url)).rstrip("/"),
         "app_name": app_settings.app_name,
         "app_version": app_settings.app_version,
     })
 
 
-@app.get("/cadastral-data", response_class=HTMLResponse)
+@app.get("/cadastral-data", response_class=HTMLResponse, dependencies=[Depends(_require_private_template)])
 async def show_cadastral_data(request: Request):
     """Display the Italian cadastral data structure in a readable HTML format"""
     try:

@@ -11,11 +11,11 @@
   classes; it was simply never linked. Load it after the theme's copy so the
   button styling resolves, and keep everything else the theme provides.
 #}
-{% extends "auth/login_base.html" %}
+{% extends theme_auth_login_parent %}
 
 {% block auth_extra_head %}
   {{ super() }}
-  <link rel="stylesheet" href="/static/css/auth.css" />
+  <link rel="stylesheet" href="{{ asset_url('css/auth.css') }}" />
   <script>
     document.addEventListener('DOMContentLoaded', function () {
       const next = new URLSearchParams(window.location.search).get('next') || '/map';

@@ -24,12 +24,12 @@ class TestRootEndpoint:
     """Tests for root endpoint."""
 
     def test_root_endpoint_returns_html(self, client):
-        """The root redirects to the canonical /map page, which is HTML."""
+        """The root points at the private map and signed-out users reach login."""
         response = client.get("/")
         assert response.status_code == 200
-        assert response.url.path == "/map"
+        assert response.url.path == "/auth/login"
         assert "text/html" in response.headers["content-type"]
-        assert 'id="directMapShell"' in response.text
+        assert 'id="directMapShell"' not in response.text
 
 
 class TestCadastralStructureEndpoints:
@@ -66,7 +66,7 @@ class TestCadastralStructureEndpoints:
         assert "Error loading cadastral structure" in response.json()["detail"]
 
     @patch("land_registry.main.load_cadastral_structure")
-    def test_cadastral_data_html_endpoint(self, mock_load, client, sample_cadastral_structure):
+    def test_cadastral_data_html_endpoint(self, mock_load, authenticated_client, sample_cadastral_structure):
         """Test cadastral data HTML endpoint."""
         # Mock the cadastral structure loader - need to mock where it's used (in main.py)
         mock_cadastral = MagicMock()
@@ -79,7 +79,7 @@ class TestCadastralStructureEndpoints:
         }
         mock_load.return_value = mock_cadastral
 
-        response = client.get("/cadastral-data")
+        response = authenticated_client.get("/cadastral-data")
         assert response.status_code == 200
         assert "text/html" in response.headers["content-type"]
         # Page title is translated — check for either locale
@@ -248,7 +248,7 @@ class TestGenerateMapEndpoint:
 
     @patch("land_registry.routers.api.extract_qpkg_data")
     @patch("folium.Map")
-    def test_generate_map_success(self, mock_map, mock_extract, client, sample_geojson):
+    def test_generate_map_success(self, mock_map, mock_extract, authenticated_client, sample_geojson):
         """Test successful map generation."""
         mock_extract.return_value = json.dumps(sample_geojson)
         mock_map_instance = MagicMock()
@@ -259,7 +259,7 @@ class TestGenerateMapEndpoint:
             temp_file.write(b'fake qpkg content')
             temp_file.seek(0)
 
-            response = client.post(
+            response = authenticated_client.post(
                 "/api/v1/generate-map/",
                 files={"file": ("test.qpkg", temp_file, "application/octet-stream")}
             )
@@ -268,13 +268,13 @@ class TestGenerateMapEndpoint:
         assert "text/html" in response.headers["content-type"]
         assert "Generated Map" in response.text
 
-    def test_generate_map_invalid_file_type(self, client):
+    def test_generate_map_invalid_file_type(self, authenticated_client):
         """Test generate map with invalid file type."""
         with tempfile.NamedTemporaryFile(suffix='.txt') as temp_file:
             temp_file.write(b'not a qpkg file')
             temp_file.seek(0)
 
-            response = client.post(
+            response = authenticated_client.post(
                 "/api/v1/generate-map/",
                 files={"file": ("test.txt", temp_file, "text/plain")}
             )
