@@ -762,10 +762,17 @@ async def gather_inputs(
     municipality_task = asyncio.create_task(
         _safe(stats_service.aget_municipality_by_cadastral_code(code), "municipality") if code else _none()
     )
-    census_task = asyncio.create_task(
-        _safe(stats_service.aget_census_section_at_point(point[0], point[1], cadastral_code=code), "census")
-        if point else _none()
-    )
+
+    async def census_for_point() -> Any:
+        municipality = await municipality_task
+        return await _safe(
+            stats_service.aget_census_section_at_point(
+                point[0], point[1], cadastral_code=code, municipality=municipality
+            ),
+            "census",
+        )
+
+    census_task = asyncio.create_task(census_for_point() if point else _none())
     income_task = asyncio.create_task(_safe(stats_service.aget_income_profile(code), "income") if code else _none())
     mps04_task = asyncio.create_task(
         _safe(stats_service.aget_mps04_pga_at_point(*point), "mps04") if point else _none()

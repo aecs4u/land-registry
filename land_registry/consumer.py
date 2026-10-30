@@ -71,15 +71,32 @@ async def canonical_map_layers() -> dict:
 
 
 @consumer_router.get("/map/layers/health")
-async def canonical_map_layers_health() -> dict:
-    """Expose the same preflight checks to embedded map consumers."""
+async def canonical_map_layers_health(layer_id: str | None = Query(None)) -> dict:
+    """Expose bounded health checks to embedded map consumers."""
     from land_registry.map_layers import get_map_layer_source
 
     source = get_map_layer_source()
+    layer_ids = None
+    if layer_id is not None:
+        from land_registry.map_layers import get_map_layer
+
+        try:
+            get_map_layer(layer_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        layer_ids = {layer_id}
     if not source.available:
-        return {"available": False, "layers": await source.health()}
+        return {"available": False, "layers": await source.health(layer_ids=layer_ids)}
     try:
-        return {"available": True, "layers": await source.health()}
+        layers = await asyncio.wait_for(source.health(layer_ids=layer_ids), timeout=5)
+        return {"available": True, "layers": layers}
+    except asyncio.TimeoutError as exc:
+        logger.warning("Consumer canonical layer health check timed out")
+        raise HTTPException(
+            status_code=503,
+            detail="Canonical map health check timed out",
+            headers={"Retry-After": "5", "Cache-Control": "no-store"},
+        ) from exc
     except Exception as exc:
         logger.warning("Consumer canonical layer health check failed: %s", exc)
         raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable") from exc
@@ -135,12 +152,27 @@ async def canonical_map_layer_feature_details(layer_id: str, feature_id: int = A
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     source = get_map_layer_source()
     if not source.available:
-        raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable")
+        raise HTTPException(
+            status_code=503,
+            detail="Canonical PostGIS map source unavailable",
+            headers={"Retry-After": "8", "Cache-Control": "no-store"},
+        )
     try:
         payload = await source.read_feature_details(layer_id, feature_id)
     except Exception as exc:
+        if getattr(exc, "sqlstate", None) == "57014":
+            logger.warning("Consumer canonical feature detail timed out for %s/%s: %s", layer_id, feature_id, exc)
+            raise HTTPException(
+                status_code=503,
+                detail="Map feature detail query timed out; retry later",
+                headers={"Retry-After": "8", "Cache-Control": "no-store"},
+            ) from exc
         logger.warning("Consumer canonical feature detail failed for %s/%s: %s", layer_id, feature_id, exc)
-        raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable") from exc
+        raise HTTPException(
+            status_code=503,
+            detail="Canonical PostGIS map source unavailable",
+            headers={"Retry-After": "8", "Cache-Control": "no-store"},
+        ) from exc
     if payload is None:
         raise HTTPException(status_code=404, detail="Map feature not found")
     return payload

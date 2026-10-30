@@ -1,5 +1,6 @@
 """Regression tests for the asyncpg request-path adapters."""
 
+import asyncio
 import sqlite3
 from contextlib import contextmanager
 from copy import deepcopy
@@ -12,6 +13,27 @@ from land_registry import stats_service
 
 def test_asyncpg_placeholder_translation():
     assert stats_service._asyncpg_sql("SELECT %s, %s::jsonb") == "SELECT $1, $2::jsonb"
+
+
+@pytest.mark.asyncio
+async def test_asyncpg_pool_initialization_is_single_flight(monkeypatch):
+    import asyncpg
+
+    source = stats_service._AsyncPostgresSource("postgresql://localhost/stats")
+    created = []
+    pool = object()
+
+    async def create_pool(*args, **kwargs):
+        created.append((args, kwargs))
+        await asyncio.sleep(0.01)
+        return pool
+
+    monkeypatch.setattr(asyncpg, "create_pool", create_pool)
+
+    pools = await asyncio.gather(*(source._get_pool() for _ in range(10)))
+
+    assert len(created) == 1
+    assert all(item is pool for item in pools)
 
 
 @pytest.mark.asyncio
@@ -36,6 +58,49 @@ async def test_async_municipality_lookup_does_not_use_legacy_adapter(monkeypatch
     result = await stats_service.aget_municipality_by_cadastral_code("H501")
 
     assert result == {"cadastral_code": "H501", "name": "Async municipality"}
+
+
+@pytest.mark.asyncio
+async def test_serving_municipality_population_queries_keep_code_filter_pushable(monkeypatch):
+    source = stats_service._AsyncPostgresSource("postgresql://localhost/stats")
+    monkeypatch.setattr(source, "_relations_available", AsyncMock(return_value=True))
+    monkeypatch.setattr(source, "_fetchrow", AsyncMock(return_value={
+        "id": 23091,
+        "cadastral_code": "L781",
+        "official_name": "Verona",
+        "is_provincial_capital": False,
+        "latitude": None,
+        "longitude": None,
+        "postal_code": None,
+        "email": None,
+        "pec_email": None,
+        "website": None,
+        "wikipedia_url": None,
+        "province": "Verona",
+        "province_sigla": "VR",
+        "nuts3": "ITH31",
+        "region": "Veneto",
+        "population_year": 2021,
+        "resident_population": 257838,
+    }))
+    history_fetch = AsyncMock(return_value=[
+        {"year": 2021, "resident_population": 257838},
+    ])
+    monkeypatch.setattr(source, "_fetch", history_fetch)
+
+    result = await source._serving_municipality_by_cadastral_code("L781")
+
+    profile_sql = source._fetchrow.await_args.args[0]
+    history_sql, history_params = history_fetch.await_args.args
+    assert "comune_population_by_year" not in profile_sql
+    assert "municipality_population_stats" not in profile_sql
+    assert "comune_code IN (%s, LPAD(%s, 6, '0'))" in history_sql
+    assert "LTRIM(comune_code" not in history_sql
+    assert history_params == (23091, "23091", "23091")
+    assert result["population"] == {"year": 2021, "resident_population": 257838}
+    assert result["population_history"] == [
+        {"year": 2021, "resident_population": 257838},
+    ]
 
 
 @pytest.mark.asyncio
@@ -378,6 +443,25 @@ async def test_panel_read_model_falls_back_to_local_cache_and_hits_on_repeat(mon
     monkeypatch.setattr(stats_service, "aget_municipality_by_cadastral_code", AsyncMock(return_value=None))
     monkeypatch.setattr(stats_service, "aget_omi_quotes", AsyncMock(return_value={"quotes": []}))
     monkeypatch.setattr(stats_service, "aget_income_profile", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        stats_service,
+        "aget_buildings_for_parcel",
+        AsyncMock(return_value={"buildings": [], "addresses": [], "available": False}),
+    )
+    # This test covers the parcel read-model cache only. The request path also
+    # starts optional OpenData and PVP worker processes; keep those source
+    # adapters isolated so local sibling .env files cannot turn this unit test
+    # into a live 12-second database lookup.
+    monkeypatch.setattr(
+        stats_service,
+        "get_opendata_for_parcel",
+        lambda *_args, **_kwargs: {"records": [], "count": 0, "available": False, "source": "fixture"},
+    )
+    monkeypatch.setattr(
+        stats_service,
+        "get_pvp_for_parcel",
+        lambda *_args, **_kwargs: {"records": [], "count": 0, "available": False, "source": "fixture"},
+    )
     monkeypatch.setattr(stats_service, "_build_parcel_enrichment", build)
     monkeypatch.setattr(stats_service, "_read_local_panel_read_model", read_local)
     monkeypatch.setattr(stats_service, "_write_local_panel_read_model", write_local)

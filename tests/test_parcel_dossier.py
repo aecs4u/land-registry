@@ -320,7 +320,10 @@ async def test_gather_inputs_starts_independent_sources_before_municipality_fini
             timeout=10,
         )
         municipality_finished.set()
-        return {"name": "Palermo", "province": "Palermo", "region": "Sicilia", "istat_code": "082053"}
+        return {
+            "name": "Palermo", "province": "Palermo", "region": "Sicilia",
+            "istat_code": "082053", "procom": 82053,
+        }
 
     async def income_lookup(_code):
         income_overlapped.append(not municipality_finished.is_set())
@@ -351,8 +354,9 @@ async def test_gather_inputs_starts_independent_sources_before_municipality_fini
     monkeypatch.setattr(stats_service, "aget_income_profile", income_lookup)
     monkeypatch.setattr(stats_service, "aget_municipality_solar_potential", AsyncMock(return_value=None))
     monkeypatch.setattr(stats_service, "get_environmental_risks", lambda *_: {"seismic": {"zone": 4}})
+    census_lookup = AsyncMock(return_value=None)
+    monkeypatch.setattr(stats_service, "aget_census_section_at_point", census_lookup)
     for name in (
-        "aget_census_section_at_point",
         "aget_mps04_pga_at_point",
         "aget_seismic_by_istat_code",
         "aget_parcel_hazard_intersections",
@@ -380,6 +384,7 @@ async def test_gather_inputs_starts_independent_sources_before_municipality_fini
     assert qol_overlapped == [True]
     assert len(region_sources_overlapped) == 4
     assert all(region_sources_overlapped)
+    assert census_lookup.await_args.kwargs["municipality"]["procom"] == 82053
 
 
 @pytest.mark.asyncio

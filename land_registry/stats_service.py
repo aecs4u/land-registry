@@ -1473,6 +1473,7 @@ class _AsyncPostgresSource:
         self.dsn = dsn.replace("postgresql+asyncpg://", "postgresql://", 1)
         self.max_connections = max_connections
         self._pool = None
+        self._pool_lock = asyncio.Lock()
         self._retry_at = 0.0
         self._poi_relation_cache: tuple[str | None, float] | None = None
         self._read_model_status_cache: tuple[dict[str, Any], float] | None = None
@@ -1485,22 +1486,26 @@ class _AsyncPostgresSource:
         self._census_relation_cache: tuple[str | None, float] | None = None
 
     async def _get_pool(self):
-        if self._pool is None:
-            import asyncpg
+        if self._pool is not None:
+            return self._pool
+        async with self._pool_lock:
+            if self._pool is None:
+                import asyncpg
 
-            self._pool = await asyncpg.create_pool(
-                self.dsn,
-                min_size=1,
-                max_size=self.max_connections,
-                command_timeout=20,
-                statement_cache_size=0,
-            )
-        return self._pool
+                self._pool = await asyncpg.create_pool(
+                    self.dsn,
+                    min_size=1,
+                    max_size=self.max_connections,
+                    command_timeout=20,
+                    statement_cache_size=0,
+                )
+            return self._pool
 
     async def close(self):
-        if self._pool is not None:
-            await self._pool.close()
-            self._pool = None
+        async with self._pool_lock:
+            if self._pool is not None:
+                pool, self._pool = self._pool, None
+                await pool.close()
 
     async def _fetch(self, sql: str, params: tuple = ()):
         pool = await self._get_pool()
@@ -2544,26 +2549,10 @@ class _AsyncPostgresSource:
                    m.website, m.wikipedia_url,
                    p.name AS province, p.vehicle_code AS province_sigla,
                    p.nuts3_2021 AS nuts3,
-                   r.name AS region,
-                   population.year AS population_year,
-                   population.resident_population
+                   r.name AS region
             FROM serving.municipalities m
             LEFT JOIN serving.provinces p ON p.id = m.province_id
             LEFT JOIN serving.regions r ON r.id = m.region_id
-            LEFT JOIN LATERAL (
-                SELECT year, resident_population
-                FROM (
-                    SELECT year, resident_population
-                    FROM serving.municipality_population_stats
-                    WHERE municipality_id = m.id
-                    UNION ALL
-                    SELECT reference_year::bigint AS year, population::bigint AS resident_population
-                    FROM serving.comune_population_by_year
-                    WHERE LTRIM(comune_code, '0') = m.id::text
-                ) population_rows
-                ORDER BY year DESC
-                LIMIT 1
-            ) population ON TRUE
             WHERE UPPER(m.cadastral_code) = UPPER(%s)
             LIMIT 1
             """,
@@ -2572,12 +2561,6 @@ class _AsyncPostgresSource:
         if row is None:
             return None
         values = {key: _postgres_scalar(row[key]) for key in row.keys()}
-        population = None
-        if values.get("population_year") is not None and values.get("resident_population") is not None:
-            population = {
-                "year": values["population_year"],
-                "resident_population": values["resident_population"],
-            }
         history = await self._fetch(
             """
             SELECT year, resident_population
@@ -2588,12 +2571,20 @@ class _AsyncPostgresSource:
                 UNION ALL
                 SELECT reference_year::bigint AS year, population::bigint AS resident_population
                 FROM serving.comune_population_by_year
-                WHERE LTRIM(comune_code, '0') = %s
+                WHERE comune_code IN (%s, LPAD(%s, 6, '0'))
             ) population_rows
             ORDER BY year
             """,
-            (values["id"], str(values["id"])),
+            (values["id"], str(values["id"]), str(values["id"])),
         )
+        population = None
+        if history:
+            latest = max(history, key=lambda item: int(item["year"]))
+            if latest["resident_population"] is not None:
+                population = {
+                    "year": _postgres_scalar(latest["year"]),
+                    "resident_population": _postgres_scalar(latest["resident_population"]),
+                }
         return {
             "cadastral_code": values.get("cadastral_code"),
             "istat_code": str(values["id"]) if values.get("id") is not None else None,
@@ -4137,9 +4128,32 @@ async def aget_income_profile(cadastral_code: str, year: Optional[int] = None) -
 
 
 async def aget_census_section_at_point(
-    lat: float, lng: float, cadastral_code: Optional[str] = None
+    lat: float,
+    lng: float,
+    cadastral_code: Optional[str] = None,
+    municipality: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Async PostgreSQL-first section lookup with the package store as fallback."""
+    """Resolve a census section locally first, then use PostgreSQL as fallback."""
+    # The bundled 2021 DuckDB copy contains the same official section geometry.
+    # Check its exact polygons before opening the FDW path, whose national
+    # foreign table can take several seconds even for one point.
+    store_path = _census_store_path()
+    if cadastral_code and store_path is not None and store_path.is_file():
+        local_municipality = municipality
+        if local_municipality is None:
+            local_municipality = await asyncio.to_thread(
+                get_municipality_by_cadastral_code, cadastral_code, use_postgres=False
+            )
+        if local_municipality is not None:
+            result = await asyncio.to_thread(
+                _census_section_for_parcel,
+                {"lat": lat, "lng": lng},
+                local_municipality,
+            )
+            if result is not None:
+                result["source"] = "ISTAT Permanent Census 2021 via local DuckDB"
+                return result
+
     source = await _get_async_postgres_source()
     if source is not None and time.monotonic() >= source._retry_at:
         try:
@@ -9952,11 +9966,11 @@ def _census_section_for_parcel(
     point: Optional[Dict[str, float]],
     municipality: Optional[Dict[str, Any]],
 ) -> Optional[Dict[str, Any]]:
-    """Resolve a parcel centroid against its municipality's census sections.
+    """Resolve a point against exact 2021 census-section geometry.
 
     The provisioned 2021 store contains Sicily geometry in UTM 32N while the
-    upstream helper currently assumes that the geometry is WGS84. Restricting
-    the read to one ``PROCOM`` also avoids scanning the national store.
+    upstream helper currently assumes that the geometry is WGS84. Restrict the
+    read to one ``PROCOM`` so the local candidate query stays bounded.
     """
     if not point or not municipality or municipality.get("procom") is None:
         return None
@@ -9972,10 +9986,74 @@ def _census_section_for_parcel(
         try:
             columns = [row[0] for row in connection.execute("DESCRIBE sections").fetchall()]
             geometry_index = columns.index("geom")
-            rows = connection.execute(
-                "SELECT * FROM sections WHERE procom = ?",
-                [int(municipality["procom"])],
-            ).fetchall()
+            procom = int(municipality["procom"])
+            has_centroids = {"centroid_lat", "centroid_lng"} <= set(columns)
+            rows_by_crs: list[tuple[int, list[tuple]]] = []
+            if has_centroids:
+                centroid_rows = connection.execute(
+                    """
+                    SELECT sez21_id, centroid_lat, centroid_lng
+                    FROM sections
+                    WHERE procom = ?
+                    """,
+                    [procom],
+                ).fetchall()
+                for epsg in (32632, 32633):
+                    transformer = Transformer.from_crs("EPSG:4326", f"EPSG:{epsg}", always_xy=True)
+                    x, y = transformer.transform(point["lng"], point["lat"])
+
+                    def centroid_distance(row: tuple) -> float:
+                        _, centroid_y, centroid_x = row
+                        try:
+                            dx = float(centroid_x) - x
+                            dy = float(centroid_y) - y
+                        except (TypeError, ValueError):
+                            return math.inf
+                        return dx * dx + dy * dy if math.isfinite(dx) and math.isfinite(dy) else math.inf
+
+                    ranked = sorted(centroid_rows, key=centroid_distance)
+                    candidate_limits = sorted({
+                        min(limit, len(ranked)) for limit in (32, 128, 512, 2048, 10000)
+                    } | ({len(ranked)} if ranked else set()))
+                    checked = 0
+                    for candidate_limit in candidate_limits:
+                        candidate_ids = [row[0] for row in ranked[checked:candidate_limit]]
+                        matching_id = None
+                        for offset in range(0, len(candidate_ids), 500):
+                            id_batch = candidate_ids[offset:offset + 500]
+                            placeholders = ", ".join("?" for _ in id_batch)
+                            candidates = connection.execute(
+                                f"SELECT sez21_id, geom FROM sections WHERE sez21_id IN ({placeholders})",
+                                id_batch,
+                            ).fetchall()
+                            geometries = {sez21_id: geometry for sez21_id, geometry in candidates}
+                            for sez21_id in id_batch:
+                                geometry_bytes = geometries.get(sez21_id)
+                                if geometry_bytes is None:
+                                    continue
+                                geometry = wkb.loads(bytes(geometry_bytes))
+                                if geometry.covers(Point(x, y)):
+                                    matching_id = sez21_id
+                                    break
+                            if matching_id is not None:
+                                break
+                        if matching_id is not None:
+                            full_row = connection.execute(
+                                "SELECT * FROM sections WHERE sez21_id = ?",
+                                [matching_id],
+                            ).fetchone()
+                            if full_row is not None:
+                                rows_by_crs.append((epsg, [full_row]))
+                            break
+                        checked = candidate_limit
+                    if rows_by_crs:
+                        break
+            elif procom is not None:
+                rows = connection.execute(
+                    "SELECT * FROM sections WHERE procom = ?",
+                    [procom],
+                ).fetchall()
+                rows_by_crs.append((32632, rows))
         finally:
             connection.close()
 
@@ -9986,45 +10064,43 @@ def _census_section_for_parcel(
             transformer = Transformer.from_crs("EPSG:4326", f"EPSG:{epsg}", always_xy=True)
             projected_points.append((epsg, Point(*transformer.transform(point["lng"], point["lat"]))))
 
-        for row in rows:
-            geometry = wkb.loads(bytes(row[geometry_index]))
-            projected_point = next(
-                (candidate for epsg, candidate in projected_points if geometry.covers(candidate)),
-                None,
-            )
-            if projected_point is None:
-                continue
-            props = {}
-            for name, value in zip(columns, row, strict=True):
-                if name == "geom":
+        for epsg, rows in rows_by_crs:
+            projected_point = next(candidate for candidate_epsg, candidate in projected_points if candidate_epsg == epsg)
+            for row in rows:
+                geometry = wkb.loads(bytes(row[geometry_index]))
+                if not geometry.covers(projected_point):
                     continue
-                if hasattr(value, "item"):
-                    value = value.item()
-                props[name] = value
-            props.setdefault("area_sqm", round(float(geometry.area), 2))
-            props["ratios"] = {
-                "education_tertiary_rate": round(props["p90"] / props["p83"], 4)
-                if props.get("p90") is not None and props.get("p83") not in (None, 0) else None,
-                "employment_rate_working_age": round(
-                    props["p101"] / sum(props.get(name) or 0 for name in (
-                        "p17", "p18", "p19", "p20", "p21", "p22",
-                        "p23", "p24", "p25", "p26",
-                    )),
-                    4,
-                ) if props.get("p101") is not None and sum(
-                    props.get(name) or 0 for name in (
-                        "p17", "p18", "p19", "p20", "p21", "p22",
-                        "p23", "p24", "p25", "p26",
-                    )
-                ) else None,
-                "foreign_resident_share": round(props["st1"] / props["p1"], 4)
-                if props.get("st1") is not None and props.get("p1") not in (None, 0) else None,
-                "vacancy_rate": round(props["a3"] / props["a8"], 4)
-                if props.get("a3") is not None and props.get("a8") not in (None, 0) else None,
-                "avg_household_size": round(props["p1"] / props["pf1"], 4)
-                if props.get("p1") is not None and props.get("pf1") not in (None, 0) else None,
-            }
-            return {"type": "Feature", "properties": props, "geometry": None}
+                props = {}
+                for name, value in zip(columns, row, strict=True):
+                    if name == "geom":
+                        continue
+                    if hasattr(value, "item"):
+                        value = value.item()
+                    props[name] = value
+                props.setdefault("area_sqm", round(float(geometry.area), 2))
+                props["ratios"] = {
+                    "education_tertiary_rate": round(props["p90"] / props["p83"], 4)
+                    if props.get("p90") is not None and props.get("p83") not in (None, 0) else None,
+                    "employment_rate_working_age": round(
+                        props["p101"] / sum(props.get(name) or 0 for name in (
+                            "p17", "p18", "p19", "p20", "p21", "p22",
+                            "p23", "p24", "p25", "p26",
+                        )),
+                        4,
+                    ) if props.get("p101") is not None and sum(
+                        props.get(name) or 0 for name in (
+                            "p17", "p18", "p19", "p20", "p21", "p22",
+                            "p23", "p24", "p25", "p26",
+                        )
+                    ) else None,
+                    "foreign_resident_share": round(props["st1"] / props["p1"], 4)
+                    if props.get("st1") is not None and props.get("p1") not in (None, 0) else None,
+                    "vacancy_rate": round(props["a3"] / props["a8"], 4)
+                    if props.get("a3") is not None and props.get("a8") not in (None, 0) else None,
+                    "avg_household_size": round(props["p1"] / props["pf1"], 4)
+                    if props.get("p1") is not None and props.get("pf1") not in (None, 0) else None,
+                }
+                return {"type": "Feature", "properties": props, "geometry": None}
     except Exception as exc:  # pragma: no cover - optional store/CRS fallback
         logger.warning("Parcel census lookup failed: %s", exc)
     return None
@@ -10886,6 +10962,8 @@ def census_db_available() -> bool:
 
 async def acensus_db_available() -> bool:
     """Check the aecs4u-stats census foreign table, then the package store."""
+    if await asyncio.to_thread(census_db_available):
+        return True
     source = await _get_async_postgres_source()
     if source is not None and time.monotonic() >= source._retry_at:
         try:
@@ -10896,7 +10974,7 @@ async def acensus_db_available() -> bool:
         except Exception:
             source._retry_at = time.monotonic() + 60
             logger.debug("aecs4u-stats census foreign table is unavailable", exc_info=True)
-    return await asyncio.to_thread(census_db_available)
+    return False
 
 
 def _local_census_sections_for_comune(

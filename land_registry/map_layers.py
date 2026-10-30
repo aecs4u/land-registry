@@ -2246,13 +2246,23 @@ class PostgresMapLayerSource:
         columns = self._source_columns(layer, self._properties_for(layer, layer_source))
         relation = await self._resolve_relation_for(layer, layer_source)
         async with layer_source.connection() as connection:
-            row = await connection.fetchrow(
-                _asyncpg_sql(
-                    f"select {columns} from {relation} t "
-                    f"where {self._column_ref('t', layer.id_column)} = %s limit 1"
-                ),
-                feature_id,
-            )
+            try:
+                row = await connection.fetchrow(
+                    _asyncpg_sql(
+                        f"select {columns} from {relation} t "
+                        f"where {self._column_ref('t', layer.id_column)} = %s limit 1"
+                    ),
+                    feature_id,
+                )
+            except Exception as exc:
+                if getattr(exc, "sqlstate", None) == "57014":
+                    log.warning(
+                        "Canonical map feature row lookup timed out for %s/%s: %s",
+                        layer_id,
+                        feature_id,
+                        exc,
+                    )
+                raise
             if not row:
                 return None
             result: dict[str, Any] = {
@@ -2486,6 +2496,8 @@ class PostgresMapLayerSource:
 
 _source: Optional[PostgresMapLayerSource] = None
 _search_source: Optional[PostgresMapLayerSource] = None
+_search_warmup_task: Optional[asyncio.Task[None]] = None
+_search_warmup_loop: Optional[asyncio.AbstractEventLoop] = None
 _source_lock = threading.Lock()
 
 
@@ -2533,18 +2545,58 @@ def get_map_search_source() -> PostgresMapLayerSource:
 
 
 async def warm_map_search_source() -> None:
-    """Open the reserved search pool ahead of the first query.
+    """Warm both reserved pools and resolve the cadastral source before search.
 
-    Creating the pool lazily put its connection setup (seconds under database
-    load) inside the first search's timeout, which then returned 503.
+    Parcel search can use a dedicated cadastral database. Warming only the
+    Stats pool left the cadastral pool setup and source-selection probes inside
+    the first search deadline.
     """
-    connection_source = get_map_search_source().connection_source
-    if connection_source is None:
+    source = get_map_search_source()
+    connection_sources = {
+        id(connection_source): connection_source
+        for connection_source in (
+            source.connection_source,
+            source.cadastral_connection_source,
+        )
+        if connection_source is not None
+    }
+    if not connection_sources:
         return
+    for connection_source in connection_sources.values():
+        try:
+            await connection_source._get_pool()
+        except Exception as exc:
+            log.warning("Map search pool warm-up failed (search will retry lazily): %s", exc)
     try:
-        await connection_source._get_pool()
+        await source._layer_source_for(get_map_layer("cadastral-parcels"))
     except Exception as exc:
-        log.warning("Map search pool warm-up failed (search will retry lazily): %s", exc)
+        log.warning(
+            "Map cadastral search source warm-up failed (search will retry lazily): %s",
+            exc,
+        )
+
+
+def start_map_search_warmup() -> None:
+    """Schedule one shared search-pool warm-up for the current event loop."""
+    global _search_warmup_task, _search_warmup_loop
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    if _search_warmup_task is not None and _search_warmup_loop is loop:
+        return
+    _search_warmup_loop = loop
+    _search_warmup_task = loop.create_task(warm_map_search_source())
+
+
+async def ensure_map_search_source_warm(timeout: float = 15.0) -> None:
+    """Wait briefly for the shared startup warm-up before a first search."""
+    task = _search_warmup_task
+    if task is None or _search_warmup_loop is not asyncio.get_running_loop():
+        start_map_search_warmup()
+        task = _search_warmup_task
+    if task is not None:
+        await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
 
 
 async def warm_low_zoom_map_tiles() -> None:

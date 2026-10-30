@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from land_registry.main import app
 from land_registry.rate_limit import RateLimitMiddleware
+from land_registry.service_health import ServiceHealthMiddleware, service_health_snapshot
 from land_registry.tile_cache import TileCache
 
 
@@ -24,6 +25,38 @@ def _source(available=True, layers=None, health_error=None):
     else:
         source.health = AsyncMock(return_value=layers or [])
     return source
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/v1/sales/map-points",
+        "/api/v1/sales/nearby-points",
+        "/api/v1/sales/pvp/123",
+    ],
+)
+@pytest.mark.asyncio
+async def test_sales_route_failures_are_reported_as_degraded_health(monkeypatch, path):
+    monkeypatch.setattr("land_registry.service_health._LAST_STATUS", {})
+
+    async def failing_route(scope, receive, send):
+        await send({"type": "http.response.start", "status": 503, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    messages = []
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        messages.append(message)
+
+    await ServiceHealthMiddleware(failing_route)(
+        {"type": "http", "path": path}, receive, send
+    )
+
+    assert service_health_snapshot()["sales_feed"]["status"] == "degraded"
+    assert service_health_snapshot()["sales_feed"]["http_status"] == 503
 
 
 # --- /ready -----------------------------------------------------------------

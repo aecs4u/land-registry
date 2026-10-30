@@ -431,9 +431,9 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Could not schedule datashader JIT warm-up (non-fatal): {e}")
 
     try:
-        from land_registry.map_layers import warm_map_search_source
+        from land_registry.map_layers import start_map_search_warmup
 
-        asyncio.create_task(warm_map_search_source())
+        start_map_search_warmup()
     except Exception as e:
         logger.warning(f"Could not schedule map search pool warm-up (non-fatal): {e}")
 

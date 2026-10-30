@@ -506,8 +506,7 @@ def test_municipality_search_selects_a_resolved_name():
 
 @pytest.mark.asyncio
 async def test_map_search_runs_parcel_lookup_on_reserved_search_pool():
-    # On the shared tile pool the lookup waited behind tile rendering and the
-    # 2 s timeout returned 503 even though the indexed query takes milliseconds.
+    # Keep parcel search on its reserved pool instead of queuing behind tiles.
     from fastapi import Response
     from land_registry.routers import api as api_module
 
@@ -517,10 +516,12 @@ async def test_map_search_runs_parcel_lookup_on_reserved_search_pool():
     search_source.search_parcels_by_reference = AsyncMock(return_value=[{
         "id": 5226219, "canonical_reference": "L781B016200.14", "municipality_name": "Verona", "sheet": "162",
     }])
-    with patch.object(api_module, "get_map_layer_source", return_value=tile_source), \
+    with patch.object(api_module, "ensure_map_search_source_warm", AsyncMock()) as warm_search, \
+         patch.object(api_module, "get_map_layer_source", return_value=tile_source), \
          patch.object(api_module, "get_map_search_source", return_value=search_source):
         result = await api_module.search_map(Response(), query="L781B016200.14", limit=10)
 
+    warm_search.assert_awaited_once()
     search_source.search_parcels_by_reference.assert_awaited_once_with("L781B016200.14", 10)
     tile_source.search_parcels_by_reference.assert_not_awaited()
     assert result["results"][0]["label"] == "L781B016200.14"
@@ -532,10 +533,21 @@ async def test_search_pool_is_warmed_ahead_of_first_query():
 
     connection_source = MagicMock()
     connection_source._get_pool = AsyncMock()
-    with patch.object(map_layers, "get_map_search_source", return_value=MagicMock(connection_source=connection_source)):
+    cadastral_connection_source = MagicMock()
+    cadastral_connection_source._get_pool = AsyncMock()
+    search_source = MagicMock(
+        connection_source=connection_source,
+        cadastral_connection_source=cadastral_connection_source,
+    )
+    search_source._layer_source_for = AsyncMock()
+    with patch.object(map_layers, "get_map_search_source", return_value=search_source):
         await map_layers.warm_map_search_source()
 
     connection_source._get_pool.assert_awaited_once()
+    cadastral_connection_source._get_pool.assert_awaited_once()
+    search_source._layer_source_for.assert_awaited_once_with(
+        map_layers.get_map_layer("cadastral-parcels")
+    )
 
 
 def test_catalog_carries_presentation_fields_for_the_layers_card():

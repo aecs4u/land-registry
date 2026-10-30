@@ -1,5 +1,7 @@
 -- Run in the agenziademanio PostgreSQL database before refreshing the stats FDW.
 -- public.concessions already stores EPSG:4326 geometry with a GiST index.
+-- Apply agenziademanio-feature-row-index.sql separately for row_id lookups;
+-- CREATE INDEX CONCURRENTLY cannot be included in this transaction.
 -- The former view reparsed and transformed the entire JSON source on each tile.
 -- Keep the existing view contract and dependencies while exposing stored geom
 -- directly, so a spatial restriction can reach the source index.

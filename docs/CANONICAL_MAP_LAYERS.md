@@ -154,7 +154,10 @@ foreign table `aecs4u-stats.agenziademanio.concessions`, mapped to
 `agenziademanio.agenziademanio.v_concession_map_features`. The foreign server
 targets the `agenziademanio` PostgreSQL database. This view reads the stored
 EPSG:4326 geometries and GiST index on `public.concessions`, without parsing or
-transforming source JSON during tile requests. It also exposes the administrative
+transforming source JSON during tile requests. Detail lookups filter by `row_id`;
+the source also needs the btree index created by
+`scripts/sql/agenziademanio-feature-row-index.sql` to avoid scanning the full
+concession table. The view also exposes the administrative
 label, source release, and geometry validation/repair flags used in map details.
 Related detail foreign tables map to the database's `agenziademanio.v_*` views.
 The `agenziademanio.concession_details` foreign table maps to

@@ -7,6 +7,8 @@ in place.
 
 Prepare the indexed source view with
 ``scripts/sql/agenziademanio-map-features.sql`` in the agenziademanio database.
+Apply ``scripts/sql/agenziademanio-feature-row-index.sql`` there as well so
+feature-detail lookups use a btree index on ``public.concessions.row_id``.
 """
 
 from __future__ import annotations
@@ -225,7 +227,8 @@ async def refresh(dsn: str) -> None:
             # The raw v_concessions view parses GeoJSON and repairs/transforms
             # every geometry while evaluating a tile bbox. Use its indexed
             # map view backed by public.concessions instead; keep details on their existing
-            # Agenzia views.
+            # Agenzia views. The source row_id btree is prepared separately because
+            # its CREATE INDEX CONCURRENTLY statement cannot run in this transaction.
             for table, (remote_schema, remote_table) in FOREIGN_TABLE_MAPPINGS.items():
                 await _set_foreign_table_option(
                     connection, table, "schema_name", remote_schema

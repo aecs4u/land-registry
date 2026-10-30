@@ -54,6 +54,8 @@ class ServiceHealthMiddleware:
         ("/api/v1/enrichment/municipality/", "municipality_reference"),
         ("/api/v1/map/search", "map_search"),
         ("/api/v1/sales/nearby-points", "sales_feed"),
+        ("/api/v1/sales/map-points", "sales_feed"),
+        ("/api/v1/sales/pvp/", "sales_feed"),
     )
 
     def __init__(self, app):
