@@ -6,8 +6,8 @@
 
 The default run is a dry run. Matching happens in the dedicated `cadastral`
 database, where the parcel GiST indexes live. `--apply` stages the result in
-`aecs4u-stats` and atomically replaces the local crosswalk after computation
-finishes successfully.
+`agenziademanio` and atomically replaces the source-owned crosswalk after
+computation finishes successfully.
 """
 
 from __future__ import annotations
@@ -181,7 +181,7 @@ CREATE_STAGE_SQL = f"""
 """
 
 
-def _database_dsns() -> tuple[str, str]:
+def _database_dsns() -> tuple[str, str, str]:
     from dotenv import dotenv_values
 
     values = {
@@ -208,15 +208,23 @@ def _database_dsns() -> tuple[str, str]:
     if not stats_dsn.startswith(("postgres://", "postgresql://")):
         raise RuntimeError("The stats database URL must use PostgreSQL")
 
+    stats_url = urlsplit(stats_dsn)
     cadastral_dsn = str(values.get("CADASTRAL_POSTGRES_DSN") or "").strip()
     if cadastral_dsn:
         cadastral_dsn = cadastral_dsn.replace("postgresql+asyncpg://", "postgresql://", 1)
     else:
-        parsed = urlsplit(stats_dsn)
-        cadastral_dsn = urlunsplit(parsed._replace(path="/cadastral"))
+        cadastral_dsn = urlunsplit(stats_url._replace(path="/cadastral"))
     if not cadastral_dsn.startswith(("postgres://", "postgresql://")):
         raise RuntimeError("The cadastral database URL must use PostgreSQL")
-    return stats_dsn, cadastral_dsn
+
+    agenziademanio_dsn = str(values.get("AGENZIADEMANIO_POSTGRES_DSN") or "").strip()
+    if agenziademanio_dsn:
+        agenziademanio_dsn = agenziademanio_dsn.replace("postgresql+asyncpg://", "postgresql://", 1)
+    else:
+        agenziademanio_dsn = urlunsplit(stats_url._replace(path="/agenziademanio"))
+    if not agenziademanio_dsn.startswith(("postgres://", "postgresql://")):
+        raise RuntimeError("The Agenzia Demanio database URL must use PostgreSQL")
+    return stats_dsn, cadastral_dsn, agenziademanio_dsn
 
 
 def _stage_record(row) -> tuple:
@@ -234,7 +242,7 @@ async def _write_stage_rows(connection, rows: list[tuple]) -> None:
 
 async def _process_batch(
     cadastral,
-    stats_writer,
+    source_writer,
     records: list,
     totals: Counter,
 ) -> None:
@@ -284,13 +292,13 @@ async def _process_batch(
             async for row in cadastral.cursor(match_sql, prefetch=1000):
                 method = row["match_method"]
                 totals[method] += 1
-                if stats_writer is not None:
+                if source_writer is not None:
                     staged_rows.append(_stage_record(row))
                     if len(staged_rows) >= 2000:
-                        await _write_stage_rows(stats_writer, staged_rows)
+                        await _write_stage_rows(source_writer, staged_rows)
                         staged_rows.clear()
         if staged_rows:
-            await _write_stage_rows(stats_writer, staged_rows)
+            await _write_stage_rows(source_writer, staged_rows)
 
     totals["processed_features"] += len(records)
     if totals["processed_features"] % 10000 < len(records):
@@ -302,7 +310,7 @@ async def _process_batch(
         )
 
 
-async def _validate_databases(stats_source, cadastral) -> None:
+async def _validate_databases(stats_source, cadastral, source_writer=None) -> None:
     from land_registry.cadastral_map_views import regional_health
 
     stats_database = await stats_source.fetchval("SELECT current_database()")
@@ -311,6 +319,10 @@ async def _validate_databases(stats_source, cadastral) -> None:
         raise RuntimeError(f"Expected aecs4u-stats, connected to {stats_database!r}")
     if cadastral_database != "cadastral":
         raise RuntimeError(f"Expected cadastral, connected to {cadastral_database!r}")
+    if source_writer is not None:
+        source_database = await source_writer.fetchval("SELECT current_database()")
+        if source_database != "agenziademanio":
+            raise RuntimeError(f"Expected agenziademanio, connected to {source_database!r}")
     if await stats_source.fetchval("SELECT to_regclass('agenziademanio.concessions')") is None:
         raise RuntimeError("agenziademanio.concessions is missing from aecs4u-stats")
     if await cadastral.fetchval("SELECT to_regclass('spatial.cadastral_parcel')") is None:
@@ -322,15 +334,15 @@ async def _validate_databases(stats_source, cadastral) -> None:
         )
 
 
-async def _apply_stage(stats_writer) -> None:
+async def _apply_stage(source_writer) -> None:
     ddl = DDL_PATH.read_text(encoding="utf-8")
-    async with stats_writer.transaction():
-        await stats_writer.execute("SET LOCAL lock_timeout = '5s'")
+    async with source_writer.transaction():
+        await source_writer.execute("SET LOCAL lock_timeout = '5s'")
         for statement in ddl.split(";"):
             if statement.strip():
-                await stats_writer.execute(statement)
-        await stats_writer.execute("DELETE FROM agenziademanio.concession_parcel_links")
-        await stats_writer.execute(f"""
+                await source_writer.execute(statement)
+        await source_writer.execute("DELETE FROM agenziademanio.concession_parcel_links")
+        await source_writer.execute(f"""
             INSERT INTO agenziademanio.concession_parcel_links (
                 snapshot_id,
                 concession_row_id,
@@ -359,14 +371,14 @@ async def _apply_stage(stats_writer) -> None:
                    now()
             FROM {STAGE_TABLE}
         """)
-        await stats_writer.execute("ANALYZE agenziademanio.concession_parcel_links")
+        await source_writer.execute("ANALYZE agenziademanio.concession_parcel_links")
 
 
 async def refresh(*, apply: bool, batch_size: int) -> None:
     import asyncpg
 
-    stats_dsn, cadastral_dsn = _database_dsns()
-    stats_source = stats_writer = cadastral = None
+    stats_dsn, cadastral_dsn, agenziademanio_dsn = _database_dsns()
+    stats_source = source_writer = cadastral = None
     totals: Counter = Counter()
     try:
         stats_source = await asyncpg.connect(
@@ -378,14 +390,14 @@ async def refresh(*, apply: bool, batch_size: int) -> None:
             server_settings={"application_name": "refresh_agenziademanio_parcel_links"},
         )
         if apply:
-            stats_writer = await asyncpg.connect(
-                stats_dsn, timeout=10, command_timeout=3600,
+            source_writer = await asyncpg.connect(
+                agenziademanio_dsn, timeout=10, command_timeout=3600,
                 server_settings={"application_name": "refresh_agenziademanio_parcel_links_writer"},
             )
-        await _validate_databases(stats_source, cadastral)
+        await _validate_databases(stats_source, cadastral, source_writer)
         await cadastral.execute(CREATE_BATCH_SQL)
-        if stats_writer is not None:
-            await stats_writer.execute(CREATE_STAGE_SQL)
+        if source_writer is not None:
+            await source_writer.execute(CREATE_STAGE_SQL)
 
         mode = "apply" if apply else "dry run"
         print(f"Starting {mode}; parcel matches will be calculated in cadastral.", flush=True)
@@ -394,10 +406,10 @@ async def refresh(*, apply: bool, batch_size: int) -> None:
             async for row in stats_source.cursor(SOURCE_SQL, prefetch=batch_size):
                 batch.append(row)
                 if len(batch) >= batch_size:
-                    await _process_batch(cadastral, stats_writer, batch, totals)
+                    await _process_batch(cadastral, source_writer, batch, totals)
                     batch.clear()
             if batch:
-                await _process_batch(cadastral, stats_writer, batch, totals)
+                await _process_batch(cadastral, source_writer, batch, totals)
 
         if totals["processed_features"] == 0:
             raise RuntimeError("No concession geometries were read; the existing crosswalk was left unchanged")
@@ -412,15 +424,15 @@ async def refresh(*, apply: bool, batch_size: int) -> None:
             flush=True,
         )
         if apply:
-            await _apply_stage(stats_writer)
-            stored_count = await stats_writer.fetchval(
+            await _apply_stage(source_writer)
+            stored_count = await source_writer.fetchval(
                 "SELECT count(*) FROM agenziademanio.concession_parcel_links"
             )
-            print(f"Replaced aecs4u-stats.agenziademanio.concession_parcel_links with {stored_count:,} rows.", flush=True)
+            print(f"Replaced agenziademanio.agenziademanio.concession_parcel_links with {stored_count:,} rows.", flush=True)
         else:
             print("Dry run complete; no persistent stats database changes were made.", flush=True)
     finally:
-        connections = [connection for connection in (stats_source, stats_writer, cadastral) if connection]
+        connections = [connection for connection in (stats_source, source_writer, cadastral) if connection]
         if connections:
             await asyncio.gather(*(connection.close() for connection in connections), return_exceptions=True)
 

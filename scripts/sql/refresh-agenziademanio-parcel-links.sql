@@ -1,6 +1,6 @@
--- Schema for the locally stored spatial concession-to-parcel crosswalk.
+-- Schema for the source-owned spatial concession-to-parcel crosswalk.
 -- The refresh script computes matches against the separate `cadastral`
--- database and replaces the rows atomically in `aecs4u-stats`.
+-- database and replaces the rows atomically in `agenziademanio`.
 
 CREATE SCHEMA IF NOT EXISTS agenziademanio;
 

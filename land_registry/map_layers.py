@@ -2389,8 +2389,8 @@ class PostgresMapLayerSource:
                     snapshot_id,
                 )
 
-            # Spatial parcel links are computed and stored locally in Stats;
-            # they are not part of the remote Agenzia source database.
+            # Spatial parcel links are source-owned in Agenzia and exposed in
+            # Stats through postgres_fdw.
             result["related"]["cadastral_parcels"] = await related_rows(
                 "select * from agenziademanio.concession_parcel_links "
                 "where snapshot_id = %s and concession_row_id = %s "

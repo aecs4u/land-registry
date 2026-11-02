@@ -165,8 +165,8 @@ The `agenziademanio.concession_details` foreign table maps to
 merges the original concession record and attributes with its snapshot,
 resource, administrative assignment, document and Sicily-contract records,
 institution targets, and regional source audits. One-to-many source rows are
-aggregated as JSON arrays so a concession stays one detail record. The local
-`concession_parcel_links` crosswalk is added by the land-registry detail API.
+aggregated as JSON arrays so a concession stays one detail record. The source-owned
+`concession_parcel_links` crosswalk is exposed by the land-registry detail API.
 Run `scripts/sql/agenziademanio-map-features.sql` in the source database to
 prepare this view. The view includes polygon footprints and WGS84 point
 records, excluding duplicate point imports in other coordinate systems.
@@ -177,21 +177,24 @@ Stats foreign table.
 Run `scripts/update_agenziademanio_fdw.py` to create any missing foreign-table
 definitions and refresh the mappings in place.
 
-Concession-to-parcel matches are stored locally in
-`aecs4u-stats.agenziademanio.concession_parcel_links`, one row per concession
-feature and parcel identity. This is a spatially calculated crosswalk, not a
-source cadastral reference: polygon rows require positive-area overlap, while
-point rows use `ST_Covers` (a point on a parcel boundary can therefore match
-both adjacent parcels). It records the parcel ID/reference, source releases,
-match method, and polygon overlap area in EPSG:3035 square metres. Refresh it
-after either source changes by running
+Concession-to-parcel matches are stored in the source-owned
+`agenziademanio.agenziademanio.concession_parcel_links`, one row per concession
+feature and parcel identity. `aecs4u-stats.agenziademanio.concession_parcel_links`
+exposes that relation through `postgres_fdw`. This is a spatially calculated
+crosswalk, not a source cadastral reference: polygon rows require positive-area
+overlap, while point rows use `ST_Covers` (a point on a parcel boundary can
+therefore match both adjacent parcels). It records the parcel ID/reference,
+source releases, match method, and polygon overlap area in EPSG:3035 square
+metres. Refresh it after either source changes by running
 `.venv/bin/python scripts/refresh_agenziademanio_parcel_links.py --apply`.
 The command reads concessions from `aecs4u-stats`, performs the spatial match
 against `cadastral.spatial.cadastral_parcel` where the regional GiST indexes
-are available, and atomically replaces the crosswalk in stats. Without
-`--apply`, it reports the calculated link counts as a dry run. The cadastral
-parcel view must first be prepared with `scripts/prepare_cadastral_map.py`.
-The schema and indexes are defined in
+are available, and atomically replaces the crosswalk in the `agenziademanio`
+database. The refresh derives that connection from `STATS_POSTGRES_DSN` by
+switching the database name, or uses `AGENZIADEMANIO_POSTGRES_DSN` when set.
+Without `--apply`, it reports the calculated link counts as a dry
+run. The cadastral parcel view must first be prepared with
+`scripts/prepare_cadastral_map.py`. The schema and indexes are defined in
 `scripts/sql/refresh-agenziademanio-parcel-links.sql`.
 The selected-parcel sidebar reads this crosswalk by the parcel's canonical map
 ID through `/api/v1/enrichment/parcel/agenziademanio/{parcel_id}`. The section
