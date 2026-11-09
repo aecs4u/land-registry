@@ -293,6 +293,15 @@ Deviations from the plan above:
   also lives in `anncsu` in the local database.
 - `docs/MAP_SRS.md` has the new requirements MAP-FR-064 to 067, and the ANNCSU
   entry in `source_catalog.py` now states the address-search reuse.
+- **Fixes after manual testing (2026-11-10), "via antigone 99, 90151 palermo":**
+  (1) five-digit postal codes (CAP) are removed before parsing, so
+  "90151 palermo" resolves to Palermo; (2) the municipality name lookup scanned
+  `istat.v_comuni_map` (about 3 s per query) and timed out under load, which
+  the page showed as "no match". Names now come from an in-memory index of all
+  ~7,900 municipalities, loaded once on the first search over the reserved
+  search pool and refreshed every 6 hours; if it cannot load, the per-query
+  search runs with a longer limit and a retry; if that also fails the API
+  returns 503 and the page says the search is unavailable instead of "no match".
 - Privacy wording (map card, `/privacy`) now says the server forwards the text
   to Nominatim, which no longer sees the visitor's IP address.
 

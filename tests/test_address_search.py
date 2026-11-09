@@ -302,3 +302,46 @@ def test_postal_code_in_the_query_is_ignored_end_to_end(monkeypatch):
     )
     results = asyncio.run(api._search_addresses("via antigone 99, 90151 palermo", Source(), 5))
     assert seen["hint"] == "palermo" and results[0]["label"] == "Via Antigone 99, Palermo"
+
+
+def test_municipality_names_come_from_an_in_memory_index_not_a_per_query_scan():
+    import asyncio
+    from contextlib import asynccontextmanager
+
+    from land_registry.routers import api
+
+    fetches = []
+
+    class Connection:
+        async def fetch(self, sql, *args):
+            fetches.append(sql)
+            return [
+                {"canonical_name": "Palermo", "istat_code": "82053"},
+                {"canonical_name": "Palma di Montechiaro", "istat_code": "84026"},
+                {"canonical_name": "Castro", "istat_code": "75017"},
+                {"canonical_name": "Castro", "istat_code": "16073"},
+            ]
+
+    class Pool:
+        @asynccontextmanager
+        async def connection(self):
+            yield Connection()
+
+    class Source:
+        connection_source = Pool()
+
+        async def search_municipalities(self, name, limit):
+            raise AssertionError("the per-query municipality scan must not run when the index loads")
+
+    api._municipality_index = None
+    api._municipality_index_task = None
+
+    async def scenario():
+        source = Source()
+        assert [m["istat_code"] for m in await api._resolve_address_municipalities(source, "Palermo")] == ["82053"]
+        assert [m["istat_code"] for m in await api._resolve_address_municipalities(source, "palerm")] == ["82053"]
+        assert {m["istat_code"] for m in await api._resolve_address_municipalities(source, "castro")} == {"75017", "16073"}
+        assert len(fetches) == 1  # one load serves every lookup
+
+    asyncio.run(scenario())
+    api._municipality_index = None

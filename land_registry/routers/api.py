@@ -4570,15 +4570,77 @@ def _address_label(match: dict[str, Any], municipality: str) -> str:
 
 _address_municipality_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _ADDRESS_MUNICIPALITY_TTL_SECONDS = 3600
+_municipality_index: Optional[tuple[float, list[dict[str, Any]]]] = None
+_municipality_index_task: Optional["asyncio.Task[Any]"] = None
+_MUNICIPALITY_INDEX_TTL_SECONDS = 6 * 3600
+
+
+async def _load_municipality_index(search_source: Any) -> list[dict[str, Any]]:
+    """Every municipality's name and ISTAT code, read once over the reserved search pool.
+
+    Matching a place name against ``istat.v_comuni_map`` costs about three
+    seconds per query (it scans the whole view), which is longer than the page
+    waits. Keeping the ~8,000 names in memory makes address lookups instant.
+    """
+    global _municipality_index
+    cached = _municipality_index
+    if cached and time.monotonic() - cached[0] < _MUNICIPALITY_INDEX_TTL_SECONDS:
+        return cached[1]
+    async with search_source.connection_source.connection() as connection:
+        rows = await asyncio.wait_for(
+            connection.fetch("SELECT t.name AS canonical_name, t.pro_com::text AS istat_code FROM istat.v_comuni_map AS t"),
+            timeout=25.0,
+        )
+    index = [{"canonical_name": r["canonical_name"], "istat_code": r["istat_code"]} for r in rows]
+    if index:
+        _municipality_index = (time.monotonic(), index)
+    return index
+
+
+def _warm_municipality_index(search_source: Any) -> None:
+    """Start loading the name index in the background (once); never blocks or raises."""
+    global _municipality_index_task
+    if getattr(search_source, "connection_source", None) is None:
+        return
+    cached = _municipality_index
+    if cached and time.monotonic() - cached[0] < _MUNICIPALITY_INDEX_TTL_SECONDS:
+        return
+    task = _municipality_index_task
+    if task is not None and not task.done():
+        return
+    try:
+        task = asyncio.get_running_loop().create_task(_load_municipality_index(search_source))
+    except RuntimeError:
+        return
+    task.add_done_callback(lambda t: t.cancelled() or t.exception())  # retrieve, never log noise
+    _municipality_index_task = task
 
 
 async def _resolve_address_municipalities(search_source: Any, hint: str) -> list[dict[str, Any]]:
-    """Municipality candidates for an address's place name, remembered for an hour.
+    """Municipality candidates for an address's place name.
 
-    The lookup shares the map's small database pool, which a burst of tile
-    requests can keep busy for seconds, so it gets a longer limit than the
-    typed-municipality search and one retry. Names rarely change, hence the cache.
+    Uses the in-memory name index (waiting for its one-time load if needed);
+    when the index cannot be built, falls back to the per-query search with a
+    longer limit and one retry, remembering the answer for an hour.
     """
+    from land_registry.address_search import fold
+
+    wanted = fold(hint)
+    if getattr(search_source, "connection_source", None) is not None:
+        try:
+            running = _municipality_index_task
+            if running is not None and not running.done():
+                index = await asyncio.wait_for(asyncio.shield(running), timeout=25.0)  # share the in-flight load
+            else:
+                index = await _load_municipality_index(search_source)
+        except Exception as exc:
+            logger.warning("Municipality name index unavailable: %s", type(exc).__name__)
+            index = []
+        if index:
+            exact = [m for m in index if fold(m["canonical_name"]) == wanted]
+            if exact:
+                return exact
+            return [m for m in index if fold(m["canonical_name"]).startswith(wanted)][:5]
     key = hint.casefold()
     cached = _address_municipality_cache.get(key)
     if cached and time.monotonic() - cached[0] < _ADDRESS_MUNICIPALITY_TTL_SECONDS:
@@ -4677,6 +4739,8 @@ async def search_map(
     """
     normalized = query.strip()
     lookup_reference = normalized.upper()
+    if _address_search_enabled() and get_map_layer_source().available:
+        _warm_municipality_index(get_map_search_source())
     parcel_results: list[dict[str, Any]] = []
     canonical_reference = re.fullmatch(r"[A-Z]\d{3}[A-Z]?\d{4}\d{2}\.\w+", lookup_reference)
     looks_like_parcel_reference = bool(canonical_reference) or ("_" in lookup_reference and "." in lookup_reference)
