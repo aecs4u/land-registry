@@ -260,8 +260,224 @@
     const year = toNumber(quote && quote.anno);
     const semester = toNumber(quote && quote.semestre);
     if (Number.isInteger(year) && year >= 1900 && year <= 9999 && (semester === 1 || semester === 2)) return `${year}-S${semester}`;
-    const match = String((quote && quote.period) || '').trim().match(/^(\d{4})-S([12])$/i);
+    const match = String((quote && quote.period) || '').trim().match(/^(\d{4})\s*-?\s*S([12])$/i);
     return match ? `${match[1]}-S${match[2]}` : null;
+  }
+
+  // Keep the cadastral category mapping used by sister/omi_quotes.py in step.
+  // Categories without a corresponding OMI building typology remain unvalued.
+  const OMI_TYPOLOGY_BY_CATEGORY = {
+    A1: [19], A2: [20], A3: [20], A4: [21], A5: [21], A6: [21], A7: [1],
+    A8: [19, 1], A10: [6], A11: [22], C1: [5], C2: [9], C3: [10],
+    C6: [13, 16], C7: [14, 15],
+  };
+
+  // Agenzia delle Entrate 2012 national cadastral means, used by SISTER only
+  // when a residential/office unit has vani but no recorded square metres.
+  const OMI_CATEGORY_MEANS_2012 = {
+    A1: [292, 11.1], A2: [126, 5.9], A3: [110, 5.3], A4: [95, 4.4],
+    A5: [58, 2.4], A6: [70, 2.6], A7: [185, 7.8], A8: [479, 15.8],
+    A9: [635, 21.2], A10: [134.1, 5.6], A11: [63, 3],
+  };
+  const OMI_TYPOLOGY_CODE_BY_LABEL = new Map([
+    ['ville e villini', 1], ['negozi', 5], ['uffici', 6], ['magazzini', 9], ['laboratori', 10],
+    ['box', 13], ['posti auto coperti', 14], ['posti auto scoperti', 15], ['autorimesse', 16],
+    ['abitazioni signorili', 19], ['abitazioni civili', 20], ['abitazioni di tipo economico', 21],
+    ['abitazioni economiche', 21], ['abitazioni tipiche dei luoghi', 22],
+    ['villas and small villas', 1], ['shops', 5], ['offices', 6], ['warehouses', 9], ['workshops', 10],
+    ['boxes', 13], ['covered parking spaces', 14], ['uncovered parking spaces', 15], ['garages', 16],
+    ['luxury apartments', 19], ['residential apartments', 20], ['economic apartments', 21],
+    ['traditional local dwellings', 22],
+  ]);
+
+  function normalizeOmiCategory(category) {
+    const match = /^\s*([A-F])\s*[/:]?\s*0*(\d{1,2})(?!\d)/.exec(String(category || '').toUpperCase());
+    return match ? `${match[1]}${Number(match[2])}` : '';
+  }
+
+  function omiQuoteTypeCode(quote) {
+    const raw = String((quote && quote.cod_tipologia) ?? '').trim();
+    const numeric = Number(raw);
+    if (raw && Number.isInteger(numeric) && numeric > 0) return numeric;
+    const label = String((quote && quote.tipologia) || raw).normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    return OMI_TYPOLOGY_CODE_BY_LABEL.get(label) ?? null;
+  }
+
+  function cadastralNumber(value) {
+    if (value && typeof value === 'object') value = value._text;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+    let text = String(value ?? '').trim().replace(/\s/g, '');
+    if (!text) return null;
+    if (text.includes(',')) {
+      text = text.includes('.') && text.lastIndexOf(',') < text.lastIndexOf('.')
+        ? text.replace(/,/g, '')
+        : text.replace(/\./g, '').replace(',', '.');
+    } else if ((text.match(/\./g) || []).length > 1 || /\.\d{3}$/.test(text)) {
+      text = text.replace(/\./g, '');
+    }
+    const number = Number(text);
+    return Number.isFinite(number) ? number : null;
+  }
+
+  function omiUnitArea(unit) {
+    const recordedArea = cadastralNumber(unit && unit.area);
+    if (recordedArea !== null && recordedArea >= 0) {
+      return recordedArea > 0
+        ? { value: recordedArea, source: 'cadastral surface', formula: `${formatNumber(recordedArea, 1)} m² cadastral surface` }
+        : { value: null, source: 'cadastral surface', formula: '' };
+    }
+
+    let raw = unit && unit.consistency;
+    if (Array.isArray(raw)) raw = raw[0];
+    let amount = null;
+    let measure = '';
+    if (raw && typeof raw === 'object') {
+      amount = raw.value ?? raw.Valore ?? raw.valore ?? raw._text;
+      measure = raw.unit ?? raw.Unita ?? raw.unita ?? '';
+    } else if (typeof raw === 'string') {
+      const match = raw.trim().match(/^([\d.,]+)\s*(m(?:2|²)|mq|vani?(?:\s+catastali)?)$/i);
+      if (match) [, amount, measure] = match;
+    }
+    const number = cadastralNumber(amount);
+    const normalizedMeasure = String(measure).trim().toLowerCase().replace(/²/g, '2').replace(/\s/g, '');
+    if (number !== null && number > 0 && ['m2', 'mq'].includes(normalizedMeasure)) {
+      return { value: number, source: 'consistency in m²', formula: `${formatNumber(number, 1)} m² consistency proxy`, proxy: true };
+    }
+    if (number !== null && number > 0 && normalizedMeasure.startsWith('van')) {
+      const category = normalizeOmiCategory(unit && (unit.category || unit.building_type));
+      const mean = OMI_CATEGORY_MEANS_2012[category];
+      if (mean) {
+        const sqmPerRoom = mean[0] / mean[1];
+        const area = number * sqmPerRoom;
+        return {
+          value: area,
+          source: 'estimated from cadastral rooms',
+          formula: `${formatNumber(number, 1)} vani × ${formatNumber(sqmPerRoom, 1)} m²/vano ≈ ${formatNumber(area, 1)} m²`,
+          proxy: true,
+        };
+      }
+    }
+    return { value: null, source: '', formula: '' };
+  }
+
+  function selectOmiQuoteForCategory(quotes, category) {
+    const candidates = OMI_TYPOLOGY_BY_CATEGORY[normalizeOmiCategory(category)] || [];
+    if (!candidates.length) return { quote: null, reason: 'Cadastral category has no matching OMI typology.' };
+    let ambiguous = false;
+    for (const code of candidates) {
+      const rows = (quotes || []).filter((quote) => omiQuoteTypeCode(quote) === code);
+      if (!rows.length) continue;
+      const prevalent = rows.filter((quote) => String(quote.stato_prevalente || '').trim().toUpperCase() === 'P');
+      const normal = rows.filter((quote) => String(quote.stato_conservazione || '').trim().toUpperCase() === 'NORMALE');
+      const chosen = prevalent.length ? prevalent : normal;
+      if (chosen.length === 1) return { quote: chosen[0], reason: '' };
+      ambiguous = true;
+    }
+    return ambiguous
+      ? { quote: null, reason: 'OMI condition is ambiguous for this typology.' }
+      : { quote: null, reason: 'No OMI quote matches this cadastral category in the selected zone.' };
+  }
+
+  function omiQuoteRate(quote) {
+    const min = toNumber(quote && quote.prezzo_min);
+    const max = toNumber(quote && quote.prezzo_max);
+    return min !== null && max !== null && min >= 0 && max >= min
+      ? { min, max, mid: (min + max) / 2 }
+      : null;
+  }
+
+  function omiMunicipalityQuoteRange(quotes, category) {
+    const byZone = new Map();
+    (quotes || []).forEach((quote) => {
+      const zone = String(quote.zona || '').trim().toUpperCase();
+      if (!zone) return;
+      if (!byZone.has(zone)) byZone.set(zone, []);
+      byZone.get(zone).push(quote);
+    });
+    const ranges = [];
+    for (const [zone, zoneQuotes] of byZone) {
+      const selected = selectOmiQuoteForCategory(zoneQuotes, category).quote;
+      const rate = omiQuoteRate(selected);
+      if (rate) ranges.push({ zone, ...rate, quote: selected, code: omiQuoteTypeCode(selected) ?? selected.cod_tipologia });
+    }
+    if (!ranges.length) return { range: null, reason: 'No matching OMI quotes are available in the municipality.' };
+    const codes = new Map();
+    ranges.forEach((item) => {
+      const code = String(omiQuoteTypeCode(item.quote) ?? item.code);
+      codes.set(code, (codes.get(code) || 0) + 1);
+    });
+    const preferred = OMI_TYPOLOGY_BY_CATEGORY[normalizeOmiCategory(category)] || [];
+    const code = [...codes.keys()].sort((a, b) =>
+      codes.get(b) - codes.get(a)
+      || (preferred.indexOf(Number(a)) < 0 ? Number.MAX_SAFE_INTEGER : preferred.indexOf(Number(a)))
+        - (preferred.indexOf(Number(b)) < 0 ? Number.MAX_SAFE_INTEGER : preferred.indexOf(Number(b)))
+      || Number(a) - Number(b))[0];
+    return {
+      range: {
+        min: Math.min(...ranges.map((item) => item.min)),
+        max: Math.max(...ranges.map((item) => item.max)),
+        mid: median(ranges.map((item) => item.mid)),
+        zone_count: ranges.length,
+        cod_tipologia: code,
+      },
+      reason: '',
+    };
+  }
+
+  function estimateOmiUnit(unit, quotes, zoneMatch) {
+    const category = unit && (unit.category || unit.building_type);
+    if (!category) return { value: null, area: { value: null, source: '', formula: '' }, reason: 'Cadastral category is missing.' };
+    if (!(OMI_TYPOLOGY_BY_CATEGORY[normalizeOmiCategory(category)] || []).length) {
+      return { value: null, area: { value: null, source: '', formula: '' }, reason: 'Cadastral category has no matching OMI typology.' };
+    }
+    const area = omiUnitArea(unit || {});
+    if (area.value === null) return { value: null, area, reason: 'No usable building surface is available.' };
+    const detectedZone = zoneMatch && zoneMatch.matched ? String(zoneMatch.zone || '').trim().toUpperCase() : '';
+    let selectedQuote = null;
+    let rate = null;
+    let zoneCount = 0;
+    if (detectedZone) {
+      const selected = selectOmiQuoteForCategory(
+        (quotes || []).filter((quote) => String(quote.zona || '').trim().toUpperCase() === detectedZone), category,
+      );
+      selectedQuote = selected.quote;
+      rate = omiQuoteRate(selectedQuote);
+      if (!selectedQuote) return { value: null, area, reason: selected.reason, zone: detectedZone };
+      if (!rate) return { value: null, area, reason: 'The selected OMI quote has no valid sale interval.', zone: detectedZone };
+    } else {
+      const selected = omiMunicipalityQuoteRange(quotes, category);
+      rate = selected.range;
+      if (!rate) return { value: null, area, reason: selected.reason };
+      zoneCount = rate.zone_count;
+    }
+    return {
+      area,
+      quote: selectedQuote,
+      zone: detectedZone || '',
+      zone_count: zoneCount,
+      municipality_wide: !detectedZone,
+      price_min: rate.min,
+      price_max: rate.max,
+      price_mid: rate.mid,
+      value_min: area.value * rate.min,
+      value_max: area.value * rate.max,
+      value_estimate: area.value * rate.mid,
+      reason: '',
+    };
+  }
+
+  function estimateOmiUnits(units, quotes, zoneMatch) {
+    const estimates = (units || []).map((unit) => estimateOmiUnit(unit, quotes, zoneMatch));
+    const valued = estimates.filter((item) => item.value_min !== undefined);
+    return {
+      estimates,
+      unit_count: estimates.length,
+      valued_unit_count: valued.length,
+      value_min: valued.reduce((sum, item) => sum + item.value_min, 0),
+      value_max: valued.reduce((sum, item) => sum + item.value_max, 0),
+      value_estimate: valued.reduce((sum, item) => sum + item.value_estimate, 0),
+    };
   }
 
   function omiQuoteTypeKey(quote) {
@@ -708,7 +924,8 @@
     parseDateTime, formatDateTime, relativeAge, median,
     cadastralCodeOf, parcelAreaSqm, centroidOf, referenceParts,
     validOmiQuotes, quoteMidpoint, estimateOmiRange, defaultEstimateArea, quoteBenchmark,
-    omiConditionLabel, omiTypologyLabel, omiQuoteLabel, omiQuotesLackPeriod,
+    omiConditionLabel, omiTypologyLabel, omiQuoteLabel, omiQuotesLackPeriod, omiQuotePeriod,
+    omiUnitArea, selectOmiQuoteForCategory, omiMunicipalityQuoteRange, estimateOmiUnit, estimateOmiUnits,
     omiHistorySeries, historyChartSvg,
     censusSummary, censusDemographics, incomeBracketLabel, incomeBracketRows, riskLevel, hydroHazardSummary, qualityHighlights, seismicLabel, bulletinSeverity,
     foldName, findBulletinZone, feedRefreshValue, parseFireObservationTime, indicatorLabel,

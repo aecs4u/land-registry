@@ -4552,6 +4552,117 @@ def get_datashader_service():
 # Canonical PostGIS map layers
 # ============================================================================
 
+def _address_search_enabled() -> bool:
+    return os.getenv("MAP_ADDRESS_SEARCH_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _address_label(match: dict[str, Any], municipality: str) -> str:
+    street = str(match.get("street") or "").title()
+    number = match.get("civic")
+    if number:
+        number = f"{number}/{match['exponent']}" if match.get("exponent") else number
+        street = f"{street} {number}"
+    label = f"{street}, {municipality}" if municipality else street
+    if not number and match.get("requested_civic"):
+        label += f" (number {match['requested_civic']} not found)"
+    return label
+
+
+_address_municipality_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_ADDRESS_MUNICIPALITY_TTL_SECONDS = 3600
+
+
+async def _resolve_address_municipalities(search_source: Any, hint: str) -> list[dict[str, Any]]:
+    """Municipality candidates for an address's place name, remembered for an hour.
+
+    The lookup shares the map's small database pool, which a burst of tile
+    requests can keep busy for seconds, so it gets a longer limit than the
+    typed-municipality search and one retry. Names rarely change, hence the cache.
+    """
+    key = hint.casefold()
+    cached = _address_municipality_cache.get(key)
+    if cached and time.monotonic() - cached[0] < _ADDRESS_MUNICIPALITY_TTL_SECONDS:
+        return cached[1]
+    last_error: Optional[Exception] = None
+    for attempt_timeout in (6.0, 8.0):
+        try:
+            candidates = await asyncio.wait_for(search_source.search_municipalities(hint, 10), timeout=attempt_timeout)
+        except Exception as exc:
+            last_error = exc
+            continue
+        if len(_address_municipality_cache) > 512:
+            _address_municipality_cache.pop(min(_address_municipality_cache, key=lambda k: _address_municipality_cache[k][0]), None)
+        _address_municipality_cache[key] = (time.monotonic(), candidates)
+        return candidates
+    raise last_error or RuntimeError("municipality lookup failed")
+
+
+async def _search_addresses(query: str, search_source: Any, limit: int) -> list[dict[str, Any]]:
+    """Civic-address results (ANNCSU) for a query such as ``via goethe 1, Palermo``.
+
+    Needs a municipality in the text.  Failures degrade to "no address
+    result": the caller still returns municipality/parcel matches.
+    """
+    from land_registry.address_search import fold, parse_address
+    from land_registry.anncsu_lookup import find_addresses
+
+    results: list[dict[str, Any]] = []
+    attempted = False
+    for parsed in parse_address(query):
+        hint = parsed.municipality_hint
+        if not hint:
+            continue
+        attempted = True
+        try:
+            candidates = await _resolve_address_municipalities(search_source, hint)
+        except Exception as exc:
+            # Not "no match": the municipality could not be looked up (e.g. the
+            # shared pool is busy with tiles). Say so, so the page offers a retry.
+            logger.warning("Address municipality resolution failed: %s", type(exc).__name__)
+            raise HTTPException(
+                status_code=503,
+                detail="Address search temporarily unavailable",
+                headers={"Retry-After": "2", "Cache-Control": "no-store"},
+            ) from exc
+        wanted = fold(hint)
+        exact = [m for m in candidates if fold(m.get("canonical_name") or "") == wanted]
+        pool = exact or [m for m in candidates if fold(m.get("canonical_name") or "").startswith(wanted)][:1]
+        for municipality in pool[:3]:
+            try:
+                matches = await asyncio.wait_for(
+                    asyncio.to_thread(find_addresses, str(municipality.get("istat_code") or ""), parsed, 3),
+                    timeout=6.0,
+                )
+            except Exception as exc:
+                logger.warning("ANNCSU address lookup failed: %s", type(exc).__name__)
+                continue
+            name = municipality.get("canonical_name") or ""
+            for match in matches:
+                data = match.as_dict()
+                data["requested_civic"] = parsed.civic_label
+                results.append({
+                    "kind": "address",
+                    "label": _address_label(data, name),
+                    "municipality_name": name,
+                    "istat_code": data["istat_code"],
+                    "lat": data["latitude"], "lon": data["longitude"],
+                    "match_level": data["match_level"],
+                    "coordinate_method": data["coordinate_method"],
+                    "street": data["street"], "civic": data["civic"], "exponent": data["exponent"],
+                    "requested_civic": parsed.civic_label,
+                    "nearby": data["nearby"],
+                    "attribution": data["attribution"],
+                })
+        if results:
+            break
+    order = {"address": 0, "address_exponent_dropped": 1, "street": 2, "fuzzy_street": 3}
+    results.sort(key=lambda r: order.get(r["match_level"], 9))
+    if attempted:
+        # Outcome counters only: the query text is never recorded.
+        map_metrics.record_event(f"address_search.{results[0]['match_level'] if results else 'no_match'}")
+    return results[:limit]
+
+
 @api_router.get("/map/search")
 async def search_map(
     response: Response,
@@ -4664,10 +4775,21 @@ async def search_map(
                     "sheet": properties.get("sheet") or properties.get("sheet_number") or properties.get("foglio"),
                 })
 
+    address_results: list[dict[str, Any]] = []
+    if (
+        source.available
+        and _address_search_enabled()
+        and not parcel_results
+        and not looks_like_parcel_reference
+        and component_match is None
+    ):
+        address_results = await _search_addresses(normalized, get_map_search_source(), limit)
+
     municipalities: list[dict[str, Any]] = []
     if (
         source.available
         and not parcel_results
+        and not address_results
         and not looks_like_parcel_reference
         and component_match is None
     ):
@@ -4704,7 +4826,7 @@ async def search_map(
 
     payload = {
         "query": normalized,
-        "results": parcel_results + [
+        "results": parcel_results + address_results + [
             {
                 "kind": "municipality",
                 "label": item.get("canonical_name") or item.get("istat_code") or "Municipality",
@@ -4719,6 +4841,115 @@ async def search_map(
         oldest = min(_map_search_cache, key=lambda key: _map_search_cache[key][0])
         _map_search_cache.pop(oldest, None)
     return payload
+
+_GEOCODE_TTL_SECONDS = 3600
+_geocode_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_geocode_lock = asyncio.Lock()
+_geocode_last_call = 0.0
+
+
+def _geocode_user_agent() -> str:
+    return os.getenv("NOMINATIM_USER_AGENT", "AECS4U-LandRegistry/1.0 (map address search)")
+
+
+def _rank_geocode_hits(hits: list[dict[str, Any]], municipality: Optional[str]) -> list[dict[str, Any]]:
+    """Normalise Nominatim hits: building/house first, wrong-city hits dropped."""
+    from land_registry.address_search import fold
+
+    wanted = fold(municipality or "")
+    results: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for hit in hits:
+        try:
+            lat, lon = float(hit["lat"]), float(hit["lon"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        address = hit.get("address") or {}
+        city = next((address.get(k) for k in ("city", "town", "village", "municipality", "hamlet") if address.get(k)), "")
+        if wanted and city and fold(city) != wanted:
+            continue
+        if hit.get("addresstype") in {"house", "building"} or address.get("house_number"):
+            level, rank = "address", 0
+        elif hit.get("category") == "highway" or hit.get("addresstype") in {"road", "street"}:
+            level, rank = "street", 1
+        else:
+            level, rank = "place", 2
+        key = f"{lat:.4f},{lon:.4f}"
+        if key in seen:
+            continue
+        seen.add(key)
+        results.append({
+            "kind": "address" if level != "place" else "place",
+            "label": hit.get("display_name") or "", "lat": lat, "lon": lon,
+            "match_level": level, "context": "Address" if level != "place" else "Place",
+            "source": "openstreetmap", "_rank": rank,
+            "attribution": "© OpenStreetMap contributors, ODbL",
+        })
+    results.sort(key=lambda r: r["_rank"])
+    for r in results:
+        r.pop("_rank", None)
+    return results
+
+
+@api_router.get("/map/geocode")
+async def geocode_map_place(
+    response: Response,
+    query: str = Query(..., min_length=2, max_length=120),
+):
+    """Server-side place/address fallback through OpenStreetMap Nominatim.
+
+    Called only after an explicit search submit finds nothing in the
+    cadastral or ANNCSU sources.  Runs on the server so the usage-policy
+    User-Agent, caching and the one-request-per-second limit are enforced in
+    one place.  Structured street/city parameters are used when the text
+    parses as an address.
+    """
+    global _geocode_last_call
+    from land_registry.address_search import parse_address
+
+    normalized = query.strip()
+    cache_key = normalized.casefold()
+    cached = _geocode_cache.get(cache_key)
+    if cached and time.monotonic() - cached[0] < _GEOCODE_TTL_SECONDS:
+        return {"query": normalized, "results": cached[1]}
+
+    params: dict[str, Any] = {
+        "format": "jsonv2", "countrycodes": "it", "limit": 8, "addressdetails": 1,
+    }
+    municipality = None
+    parsed = parse_address(normalized)
+    if parsed and parsed[0].municipality_hint:
+        best = parsed[0]
+        municipality = best.municipality_hint
+        street = f"{best.civic_label} {best.raw_street}".strip() if best.civic else best.raw_street
+        params.update({"street": street, "city": municipality})
+    else:
+        params["q"] = normalized
+
+    async with _geocode_lock:
+        wait = 1.0 - (time.monotonic() - _geocode_last_call)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _geocode_last_call = time.monotonic()
+        try:
+            async with httpx.AsyncClient(timeout=6.0, follow_redirects=False) as client:
+                upstream = await client.get(
+                    "https://nominatim.openstreetmap.org/search",
+                    params=params,
+                    headers={"User-Agent": _geocode_user_agent(), "Accept": "application/json"},
+                )
+            upstream.raise_for_status()
+            hits = upstream.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning("Nominatim geocoding failed: %s", type(exc).__name__)
+            raise HTTPException(status_code=503, detail="Place search temporarily unavailable") from exc
+    results = _rank_geocode_hits(hits if isinstance(hits, list) else [], municipality)
+    _geocode_cache[cache_key] = (time.monotonic(), results)
+    if len(_geocode_cache) > 256:
+        _geocode_cache.pop(min(_geocode_cache, key=lambda k: _geocode_cache[k][0]), None)
+    response.headers["Cache-Control"] = "private, max-age=300"
+    return {"query": normalized, "results": results}
+
 
 @api_router.get("/map/layers")
 async def get_map_layers():
@@ -4862,6 +5093,40 @@ async def get_sister_parcel_features(
     except Exception as exc:
         logger.warning("SISTER parcel map query failed: %s", exc)
         raise HTTPException(status_code=503, detail="SISTER parcel layer unavailable") from exc
+
+
+@api_router.get("/map/npl-asteflorio-assets")
+async def get_npl_asteflorio_asset_features(
+    west: float = Query(..., ge=-180, le=180),
+    south: float = Query(..., ge=-90, le=90),
+    east: float = Query(..., ge=-180, le=180),
+    north: float = Query(..., ge=-90, le=90),
+    refresh: bool = Query(False, description="Reload the imported NPL asset views."),
+):
+    """Return municipality-level NPL Aste Florio assets for the current map view."""
+    if west >= east or south >= north:
+        raise HTTPException(status_code=400, detail="Invalid map bounding box")
+    source = get_map_layer_source()
+    if not source.available:
+        raise HTTPException(status_code=503, detail="Canonical PostGIS map source unavailable")
+    try:
+        result = await asyncio.wait_for(
+            source.read_npl_asteflorio_assets(
+                (west, south, east, north), force_refresh=refresh
+            ),
+            timeout=15,
+        )
+        if not result.get("available"):
+            raise HTTPException(status_code=503, detail="NPL Aste Florio asset views unavailable")
+        return result
+    except asyncio.TimeoutError as exc:
+        logger.warning("NPL Aste Florio asset map query timed out")
+        raise HTTPException(status_code=503, detail="NPL Aste Florio asset map query timed out") from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("NPL Aste Florio asset map query failed: %s", exc)
+        raise HTTPException(status_code=503, detail="NPL Aste Florio asset layer unavailable") from exc
 
 
 @api_router.get("/map/layers/{layer_id}/features")

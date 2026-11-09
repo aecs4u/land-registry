@@ -124,7 +124,8 @@ The dev server runs on **port 8000**. Panel/Bokeh dashboard runs on **port 5006*
 - `POST /api/v1/generate-map/` - Generate static Folium map from uploads
 
 ### Cadastral Data Loading
-- `GET /api/v1/map/search` - Search canonical municipalities and exact parcel references
+- `GET /api/v1/map/search` - Search canonical municipalities, exact parcel references and civic addresses (ANNCSU; `kind: "address"` with `match_level`; disable with `MAP_ADDRESS_SEARCH_ENABLED=0`)
+- `GET /api/v1/map/geocode` - Server-side OpenStreetMap Nominatim fallback for places/addresses (explicit submit only; cached, 1 request/s)
 - `GET /api/v1/map/metrics` - Privacy-preserving map request diagnostics
 - `GET /api/v1/get-cadastral-structure/` - Load Italian cadastral hierarchy (cached)
 - `POST /api/v1/load-cadastral-files/` - Load multiple cadastral files (parallel, returns all at once)

@@ -25,6 +25,8 @@ def evaluate_health(
 
     for item in health:
         layer_id = item.get("id", "unknown")
+        if item.get("preflight_required") is False:
+            continue
         if not item.get("relation_exists"):
             problems.append(f"{layer_id}: relation is missing")
         if not item.get("geometry_column_exists"):

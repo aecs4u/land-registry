@@ -132,14 +132,50 @@ The following layers are rendered through PostGIS MVT, with bounded GeoJSON
 available for viewport fallback and popup inspection:
 
 - administrative boundaries, cadastral sheets, cadastral parcels;
-- cadastral urban sections, OMI market zones, and postal zones;
+- cadastral urban sections, OMI market zones, postal zones, and ANNCSU civic-address points;
 - flood and landslide areas, census sections, MPS04 and INGV seismic points;
-- EGMS ground movement, solar potential by municipality, and MIT/SID
-  maritime-domain concessions.
+- EGMS ground movement, solar potential by municipality, MEF/IRPEF municipal
+  income, CORINE land cover, and MIT/SID maritime-domain concessions.
 
 Dense point data is tile-first. The GeoJSON endpoint refuses overly broad
 viewports and returns an empty collection with the required zoom level rather
 than initiating an unsafe national scan.
+
+ANNCSU points are read from the source-owned `anncsu` PostgreSQL database.
+The map includes only regional address tables with EPSG:4258 point geometry
+and a GiST index; currently available regions determine the layer's partial
+coverage. Dense tiles cluster points below zoom 14. Feature popups show the
+civic address, coordinate method, municipality code, source vintage, and ANNCSU
+access ID. The source is published under CC BY 4.0.
+
+The MEF/IRPEF layer joins `serving.irpef_comuni` to the current ISTAT
+municipality map by normalized ISTAT municipality code. It uses the latest
+common tax year and displays mean taxable income per taxpayer; the selectable
+color modes also show taxpayer shares calculated from the published brackets
+below €10,000 and above €120,000.
+This is a municipal taxpayer measure, not a household-income measure. The
+layer is optional and reports its year and data readiness in map health.
+
+CORINE land cover is read from the source-owned `corine` PostgreSQL database.
+Only regional `rXX__corine_clc2018` tables with EPSG:3035 geometry, required
+attributes, and a GiST index are included. The map colors CORINE 2018 polygons
+by their level-1 class and reports partial coverage when only some regional
+stores are ready.
+
+## Remaining spatial sources
+
+Quality-of-life observations are available in the source table view, but the
+configured `quality_of_life.v_quality_of_life_map` currently fails because its
+province-boundary dependency `geo_admin.provinces` is missing. Keep the
+province indicators in the existing parcel details until the source provides a
+working geometry join; the map needs an explicit indicator and edition choice.
+
+Relocation indicators in this deployment describe countries, so they do not
+support a meaningful Italian municipality or parcel overlay. No canonical
+Successioni relation or geographic key is currently published to this app; add
+its map visualization after the source supplies a stable municipality or
+parcel join.
+
 Parcel GeoJSON uses a tighter viewport cap of 0.0005 square degrees because a
 single dense city view can intersect tens of thousands of parcels. Map clients
 send their current zoom so the response can recommend a suitable next level.
@@ -250,11 +286,13 @@ visible on the next snapshot refresh without rebuilding a database cache.
 
 ## Release gate
 
-Release only when every catalog item reports `relation_exists`,
+Release only when every required catalog item reports `relation_exists`,
 `geometry_column_exists`, and `srid_matches` as true, and every layer that
 requires a local spatial index reports `gist_index_exists`. Smoke tests should
 cover both an MVT tile and a GeoJSON viewport. Cadastral nationwide coverage
 and the upstream urban-section count remain data-acquisition requirements;
-the map reports available canonical rows but does not claim national parity
-until those sources are loaded. The Cloud Run workflow separately verifies
-that the deployed service can reach all 14 catalog layers after rollout.
+optional data sources such as ANNCSU do not block release when their regional
+stores are absent. The map reports available canonical rows but does not claim
+national parity until those sources are loaded. The Cloud Run workflow separately
+verifies that the deployed service can reach the advertised catalog layers after
+rollout.

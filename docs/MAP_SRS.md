@@ -142,6 +142,9 @@ The improved map shall let a user open the application, navigate to any supporte
 | MAP-FR-025 | Search results shall display enough context to distinguish duplicate parcel numbers, including municipality and sheet. | Must |
 | MAP-FR-026 | Selecting a result shall fly to the geometry, select it, and open the detail panel. | Must |
 | MAP-FR-027 | Search shall work without requiring the user to load a local cadastral file first. | Must |
+| MAP-FR-064 | Search shall resolve a civic address (street type, street name, house number with optional letter, municipality) against the ANNCSU address registry, and label the match level: exact address, number found without the requested letter, street only, or approximate street. | Should |
+| MAP-FR-065 | Selecting an address result shall fly to its point, show a marker labelled with the address, load and highlight the cadastral parcel containing the point (or the nearest parcel within a few metres, stated as such) and open the parcel detail panel. A street-only match shall keep the marker without selecting a parcel and shall suggest nearby house numbers. | Should |
+| MAP-FR-066 | Address and place text shall be sent to a third-party geocoder only after an explicit submit that found no cadastral or address-registry match, from the server, and this shall be stated beside the search box and on the privacy page. | Must |
 
 ### 5.5 Hover, selection, and detail panel
 
@@ -168,6 +171,7 @@ The improved map shall let a user open the application, navigate to any supporte
 | MAP-FR-037 | The URL shall support a stable parcel reference when a parcel is selected. | Must |
 | MAP-FR-038 | URL updates shall be throttled or performed on meaningful map movement events. | Should |
 | MAP-FR-039 | Invalid or unavailable URL parameters shall fail gracefully and leave the user at the nearest valid view. | Must |
+| MAP-FR-067 | The URL shall restore an address marker (`addr`, `addr_lat`, `addr_lng`); a label longer than 120 characters or coordinates outside Italy shall be ignored. | Should |
 | MAP-FR-040 | Copy Link shall use the Clipboard API with a visible fallback when clipboard access is unavailable. | Should |
 | MAP-FR-063 | Zone-card Sales and Rents actions shall open a restorable mapping-view context containing the selected workflow and zone. | Must |
 
@@ -314,7 +318,7 @@ The first production release is acceptable when all of the following are true:
 
 1. A user can open the map and navigate to a supported municipality without uploading a file.
 2. Parcels appear automatically at the configured zoom level, with a working fallback where vector tiles are unavailable.
-3. A user can search by municipality and cadastral reference and navigate to a result.
+3. A user can search by municipality, cadastral reference and civic address and navigate to a result; an address result shows a labelled marker, the parcel and the parcel panel (see `docs/ADDRESS_SEARCH_PLAN.md`).
 4. Clicking a parcel opens the detail panel and preserves the selected state while the user changes basemaps.
 5. The URL restores map position and selected parcel where the referenced data is available.
 6. Layer controls show only one basemap, clearly separate overlays, and communicate layer availability.

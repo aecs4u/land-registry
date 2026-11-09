@@ -40,6 +40,8 @@ def test_catalog_covers_every_allow_listed_spatial_relation():
         "spatial.protection_area",
         "solar.solar_potential_comuni",
         "agenziademanio.concessions",
+        "public.r19__addresses",
+        "public.r19__corine_clc2018",
     } == tables
 
 
@@ -835,8 +837,8 @@ def test_egms_layer_offers_selectable_colour_modes():
 
 def test_layers_without_colour_modes_keep_their_flat_or_legacy_styling():
     for layer in MAP_LAYERS:
-        if layer.id == "surface-subsidence":
-            continue
+        if layer.id in {"surface-subsidence", "mef-irpef-income"}:
+            continue  # the layers that declare colour modes
         public = layer.public()
         assert public["color_modes"] == [] and public["default_color_mode"] == ""
 
@@ -878,3 +880,22 @@ def test_map_script_draws_the_chosen_colour_mode_and_keeps_it_in_the_link():
         assert name in script
     # Repainting reuses the loaded tiles instead of re-adding the layer.
     assert "setPaintProperty(`fill-${layer.id}`, 'fill-color'" in script
+
+
+def test_anncsu_layer_reads_regional_tables_from_public_or_the_anncsu_schema():
+    from land_registry.map_layers import _AsyncpgConnectionSource, PostgresMapLayerSource
+
+    def row(schema):
+        return {"region_code": 19, "address_table": "r19__addresses", "table_schema": schema,
+                "streets_exist": True, "provenance_exists": True}
+
+    union = PostgresMapLayerSource._anncsu_union_relation
+    assert 'FROM public."r19__addresses"' in union([row("public")])
+    assert 'FROM anncsu."r19__addresses"' in union([row("anncsu")])
+    assert 'LEFT JOIN anncsu."r19__streets"' in union([row("anncsu")])
+    assert 'anncsu."r19__anncsu_provenance"' in union([row("anncsu")])
+    assert 'FROM public."r19__addresses"' in union([{k: v for k, v in row("x").items() if k != "table_schema"}])
+    # Unknown schemas are never interpolated into SQL.
+    assert "evil" not in union([row("evil")])
+    # PostGIS may live in the same schema, so the source searches both.
+    assert _AsyncpgConnectionSource._ANNCSU_SEARCH_PATH == "public,anncsu"

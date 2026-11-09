@@ -1125,6 +1125,33 @@ msgstr "Municipal coordinate coverage is unknown"
 msgid "Coordinate method {n}"
 msgstr "Coordinate method {n}"
 
+msgid "Coordinate method"
+msgstr "Coordinate method"
+
+msgid "Street"
+msgstr "Street"
+
+msgid "Locality"
+msgstr "Locality"
+
+msgid "Civic number"
+msgstr "Civic number"
+
+msgid "Municipality code"
+msgstr "Municipality code"
+
+msgid "Region code"
+msgstr "Region code"
+
+msgid "Source vintage"
+msgstr "Source vintage"
+
+msgid "Access ID"
+msgstr "Access ID"
+
+msgid "ANNCSU — Agenzia delle Entrate and ISTAT · CC BY 4.0"
+msgstr "ANNCSU — Agenzia delle Entrate and ISTAT · CC BY 4.0"
+
 msgid "ANNCSU points are spatially matched to the parcel. Municipalities may not provide coordinates for every civic address; no geocoded match does not mean the parcel has no address."
 msgstr "ANNCSU points are spatially matched to the parcel. Municipalities may not provide coordinates for every civic address; no geocoded match does not mean the parcel has no address."
 
@@ -1260,3 +1287,159 @@ msgstr "No data"
 
 msgid "Open {section}"
 msgstr "Open {section}"
+
+msgid "SISTER buildings"
+msgstr "SISTER buildings"
+
+msgid "OMI estimate for SISTER buildings"
+msgstr "OMI estimate for SISTER buildings"
+
+msgid "Central estimate"
+msgstr "Central estimate"
+
+msgid "Based on {n} SISTER building units."
+msgstr "Based on {n} SISTER building units."
+
+msgid "Only {valued} of {total} SISTER building units have usable OMI data; unvalued units are excluded."
+msgstr "Only {valued} of {total} SISTER building units have usable OMI data; unvalued units are excluded."
+
+msgid "The OMI zone was not detected; this SISTER estimate uses selected category quotes across {n} municipality zones."
+msgstr "The OMI zone was not detected; this SISTER estimate uses selected category quotes across {n} municipality zones."
+
+msgid "SISTER category and OMI condition selected this quote automatically; review the zone and surface."
+msgstr "SISTER category and OMI condition selected this quote automatically; review the zone and surface."
+
+msgid "No automatic estimate is available; check the cadastral category, OMI zone and surface."
+msgstr "No automatic estimate is available; check the cadastral category, OMI zone and surface."
+
+msgid "SISTER area basis: {formula}. Confirm this is the commercial surface and matches the OMI measurement basis."
+msgstr "SISTER area basis: {formula}. Confirm this is the commercial surface and matches the OMI measurement basis."
+
+msgid "SISTER does not provide a usable unit surface; enter a measured commercial surface to estimate."
+msgstr "SISTER does not provide a usable unit surface; enter a measured commercial surface to estimate."
+
+msgid "SISTER calculates building ranges from the cadastral category, selected OMI condition and recorded surface; missing residential surface can use the documented cadastral-consistency proxy."
+msgstr "SISTER calculates building ranges from the cadastral category, selected OMI condition and recorded surface; missing residential surface can use the documented cadastral-consistency proxy."
+
+msgid "Municipality-wide quote range across {n} zones"
+msgstr "Municipality-wide quote range across {n} zones"
+
+msgid "Period not specified"
+msgstr "Period not specified"
+
+msgid "Cadastral category is missing."
+msgstr "Cadastral category is missing."
+
+msgid "Cadastral category has no matching OMI typology."
+msgstr "Cadastral category has no matching OMI typology."
+
+msgid "No usable building surface is available."
+msgstr "No usable building surface is available."
+
+msgid "OMI condition is ambiguous for this typology."
+msgstr "OMI condition is ambiguous for this typology."
+
+msgid "No OMI quote matches this cadastral category in the selected zone."
+msgstr "No OMI quote matches this cadastral category in the selected zone."
+
+msgid "No matching OMI quotes are available in the municipality."
+msgstr "No matching OMI quotes are available in the municipality."
+
+msgid "The selected OMI quote has no valid sale interval."
+msgstr "The selected OMI quote has no valid sale interval."
+
+msgid "MEF / IRPEF mean taxable income"
+msgstr "MEF / IRPEF mean taxable income"
+
+msgid "CORINE land cover (2018)"
+msgstr "CORINE land cover (2018)"
+
+msgid "Mean taxable income"
+msgstr "Mean taxable income"
+
+msgid "Taxpayers above €120,000"
+msgstr "Taxpayers above €120,000"
+
+msgid "Taxpayers below €10,000"
+msgstr "Taxpayers below €10,000"
+
+msgid "Taxable income per taxpayer in the selected tax year."
+msgstr "Taxable income per taxpayer in the selected tax year."
+
+msgid "Share of taxpayers in the MEF income bracket above €120,000."
+msgstr "Share of taxpayers in the MEF income bracket above €120,000."
+
+msgid "Share of taxpayers with taxable income below €10,000."
+msgstr "Share of taxpayers with taxable income below €10,000."
+
+msgid "Show NPL Aste Florio assets"
+msgstr "Show NPL Aste Florio assets"
+
+msgid "NPL Aste Florio asset locations are approximate municipality points."
+msgstr "NPL Aste Florio asset locations are approximate municipality points."
+
+msgid "Locations are at municipality level; exact cadastral parcels are not available yet."
+msgstr "Locations are at municipality level; exact cadastral parcels are not available yet."
+
+msgid "Loading NPL Aste Florio assets…"
+msgstr "Loading NPL Aste Florio assets…"
+
+msgid "NPL Aste Florio asset layer is temporarily unavailable."
+msgstr "NPL Aste Florio asset layer is temporarily unavailable."
+
+msgid "{n} municipality locations with {assets} NPL assets in this view."
+msgstr "{n} municipality locations with {assets} NPL assets in this view."
+
+msgid "No NPL Aste Florio assets in this view."
+msgstr "No NPL Aste Florio assets in this view."
+
+msgid "Some NPL Aste Florio assets have no matching municipality location."
+msgstr "Some NPL Aste Florio assets have no matching municipality location."
+
+msgid "NPL Aste Florio assets"
+msgstr "NPL Aste Florio assets"
+
+msgid "NPL asset"
+msgstr "NPL asset"
+
+msgid "Assets"
+msgstr "Assets"
+
+msgid "Positions"
+msgstr "Positions"
+
+msgid "Asset number"
+msgstr "Asset number"
+
+msgid "Position"
+msgstr "Position"
+
+msgid "Position type"
+msgstr "Position type"
+
+msgid "Asset type"
+msgstr "Asset type"
+
+msgid "Cadastral category"
+msgstr "Cadastral category"
+
+msgid "Consistency"
+msgstr "Consistency"
+
+msgid "Floor"
+msgstr "Floor"
+
+msgid "Estimated gross value"
+msgstr "Estimated gross value"
+
+msgid "Open position listing"
+msgstr "Open position listing"
+
+msgid "Municipality-level location; this point does not identify a cadastral parcel."
+msgstr "Municipality-level location; this point does not identify a cadastral parcel."
+
+msgid "View asset details ({n})"
+msgstr "View asset details ({n})"
+
+msgid "Asset details unavailable."
+msgstr "Asset details unavailable."

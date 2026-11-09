@@ -2758,11 +2758,51 @@ class _AsyncPostgresSource:
             "source": "Agenzia delle Entrate OMI via aecs4u-stats PostgreSQL facts.market_quote_fact",
         }
 
+    async def _omi_istat_key_from_postgres(self, cadastral_code: str) -> Optional[int]:
+        """Resolve AdE's region-prefixed ISTAT key from the shared municipality table.
+
+        The packaged ISTAT SQLite store is optional. When it is absent, the
+        canonical PostgreSQL municipality table still carries the two pieces
+        needed by ``omi_ref_zone.cod_comune_istat``.
+        """
+        if not await self._relations_available(("geo.municipalities",)):
+            return None
+        code = str(cadastral_code or "").strip().upper()
+        if not code:
+            return None
+        row = await self._fetchrow(
+            """
+            SELECT (lpad(m.region_id::text, 2, '0')
+                    || lpad(m.alphanumeric_code, 6, '0'))::bigint AS omi_istat_code
+            FROM geo.municipalities AS m
+            WHERE m.region_id IS NOT NULL
+              AND m.alphanumeric_code ~ '^[0-9]+$'
+              AND (
+                  upper(m.cadastral_code) = upper(%s)
+                  OR (%s ~ '^[0-9]+$'
+                      AND ltrim(m.alphanumeric_code, '0') = ltrim(%s, '0'))
+              )
+            ORDER BY CASE WHEN upper(m.cadastral_code) = upper(%s) THEN 0 ELSE 1 END
+            LIMIT 1
+            """,
+            (code, code, code, code),
+        )
+        if row is None or row["omi_istat_code"] is None:
+            return None
+        return int(row["omi_istat_code"])
+
     async def omi_quotes_by_cadastral_code(self, cadastral_code: str) -> Optional[Dict[str, Any]]:
         omi_relations = ("omi.omi_ref_zone", "omi.omi_fact_quotazioni_valori")
         if await self._relations_available(omi_relations):
             code = (cadastral_code or "").strip().upper()
             istat_keys = _omi_istat_keys(code)
+            if not istat_keys:
+                try:
+                    postgres_key = await self._omi_istat_key_from_postgres(code)
+                    if postgres_key is not None:
+                        istat_keys = [postgres_key]
+                except Exception:
+                    logger.debug("Could not resolve OMI ISTAT key from PostgreSQL for %s", code, exc_info=True)
             if code.isdigit():
                 candidates: list[tuple[str, Any]] = [
                     ("cod_comune_istat", float(istat_keys[0] if istat_keys else code)),
@@ -2778,30 +2818,35 @@ class _AsyncPostgresSource:
                     ("cod_comune_catastale", code),
                 ])
 
-            query_template = """
-                WITH latest_period AS (
-                    SELECT z.anno, z.semestre
-                    FROM omi.omi_ref_zone AS z
-                    JOIN omi.omi_fact_quotazioni_valori AS v ON v.zona_id = z.zona_id
-                    WHERE z.{code_column} = %s
-                    ORDER BY z.anno DESC, z.semestre DESC
-                    LIMIT 1
-                )
+            latest_period_template = """
+                SELECT z.anno, z.semestre
+                FROM omi.omi_ref_zone AS z
+                WHERE z.{code_column} = %s
+                ORDER BY z.anno DESC, z.semestre DESC
+                LIMIT 1
+            """
+            quote_template = """
                 SELECT z.anno, z.semestre, z.zona, v.cod_tipologia, v.tipologia,
-                       v.stato_conservazione, v.prezzo_min, v.prezzo_max,
+                       v.stato_conservazione, v.stato_prevalente, v.prezzo_min, v.prezzo_max,
                        v.locazione_min, v.locazione_max
                 FROM omi.omi_ref_zone AS z
                 JOIN omi.omi_fact_quotazioni_valori AS v ON v.zona_id = z.zona_id
-                JOIN latest_period AS latest
-                  ON latest.anno = z.anno AND latest.semestre = z.semestre
                 WHERE z.{code_column} = %s
+                  AND z.anno = %s
+                  AND z.semestre = %s
                 ORDER BY z.zona, v.cod_tipologia, v.stato_conservazione
             """
             quote_rows = []
             for code_column, code_value in candidates:
                 # Column names are selected from the fixed allowlist above.
+                latest_period = await self._fetchrow(
+                    latest_period_template.format(code_column=code_column), (code_value,)
+                )
+                if latest_period is None:
+                    continue
                 quote_rows = await self._fetch(
-                    query_template.format(code_column=code_column), (code_value, code_value)
+                    quote_template.format(code_column=code_column),
+                    (code_value, latest_period["anno"], latest_period["semestre"]),
                 )
                 if quote_rows:
                     break
@@ -2814,7 +2859,7 @@ class _AsyncPostgresSource:
                     semester = int(row["semestre"]) if row["semestre"] is not None else None
                     unique_key = (
                         year, semester, row["zona"], row["cod_tipologia"],
-                        row["stato_conservazione"], row["prezzo_min"], row["prezzo_max"],
+                        row["stato_conservazione"], row.get("stato_prevalente"), row["prezzo_min"], row["prezzo_max"],
                         row["locazione_min"], row["locazione_max"],
                     )
                     if unique_key in seen:
@@ -2828,6 +2873,7 @@ class _AsyncPostgresSource:
                         "cod_tipologia": _postgres_scalar(row["cod_tipologia"]),
                         "tipologia": row["tipologia"],
                         "stato_conservazione": str(row["stato_conservazione"] or "").strip().upper(),
+                        "stato_prevalente": str(row.get("stato_prevalente") or "").strip().upper(),
                         "prezzo_min": _postgres_scalar(row["prezzo_min"]),
                         "prezzo_max": _postgres_scalar(row["prezzo_max"]),
                         "locazione_min": _omi_postgres_number(row["locazione_min"]),
@@ -9774,11 +9820,24 @@ def _anncsu_addresses_detail_block(
     except (OSError, ValueError, TypeError):
         logger.debug("ANNCSU region could not be resolved: %s", region, exc_info=True)
         return _unavailable_anncsu_addresses_block("region_unavailable")
+    query = _anncsu.civic_addresses_for_geometry
+    if not status.get("ready") and status.get("state") == "missing":
+        # The installed package reads only schema ``public``; databases that
+        # keep the regional tables in schema ``anncsu`` use the schema-aware twin.
+        try:
+            from land_registry import anncsu_lookup
+
+            alternative = anncsu_lookup.region_status(region)
+        except Exception:
+            logger.debug("Schema-aware ANNCSU status failed", exc_info=True)
+            alternative = None
+        if alternative and alternative.get("ready"):
+            status, query = alternative, anncsu_lookup.civic_addresses_for_geometry
     if not status.get("ready"):
         reason = "not_built" if status.get("state") == "missing" else "store_unavailable"
         return _unavailable_anncsu_addresses_block(reason)
     try:
-        data = _anncsu.civic_addresses_for_geometry(
+        data = query(
             geometry,
             region,
             cadastral_code=cadastral_code,

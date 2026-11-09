@@ -933,7 +933,7 @@
         const quoteOverflowNote = quotes.length > 80
           ? note(tr('The estimator selector shows the first {limit} sale quotes; the table lists all current quotes.', { limit: 80 }))
           : '';
-        const unitValuations = omiUnitValuations(data.sister, quotes.slice(0, 80), data.zone, tr);
+        const unitValuations = omiUnitValuations(data.sister, quoteList, quotes, data.zone, ctx);
         return {
           badge: quoteList.length,
           meta,
@@ -2442,8 +2442,28 @@
   }
 
   function omiQuoteTable(quotes, tr) {
-    const labels = ['Zone', 'Type', 'Condition', 'Sale range (€/m²)', 'Rent range (€/m²/month)', 'Gross yield', 'Sale percentile', 'Period'];
-    const body = quotes.map((quote) => {
+    const periodLabel = (quote) => {
+      const period = Core.omiQuotePeriod(quote);
+      return period ? period.replace('-S', ' S') : tr('Period not specified');
+    };
+    const periods = [...new Set(quotes.map(periodLabel))].sort((left, right) => {
+      const a = left.match(/^(\d{4}) S([12])$/);
+      const b = right.match(/^(\d{4}) S([12])$/);
+      if (!a) return b ? 1 : 0;
+      if (!b) return -1;
+      return Number(b[1]) - Number(a[1]) || Number(b[2]) - Number(a[2]);
+    });
+    const rowsByQuote = new Map();
+    quotes.forEach((quote) => {
+      const type = Core.omiTypologyLabel(quote, tr);
+      const condition = Core.omiConditionLabel(quote.stato_conservazione, tr) || '—';
+      const key = JSON.stringify([quote.zona || '—', type, condition, quote.cod_tipologia ?? '']);
+      if (!rowsByQuote.has(key)) rowsByQuote.set(key, { zone: quote.zona || '—', type, condition, byPeriod: new Map() });
+      rowsByQuote.get(key).byPeriod.set(periodLabel(quote), quote);
+    });
+    const metricLabels = ['Sale range (€/m²)', 'Rent range (€/m²/month)', 'Gross yield', 'Sale percentile'];
+    const cell = (quote, metricIndex) => {
+      if (!quote) return '<td>—</td>';
       const saleMin = Core.toNumber(quote.prezzo_min);
       const saleMax = Core.toNumber(quote.prezzo_max);
       const rentMin = Core.toNumber(quote.locazione_min);
@@ -2453,34 +2473,25 @@
       const rent = rentMin !== null && rentMax !== null ? `${Core.formatNumber(rentMin, 2)}–${Core.formatNumber(rentMax, 2)}` : '—';
       const yieldPct = Core.toNumber(metrics.gross_rental_yield_pct);
       const percentile = Core.toNumber(metrics.zone_percentile_pct);
-      const period = quote.anno && quote.semestre ? `${quote.anno} S${quote.semestre}` : '—';
-      return `<tr><td>${esc(quote.zona || '—')}</td><td>${esc(Core.omiTypologyLabel(quote, tr))}</td>`
-        + `<td>${esc(Core.omiConditionLabel(quote.stato_conservazione, tr) || '—')}</td><td>${sale}</td><td>${rent}</td>`
-        + `<td>${yieldPct === null ? '—' : `${Core.formatNumber(yieldPct, 2)}%`}</td>`
-        + `<td>${percentile === null ? '—' : `${Core.formatNumber(percentile, 1)}%`}</td><td>${esc(period)}</td></tr>`;
-    }).join('');
+      const values = [sale, rent, yieldPct === null ? '—' : `${Core.formatNumber(yieldPct, 2)}%`, percentile === null ? '—' : `${Core.formatNumber(percentile, 1)}%`];
+      return `<td>${values[metricIndex]}</td>`;
+    };
+    const body = [...rowsByQuote.values()].sort((left, right) =>
+      left.zone.localeCompare(right.zone) || left.type.localeCompare(right.type) || left.condition.localeCompare(right.condition))
+      .map((row) => `<tr><th scope="row">${esc(row.zone)}</th><td>${esc(row.type)}</td><td>${esc(row.condition)}</td>`
+        + periods.map((period) => metricLabels.map((_, index) => cell(row.byPeriod.get(period), index)).join('')).join('')
+        + '</tr>').join('');
     const title = tr('All OMI quotes for this municipality ({n})', { n: quotes.length });
     return `<details class="parcel-omi-quotes"><summary>${esc(title)}</summary>`
       + `<div class="parcel-omi-table-wrap"><table class="parcel-omi-table" aria-label="${esc(title)}">`
-      + `<thead><tr>${labels.map((label) => `<th scope="col">${esc(tr(label))}</th>`).join('')}</tr></thead>`
+      + `<thead><tr><th scope="col" rowspan="2">${esc(tr('Zone'))}</th><th scope="col" rowspan="2">${esc(tr('Type'))}</th>`
+      + `<th scope="col" rowspan="2">${esc(tr('Condition'))}</th>${periods.map((period) => `<th scope="colgroup" colspan="${metricLabels.length}">${esc(period)}</th>`).join('')}</tr>`
+      + `<tr>${periods.map(() => metricLabels.map((label) => `<th scope="col">${esc(tr(label))}</th>`).join('')).join('')}</tr></thead>`
       + `<tbody>${body}</tbody></table></div></details>`;
   }
 
-  function omiCadastralTypeHint(category) {
-    const normalized = String(category || '').toUpperCase().replaceAll('/', '').replaceAll(' ', '');
-    const hints = {
-      A1: 'signoril', A2: 'civil', A3: 'economich', A4: 'popolar',
-      A5: 'ultrapopol', A6: 'rural', A7: 'villini', A8: 'villini',
-      A10: 'uffici', C1: 'negozi', C2: 'magazzini', C3: 'laboratori',
-    };
-    return hints[normalized] || null;
-  }
-
-  function omiComparableText(value) {
-    return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-  }
-
-  function omiUnitValuations(sister, quotes, zoneMatch, tr) {
+  function omiUnitValuations(sister, allQuotes, quotes, zoneMatch, ctx) {
+    const { tr } = ctx;
     if (!sister || sister.available !== true) return '';
     const units = Array.isArray(sister.valuation_units)
       ? sister.valuation_units
@@ -2489,30 +2500,48 @@
     if (!units.length && !land.length) {
       return `<section class="parcel-omi-units"><h3>${esc(tr('OMI estimate by SISTER unit'))}</h3>${note(tr('No SISTER building or land units are available for this parcel.'))}</section>`;
     }
-    const detectedZone = zoneMatch && zoneMatch.matched ? String(zoneMatch.zone || '').toUpperCase() : '';
-    const optionsFor = (selectedIndex) => `<option value="">${esc(tr('Choose an OMI quote'))}</option>` + quotes.map((quote, index) => {
-      const selected = selectedIndex === index ? ' selected' : '';
-      return `<option value="${index}"${selected}>${esc(Core.omiQuoteLabel(quote, tr))}</option>`;
-    }).join('');
+    const valuation = Core.estimateOmiUnits(units, allQuotes, zoneMatch);
+    if (valuation.valued_unit_count) {
+      ctx.setStat('price', `${Core.formatCurrency(valuation.value_min)} – ${Core.formatCurrency(valuation.value_max)}`);
+    }
+    const summary = valuation.valued_unit_count
+      ? `<div id="parcelOmiAutomaticSummary" class="parcel-estimate parcel-omi-automatic-estimate"><span>${esc(tr('OMI estimate for SISTER buildings'))}</span>`
+        + `<strong>${esc(Core.formatCurrency(valuation.value_min))} – ${esc(Core.formatCurrency(valuation.value_max))}</strong>`
+        + `<small>${esc(tr('Central estimate'))}: ${esc(Core.formatCurrency(valuation.value_estimate))}</small>`
+        + note(valuation.valued_unit_count === units.length
+          ? tr('Based on {n} SISTER building units.', { n: valuation.valued_unit_count })
+          : tr('Only {valued} of {total} SISTER building units have usable OMI data; unvalued units are excluded.', { valued: valuation.valued_unit_count, total: units.length }))
+        + `</div>`
+      : `<div id="parcelOmiAutomaticSummary" class="parcel-estimate parcel-omi-automatic-estimate" hidden></div>`;
+    const optionsFor = (selectedIndex) => {
+      const visibleQuotes = quotes.slice(0, 80).map((quote, index) => ({ quote, index }));
+      if (selectedIndex >= 0 && !visibleQuotes.some((item) => item.index === selectedIndex)) {
+        visibleQuotes.push({ quote: quotes[selectedIndex], index: selectedIndex });
+      }
+      return `<option value="">${esc(tr('Choose an OMI quote'))}</option>` + visibleQuotes.map(({ quote, index }) => {
+        const selected = selectedIndex === index ? ' selected' : '';
+        return `<option value="${index}"${selected}>${esc(Core.omiQuoteLabel(quote, tr))}</option>`;
+      }).join('');
+    };
     const buildingCards = units.map((unit, index) => {
       const category = unit.category || unit.building_type || '';
-      const hint = omiCadastralTypeHint(category);
-      const categoryText = omiComparableText(category);
-      const hintedQuotes = hint
-        ? quotes.map((quote, quoteIndex) => ({ quote, quoteIndex }))
-          .filter(({ quote }) => omiComparableText(quote.tipologia || quote.cod_tipologia).includes(hint))
-          .filter(({ quote }) => !detectedZone || String(quote.zona || '').toUpperCase() === detectedZone)
-        : [];
-      const suggestedIndex = detectedZone && hintedQuotes.length === 1 ? hintedQuotes[0].quoteIndex : null;
-      const rawArea = Core.toNumber(unit.area);
-      const area = rawArea !== null && rawArea > 0 ? String(rawArea) : '';
+      const estimate = valuation.estimates[index];
+      const selectedIndex = estimate && estimate.quote ? quotes.indexOf(estimate.quote) : -1;
+      const area = estimate && estimate.area && estimate.area.value !== null ? String(estimate.area.value) : '';
       const number = unit.subunit || index + 1;
-      const matchNote = suggestedIndex !== null
-        ? tr('Suggested from cadastral category {category}; review before use.', { category })
-        : hint && !hintedQuotes.length
-          ? tr('No matching OMI type was found for category {category}; choose a quote manually.', { category })
-          : tr('Select an OMI type manually; no unique category match is available.') + (categoryText ? ` ${tr('Cadastral category')}: ${category}.` : '');
-      return `<article class="parcel-record parcel-omi-unit-card" data-omi-unit-card>
+      const matchNote = estimate && estimate.value_min !== undefined
+        ? estimate.municipality_wide
+          ? tr('The OMI zone was not detected; this SISTER estimate uses selected category quotes across {n} municipality zones.', { n: estimate.zone_count })
+          : tr('SISTER category and OMI condition selected this quote automatically; review the zone and surface.')
+        : tr(estimate && estimate.reason || 'No automatic estimate is available; check the cadastral category, OMI zone and surface.')
+        + (category ? ` ${tr('Cadastral category')}: ${category}.` : '');
+      const rateMin = estimate && estimate.municipality_wide ? estimate.price_min : null;
+      const rateMax = estimate && estimate.municipality_wide ? estimate.price_max : null;
+      const areaNote = estimate && estimate.area && estimate.area.value !== null
+        ? tr('SISTER area basis: {formula}. Confirm this is the commercial surface and matches the OMI measurement basis.', { formula: estimate.area.formula })
+        : tr('SISTER does not provide a usable unit surface; enter a measured commercial surface to estimate.');
+      const rateMid = estimate && estimate.municipality_wide ? estimate.price_mid : null;
+      return `<article class="parcel-record parcel-omi-unit-card" data-omi-unit-card data-auto-rate-min="${rateMin ?? ''}" data-auto-rate-max="${rateMax ?? ''}" data-auto-rate-mid="${rateMid ?? ''}" data-auto-zone-count="${estimate && estimate.municipality_wide ? estimate.zone_count : ''}">
         <h4>${esc(tr('Building unit {n}', { n: number }))}${category ? ` <small>${esc(category)}</small>` : ''}</h4>
         ${rows([
           [tr('Subunit'), text(unit.subunit)],
@@ -2522,11 +2551,10 @@
           [tr('Cadastral income'), unit.cadastral_income == null ? null : `€ ${Core.formatNumber(unit.cadastral_income, 2)}`],
         ])}
         <div class="parcel-form">
-          <label>${esc(tr('OMI zone and property type'))}<select class="parcel-input" data-omi-unit-quote>${optionsFor(suggestedIndex)}</select></label>
-          <label>${esc(tr('Surface used for the estimate (m²)'))}<input class="parcel-input" data-omi-unit-area type="number" inputmode="decimal" min="1" step="1" value="${esc(area)}" placeholder="${esc(tr('e.g. 100'))}"></label>
+          <label>${esc(tr('OMI zone and property type'))}<select class="parcel-input" data-omi-unit-quote>${optionsFor(selectedIndex)}</select></label>
+          <label>${esc(tr('Surface used for the estimate (m²)'))}<input class="parcel-input" data-omi-unit-area type="number" inputmode="decimal" min="1" step="0.1" value="${esc(area)}" placeholder="${esc(tr('e.g. 100'))}"></label>
         </div>
-        ${note(matchNote)}
-        ${rawArea !== null && rawArea > 0 ? note(tr('SISTER recorded {area} m²; confirm that this is the commercial surface and uses the OMI measurement basis.', { area: Core.formatNumber(rawArea, 1) })) : note(tr('SISTER does not provide a usable unit surface; enter a measured commercial surface to estimate.'))}
+        ${note(matchNote)}${note(areaNote)}
         <div class="parcel-estimate parcel-omi-unit-result" data-omi-unit-result aria-live="polite"></div>
       </article>`;
     }).join('');
@@ -2538,8 +2566,8 @@
         [tr('Address'), text(record.address)],
       ])}</article>`).join('')}${note(tr('Land is listed separately. Building OMI quotes do not provide a land valuation for this record.'))}</div>`
       : '';
-    return `<section class="parcel-omi-units"><h3>${esc(tr('OMI estimate by SISTER unit'))}</h3>`
-      + (units.length ? note(tr('Estimate each building unit separately using its cadastral category and a verified commercial surface. The category suggestion is only a starting point.')) : '')
+    return `<section class="parcel-omi-units"><h3>${esc(tr('OMI estimate by SISTER unit'))}</h3>${summary}`
+      + (units.length ? note(tr('SISTER calculates building ranges from the cadastral category, selected OMI condition and recorded surface; missing residential surface can use the documented cadastral-consistency proxy.')) : '')
       + buildingCards + landRecords + `</section>`;
   }
 
@@ -2562,24 +2590,65 @@
     const alive = () => ctx.isCurrent();
 
     function showUnitEstimates() {
+      let totalMin = 0;
+      let totalMax = 0;
+      let totalMid = 0;
+      let totalUnits = 0;
+      let valuedUnits = 0;
       el.querySelectorAll('[data-omi-unit-card]').forEach((card) => {
         const quoteSelect = card.querySelector('[data-omi-unit-quote]');
         const unitArea = card.querySelector('[data-omi-unit-area]');
         const result = card.querySelector('[data-omi-unit-result]');
         if (!quoteSelect || !unitArea || !result) return;
-        const quote = quoteSelect.value === '' ? null : quotes[Number(quoteSelect.value)];
-        const range = quote ? Core.estimateOmiRange(quote, unitArea.value) : null;
+        const quote = quoteSelect.value === '' ? null : allValidQuotes[Number(quoteSelect.value)];
+        let range = quote ? Core.estimateOmiRange(quote, unitArea.value) : null;
+        let midpoint = range ? (range.min + range.max) / 2 : null;
+        let sourceNote = quote ? `${tr('Local preview')} · ${Core.omiQuoteLabel(quote, tr)}` : '';
+        if (!range && !quote) {
+          const area = Core.toNumber(unitArea.value);
+          const priceMin = Core.toNumber(card.dataset.autoRateMin);
+          const priceMax = Core.toNumber(card.dataset.autoRateMax);
+          const priceMid = Core.toNumber(card.dataset.autoRateMid);
+          const zoneCount = Core.toNumber(card.dataset.autoZoneCount);
+          if (area !== null && area > 0 && priceMin !== null && priceMax !== null && priceMax >= priceMin) {
+            range = { min: area * priceMin, max: area * priceMax };
+            midpoint = area * (priceMid === null ? (priceMin + priceMax) / 2 : priceMid);
+            sourceNote = tr('Municipality-wide quote range across {n} zones', { n: zoneCount });
+          }
+        }
+        if (range) {
+          totalMin += range.min;
+          totalMax += range.max;
+          totalMid += midpoint;
+          valuedUnits += 1;
+        }
+        totalUnits += 1;
         result.innerHTML = range
-          ? `<span>${esc(tr('Indicative value'))}</span><strong>${esc(Core.formatCurrency(range.min))} – ${esc(Core.formatCurrency(range.max))}</strong><small>${esc(tr('Local preview'))} · ${esc(Core.omiQuoteLabel(quote, tr))}</small>`
+          ? `<span>${esc(tr('Indicative value'))}</span><strong>${esc(Core.formatCurrency(range.min))} – ${esc(Core.formatCurrency(range.max))}</strong><small>${esc(sourceNote)}</small>`
           : `<span>${esc(!quote ? tr('Choose an OMI quote to estimate this unit.') : tr('Enter a valid surface to compute the estimate.'))}</span>`;
       });
+      const summary = el.querySelector('#parcelOmiAutomaticSummary');
+      if (summary) {
+        if (valuedUnits) {
+          summary.hidden = false;
+          summary.innerHTML = `<span>${esc(tr('OMI estimate for SISTER buildings'))}</span>`
+            + `<strong>${esc(Core.formatCurrency(totalMin))} – ${esc(Core.formatCurrency(totalMax))}</strong>`
+            + `<small>${esc(tr('Central estimate'))}: ${esc(Core.formatCurrency(totalMid))}</small>`
+            + note(valuedUnits === totalUnits
+              ? tr('Based on {n} SISTER building units.', { n: valuedUnits })
+              : tr('Only {valued} of {total} SISTER building units have usable OMI data; unvalued units are excluded.', { valued: valuedUnits, total: totalUnits }));
+          ctx.setStat('price', `${Core.formatCurrency(totalMin)} – ${Core.formatCurrency(totalMax)}`);
+        } else {
+          summary.hidden = true;
+          ctx.setStat('price', '—');
+        }
+      }
     }
 
     function showQuote() {
       const quote = current();
       if (!quote) {
         quoteRows.innerHTML = note(tr('Choose an OMI zone and property type to see the quote.'));
-        ctx.setStat('price', '—');
         return;
       }
       const benchmark = Core.quoteBenchmark(allValidQuotes, quote);
@@ -2601,7 +2670,6 @@
         ? note(tr('Gross yield = rent midpoint × 12 ÷ sale midpoint × 100%, before costs and taxes. Percentile uses midranks of sale midpoints for the same OMI type and condition; ties share their middle rank.'))
         : '')
         + modelVersionDetails([metrics.gross_rental_yield_model_version, metrics.zone_percentile_model_version], tr);
-      ctx.setStat('price', `${Core.formatNumber(quote.prezzo_min)}–${Core.formatNumber(quote.prezzo_max)} €/m²`);
     }
 
     function showEstimate() {
@@ -3211,7 +3279,7 @@
     view.ctx = made.ctx;
     const area = Core.parcelAreaSqm(made.ctx.props);
     view.statStrip.innerHTML = stripCell('area', area && area.computed ? tr('Area (computed)') : tr('Area'))
-      + stripCell('sheet', tr('Sheet')) + stripCell('price', tr('Sale price (OMI)'), { scope: tr('OMI zone') })
+      + stripCell('sheet', tr('Sheet')) + stripCell('price', tr('OMI valuation'), { scope: tr('SISTER buildings') })
       + stripCell('hazard', tr('Flood / landslide'), { scope: tr('Municipal') }) + stripCell('buildings', tr('OSM footprints'))
       + stripCell('composite-risk', tr('Risk context'), { meter: true, scope: tr('Municipal') });
     made.ctx.setStat('area', area ? Core.formatArea(area.value) : '—');

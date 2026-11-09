@@ -49,6 +49,11 @@ SOURCE_CATALOG = (
         license_basis="official_open_data_terms_reviewed",
         terms_url="https://www.anncsu.gov.it/it/consultazione-dellarchivio/ricerca-strade-e-numeri-civici/",
         citation="ANNCSU — Agenzia delle Entrate and ISTAT",
+        reuse_terms=(
+            "Reused under CC BY 4.0 for civic-address matching in the parcel panel, the civic-address map layer "
+            "and the map address search (street and house number to access point). Coordinates are submitted by "
+            "municipalities and are incomplete; a missing match does not mean an address does not exist."
+        ),
         attribution_text="ANNCSU — Agenzia delle Entrate and ISTAT",
     ),
     SourceCatalogEntry(

@@ -46,6 +46,10 @@
     basemapUserSelected: false,
     searchTimer: null,
     searchRequest: 0,
+    addressRequest: 0,
+    searchMarker: null,
+    searchMarkerInfo: null,
+    pendingAddress: null,
     searchController: null,
     searchActiveIndex: -1,
     parcelFinderRequest: 0,
@@ -504,6 +508,14 @@
       if (state.selectedFeature?.id != null) params.set('parcel_id', String(state.selectedFeature.id));
       else params.delete('parcel_id');
     } else { params.delete('parcel'); params.delete('parcel_id'); }
+    // The address marker (label + point) is shareable; the label is bounded
+    // and validated again on restore.
+    const marker = state.searchMarkerInfo;
+    if (marker) {
+      params.set('addr', marker.label.slice(0, 120));
+      params.set('addr_lat', marker.lat.toFixed(6));
+      params.set('addr_lng', marker.lng.toFixed(6));
+    } else { params.delete('addr'); params.delete('addr_lat'); params.delete('addr_lng'); }
     window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}${window.location.hash}`);
   }
 
@@ -956,10 +968,13 @@
         // Below ``cluster_below_zoom`` the server sends grid clusters (``point_count``)
         // instead of individual features; they get their own circle + count layers.
         const clustered = Number(layer.cluster_below_zoom || 0) > 0;
+        const pointFilter = layer.kind === 'mixed'
+          ? (clustered
+            ? ['all', ['==', ['geometry-type'], 'Point'], ['!', ['has', 'point_count']]]
+            : ['==', ['geometry-type'], 'Point'])
+          : (clustered ? ['!', ['has', 'point_count']] : null);
         state.map.addLayer({ id: `point-${layer.id}`, type: 'circle', source: sourceId, 'source-layer': layer.id,
-          ...(layer.kind === 'mixed'
-            ? { filter: clustered ? ['all', ['==', ['geometry-type'], 'Point'], ['!', ['has', 'point_count']]] : ['==', ['geometry-type'], 'Point'] }
-            : {}),
+          ...(pointFilter ? { filter: pointFilter } : {}),
           minzoom: Number(layer.min_zoom || 0), paint: { 'circle-color': color, 'circle-radius': 4, 'circle-stroke-color': '#fff', 'circle-stroke-width': 1, 'circle-opacity': layer.kind === 'point' ? (userOpacity ?? 1) : 1 } });
       }
       if (Number(layer.cluster_below_zoom || 0) > 0) addClusterLayers(layer, sourceId, color);
@@ -1222,7 +1237,7 @@
     const slider = document.createElement('input');
     slider.type = 'range';
     Object.assign(slider, { min: setting.min, max: setting.max, step: setting.step, value: setting.value });
-    // Fourteen sliders share the caption "Fill"; the name must say whose.
+    // Layer opacity sliders share the caption "Fill"; the name must say whose.
     slider.setAttribute('aria-label', `${setting.label}: ${tr(layer.title)}`);
     slider.addEventListener('input', () => applyLayerOpacity(layer, Number(slider.value)));
     const caption = document.createElement('span');
@@ -3125,6 +3140,7 @@
     state.selectedReference = null;
     state.selectedFeature = null;
     clearSelectedAuctionSaleMarker();
+    if (!options.keepSearchMarker) clearSearchMarker();
     window.ParcelPanel?.clear();
     state.map?.getSource('adjacent-parcels')?.setData(emptyFeatureCollection());
     sisterBuildingsOverlay.fetchToken += 1;
@@ -3673,6 +3689,7 @@
       return;
     }
     const properties = feature?.properties || {};
+    const anncsu = layer.id === 'anncsu-addresses';
     const popup = new maplibregl.Popup({ maxWidth: '420px', closeButton: true })
       .setLngLat(lngLat)
       .addTo(state.map);
@@ -3681,6 +3698,13 @@
       const concession = layer.id === 'maritime-concessions';
       const displayProperties = details?.properties || properties;
       const relatedItems = details?.related || {};
+      const coordinateMethodLabels = {
+        '1': tr('Field survey, estimated accuracy < 5 m'),
+        '2': tr('Field survey, estimated accuracy ≥ 5 m'),
+        '3': tr('Indirect mapping, estimated accuracy < 5 m'),
+        '4': tr('Indirect mapping, estimated accuracy ≥ 5 m'),
+        '5': tr('Indirect mapping via Portale per i Comuni'),
+      };
       const scalarRows = entries => entries
         .filter(([, value]) => value !== null && value !== undefined && typeof value !== 'object' && value !== '')
         .map(([key, value]) => `<tr><th>${escapeHtml(key)}</th><td>${escapeHtml(value)}</td></tr>`)
@@ -3696,6 +3720,18 @@
           [tr('Snapshot date'), snapshot.reference_date],
           [tr('Geometry status'), displayProperties.geometry_repaired === true ? tr('Repaired for map') : null],
         ])
+        : anncsu
+          ? scalarRows([
+            [tr('Address'), displayProperties.address],
+            [tr('Street'), displayProperties.street],
+            [tr('Locality'), displayProperties.locality],
+            [tr('Civic number'), [displayProperties.civic_number || displayProperties.metric_number, displayProperties.exponent, displayProperties.specificity].filter(Boolean).join(' ')],
+            [tr('Coordinate method'), coordinateMethodLabels[String(displayProperties.coordinate_method)] || displayProperties.coordinate_method_label],
+            [tr('Municipality code'), displayProperties.comune_code],
+            [tr('Region code'), displayProperties.region_code],
+            [tr('Source vintage'), displayProperties.source_vintage],
+            [tr('Access ID'), displayProperties.access_id],
+          ])
         : scalarRows(Object.entries(properties)
           .filter(([, value]) => value !== null && value !== undefined && typeof value !== 'object')
           .slice(0, 6)
@@ -3725,12 +3761,17 @@
       const documentHint = concession && details && !documents.length
         ? `<p class="map-muted">${escapeHtml(tr('No concession documents are linked to this record.'))}</p>`
         : '';
+      const anncsuAttribution = anncsu
+        ? `<p class="map-muted">${escapeHtml(tr('ANNCSU — Agenzia delle Entrate and ISTAT · CC BY 4.0'))}</p>`
+        : '';
       const heading = concession
         ? `${tr('Maritime concession')}${displayProperties.idconc ? ` · ${displayProperties.idconc}` : ''}`
+        : anncsu && displayProperties.address
+          ? displayProperties.address
         : layer.group === 'administrative-boundaries' && properties.canonical_name
           ? `${properties.unit_type ? `${properties.unit_type}: ` : ''}${properties.canonical_name}`
           : layer.title;
-      popup.setHTML(`<strong>${escapeHtml(heading)}</strong><table class="parcel-detail-table"><tbody>${rows || '<tr><td>No feature details</td></tr>'}</tbody></table>${relatedSummary}${related}${documentHint}<small><a href="/data-sources">${escapeHtml(tr('Data sources'))}</a></small>`);
+      popup.setHTML(`<strong>${escapeHtml(heading)}</strong><table class="parcel-detail-table"><tbody>${rows || '<tr><td>No feature details</td></tr>'}</tbody></table>${anncsuAttribution}${relatedSummary}${related}${documentHint}<small><a href="/data-sources">${escapeHtml(tr('Data sources'))}</a></small>`);
     };
 
     renderPopup();
@@ -3907,7 +3948,11 @@
       const parcelContext = result.kind === 'parcel'
         ? [result.municipality_name, result.sheet ? `Sheet ${result.sheet}` : '', result.id != null ? `Polygon ID ${result.id}` : ''].filter(Boolean).join(' · ')
         : '';
-      const context = parcelContext || result.context || (result.kind === 'parcel' ? 'Cadastral parcel' : 'Municipality');
+      const addressContext = result.kind === 'address'
+        ? [result.match_level === 'address' || result.match_level === 'address_exponent_dropped' ? tr('Civic address') : tr('Street'),
+          result.source === 'openstreetmap' ? 'OpenStreetMap' : 'ANNCSU'].join(' · ')
+        : '';
+      const context = parcelContext || addressContext || result.context || (result.kind === 'parcel' ? 'Cadastral parcel' : 'Municipality');
       button.innerHTML = `<strong>${escapeHtml(result.label)}</strong><small>${escapeHtml(context)}</small>`;
       button.addEventListener('click', () => chooseSearchResult(result));
       list.appendChild(button);
@@ -3921,9 +3966,139 @@
     if (status) status.textContent = '';
   }
 
+  // --- Address search result: marker + cadastral parcel + parcel window -------
+  function clearSearchMarker() {
+    if (state.searchMarker) { state.searchMarker.remove(); state.searchMarker = null; }
+    state.searchMarkerInfo = null;
+  }
+
+  function showSearchMarker(lng, lat, label, detail) {
+    clearSearchMarker();
+    if (!state.map || !window.maplibregl) return;
+    const element = document.createElement('div');
+    element.className = 'search-address-marker';
+    element.setAttribute('role', 'img');
+    element.setAttribute('aria-label', label);
+    const text = document.createElement('span');
+    text.className = 'search-address-marker-label';
+    text.textContent = label;
+    const pin = document.createElement('span');
+    pin.className = 'search-address-marker-pin';
+    pin.setAttribute('aria-hidden', 'true');
+    element.append(text, pin);
+    if (detail) element.title = detail;
+    state.searchMarker = new maplibregl.Marker({ element, anchor: 'bottom' }).setLngLat([lng, lat]).addTo(state.map);
+    state.searchMarkerInfo = { lat, lng, label };
+    writeUrl();
+  }
+
+  // Restores the marker of a shared link (?addr=&addr_lat=&addr_lng=).
+  function readAddressMarkerParams() {
+    const params = new URLSearchParams(window.location.search);
+    const label = (params.get('addr') || '').trim().slice(0, 120);
+    const lat = Number(params.get('addr_lat')), lng = Number(params.get('addr_lng'));
+    if (!label || !Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    // Same bounds the map itself is restricted to.
+    if (lng < ITALY_BOUNDS[0][0] || lng > ITALY_BOUNDS[1][0] || lat < ITALY_BOUNDS[0][1] || lat > ITALY_BOUNDS[1][1]) return null;
+    return { label, lat, lng };
+  }
+
+  // Captured before the first writeUrl() call, which rewrites the query string.
+  function restoreAddressMarkerFromUrl() {
+    const pending = state.pendingAddress;
+    state.pendingAddress = null;
+    if (!pending) return;
+    showSearchMarker(pending.lng, pending.lat, pending.label, '');
+    if ($('mapSearchInput') && !$('mapSearchInput').value) $('mapSearchInput').value = pending.label;
+  }
+
+  // Access points sit at doors and often fall on a boundary or road, so when
+  // no parcel contains the point, look for the nearest one within a few metres.
+  async function parcelNearPoint(lat, lng) {
+    const exact = await parcelAtPoint(lat, lng);
+    if (exact) return { feature: exact, distance: 0 };
+    const cosLat = Math.cos(lat * Math.PI / 180);
+    for (const radius of [4, 10]) {
+      const probes = [];
+      for (let bearing = 0; bearing < 360; bearing += 45) {
+        const rad = bearing * Math.PI / 180;
+        probes.push(parcelAtPoint(lat + radius * Math.cos(rad) / 110574, lng + radius * Math.sin(rad) / (111320 * cosLat)).catch(() => null));
+      }
+      const hit = (await Promise.all(probes)).find(Boolean);
+      if (hit) return { feature: hit, distance: radius };
+    }
+    return null;
+  }
+
+  function addressMatchNote(result) {
+    switch (result.match_level) {
+      case 'address_exponent_dropped': return tr('Exact number found; the requested letter was not matched.');
+      case 'street': return result.requested_civic
+        ? tr('Street found, but number {n} is not in the address registry.').replace('{n}', result.requested_civic)
+        : tr('Street found.');
+      case 'fuzzy_street': return tr('Approximate street match.');
+      default: return '';
+    }
+  }
+
+  async function parcelAtPoint(lat, lng) {
+    const response = await fetch(`/api/v1/enrichment/parcel/at-point?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`);
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error('Parcel lookup unavailable');
+    return response.json();
+  }
+
+  async function chooseAddressResult(result) {
+    const lat = Number(result.lat), lng = Number(result.lon);
+    if (!state.map || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+      mapStatus(`${result.label} has no location on file`, true);
+      return;
+    }
+    const exact = result.match_level === 'address' || result.match_level === 'address_exponent_dropped';
+    const note = addressMatchNote(result);
+    clearParcelSelection({ silent: true });
+    showSearchMarker(lng, lat, result.label, [note, result.attribution].filter(Boolean).join(' · '));
+    $('mapSearchInput').value = result.label;
+    const requestId = ++state.addressRequest;
+    // A street-only or approximate hit is not precise enough to name a parcel.
+    if (!exact && result.source !== 'openstreetmap') {
+      state.map.flyTo({ center: [lng, lat], zoom: 17, duration: 800 });
+      mapStatus([result.label, note].filter(Boolean).join(' — '));
+      $('mapSearchStatus').textContent = result.nearby?.length
+        ? `${tr('Nearby numbers')}: ${result.nearby.join(', ')}` : note;
+      return;
+    }
+    state.map.flyTo({ center: [lng, lat], zoom: 18, duration: 600 });
+    mapStatus('Looking up cadastral parcel…');
+    try {
+      const found = await parcelNearPoint(lat, lng);
+      if (requestId !== state.addressRequest) return;
+      const feature = found?.feature;
+      const props = feature?.properties || {};
+      const reference = props.canonical_reference || props.national_cadastral_reference
+        || props.NATIONALCADASTRALREFERENCE || props.national_reference;
+      if (!feature || !reference) {
+        mapStatus(tr('No cadastral parcel found at this address'), true);
+        $('mapSearchStatus').textContent = tr('No cadastral parcel found at this address');
+        return;
+      }
+      const id = Number(props.id ?? feature.id);
+      // Draws the parcel highlight and opens the parcel window.
+      await loadParcelByReference(reference, true, Number.isInteger(id) && id > 0 ? id : null);
+      if (requestId === state.addressRequest) {
+        $('mapSearchStatus').textContent = found.distance
+          ? tr('Nearest parcel, within {m} m of the address point.').replace('{m}', String(found.distance))
+          : note;
+      }
+    } catch (error) {
+      if (requestId === state.addressRequest) mapStatus(error.message || 'Parcel lookup unavailable', true);
+    }
+  }
+
   function chooseSearchResult(result) {
     closeSearchSuggestions();
     $('mapSearchInput').value = result.label;
+    if (result.kind === 'address') { chooseAddressResult(result); return; }
     if (result.kind === 'parcel') { $('mapSearchInput').focus(); loadParcelByReference(result.reference, true, result.id ?? null); return; }
     const profile = result.municipality || result;
     const bbox = [profile.west, profile.south, profile.east, profile.north].map(Number);
@@ -4192,18 +4367,10 @@
     $('parcelFinderForm').addEventListener('submit', searchParcelFromFinder);
   }
 
-  // Human label for a Nominatim hit; its addresstype/type says whether the
-  // result is a municipality, a street, a watercourse, and so on.
-  function placeKindLabel(place) {
-    const type = place.addresstype || place.type || '';
-    if (['city', 'town', 'village', 'municipality', 'hamlet'].includes(type)) return 'Place';
-    if (['road', 'street', 'house', 'building'].includes(type) || place.category === 'highway') return 'Address';
-    return type ? type.replaceAll('_', ' ').replace(/^./, (c) => c.toUpperCase()) : 'Place';
-  }
-
-  // Only explicit submits reach the public Nominatim service: its usage
+  // Only explicit submits reach Nominatim (via /api/v1/map/geocode): its usage
   // policy forbids autocomplete, and as-you-type calls would forward every
-  // keystroke (including parcel references) to a third party.
+  // keystroke (including parcel references) to a third party. The local
+  // cadastral and ANNCSU sources are searched as you type.
   async function search(query, explicit = false) {
     const normalized = query.trim();
     const requestId = ++state.searchRequest;
@@ -4224,26 +4391,16 @@
       const payload = serviceDown ? {} : await response.json();
       if (requestId !== state.searchRequest) return;
       let results = payload.results || [];
-      if (!results.length && explicit && !(/^[A-Z]\d{3}[A-Z]?\d{4}\d{2}(?:\.|$)/i.test(normalized) || /^[A-Z]\d{3}[_-].*\./i.test(normalized))) {
-        // The canonical profile store is optional in local/degraded
-        // deployments. Keep municipality discovery usable through the same
-        // Nominatim provider already used by the legacy location search.
-        const placeResponse = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&countrycodes=it&limit=8&q=${encodeURIComponent(normalized)}`, { headers: { Accept: 'application/json' }, signal: controller.signal });
-        if (placeResponse.ok) {
-          const places = await placeResponse.json();
-          // Nominatim frequently returns near-duplicate administrative
-          // entries for the same place (e.g. the city and its metro/comune
-          // boundary); collapse anything sharing a rounded coordinate pair.
-          const seen = new Set();
-          results = places
-            .map((place) => ({ kind: 'place', label: place.display_name, context: placeKindLabel(place), lat: place.lat, lon: place.lon }))
-            .filter((place) => {
-              const key = `${Number(place.lat).toFixed(3)},${Number(place.lon).toFixed(3)}`;
-              if (seen.has(key)) return false;
-              seen.add(key);
-              return true;
-            });
-        }
+      const hasPreciseHit = results.some((r) => r.kind === 'parcel' || r.kind === 'municipality'
+        || (r.kind === 'address' && (r.match_level === 'address' || r.match_level === 'address_exponent_dropped')));
+      if (!hasPreciseHit && explicit && !(/^[A-Z]\d{3}[A-Z]?\d{4}\d{2}(?:\.|$)/i.test(normalized) || /^[A-Z]\d{3}[_-].*\./i.test(normalized))) {
+        // Place/address fallback through our server, which forwards the text
+        // to OpenStreetMap Nominatim (caching, rate limit and User-Agent are
+        // enforced there). Failures leave the cadastral results untouched.
+        try {
+          const placeResponse = await fetch(`/api/v1/map/geocode?query=${encodeURIComponent(normalized)}`, { signal: controller.signal });
+          if (placeResponse.ok) results = results.concat((await placeResponse.json()).results || []);
+        } catch (error) { if (error.name === 'AbortError') throw error; }
       }
       if (requestId !== state.searchRequest) return;
       const seenResults = new Set();
@@ -4283,7 +4440,7 @@
     else fallbackCopy(url);
   }
 
-  function clearParcelSelection() {
+  function clearParcelSelection(options = {}) {
     closeMunicipalityDetails();
     closeMaritimeConcessionDetails();
     closeOmiMarketZoneDetails();
@@ -4304,7 +4461,7 @@
     $('directParcelPanel').hidden = true;
     updateParcelZoomAffordance();
     writeUrl();
-    mapStatus('Selection cleared');
+    if (!options.silent) mapStatus('Selection cleared');
   }
 
   function sisterBatchKey(feature) {
@@ -4732,6 +4889,7 @@
   const sisterBuildingsOverlay = { active: false, fetchToken: 0, records: [] };
   const sisterParcelsOverlay = { active: false, fetchToken: 0, debounceTimer: null, controller: null, leafletLayer: null };
   const auctionParcelsOverlay = { active: false, fetchToken: 0, debounceTimer: null, controller: null, leafletLayer: null };
+  const nplAsteFlorioOverlay = { active: false, fetchToken: 0, debounceTimer: null, controller: null, leafletLayer: null };
 
   // ---- Sales map integration --------------------------------------------
   // PVP map points come from the enriched v_map_sales database view through
@@ -5560,6 +5718,202 @@
     auctionParcelsOverlay.leafletLayer = null;
     if ($('auctionParcelsCount')) $('auctionParcelsCount').textContent = '';
     if ($('auctionParcelsStatus')) $('auctionParcelsStatus').textContent = '';
+  }
+
+  function nplAsteFlorioPopupHtml(properties = {}) {
+    let assets = Array.isArray(properties.assets) ? properties.assets : [];
+    if (!assets.length && typeof properties.assets === 'string') {
+      try { assets = JSON.parse(properties.assets); } catch (_) { assets = []; }
+    }
+    const externalUrl = (value) => {
+      try {
+        const url = new URL(String(value || ''), window.location.origin);
+        return ['http:', 'https:'].includes(url.protocol) ? url.href : '';
+      } catch (_) { return ''; }
+    };
+    const formatValue = (value) => {
+      if (value === null || value === undefined || value === '') return '';
+      const amount = Number(value);
+      return Number.isFinite(amount)
+        ? new Intl.NumberFormat(numberLocale(), { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(amount)
+        : String(value);
+    };
+    const cards = assets.map((asset, index) => {
+      const title = asset.position_title || `${tr('NPL asset')} ${asset.asset_number || index + 1}`;
+      const url = externalUrl(asset.detail_url);
+      const titleHtml = url
+        ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(title)}</a>`
+        : escapeHtml(title);
+      const fields = [
+        [tr('Asset number'), asset.asset_number],
+        [tr('Position'), asset.position_id],
+        [tr('Position type'), asset.position_type],
+        [tr('Asset type'), asset.asset_type],
+        [tr('Cadastral category'), asset.cadastral_category],
+        [tr('Consistency'), asset.consistency_text],
+        [tr('Floor'), asset.floor],
+        [tr('Estimated gross value'), formatValue(asset.gbv_eur)],
+      ].filter(([, value]) => value !== null && value !== undefined && value !== '');
+      const rows = fields.map(([label, value]) =>
+        `<div class="npl-asset-detail-row"><small>${escapeHtml(label)}</small><span>${escapeHtml(value)}</span></div>`
+      ).join('');
+      const description = asset.description
+        ? `<p class="npl-asset-description">${escapeHtml(asset.description)}</p>`
+        : '';
+      const link = url
+        ? `<a class="npl-asset-source-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(tr('Open position listing'))}</a>`
+        : '';
+      return `<article class="npl-asset-popup-item"><strong>${titleHtml}</strong>${description}<div class="npl-asset-detail-grid">${rows}</div>${link}</article>`;
+    }).join('');
+    const heading = [properties.municipality, properties.province].filter(Boolean).join(' · ') || tr('NPL Aste Florio assets');
+    const summary = `<p class="npl-asset-popup-summary">${escapeHtml(tr('Assets'))}: ${escapeHtml(properties.asset_count ?? assets.length)} · ${escapeHtml(tr('Positions'))}: ${escapeHtml(properties.position_count ?? '—')}</p>`;
+    const locationNote = `<p class="npl-asset-location-note">${escapeHtml(tr('Municipality-level location; this point does not identify a cadastral parcel.'))}</p>`;
+    const details = assets.length
+      ? `<details class="npl-asset-popup-details"><summary>${escapeHtml(tr('View asset details ({n})', { n: assets.length }))}</summary><div class="npl-asset-popup-list">${cards}</div></details>`
+      : `<p>${escapeHtml(tr('Asset details unavailable.'))}</p>`;
+    return `<div class="npl-asset-popup"><strong>${escapeHtml(heading)}</strong>${summary}${locationNote}${details}</div>`;
+  }
+
+  function ensureNplAsteFlorioOverlayLayer() {
+    if (!state.map) return;
+    ensureOverlaySource('npl-asteflorio-assets');
+    if (!state.map.getLayer('circle-npl-asteflorio-assets')) {
+      state.map.addLayer({
+        id: 'circle-npl-asteflorio-assets', type: 'circle', source: 'npl-asteflorio-assets',
+        paint: {
+          'circle-color': '#7c3aed',
+          'circle-radius': ['interpolate', ['linear'], ['get', 'asset_count'], 1, 6, 10, 9, 30, 12, 100, 17],
+          'circle-stroke-color': '#fff', 'circle-stroke-width': 1.5, 'circle-opacity': 0.94,
+        },
+      });
+      state.map.addLayer({
+        id: 'label-npl-asteflorio-assets', type: 'symbol', source: 'npl-asteflorio-assets', minzoom: 7,
+        layout: {
+          'text-field': ['to-string', ['get', 'asset_count']],
+          'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+          'text-size': 10,
+        },
+        paint: { 'text-color': '#fff', 'text-halo-color': '#5b21b6', 'text-halo-width': 0.6 },
+      });
+      const setPointer = () => { state.map.getCanvas().style.cursor = 'pointer'; };
+      const clearPointer = () => { state.map.getCanvas().style.cursor = ''; };
+      const showPopup = (event) => {
+        const feature = event.features?.[0];
+        if (!feature) return;
+        new maplibregl.Popup({ maxWidth: '460px', maxHeight: '70vh', className: 'npl-asset-popup-shell' })
+          .setLngLat(event.lngLat)
+          .setHTML(nplAsteFlorioPopupHtml(feature.properties || {}))
+          .addTo(state.map);
+      };
+      ['circle-npl-asteflorio-assets', 'label-npl-asteflorio-assets'].forEach((id) => {
+        state.map.on('mouseenter', id, setPointer);
+        state.map.on('mouseleave', id, clearPointer);
+        state.map.on('click', id, showPopup);
+      });
+      reorderMapLayers();
+    }
+    ['circle-npl-asteflorio-assets', 'label-npl-asteflorio-assets'].forEach((id) => {
+      if (state.map.getLayer(id) && state.map.getLayoutProperty(id, 'visibility') !== 'visible') {
+        state.map.setLayoutProperty(id, 'visibility', 'visible');
+      }
+    });
+  }
+
+  function nplAsteFlorioMoveEnd() {
+    clearTimeout(nplAsteFlorioOverlay.debounceTimer);
+    nplAsteFlorioOverlay.debounceTimer = setTimeout(() => refreshNplAsteFlorioOverlay(), 350);
+  }
+
+  async function refreshNplAsteFlorioOverlay(forceRefresh = false) {
+    const map = state.map || state.fallbackMap;
+    if (!nplAsteFlorioOverlay.active || !map) return;
+    const token = ++nplAsteFlorioOverlay.fetchToken;
+    nplAsteFlorioOverlay.controller?.abort();
+    const status = $('nplAsteFlorioAssetsStatus');
+    const count = $('nplAsteFlorioAssetsCount');
+    const bounds = map.getBounds();
+    const params = new URLSearchParams({
+      west: String(Math.max(-180, bounds.getWest())),
+      south: String(Math.max(-90, bounds.getSouth())),
+      east: String(Math.min(180, bounds.getEast())),
+      north: String(Math.min(90, bounds.getNorth())),
+    });
+    if (forceRefresh) params.set('refresh', 'true');
+    const controller = new AbortController();
+    nplAsteFlorioOverlay.controller = controller;
+    const timeout = setTimeout(() => controller.abort(), 45000);
+    if (status) status.textContent = tr('Loading NPL Aste Florio assets…');
+    const task = beginMapProgress('npl-asteflorio-assets', 'Loading NPL Aste Florio assets…');
+    try {
+      const response = await fetch(`/api/v1/map/npl-asteflorio-assets?${params}`, { signal: controller.signal });
+      if (!response.ok) throw new Error(tr('NPL Aste Florio asset layer is temporarily unavailable.'));
+      const payload = await response.json();
+      if (token !== nplAsteFlorioOverlay.fetchToken || !nplAsteFlorioOverlay.active) return;
+      const features = Array.isArray(payload.features) ? payload.features : [];
+      const collection = { type: 'FeatureCollection', features };
+      if (state.map) {
+        ensureNplAsteFlorioOverlayLayer();
+        state.map.getSource('npl-asteflorio-assets')?.setData(collection);
+      } else if (state.fallbackMap) {
+        nplAsteFlorioOverlay.leafletLayer?.remove();
+        nplAsteFlorioOverlay.leafletLayer = features.length ? L.geoJSON(collection, {
+          pointToLayer: (feature, latlng) => L.circleMarker(latlng, {
+            radius: Math.min(17, 6 + Math.log2(Math.max(1, Number(feature.properties?.asset_count) || 1)) * 2),
+            color: '#5b21b6', weight: 1.5, fillColor: '#7c3aed', fillOpacity: 0.94,
+          }),
+          onEachFeature: (feature, layer) => layer.bindPopup(nplAsteFlorioPopupHtml(feature.properties || {}), { maxWidth: 460 }),
+        }).addTo(state.fallbackMap) : null;
+      }
+      if (count) count.textContent = payload.asset_count ? `(${payload.asset_count})` : '';
+      if (status) {
+        status.textContent = features.length
+          ? tr('{n} municipality locations with {assets} NPL assets in this view.', { n: features.length, assets: payload.asset_count || 0 })
+          : tr('No NPL Aste Florio assets in this view.');
+        if (payload.unlocated_asset_count) {
+          status.textContent += ` ${tr('Some NPL Aste Florio assets have no matching municipality location.')}`;
+        }
+      }
+    } catch (error) {
+      if (error.name === 'AbortError' || token !== nplAsteFlorioOverlay.fetchToken) return;
+      state.map?.getSource('npl-asteflorio-assets')?.setData(emptyFeatureCollection());
+      nplAsteFlorioOverlay.leafletLayer?.remove();
+      nplAsteFlorioOverlay.leafletLayer = null;
+      if (count) count.textContent = '';
+      if (status) status.textContent = error.message || tr('NPL Aste Florio asset layer is temporarily unavailable.');
+    } finally {
+      clearTimeout(timeout);
+      task.finish();
+      if (nplAsteFlorioOverlay.controller === controller) nplAsteFlorioOverlay.controller = null;
+    }
+  }
+
+  function toggleNplAsteFlorioOverlay() {
+    const checkbox = $('toggleNplAsteFlorioAssets');
+    nplAsteFlorioOverlay.active = Boolean(checkbox?.checked);
+    const map = state.map || state.fallbackMap;
+    if (nplAsteFlorioOverlay.active) {
+      if (state.map) ensureNplAsteFlorioOverlayLayer();
+      map?.on('moveend', nplAsteFlorioMoveEnd);
+      if (state.fallbackMap) map?.on('zoomend', nplAsteFlorioMoveEnd);
+      void refreshNplAsteFlorioOverlay();
+      return;
+    }
+    map?.off('moveend', nplAsteFlorioMoveEnd);
+    if (state.fallbackMap) map?.off('zoomend', nplAsteFlorioMoveEnd);
+    clearTimeout(nplAsteFlorioOverlay.debounceTimer);
+    nplAsteFlorioOverlay.fetchToken += 1;
+    nplAsteFlorioOverlay.controller?.abort();
+    mapTasks.get('npl-asteflorio-assets')?.finish();
+    state.map?.getSource('npl-asteflorio-assets')?.setData(emptyFeatureCollection());
+    ['circle-npl-asteflorio-assets', 'label-npl-asteflorio-assets'].forEach((id) => {
+      if (state.map?.getLayer(id) && state.map.getLayoutProperty(id, 'visibility') !== 'none') {
+        state.map.setLayoutProperty(id, 'visibility', 'none');
+      }
+    });
+    nplAsteFlorioOverlay.leafletLayer?.remove();
+    nplAsteFlorioOverlay.leafletLayer = null;
+    if ($('nplAsteFlorioAssetsCount')) $('nplAsteFlorioAssetsCount').textContent = '';
+    if ($('nplAsteFlorioAssetsStatus')) $('nplAsteFlorioAssetsStatus').textContent = '';
   }
 
   const parcelFlagRefreshDelay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -7190,8 +7544,28 @@
     if (open) loadShortlist();
   }
 
+  // The search card grows (privacy note, status line, hierarchy finder), so the
+  // shortlist card below it follows its measured bottom edge instead of a fixed
+  // offset. The result list floats over the shortlist, so it is not counted.
+  function setupSearchCardClearance() {
+    const card = document.querySelector('.map-search-card');
+    const stage = card && card.closest('.direct-map-stage');
+    if (!card || !stage) return;
+    const update = () => {
+      const results = $('mapSearchResults');
+      const floating = results && !results.hidden ? results.offsetHeight : 0;
+      const bottom = card.offsetTop + card.offsetHeight - floating;
+      stage.style.setProperty('--map-search-bottom', `${Math.ceil(bottom)}px`);
+    };
+    update();
+    if (window.ResizeObserver) new ResizeObserver(update).observe(card);
+    window.addEventListener('resize', update);
+    card.addEventListener('toggle', update, true);
+  }
+
   function setupControls() {
     setupWelcomeTour();
+    setupSearchCardClearance();
     populatePoiCategories();
     setupParcelFinder();
     $('mapSearchForm').addEventListener('submit', (event) => {
@@ -7225,7 +7599,7 @@
       current.searchParams.set('lang', language);
       window.location.assign(`${current.pathname}${current.search}${current.hash}`);
     }, true);
-    $('mapSearchInput').addEventListener('input', () => { clearTimeout(state.searchTimer); state.searchTimer = setTimeout(() => submitSearch($('mapSearchInput').value), SEARCH_DEBOUNCE_MS); });
+    $('mapSearchInput').addEventListener('input', () => { if (!$('mapSearchInput').value.trim()) clearSearchMarker(); clearTimeout(state.searchTimer); state.searchTimer = setTimeout(() => submitSearch($('mapSearchInput').value), SEARCH_DEBOUNCE_MS); });
     $('locateButton').addEventListener('click', locate);
     $('shareButton').addEventListener('click', copyLink);
     $('parcelSaveButton').addEventListener('click', saveParcel);
@@ -7247,6 +7621,10 @@
     $('toggleSisterBuildings')?.addEventListener('click', toggleSisterBuildingsOverlay);
     $('toggleSisterParcels')?.addEventListener('change', toggleSisterParcelsOverlay);
     $('toggleAuctionHighlight')?.addEventListener('change', toggleAuctionParcelsOverlay);
+    $('toggleNplAsteFlorioAssets')?.addEventListener('change', toggleNplAsteFlorioOverlay);
+    $('refreshNplAsteFlorioAssetsButton')?.addEventListener('click', () => {
+      void refreshNplAsteFlorioOverlay(true);
+    });
     $('sisterBatchClickButton')?.addEventListener('click', () => setSisterBatchMode('click'));
     $('sisterBatchPolygonButton')?.addEventListener('click', () => setSisterBatchMode('polygon'));
     $('sisterBatchCircleButton')?.addEventListener('click', () => setSisterBatchMode('circle'));
@@ -7732,6 +8110,7 @@
     else mapStatus(state.fallbackMap ? 'Map ready (raster mode)' : 'Map ready');
     await loadCatalog();
     if ($('toggleSisterParcels')?.checked) toggleSisterParcelsOverlay();
+    if ($('toggleNplAsteFlorioAssets')?.checked) toggleNplAsteFlorioOverlay();
     const requestedView = new URLSearchParams(window.location.search);
     if (requestedView.get('panel') === 'table') setTableViewOpen(true);
     const routeNotices = {
@@ -7744,7 +8123,9 @@
     void loadShortlist();
     void loadLayerHealth();
     if (restored.parcel && !restored.invalidParcel) await loadParcelByReference(restored.parcel, false, restored.parcelId);
-    else if (!restored.hasView && state.preferences?.start_view === 'geolocate') centreOnUserLocation();
+    restoreAddressMarkerFromUrl();
+    if (restored.parcel && !restored.invalidParcel) return;
+    if (!restored.hasView && state.preferences?.start_view === 'geolocate') centreOnUserLocation();
   }
 
   async function init() {
@@ -7760,6 +8141,7 @@
       state.initializing = false;
       return;
     }
+    state.pendingAddress = readAddressMarkerParams();
     state.preferences = await loadPreferences();
     const restored = urlState();
     state.basemapUserSelected = Boolean(
@@ -7896,6 +8278,14 @@
     state.map.on('moveend', () => { if (tableView.active) { tableView.page = 1; void loadTableData(); } });
     state.map.on('moveend', updateParcelZoomAffordance);
     state.map.on('click', (event) => {
+      // NPL asset locations are municipality centroids, so a click on one
+      // must not fall through to a cadastral parcel drawn beneath the marker.
+      const nplAssetLayers = ['circle-npl-asteflorio-assets', 'label-npl-asteflorio-assets']
+        .filter((layerId) => state.map.getLayer(layerId));
+      if (nplAssetLayers.length && state.map.queryRenderedFeatures(event.point, { layers: nplAssetLayers }).length) {
+        event.preventDefault();
+        return;
+      }
       closeLayerStack();
       closeMunicipalityDetails();
       closeCadastralSheetDetails();

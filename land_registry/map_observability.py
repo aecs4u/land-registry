@@ -50,6 +50,7 @@ class MapMetrics:
         self._requests = 0
         self._errors = 0
         self._routes: dict[str, dict[str, Any]] = defaultdict(self._new_route)
+        self._events: dict[str, int] = defaultdict(int)
 
     @staticmethod
     def _new_route() -> dict[str, Any]:
@@ -74,9 +75,16 @@ class MapMetrics:
             else:
                 item["latency_buckets_ms"][str(bucket)] += 1
 
+    def record_event(self, name: str) -> None:
+        """Count a named outcome (e.g. ``address_search.address``); never carries query text."""
+        with self._lock:
+            if name in self._events or len(self._events) < 64:
+                self._events[name] += 1
+
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             return {
+                "events": dict(self._events),
                 "started_at": self._started_at,
                 "uptime_seconds": max(0.0, time.time() - self._started_at),
                 "requests": self._requests,

@@ -35,7 +35,7 @@ def build_page(key: str, _) -> dict:
                     _("We use a session cookie and a language-preference cookie. The light or dark theme is kept in browser storage. This application does not set advertising or analytics cookies."),
                 ]},
                 {"heading": _("Third-party services"), "paragraphs": [
-                    _("Basemap tiles are loaded from third-party tile providers, and place-name searches that find no cadastral match are sent to OpenStreetMap Nominatim. Those providers see your IP address and the text you searched for."),
+                    _("Basemap tiles are loaded from third-party tile providers, which see your IP address. Place and address searches that find no cadastral or address-registry match are forwarded by our server to OpenStreetMap Nominatim, which receives the text you searched for but not your IP address."),
                 ]},
                 {"heading": _("Diagnostics"), "paragraphs": [
                     _("Request counts and latency buckets are recorded for the map endpoints. Search text and coordinates are not part of those metrics."),

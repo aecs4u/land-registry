@@ -1,0 +1,452 @@
+[
+ {
+  "text": "Via Maestri Del Lavoro 24, Palermo",
+  "municipality": "Palermo",
+  "istat": "082053",
+  "street_id": "575478",
+  "street": "VIA MAESTRI DEL LAVORO",
+  "civic": "24",
+  "exponent": null
+ },
+ {
+  "text": "vicolo zappa sarcano 13 palermo",
+  "municipality": "Palermo",
+  "istat": "082053",
+  "street_id": "577257",
+  "street": "VICOLO ZAPPA SARCANO",
+  "civic": "13",
+  "exponent": null
+ },
+ {
+  "text": "Via Alfredo Niceforo 18, Palermo (XX)",
+  "municipality": "Palermo",
+  "istat": "082053",
+  "street_id": "572899",
+  "street": "VIA ALFREDO NICEFORO",
+  "civic": "18",
+  "exponent": null
+ },
+ {
+  "text": "Vicolo Tosto 7, Catania",
+  "municipality": "Catania",
+  "istat": "087015",
+  "street_id": "1048815",
+  "street": "VICOLO TOSTO",
+  "civic": "7",
+  "exponent": null
+ },
+ {
+  "text": "Via Delle Viole 5, Catania",
+  "municipality": "Catania",
+  "istat": "087015",
+  "street_id": "1047350",
+  "street": "VIA DELLE VIOLE",
+  "civic": "5",
+  "exponent": null
+ },
+ {
+  "text": "via orazio condorelli 1 catania",
+  "municipality": "Catania",
+  "istat": "087015",
+  "street_id": "1048196",
+  "street": "VIA ORAZIO CONDORELLI",
+  "civic": "1",
+  "exponent": null
+ },
+ {
+  "text": "Via Dell'Apollonion 23, Siracusa (XX)",
+  "municipality": "Siracusa",
+  "istat": "089017",
+  "street_id": "226360",
+  "street": "VIA DELL'APOLLONION",
+  "civic": "23",
+  "exponent": null
+ },
+ {
+  "text": "V. Alberto Broggi 16, Siracusa",
+  "municipality": "Siracusa",
+  "istat": "089017",
+  "street_id": "225946",
+  "street": "VIA ALBERTO BROGGI",
+  "civic": "16",
+  "exponent": null
+ },
+ {
+  "text": "Via Dante 1, Siracusa",
+  "municipality": "Siracusa",
+  "istat": "089017",
+  "street_id": "226163",
+  "street": "VIA DANTE",
+  "civic": "1",
+  "exponent": null
+ },
+ {
+  "text": "via luigi capuana 24 trapani",
+  "municipality": "Trapani",
+  "istat": "081021",
+  "street_id": "245626",
+  "street": "VIA LUIGI CAPUANA",
+  "civic": "24",
+  "exponent": null
+ },
+ {
+  "text": "Via Dei Prati 48, Trapani (XX)",
+  "municipality": "Trapani",
+  "istat": "081021",
+  "street_id": "245293",
+  "street": "VIA DEI PRATI",
+  "civic": "48",
+  "exponent": null
+ },
+ {
+  "text": "V. Capitano Verri 49, Trapani",
+  "municipality": "Trapani",
+  "istat": "081021",
+  "street_id": "245195",
+  "street": "VIA CAPITANO VERRI",
+  "civic": "49",
+  "exponent": null
+ },
+ {
+  "text": "Via Angiolo Silvio Novaro 13/A, Agrigento",
+  "municipality": "Agrigento",
+  "istat": "084001",
+  "street_id": "813234",
+  "street": "VIA ANGIOLO SILVIO NOVARO",
+  "civic": "13",
+  "exponent": "A"
+ },
+ {
+  "text": "via del ligustro 1 agrigento",
+  "municipality": "Agrigento",
+  "istat": "084001",
+  "street_id": "813464",
+  "street": "VIA DEL LIGUSTRO",
+  "civic": "1",
+  "exponent": null
+ },
+ {
+  "text": "Via Giovanni Amendola 17, Agrigento (XX)",
+  "municipality": "Agrigento",
+  "istat": "084001",
+  "street_id": "813231",
+  "street": "VIA GIOVANNI AMENDOLA",
+  "civic": "17",
+  "exponent": null
+ },
+ {
+  "text": "V. Mentana 30/A, Ragusa",
+  "municipality": "Ragusa",
+  "istat": "088009",
+  "street_id": "362816",
+  "street": "VIA MENTANA",
+  "civic": "30",
+  "exponent": "A"
+ },
+ {
+  "text": "Corso Don Minzoni 91, Ragusa",
+  "municipality": "Ragusa",
+  "istat": "088009",
+  "street_id": "362425",
+  "street": "CORSO DON MINZONI",
+  "civic": "91",
+  "exponent": null
+ },
+ {
+  "text": "via dottore nicola calipari 19/A ragusa",
+  "municipality": "Ragusa",
+  "istat": "088009",
+  "street_id": "363831",
+  "street": "VIA DOTTORE NICOLA CALIPARI",
+  "civic": "19",
+  "exponent": "A"
+ },
+ {
+  "text": "Via Balate 8, Caltanissetta (XX)",
+  "municipality": "Caltanissetta",
+  "istat": "085004",
+  "street_id": "876567",
+  "street": "VIA BALATE",
+  "civic": "8",
+  "exponent": null
+ },
+ {
+  "text": "Vicolo Torinese 15, Caltanissetta",
+  "municipality": "Caltanissetta",
+  "istat": "085004",
+  "street_id": "877161",
+  "street": "VICOLO TORINESE",
+  "civic": "15",
+  "exponent": null
+ },
+ {
+  "text": "Piazza San Domenico 4, Caltanissetta",
+  "municipality": "Caltanissetta",
+  "istat": "085004",
+  "street_id": "877077",
+  "street": "PIAZZA SAN DOMENICO",
+  "civic": "4",
+  "exponent": null
+ },
+ {
+  "text": "via fontanagrande 99 enna",
+  "municipality": "Enna",
+  "istat": "086009",
+  "street_id": "115489",
+  "street": "VIA FONTANAGRANDE",
+  "civic": "99",
+  "exponent": null
+ },
+ {
+  "text": "Via Enrico Mattei 16, Enna (XX)",
+  "municipality": "Enna",
+  "istat": "086009",
+  "street_id": "115855",
+  "street": "VIA ENRICO MATTEI",
+  "civic": "16",
+  "exponent": null
+ },
+ {
+  "text": "V. Villarosa 4, Enna",
+  "municipality": "Enna",
+  "istat": "086009",
+  "street_id": "115712",
+  "street": "VIA VILLAROSA",
+  "civic": "4",
+  "exponent": null
+ },
+ {
+  "text": "Via Dagotti 21, Marsala",
+  "municipality": "Marsala",
+  "istat": "081011",
+  "street_id": "1220870",
+  "street": "VIA DAGOTTI",
+  "civic": "21",
+  "exponent": null
+ },
+ {
+  "text": "vicolo linosa 27 marsala",
+  "municipality": "Marsala",
+  "istat": "081011",
+  "street_id": "1221003",
+  "street": "VICOLO LINOSA",
+  "civic": "27",
+  "exponent": null
+ },
+ {
+  "text": "Viale Olimpia 22, Marsala (XX)",
+  "municipality": "Marsala",
+  "istat": "081011",
+  "street_id": "1221048",
+  "street": "VIALE OLIMPIA",
+  "civic": "22",
+  "exponent": null
+ },
+ {
+  "text": "V. Incorvino Amalfitana 36, Bagheria",
+  "municipality": "Bagheria",
+  "istat": "082006",
+  "street_id": "616767",
+  "street": "VIA INCORVINO AMALFITANA",
+  "civic": "36",
+  "exponent": null
+ },
+ {
+  "text": "Via Caduti Senza Croce 7, Bagheria",
+  "municipality": "Bagheria",
+  "istat": "082006",
+  "street_id": "616053",
+  "street": "VIA CADUTI SENZA CROCE",
+  "civic": "7",
+  "exponent": null
+ },
+ {
+  "text": "via piano cuto' 15 bagheria",
+  "municipality": "Bagheria",
+  "istat": "082006",
+  "street_id": "616449",
+  "street": "VIA PIANO CUTO'",
+  "civic": "15",
+  "exponent": null
+ },
+ {
+  "text": "Via Giuseppe Scalarini 5, Vittoria (XX)",
+  "municipality": "Vittoria",
+  "istat": "088012",
+  "street_id": "255620",
+  "street": "VIA GIUSEPPE SCALARINI",
+  "civic": "5",
+  "exponent": null
+ },
+ {
+  "text": "V. Elsa Morante 27, Vittoria",
+  "municipality": "Vittoria",
+  "istat": "088012",
+  "street_id": "255510",
+  "street": "VIA ELSA MORANTE",
+  "civic": "27",
+  "exponent": null
+ },
+ {
+  "text": "Via Ernesto Che Guevara 40, Vittoria",
+  "municipality": "Vittoria",
+  "istat": "088012",
+  "street_id": "255519",
+  "street": "VIA ERNESTO CHE GUEVARA",
+  "civic": "40",
+  "exponent": null
+ },
+ {
+  "text": "via sacerdote giuseppe cardillo 46 acireale",
+  "municipality": "Acireale",
+  "istat": "087004",
+  "street_id": "1227268",
+  "street": "VIA SACERDOTE GIUSEPPE CARDILLO",
+  "civic": "46",
+  "exponent": null
+ },
+ {
+  "text": "Via Icaro 5, Acireale (XX)",
+  "municipality": "Acireale",
+  "istat": "087004",
+  "street_id": "1227292",
+  "street": "VIA ICARO",
+  "civic": "5",
+  "exponent": null
+ },
+ {
+  "text": "V. Biella 26, Acireale",
+  "municipality": "Acireale",
+  "istat": "087004",
+  "street_id": "1227048",
+  "street": "VIA BIELLA",
+  "civic": "26",
+  "exponent": null
+ },
+ {
+  "text": "Via Colonnello Nicolosi 10, Mazara del Vallo",
+  "municipality": "Mazara del Vallo",
+  "istat": "081012",
+  "street_id": "601130",
+  "street": "VIA COLONNELLO NICOLOSI",
+  "civic": "10",
+  "exponent": null
+ },
+ {
+  "text": "via delle rose di padre pio 17 mazara del vallo",
+  "municipality": "Mazara del Vallo",
+  "istat": "081012",
+  "street_id": "602098",
+  "street": "VIA DELLE ROSE DI PADRE PIO",
+  "civic": "17",
+  "exponent": null
+ },
+ {
+  "text": "Via Amedeo Modigliani 17, Mazara del Vallo (XX)",
+  "municipality": "Mazara del Vallo",
+  "istat": "081012",
+  "street_id": "600982",
+  "street": "VIA AMEDEO MODIGLIANI",
+  "civic": "17",
+  "exponent": null
+ },
+ {
+  "text": "V. Tivoli 10, Paternò",
+  "municipality": "Paternò",
+  "istat": "087033",
+  "street_id": "1135314",
+  "street": "VIA TIVOLI",
+  "civic": "10",
+  "exponent": null
+ },
+ {
+  "text": "Via San Marino 8, Paternò",
+  "municipality": "Paternò",
+  "istat": "087033",
+  "street_id": "1135246",
+  "street": "VIA SAN MARINO",
+  "civic": "8",
+  "exponent": null
+ },
+ {
+  "text": "via treviso 22 paternò",
+  "municipality": "Paternò",
+  "istat": "087033",
+  "street_id": "1135323",
+  "street": "VIA TREVISO",
+  "civic": "22",
+  "exponent": null
+ },
+ {
+  "text": "Corso Tukory 140/B, Palermo",
+  "municipality": "Palermo",
+  "istat": "082053",
+  "street_id": "577031",
+  "street": "CORSO TUKORY",
+  "civic": "140",
+  "exponent": "B"
+ },
+ {
+  "text": "Via Dilg 2/A, Catania",
+  "municipality": "Catania",
+  "istat": "087015",
+  "street_id": "1047381",
+  "street": "VIA DILG",
+  "civic": "2",
+  "exponent": "A"
+ },
+ {
+  "text": "Viale Santa Panagia 172/A, Siracusa",
+  "municipality": "Siracusa",
+  "istat": "089017",
+  "street_id": "227208",
+  "street": "VIALE SANTA PANAGIA",
+  "civic": "172",
+  "exponent": "A"
+ },
+ {
+  "text": "Via Archi 109/B, Trapani",
+  "municipality": "Trapani",
+  "istat": "081021",
+  "street_id": "245110",
+  "street": "VIA ARCHI",
+  "civic": "109",
+  "exponent": "B"
+ },
+ {
+  "text": "Via Vittorio De Sica 16/B, Agrigento",
+  "municipality": "Agrigento",
+  "istat": "084001",
+  "street_id": "814280",
+  "street": "VIA VITTORIO DE SICA",
+  "civic": "16",
+  "exponent": "B"
+ },
+ {
+  "text": "Via Generale Luigi Cadorna 8/A, Ragusa",
+  "municipality": "Ragusa",
+  "istat": "088009",
+  "street_id": "362582",
+  "street": "VIA GENERALE LUIGI CADORNA",
+  "civic": "8",
+  "exponent": "A"
+ },
+ {
+  "text": "Via Giuseppe Saragat 14/B, Caltanissetta",
+  "municipality": "Caltanissetta",
+  "istat": "085004",
+  "street_id": "876822",
+  "street": "VIA GIUSEPPE SARAGAT",
+  "civic": "14",
+  "exponent": "B"
+ },
+ {
+  "text": "Via Boris Giuliano 11/B, Enna",
+  "municipality": "Enna",
+  "istat": "086009",
+  "street_id": "115381",
+  "street": "VIA BORIS GIULIANO",
+  "civic": "11",
+  "exponent": "B"
+ }
+]

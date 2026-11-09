@@ -381,8 +381,9 @@ def test_theme_map_loads_topojson_parser_for_civil_protection_bulletin():
 def test_idle_handler_only_reacts_after_a_tile_loading_phase():
     # Unconditional idle work re-rendered the map forever and replaced every
     # status message with "Map ready".
-    idle = SCRIPT[SCRIPT.index("state.map.on('idle'"):]
-    idle = idle[:idle.index("});") + 3]
+    assert "state.map.on('idle', finishInitialTileLoad);" in SCRIPT
+    idle = SCRIPT[SCRIPT.index("const finishInitialTileLoad = () => {"):]
+    idle = idle[:idle.index("const finishInitialMapLoad")]
     assert "if (!state.tilesLoading) return;" in idle
     assert "state.mapReadyAnnounced" in idle
     assert "getLayoutProperty(id, 'visibility')" in SCRIPT
@@ -629,8 +630,9 @@ def test_sparse_layers_explain_an_empty_view_instead_of_looking_broken():
     assert "layer.sparse && state.map" in MAP_SCRIPT
     assert "Nothing in this view: this layer only covers part of Italy." in MAP_SCRIPT
     # The hint refreshes once tiles settle (inside the guarded idle handler), not on every idle.
-    idle = MAP_SCRIPT[MAP_SCRIPT.index("state.map.on('idle'"):]
-    idle = idle[:idle.index("});") + 3]
+    assert "state.map.on('idle', finishInitialTileLoad);" in MAP_SCRIPT
+    idle = MAP_SCRIPT[MAP_SCRIPT.index("const finishInitialTileLoad = () => {"):]
+    idle = idle[:idle.index("const finishInitialMapLoad")]
     assert "updateLayerBadges()" in idle and "if (!state.tilesLoading) return;" in idle
     # Popups no longer print the serving database as if it were the data provider.
     assert "layer.source || 'Source not available'" not in MAP_SCRIPT

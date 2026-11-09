@@ -73,7 +73,7 @@
         <button id="mapSearchSubmit" type="submit" class="btn btn-primary" title="{{ _('Search') }}" aria-label="{{ _('Search') }}"><i class="fas fa-arrow-right" aria-hidden="true"></i></button>
       </form>
       <div id="mapSearchStatus" class="map-search-status" aria-live="polite"></div>
-      <p class="map-muted map-search-privacy">{{ _('Search fallback sends your place name to OpenStreetMap Nominatim.') }} <a href="/privacy">{{ _('Privacy') }}</a></p>
+      <p class="map-muted map-search-privacy">{{ _('If nothing is found locally, pressing Enter sends your text to OpenStreetMap Nominatim through our server.') }} <a href="/privacy">{{ _('Privacy') }}</a></p>
       <details class="map-parcel-finder" id="mapParcelFinder">
         <summary>{{ _('Browse by cadastral hierarchy') }}</summary>
         <form class="map-parcel-finder-form" id="parcelFinderForm">
@@ -310,6 +310,15 @@
             <button type="button" class="secondary-action compact btn btn-outline-secondary" id="refreshAuctionFlagsButton">{{ _('Refresh') }}</button>
           </div>
           <div id="auctionParcelsStatus" class="map-layer-meta" aria-live="polite"></div>
+          <div class="map-live-layer-row">
+            <label class="map-live-checkbox" title="{{ _('NPL Aste Florio asset locations are approximate municipality points.') }}">
+              <input type="checkbox" id="toggleNplAsteFlorioAssets" aria-describedby="nplAsteFlorioAssetsStatus nplAsteFlorioAssetsDisclosure">
+              <span><i class="map-layer-swatch" style="background:#7c3aed" aria-hidden="true"></i>{{ _('Show NPL Aste Florio assets') }} <span id="nplAsteFlorioAssetsCount"></span></span>
+            </label>
+            <button type="button" class="secondary-action compact btn btn-outline-secondary" id="refreshNplAsteFlorioAssetsButton" aria-label="{{ _('Refresh') }}: {{ _('Show NPL Aste Florio assets') }}">{{ _('Refresh') }}</button>
+          </div>
+          <div id="nplAsteFlorioAssetsStatus" class="map-layer-meta" aria-live="polite"></div>
+          <div id="nplAsteFlorioAssetsDisclosure" class="map-layer-meta">{{ _('Locations are at municipality level; exact cadastral parcels are not available yet.') }}</div>
         </div>
         <section class="sister-batch-tools" aria-labelledby="sisterBatchHeading">
           <h3 id="sisterBatchHeading" class="layer-section-title">{{ _('SISTER query batch') }}</h3>

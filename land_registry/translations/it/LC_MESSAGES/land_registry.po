@@ -1511,8 +1511,8 @@ msgstr "Usiamo cookie e archiviazione del browser per la sessione, la lingua del
 msgid "Third-party services"
 msgstr "Servizi di terze parti"
 
-msgid "Basemap tiles are loaded from third-party tile providers, and place-name searches that find no cadastral match are sent to OpenStreetMap Nominatim. Those providers see your IP address and the text you searched for."
-msgstr "Le mappe di base sono caricate da fornitori di tile esterni e le ricerche di toponimi senza corrispondenza catastale sono inviate a OpenStreetMap Nominatim. Questi fornitori vedono il tuo indirizzo IP e il testo cercato."
+msgid "Basemap tiles are loaded from third-party tile providers, which see your IP address. Place and address searches that find no cadastral or address-registry match are forwarded by our server to OpenStreetMap Nominatim, which receives the text you searched for but not your IP address."
+msgstr "Le tessere della mappa di base sono caricate da fornitori esterni, che vedono il tuo indirizzo IP. Le ricerche di luoghi e indirizzi senza corrispondenze nel catasto o nell'archivio indirizzi sono inoltrate dal nostro server a OpenStreetMap Nominatim, che riceve il testo cercato ma non il tuo indirizzo IP."
 
 msgid "Diagnostics"
 msgstr "Diagnostica"
@@ -1637,8 +1637,8 @@ msgstr "Seleziona una particella e usa il pannello dei dettagli per trovare quel
 msgid "Drawing and zone tools are available in the analysis workspace."
 msgstr "Gli strumenti di disegno e gestione delle zone sono disponibili nell'area di analisi."
 
-msgid "Search fallback sends your place name to OpenStreetMap Nominatim."
-msgstr "La ricerca alternativa invia il nome del luogo a OpenStreetMap Nominatim."
+msgid "If nothing is found locally, pressing Enter sends your text to OpenStreetMap Nominatim through our server."
+msgstr "Se non si trova nulla in locale, premendo Invio il testo viene inviato a OpenStreetMap Nominatim tramite il nostro server."
 
 msgid "Basemap tiles are loaded from external map providers. See the privacy page for details."
 msgstr "Le tile della mappa di base sono caricate da fornitori esterni. Consulta la pagina privacy per i dettagli."
@@ -4975,6 +4975,27 @@ msgstr "Copertura coordinate non nota nel comune"
 msgid "Coordinate method {n}"
 msgstr "Metodo coordinate {n}"
 
+msgid "Coordinate method"
+msgstr "Metodo di georeferenziazione"
+
+msgid "Street"
+msgstr "Via"
+
+msgid "Locality"
+msgstr "Località"
+
+msgid "Civic number"
+msgstr "Numero civico"
+
+msgid "Source vintage"
+msgstr "Edizione della fonte"
+
+msgid "Access ID"
+msgstr "ID accesso"
+
+msgid "ANNCSU — Agenzia delle Entrate and ISTAT · CC BY 4.0"
+msgstr "ANNCSU — Agenzia delle Entrate e ISTAT · CC BY 4.0"
+
 msgid "ANNCSU points are spatially matched to the parcel. Municipalities may not provide coordinates for every civic address; no geocoded match does not mean the parcel has no address."
 msgstr "I punti ANNCSU sono abbinati spazialmente alla particella. I comuni potrebbero non fornire le coordinate di tutti i numeri civici; l'assenza di corrispondenze georeferenziate non significa che la particella sia priva di indirizzo."
 
@@ -5814,3 +5835,174 @@ msgstr "Nessun livello corrisponde a questa ricerca."
 
 msgid "Expand parcel details"
 msgstr "Espandi i dettagli della particella"
+
+msgid "SISTER buildings"
+msgstr "Fabbricati SISTER"
+
+msgid "OMI estimate for SISTER buildings"
+msgstr "Stima OMI per i fabbricati SISTER"
+
+msgid "Central estimate"
+msgstr "Stima centrale"
+
+msgid "Based on {n} SISTER building units."
+msgstr "Basata su {n} unità immobiliari SISTER."
+
+msgid "Only {valued} of {total} SISTER building units have usable OMI data; unvalued units are excluded."
+msgstr "Solo {valued} unità su {total} hanno dati OMI utilizzabili; le unità non valutate sono escluse."
+
+msgid "The OMI zone was not detected; this SISTER estimate uses selected category quotes across {n} municipality zones."
+msgstr "La zona OMI non è stata rilevata; questa stima SISTER usa le quotazioni della categoria selezionata in {n} zone comunali."
+
+msgid "SISTER category and OMI condition selected this quote automatically; review the zone and surface."
+msgstr "La categoria catastale SISTER e lo stato OMI hanno selezionato automaticamente questa quotazione; verificare zona e superficie."
+
+msgid "No automatic estimate is available; check the cadastral category, OMI zone and surface."
+msgstr "Stima automatica non disponibile; verificare categoria catastale, zona OMI e superficie."
+
+msgid "SISTER area basis: {formula}. Confirm this is the commercial surface and matches the OMI measurement basis."
+msgstr "Superficie usata da SISTER: {formula}. Verificare che sia la superficie commerciale e che corrisponda al criterio OMI."
+
+msgid "SISTER calculates building ranges from the cadastral category, selected OMI condition and recorded surface; missing residential surface can use the documented cadastral-consistency proxy."
+msgstr "SISTER calcola gli intervalli dei fabbricati in base alla categoria catastale, allo stato OMI selezionato e alla superficie registrata; se manca la superficie residenziale può usare la proxy documentata basata sulla consistenza catastale."
+
+msgid "Municipality-wide quote range across {n} zones"
+msgstr "Intervallo comunale delle quotazioni su {n} zone"
+
+msgid "Period not specified"
+msgstr "Periodo non specificato"
+
+msgid "Cadastral category is missing."
+msgstr "Categoria catastale assente."
+
+msgid "Cadastral category has no matching OMI typology."
+msgstr "La categoria catastale non corrisponde a una tipologia OMI."
+
+msgid "No usable building surface is available."
+msgstr "Non è disponibile una superficie utile del fabbricato."
+
+msgid "OMI condition is ambiguous for this typology."
+msgstr "Lo stato OMI di questa tipologia non è determinabile in modo univoco."
+
+msgid "No OMI quote matches this cadastral category in the selected zone."
+msgstr "Nella zona selezionata non ci sono quotazioni OMI corrispondenti alla categoria catastale."
+
+msgid "No matching OMI quotes are available in the municipality."
+msgstr "Nel comune non sono disponibili quotazioni OMI corrispondenti."
+
+msgid "The selected OMI quote has no valid sale interval."
+msgstr "La quotazione OMI selezionata non ha un intervallo di vendita valido."
+
+msgid "MEF / IRPEF mean taxable income"
+msgstr "Reddito imponibile medio MEF / IRPEF"
+
+msgid "CORINE land cover (2018)"
+msgstr "Copertura del suolo CORINE (2018)"
+
+msgid "Taxpayers above €120,000"
+msgstr "Contribuenti oltre 120.000 €"
+
+msgid "Taxpayers below €10,000"
+msgstr "Contribuenti sotto 10.000 €"
+
+msgid "Taxable income per taxpayer in the selected tax year."
+msgstr "Reddito imponibile per contribuente nell'anno d'imposta selezionato."
+
+msgid "Share of taxpayers in the MEF income bracket above €120,000."
+msgstr "Quota di contribuenti nella fascia MEF oltre 120.000 €."
+
+msgid "Share of taxpayers with taxable income below €10,000."
+msgstr "Quota di contribuenti con reddito imponibile inferiore a 10.000 €."
+
+msgid "Show NPL Aste Florio assets"
+msgstr "Mostra beni NPL Aste Florio"
+
+msgid "NPL Aste Florio asset locations are approximate municipality points."
+msgstr "Le posizioni dei beni NPL Aste Florio sono punti approssimativi a livello comunale."
+
+msgid "Locations are at municipality level; exact cadastral parcels are not available yet."
+msgstr "Le posizioni sono a livello comunale; le particelle catastali esatte non sono ancora disponibili."
+
+msgid "Loading NPL Aste Florio assets…"
+msgstr "Caricamento dei beni NPL Aste Florio…"
+
+msgid "NPL Aste Florio asset layer is temporarily unavailable."
+msgstr "Il livello dei beni NPL Aste Florio non è temporaneamente disponibile."
+
+msgid "{n} municipality locations with {assets} NPL assets in this view."
+msgstr "{n} comuni con {assets} beni NPL in questa vista."
+
+msgid "No NPL Aste Florio assets in this view."
+msgstr "Nessun bene NPL Aste Florio in questa vista."
+
+msgid "Some NPL Aste Florio assets have no matching municipality location."
+msgstr "Alcuni beni NPL Aste Florio non hanno un comune corrispondente."
+
+msgid "NPL Aste Florio assets"
+msgstr "Beni NPL Aste Florio"
+
+msgid "NPL asset"
+msgstr "Bene NPL"
+
+msgid "Assets"
+msgstr "Beni"
+
+msgid "Positions"
+msgstr "Posizioni"
+
+msgid "Asset number"
+msgstr "Numero del bene"
+
+msgid "Position"
+msgstr "Posizione"
+
+msgid "Position type"
+msgstr "Tipo di posizione"
+
+msgid "Asset type"
+msgstr "Tipo di bene"
+
+msgid "Floor"
+msgstr "Piano"
+
+msgid "Estimated gross value"
+msgstr "Valore lordo stimato"
+
+msgid "Open position listing"
+msgstr "Apri la scheda della posizione"
+
+msgid "Municipality-level location; this point does not identify a cadastral parcel."
+msgstr "Posizione a livello comunale; questo punto non identifica una particella catastale."
+
+msgid "View asset details ({n})"
+msgstr "Mostra i dettagli dei beni ({n})"
+
+msgid "Asset details unavailable."
+msgstr "Dettagli del bene non disponibili."
+
+# Address search
+msgid "Exact number found; the requested letter was not matched."
+msgstr "Numero civico trovato; la lettera richiesta non corrisponde."
+
+# Address search
+msgid "Street found, but number {n} is not in the address registry."
+msgstr "Via trovata, ma il numero {n} non è nell'archivio indirizzi."
+
+# Address search
+msgid "Street found."
+msgstr "Via trovata."
+
+# Address search
+msgid "Approximate street match."
+msgstr "Corrispondenza approssimata della via."
+
+# Address search
+msgid "Nearby numbers"
+msgstr "Numeri civici vicini"
+
+# Address search
+msgid "No cadastral parcel found at this address"
+msgstr "Nessuna particella catastale trovata a questo indirizzo"
+
+msgid "Nearest parcel, within {m} m of the address point."
+msgstr "Particella più vicina, entro {m} m dal punto dell'indirizzo."
