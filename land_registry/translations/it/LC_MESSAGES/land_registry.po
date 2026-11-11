@@ -4212,11 +4212,47 @@ msgstr "Per il cerchio servono un centro e un punto distinto sul bordo."
 msgid "Selected parcels"
 msgstr "Particelle selezionate"
 
+msgid "Close SISTER query batch"
+msgstr "Chiudi batch di query SISTER"
+
 msgid "Create SISTER CSV"
 msgstr "Crea CSV per SISTER"
 
-msgid "Downloads analytical historical visura requests for land and buildings. The CSV is not submitted automatically."
-msgstr "Scarica le richieste di visura storica analitica per terreni e fabbricati. Il CSV non viene inviato automaticamente."
+msgid "Add to an existing list…"
+msgstr "Aggiungi a una lista esistente…"
+
+msgid "All selected parcels are already in {file}; nothing was added."
+msgstr "Tutte le particelle selezionate sono già in {file}; non è stato aggiunto nulla."
+
+msgid "Added {rows} requests for {parcels} parcels to {file}."
+msgstr "Aggiunte {rows} richieste per {parcels} particelle a {file}."
+
+msgid "Downloaded {file} with {rows} requests for {parcels} parcels added. Replace the original list with it."
+msgstr "Scaricato {file} con {rows} richieste aggiunte per {parcels} particelle. Sostituisci con questo la lista originale."
+
+msgid "{skipped} parcels were already in the list."
+msgstr "{skipped} particelle erano già nella lista."
+
+msgid "{file} is not a SISTER Markdown list: it has no sister-batch-table marker."
+msgstr "{file} non è una lista Markdown di SISTER: manca il marcatore sister-batch-table."
+
+msgid "The list could not be read."
+msgstr "Impossibile leggere la lista."
+
+msgid "Recent searches"
+msgstr "Ricerche recenti"
+
+msgid "Clear recent searches"
+msgstr "Cancella le ricerche recenti"
+
+msgid "Create SISTER run-list"
+msgstr "Crea run-list per SISTER"
+
+msgid "Downloads analytical historical visura requests for land and buildings, as a CSV or as a Markdown list for sister batch run-list; the selection can also be added to a list you already have. Nothing is submitted automatically."
+msgstr "Scarica le richieste di visura storica analitica per terreni e fabbricati, come CSV o come lista Markdown per sister batch run-list; la selezione può anche essere aggiunta a una lista che hai già. Nulla viene inviato automaticamente."
+
+msgid "Downloaded a SISTER run-list with {rows} requests for {parcels} parcels."
+msgstr "Scaricata una run-list SISTER con {rows} richieste per {parcels} particelle."
 
 msgid "Click parcels to add or remove them from the batch."
 msgstr "Fai clic sulle particelle per aggiungerle o rimuoverle dal batch."

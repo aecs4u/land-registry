@@ -144,6 +144,7 @@
       <button type="button" class="map-round-button btn btn-light" id="shareButton" title="{{ _('Copy map link') }}" aria-label="{{ _('Copy map link') }}"><i class="fas fa-share-alt" aria-hidden="true"></i></button>
       <button type="button" class="map-round-button btn btn-light" id="resetButton" title="{{ _('Reset view') }}" aria-label="{{ _('Reset view') }}"><i class="fas fa-home" aria-hidden="true"></i></button>
       <button type="button" class="map-round-button btn btn-light" id="tableToggle" title="{{ _('Attribute table') }}" aria-label="{{ _('Attribute table') }}" aria-controls="mapTableCard" aria-expanded="false"><i class="fas fa-table" aria-hidden="true"></i></button>
+      <button type="button" class="map-round-button btn btn-light" id="sisterBatchToggle" title="{{ _('SISTER query batch') }}" aria-label="{{ _('SISTER query batch') }}" aria-controls="sisterBatchCard" aria-expanded="false"><img class="map-round-button-logo" src="{{ asset_url('sister-logo.svg') }}" alt="" width="22" height="22" aria-hidden="true"></button>
       <button type="button" class="map-round-button btn btn-light" id="mapCoordinatesToggle" title="{{ _('Show cursor coordinates') }}" aria-label="{{ _('Show cursor coordinates') }}" aria-pressed="false">⌖</button>
       <button type="button" class="map-round-button btn btn-light" id="mapMiniMapToggle" title="{{ _('Toggle overview map') }}" aria-label="{{ _('Toggle overview map') }}" aria-pressed="false">▣</button>
       <button type="button" class="map-round-button btn btn-light" id="googleMapsButton" title="{{ _('Open Google Maps') }}" aria-label="{{ _('Open Google Maps') }}"><i class="fas fa-map-marker-alt" aria-hidden="true"></i></button>
@@ -243,6 +244,31 @@
       </section>
     </section>
 
+    <section class="map-layers-card sister-batch-card" id="sisterBatchCard" aria-labelledby="sisterBatchHeading" hidden>
+      <div class="map-card-heading">
+        <h2 id="sisterBatchHeading">{{ _('SISTER query batch') }}</h2>
+        <button type="button" class="map-card-close" id="sisterBatchCloseButton" aria-label="{{ _('Close SISTER query batch') }}">×</button>
+      </div>
+      <div class="sister-batch-tools">
+      <p class="map-layer-meta">{{ _('Select parcels by clicking them, drawing a polygon, or defining a circle.') }}</p>
+      <div class="sister-batch-tool-row" role="group" aria-label="{{ _('Parcel selection tools') }}">
+        <button type="button" class="secondary-action compact btn btn-outline-secondary" id="sisterBatchClickButton" aria-pressed="false">{{ _('Click parcels') }}</button>
+        <button type="button" class="secondary-action compact btn btn-outline-secondary" id="sisterBatchPolygonButton" aria-pressed="false">{{ _('Polygon') }}</button>
+        <button type="button" class="secondary-action compact btn btn-outline-secondary" id="sisterBatchCircleButton" aria-pressed="false">{{ _('Circle') }}</button>
+      </div>
+      <div id="sisterBatchStatus" class="map-layer-meta" aria-live="polite">{{ _('No parcels selected') }}</div>
+      <ul id="sisterBatchList" class="sister-batch-list" aria-label="{{ _('Selected parcels') }}"></ul>
+      <div class="sister-batch-tool-row">
+        <button type="button" class="secondary-action compact btn btn-outline-secondary" id="sisterBatchClearButton" disabled>{{ _('Clear selection') }}</button>
+        <button type="button" class="secondary-action compact btn btn-outline-secondary sister-batch-export" id="sisterBatchExportButton" disabled>{{ _('Create SISTER CSV') }}</button>
+        <button type="button" class="secondary-action compact btn btn-outline-secondary sister-batch-export" id="sisterBatchRunListButton" disabled>{{ _('Create SISTER run-list') }}</button>
+        <button type="button" class="secondary-action compact btn btn-outline-secondary" id="sisterBatchAppendButton" disabled>{{ _('Add to an existing list…') }}</button>
+        <input type="file" id="sisterBatchAppendFile" accept=".md,text/markdown" hidden>
+      </div>
+      <p class="map-layer-meta">{{ _('Downloads analytical historical visura requests for land and buildings, as a CSV or as a Markdown list for sister batch run-list; the selection can also be added to a list you already have. Nothing is submitted automatically.') }}</p>
+      </div>
+    </section>
+
     <section class="map-layers-card" id="mapLayersCard" aria-label="{{ _('Map layers') }}" hidden>
       <div class="map-card-heading">
         <h2>{{ _('Layers') }}</h2>
@@ -320,22 +346,6 @@
           <div id="nplAsteFlorioAssetsStatus" class="map-layer-meta" aria-live="polite"></div>
           <div id="nplAsteFlorioAssetsDisclosure" class="map-layer-meta">{{ _('Locations are at municipality level; exact cadastral parcels are not available yet.') }}</div>
         </div>
-        <section class="sister-batch-tools" aria-labelledby="sisterBatchHeading">
-          <h3 id="sisterBatchHeading" class="layer-section-title">{{ _('SISTER query batch') }}</h3>
-          <p class="map-layer-meta">{{ _('Select parcels by clicking them, drawing a polygon, or defining a circle.') }}</p>
-          <div class="sister-batch-tool-row" role="group" aria-label="{{ _('Parcel selection tools') }}">
-            <button type="button" class="secondary-action compact btn btn-outline-secondary" id="sisterBatchClickButton" aria-pressed="false">{{ _('Click parcels') }}</button>
-            <button type="button" class="secondary-action compact btn btn-outline-secondary" id="sisterBatchPolygonButton" aria-pressed="false">{{ _('Polygon') }}</button>
-            <button type="button" class="secondary-action compact btn btn-outline-secondary" id="sisterBatchCircleButton" aria-pressed="false">{{ _('Circle') }}</button>
-          </div>
-          <div id="sisterBatchStatus" class="map-layer-meta" aria-live="polite">{{ _('No parcels selected') }}</div>
-          <ul id="sisterBatchList" class="sister-batch-list" aria-label="{{ _('Selected parcels') }}"></ul>
-          <div class="sister-batch-tool-row">
-            <button type="button" class="secondary-action compact btn btn-outline-secondary" id="sisterBatchClearButton" disabled>{{ _('Clear selection') }}</button>
-            <button type="button" class="secondary-action compact btn btn-outline-secondary sister-batch-export" id="sisterBatchExportButton" disabled>{{ _('Create SISTER CSV') }}</button>
-          </div>
-          <p class="map-layer-meta">{{ _('Downloads analytical historical visura requests for land and buildings. The CSV is not submitted automatically.') }}</p>
-        </section>
         <section class="map-urban-contour-tools" aria-labelledby="urbanContourHeading">
           <h3 id="urbanContourHeading" class="layer-section-title">{{ _('Urban contour') }}</h3>
           <label class="map-live-checkbox"><input type="checkbox" id="urbanContourEnabled" checked><span>{{ _('Enable overlay') }}</span></label>

@@ -661,3 +661,53 @@ def test_default_basemap_is_one_consistent_choice():
     for template in (TEMPLATE, THEME_TEMPLATE):
         assert '<option value="osm" selected>' in template
         assert '<option value="light" selected>' not in template
+
+
+def test_parcel_selection_exports_a_sister_run_list():
+    for template in (TEMPLATE, THEME_TEMPLATE):
+        assert 'id="sisterBatchRunListButton"' in template
+    assert "$('sisterBatchRunListButton')?.addEventListener('click', exportSisterRunList)" in MAP_SCRIPT
+    # The table marker and header are what `sister batch run-list` parses.
+    assert "'<!-- sister-batch-table -->'" in MAP_SCRIPT
+    assert "`| ${SISTER_RUN_LIST_COLUMNS.join(' | ')} |`" in MAP_SCRIPT
+    # Ids ending in -F/-T are pruned as alternatives by SISTER; both rows are wanted here.
+    assert "'fabbricati' : 'terreni'" in MAP_SCRIPT
+
+
+def test_sister_batch_is_a_stand_alone_window_opened_from_the_control_stack():
+    for template in (TEMPLATE, THEME_TEMPLATE):
+        assert 'id="sisterBatchToggle"' in template and 'aria-controls="sisterBatchCard"' in template
+        assert "asset_url('sister-logo.svg')" in template
+        layers = template[template.index('id="mapLayersCard"'):template.index('id="layersToggle"')]
+        assert "sisterBatch" not in layers
+        window = template[template.index('id="sisterBatchCard"'):template.index('id="mapLayersCard"')]
+        for control in ("sisterBatchCloseButton", "sisterBatchClickButton", "sisterBatchList", "sisterBatchRunListButton"):
+            assert f'id="{control}"' in window
+    assert "function setSisterBatchWindowOpen(open)" in MAP_SCRIPT
+    # Closing the window stops the selection tool and keeps the selected parcels.
+    assert "} else if (state.sisterBatch.mode) setSisterBatchMode(null);" in MAP_SCRIPT
+    assert (ROOT / "land_registry/static/sister-logo.svg").is_file()
+
+
+def test_parcel_selection_can_be_appended_to_an_existing_sister_list():
+    for template in (TEMPLATE, THEME_TEMPLATE):
+        assert 'id="sisterBatchAppendButton"' in template
+        assert 'id="sisterBatchAppendFile" accept=".md,text/markdown" hidden' in template
+    assert "function appendToSisterRunList(text, features)" in MAP_SCRIPT
+    # Rows already in the list keep their ids (SISTER's resume key) and are not added twice.
+    assert "if (existingIds.has(base)) return;" in MAP_SCRIPT
+    # A file without a marked table is refused instead of being rewritten.
+    assert "if (!lastTable) return null;" in MAP_SCRIPT
+
+
+def test_map_search_remembers_past_searches_in_the_browser_only():
+    assert "const RECENT_SEARCHES_KEY = 'land-registry.map.recent-searches.v1';" in MAP_SCRIPT
+    choose = MAP_SCRIPT[MAP_SCRIPT.index("function chooseSearchResult(result) {"):]
+    assert choose.index("rememberSearch(result);") < choose.index("closeSearchSuggestions();")
+    # Kept in local storage, bounded, and removable one by one or all at once.
+    assert "window.localStorage.setItem(RECENT_SEARCHES_KEY" in MAP_SCRIPT
+    assert ".slice(0, RECENT_SEARCHES_LIMIT)" in MAP_SCRIPT
+    assert "tr('Clear recent searches')" in MAP_SCRIPT and "forgetSearch(result)" in MAP_SCRIPT
+    # Opened by a click or ArrowDown, never by a programmatic focus.
+    assert "$('mapSearchInput').addEventListener('focus'" not in MAP_SCRIPT
+    assert ".map-search-recent-heading" in STYLES

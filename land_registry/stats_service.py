@@ -2238,15 +2238,22 @@ class _AsyncPostgresSource:
         if not available:
             return None
 
-        table_names = [name.split(".", 1)[1] for name in available]
+        relation_specs = [
+            tuple(name.split(".", 1)) if "." in name else ("public", name)
+            for name in available
+        ]
         column_rows = await self._fetch(
             """
             SELECT table_name, column_name
             FROM information_schema.columns
-            WHERE table_schema = %s AND table_name = ANY(%s::text[])
+            WHERE table_schema = ANY(%s::text[])
+              AND table_name = ANY(%s::text[])
             ORDER BY table_name, ordinal_position
             """,
-            ("public", table_names),
+            (
+                list(dict.fromkeys(schema for schema, _table in relation_specs)),
+                list(dict.fromkeys(table for _schema, table in relation_specs)),
+            ),
         )
         columns: dict[str, list[str]] = {}
         for row in column_rows:
@@ -2271,14 +2278,17 @@ class _AsyncPostgresSource:
         }
         country_values = tuple(dict.fromkeys((country_code.upper(), "ITA", "ITALY")))
 
-        async def rows_for(table_name: str):
+        async def rows_for(schema_name: str, table_name: str):
             table_columns = columns.get(table_name, [])
             by_lower = {name.lower(): name for name in table_columns}
             country_column = next((by_lower[name] for name in country_aliases if name in by_lower), None)
             year_column = next((by_lower[name] for name in year_aliases if name in by_lower), None)
             if country_column is None or year_column is None:
                 return []
-            table = f"serving.{_quote_pg_identifier(table_name)}"
+            table = (
+                f"{_quote_pg_identifier(schema_name)}."
+                f"{_quote_pg_identifier(table_name)}"
+            )
             country_field = _quote_pg_identifier(country_column)
             year_field = _quote_pg_identifier(year_column)
             query_rows = await self._fetch(
@@ -2303,15 +2313,20 @@ class _AsyncPostgresSource:
                     values.append(payload)
             return values
 
-        table_rows = await asyncio.gather(*(rows_for(name) for name in table_names))
+        table_rows = await asyncio.gather(
+            *(rows_for(schema, table) for schema, table in relation_specs)
+        )
         clusters: dict[str, dict[str, Dict[str, Any]]] = {}
         year_set: set[str] = set()
-        for table_name, records in zip(table_names, table_rows, strict=True):
+        for (_schema_name, table_name), records in zip(relation_specs, table_rows, strict=True):
             suffix = table_name.removeprefix("relocation_")
             group_key, _group_label = groups.get(
                 suffix, ("country_profile", "Country profile")
             )
-            table_columns = {name.lower(): name for name in columns.get(table_name, [])}
+            table_columns = {
+                name.lower(): name
+                for name in columns.get(table_name, [])
+            }
             year_key = next((table_columns[name] for name in year_aliases if name in table_columns), None)
             if year_key is None:
                 continue
@@ -2400,7 +2415,7 @@ class _AsyncPostgresSource:
             "country_name": country_name,
             "spatial_resolution": "country",
             "scope_note": "Country-level relocation indicators for {country}; these values do not describe the province or parcel.",
-            "source": "aecs4u-stats public.relocation_* views",
+            "source": "relocation.public.relocation_*",
         }
 
     @_on_database("istat")

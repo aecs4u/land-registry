@@ -18,6 +18,8 @@
   const SEARCH_DEBOUNCE_MS = 250;
   const LAST_VIEW_KEY = 'land-registry.map.lastView';
   const WELCOME_TOUR_KEY = 'land-registry.map.welcome-seen.v1';
+  const RECENT_SEARCHES_KEY = 'land-registry.map.recent-searches.v1';
+  const RECENT_SEARCHES_LIMIT = 8;
   const BASEMAPS = ['osm', 'light', 'dark', 'satellite'];
   // One tile request per tile, labels baked in and native detail to z19; Esri
   // Light needs two requests (base + labels) and is only native to z16.
@@ -3933,9 +3935,67 @@
     finally { task.finish(); }
   }
 
-  function renderSearchResults(results) {
+  // Past searches are the results the visitor picked, most recent first. They stay in
+  // this browser's local storage (never sent to the server) and reopen without a new query.
+  function recentSearchKey(result) {
+    return `${result.kind || ''}:${String(result.label || '').trim().toLocaleLowerCase()}`;
+  }
+
+  function readRecentSearches() {
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(RECENT_SEARCHES_KEY) || '[]');
+      return (Array.isArray(stored) ? stored : [])
+        .filter((item) => item && typeof item === 'object' && typeof item.label === 'string' && item.label.trim() && typeof item.kind === 'string')
+        .slice(0, RECENT_SEARCHES_LIMIT);
+    } catch (_) { return []; }
+  }
+
+  function writeRecentSearches(items) {
+    try {
+      if (items.length) window.localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(items));
+      else window.localStorage.removeItem(RECENT_SEARCHES_KEY);
+    } catch (_) { /* storage may be disabled or full */ }
+  }
+
+  function rememberSearch(result) {
+    if (!result || typeof result.label !== 'string' || !result.label.trim() || !result.kind) return;
+    let entry;
+    try { entry = JSON.parse(JSON.stringify(result)); } catch (_) { return; }
+    // An unusually large result is not worth a slot of the origin's storage quota.
+    if (JSON.stringify(entry).length > 4096) return;
+    const key = recentSearchKey(entry);
+    writeRecentSearches([entry, ...readRecentSearches().filter((item) => recentSearchKey(item) !== key)].slice(0, RECENT_SEARCHES_LIMIT));
+  }
+
+  function forgetSearch(result) {
+    const key = recentSearchKey(result);
+    writeRecentSearches(readRecentSearches().filter((item) => recentSearchKey(item) !== key));
+  }
+
+  function showRecentSearches() {
+    const recent = readRecentSearches();
+    if (!recent.length) return false;
+    state.searchActiveIndex = -1;
+    $('mapSearchStatus').textContent = '';
+    renderSearchResults(recent, { recent: true });
+    return true;
+  }
+
+  function renderSearchResults(results, options = {}) {
     const list = $('mapSearchResults');
     list.replaceChildren();
+    list.classList.toggle('is-recent', Boolean(options.recent && results.length));
+    if (options.recent && results.length) {
+      const heading = document.createElement('div');
+      heading.className = 'map-search-recent-heading'; heading.setAttribute('role', 'presentation');
+      const title = document.createElement('span'); title.textContent = tr('Recent searches');
+      const clear = document.createElement('button');
+      clear.type = 'button'; clear.className = 'map-search-recent-clear'; clear.textContent = tr('Clear');
+      clear.setAttribute('aria-label', tr('Clear recent searches'));
+      clear.addEventListener('click', () => { writeRecentSearches([]); closeSearchSuggestions(); $('mapSearchInput').focus(); });
+      heading.append(title, clear);
+      list.appendChild(heading);
+    }
     list.hidden = !results.length;
     const input = $('mapSearchInput');
     input.setAttribute('aria-expanded', results.length ? 'true' : 'false');
@@ -3955,6 +4015,17 @@
       const context = parcelContext || addressContext || result.context || (result.kind === 'parcel' ? 'Cadastral parcel' : 'Municipality');
       button.innerHTML = `<strong>${escapeHtml(result.label)}</strong><small>${escapeHtml(context)}</small>`;
       button.addEventListener('click', () => chooseSearchResult(result));
+      if (options.recent) {
+        const row = document.createElement('div');
+        row.className = 'map-search-recent-row'; row.setAttribute('role', 'presentation');
+        const remove = document.createElement('button');
+        remove.type = 'button'; remove.className = 'map-search-recent-remove'; remove.textContent = '×'; remove.tabIndex = -1;
+        remove.setAttribute('aria-label', tr('Remove {reference}', { reference: result.label }));
+        remove.addEventListener('click', () => { forgetSearch(result); if (!showRecentSearches()) closeSearchSuggestions(); $('mapSearchInput').focus(); });
+        row.append(button, remove);
+        list.appendChild(row);
+        return;
+      }
       list.appendChild(button);
     });
   }
@@ -4096,6 +4167,7 @@
   }
 
   function chooseSearchResult(result) {
+    rememberSearch(result);
     closeSearchSuggestions();
     $('mapSearchInput').value = result.label;
     if (result.kind === 'address') { chooseAddressResult(result); return; }
@@ -4375,7 +4447,11 @@
     const normalized = query.trim();
     const requestId = ++state.searchRequest;
     if (state.searchController) state.searchController.abort();
-    if (normalized.length < 2) { renderSearchResults([]); $('mapSearchStatus').textContent = ''; return; }
+    if (normalized.length < 2) {
+      // An emptied box goes back to the past searches while the visitor is still in it.
+      if (!(!normalized && document.activeElement === $('mapSearchInput') && showRecentSearches())) { renderSearchResults([]); $('mapSearchStatus').textContent = ''; }
+      return;
+    }
     const controller = new AbortController();
     state.searchController = controller;
     let timedOut = false;
@@ -4544,9 +4620,27 @@
           : tr('{n} selected; {missing} need cadastral details before export', { n: count.toLocaleString(numberLocale()), missing: (count - ready).toLocaleString(numberLocale()) }))
         : tr('No parcels selected'));
     }
+    $('sisterBatchToggle')?.classList.toggle('has-selection', count > 0);
     if ($('sisterBatchClearButton')) $('sisterBatchClearButton').disabled = !count && !state.sisterBatch.mode && !state.sisterBatch.busy;
     if ($('sisterBatchExportButton')) $('sisterBatchExportButton').disabled = !count || ready !== count || state.sisterBatch.busy;
+    if ($('sisterBatchRunListButton')) $('sisterBatchRunListButton').disabled = !count || ready !== count || state.sisterBatch.busy;
+    if ($('sisterBatchAppendButton')) $('sisterBatchAppendButton').disabled = !count || ready !== count || state.sisterBatch.busy;
     tools.forEach(([id]) => { if ($(id)) $(id).disabled = state.sisterBatch.busy; });
+  }
+
+  // The batch window shares the layers panel's slot, so only one is open. Closing it
+  // stops the active selection tool but keeps the selected parcels.
+  function setSisterBatchWindowOpen(open) {
+    const card = $('sisterBatchCard');
+    if (!card || card.hidden === !open) return;
+    card.hidden = !open;
+    $('sisterBatchToggle')?.setAttribute('aria-expanded', String(open));
+    if (open) {
+      if ($('mapLayersCard')) $('mapLayersCard').hidden = true;
+      $('layersToggle')?.setAttribute('aria-expanded', 'false');
+      if ($('mapBasemapPopover')) $('mapBasemapPopover').hidden = true;
+      $('basemapToggle')?.setAttribute('aria-expanded', 'false');
+    } else if (state.sisterBatch.mode) setSisterBatchMode(null);
   }
 
   function setSisterBatchMode(mode) {
@@ -4793,21 +4887,191 @@
     return `"${text.replace(/"/g, '""')}"`;
   }
 
+  function downloadSisterBatchFile(content, type, extension) {
+    const blob = new Blob([content], { type });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `land_registry_sister_batch_${new Date().toISOString().slice(0, 10)}.${extension}`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
   function exportSisterBatch() {
     const headers = ['command', 'provincia', 'comune', 'foglio', 'particella', 'subalterno', 'tipo_catasto', 'codice_fiscale', 'vista', 'sezione', 'source_files', 'scope_note'];
     const rows = [...state.sisterBatch.features.values()].flatMap(sisterBatchCsvRows);
     if (!rows.length) { renderSisterBatchControls(tr('No complete cadastral references are ready to export.')); return; }
     const csv = [headers, ...rows].map(row => row.map(csvCell).join(',')).join('\r\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `land_registry_sister_batch_${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+    downloadSisterBatchFile(csv, 'text/csv;charset=utf-8', 'csv');
     renderSisterBatchControls(tr('Downloaded {rows} SISTER requests for {parcels} parcels.', { rows: rows.length.toLocaleString(numberLocale()), parcels: state.sisterBatch.features.size.toLocaleString(numberLocale()) }));
+  }
+
+  // SISTER reads a table cell literally: a pipe is written as an entity and a
+  // line break as <br> (sister docs/batch_markdown_format.md).
+  function markdownCell(value) {
+    return String(value ?? '').replace(/&/g, '&amp;').replace(/\|/g, '&#124;').replace(/\r?\n/g, '<br>').trim();
+  }
+
+  // The Markdown list read by `sister batch run-list`. Row ids are the key of
+  // SISTER's resume journal, so they come from the parcel reference and not
+  // from the row position. They must not end in -F/-T: `prune-list` treats
+  // such a pair as two guesses for one identifier and drops both when one is
+  // stored, while here the land and the building visura are both wanted.
+  const SISTER_RUN_LIST_COLUMNS = ['id', 'command', 'provincia', 'comune', 'foglio', 'particella', 'subalterno', 'tipo_catasto', 'sezione', 'vista', 'scope_note'];
+  const SISTER_RUN_LIST_MARKER = /<!--\s*sister-batch-table(?::v\d+)?\s*(\{.*\})?\s*-->/;
+
+  // Rows whose id is in `existingIds` are already in the list being extended and are skipped.
+  function sisterRunListRows(features, existingIds = new Set()) {
+    const csvIndex = { command: 0, provincia: 1, comune: 2, foglio: 3, particella: 4, subalterno: 5, tipo_catasto: 6, vista: 8, sezione: 9, scope_note: 11 };
+    const used = new Set();
+    const lines = [];
+    let parcels = 0;
+    let skipped = 0;
+    features.forEach((feature) => {
+      const groups = sisterBatchCsvRows(feature);
+      if (!groups.length) return;
+      const reference = String(referenceFrom(feature.properties || {}) || '').trim().toUpperCase();
+      const slug = reference.replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      let added = false;
+      groups.forEach((fields) => {
+        const base = `map-${slug}-${fields[csvIndex.tipo_catasto] === 'F' ? 'fabbricati' : 'terreni'}`;
+        if (existingIds.has(base)) return;
+        let id = base;
+        for (let copy = 2; used.has(id); copy += 1) id = `${base}-${copy}`;
+        used.add(id);
+        added = true;
+        lines.push(`| ${[id, ...SISTER_RUN_LIST_COLUMNS.slice(1).map((column) => fields[csvIndex[column]])].map(markdownCell).join(' | ')} |`);
+      });
+      if (added) parcels += 1; else skipped += 1;
+    });
+    return { lines, parcels, skipped };
+  }
+
+  function sisterRunListTableHead() {
+    return [
+      '<!-- sister-batch-table -->',
+      `| ${SISTER_RUN_LIST_COLUMNS.join(' | ')} |`,
+      `|${' --- |'.repeat(SISTER_RUN_LIST_COLUMNS.length)}`,
+    ];
+  }
+
+  function sisterRunListMarkdown(features) {
+    const { lines, parcels } = sisterRunListRows(features);
+    if (!lines.length) return null;
+    const date = new Date().toISOString().slice(0, 10);
+    const markdown = [
+      `# Land Registry map selection ${date}`,
+      '',
+      `${parcels} parcels selected on the Land Registry map; ${lines.length} analytical historical visura queries (Catasto Terreni and Catasto Fabbricati).`,
+      '',
+      ...sisterRunListTableHead(),
+      ...lines,
+      '',
+    ].join('\n');
+    return { markdown, rows: lines.length, parcels };
+  }
+
+  function exportSisterRunList() {
+    const list = sisterRunListMarkdown([...state.sisterBatch.features.values()]);
+    if (!list) { renderSisterBatchControls(tr('No complete cadastral references are ready to export.')); return; }
+    downloadSisterBatchFile(list.markdown, 'text/markdown;charset=utf-8', 'md');
+    renderSisterBatchControls(tr('Downloaded a SISTER run-list with {rows} requests for {parcels} parcels.', { rows: list.rows.toLocaleString(numberLocale()), parcels: list.parcels.toLocaleString(numberLocale()) }));
+  }
+
+  function markdownTableCells(line) {
+    const text = line.trim();
+    return text.startsWith('|') && text.endsWith('|') && text.length > 1 ? text.slice(1, -1).split('|').map((cell) => cell.trim()) : null;
+  }
+
+  // Adds the selection to an existing SISTER Markdown list without touching its rows:
+  // SISTER keys its resume journal on the ids already in the file. Returns null when the
+  // text has no marked table, i.e. it is not a list `sister batch run-list` would read.
+  function appendToSisterRunList(text, features) {
+    const newline = text.includes('\r\n') ? '\r\n' : '\n';
+    const source = text.split(/\r?\n/);
+    while (source.length && !source[source.length - 1].trim()) source.pop();
+    const existingIds = new Set();
+    let lastTable = null;
+    for (let index = 0; index < source.length; index += 1) {
+      if (!SISTER_RUN_LIST_MARKER.test(source[index])) continue;
+      let head = index + 1;
+      while (head < source.length && !source[head].trim()) head += 1;
+      const header = markdownTableCells(source[head] || '');
+      if (!header) continue;
+      const idColumn = header.indexOf('id');
+      let end = head + 1;
+      for (; end < source.length; end += 1) {
+        const row = markdownTableCells(source[end]);
+        if (!row) break;
+        if (idColumn >= 0 && row[idColumn] && !/^:?-{3,}:?$/.test(row[idColumn])) existingIds.add(row[idColumn].replace(/^`(.*)`$/, '$1').trim());
+      }
+      lastTable = { header, end, shared: /\{.*\}/.test(source[index]) };
+      index = end - 1;
+    }
+    if (!lastTable) return null;
+    const { lines, parcels, skipped } = sisterRunListRows(features, existingIds);
+    if (!lines.length) return { markdown: text, rows: 0, parcels, skipped };
+    // Same columns, no shared parameters and nothing after it: the rows continue that table.
+    const continues = lastTable.end === source.length && !lastTable.shared
+      && lastTable.header.join('|') === SISTER_RUN_LIST_COLUMNS.join('|');
+    const addition = continues
+      ? lines
+      : ['', `## Land Registry map selection ${new Date().toISOString().slice(0, 10)}`, '', ...sisterRunListTableHead(), ...lines];
+    return { markdown: [...source, ...addition, ''].join(newline), rows: lines.length, parcels, skipped };
+  }
+
+  function sisterRunListAppendMessage(result, name, saved) {
+    const values = {
+      rows: result.rows.toLocaleString(numberLocale()), parcels: result.parcels.toLocaleString(numberLocale()),
+      skipped: result.skipped.toLocaleString(numberLocale()), file: name,
+    };
+    if (!result.rows) return tr('All selected parcels are already in {file}; nothing was added.', values);
+    const message = saved
+      ? tr('Added {rows} requests for {parcels} parcels to {file}.', values)
+      : tr('Downloaded {file} with {rows} requests for {parcels} parcels added. Replace the original list with it.', values);
+    return result.skipped ? `${message} ${tr('{skipped} parcels were already in the list.', values)}` : message;
+  }
+
+  async function finishSisterRunListAppend(file, save) {
+    const features = [...state.sisterBatch.features.values()];
+    const result = appendToSisterRunList(await file.text(), features);
+    if (!result) { renderSisterBatchControls(tr('{file} is not a SISTER Markdown list: it has no sister-batch-table marker.', { file: file.name })); return; }
+    let saved = false;
+    if (result.rows) {
+      if (save) saved = await save(result.markdown);
+      if (!saved) {
+        const url = URL.createObjectURL(new Blob([result.markdown], { type: 'text/markdown;charset=utf-8' }));
+        const link = document.createElement('a');
+        link.href = url; link.download = file.name;
+        document.body.appendChild(link); link.click(); link.remove();
+        URL.revokeObjectURL(url);
+      }
+    }
+    renderSisterBatchControls(sisterRunListAppendMessage(result, file.name, saved));
+  }
+
+  // Chromium can write the chosen list back in place; other browsers download the
+  // extended list under the same name.
+  async function appendSisterRunList() {
+    if (!sisterRunListRows([...state.sisterBatch.features.values()]).lines.length) {
+      renderSisterBatchControls(tr('No complete cadastral references are ready to export.')); return;
+    }
+    if (typeof window.showOpenFilePicker !== 'function') { $('sisterBatchAppendFile')?.click(); return; }
+    try {
+      const [handle] = await window.showOpenFilePicker({ types: [{ description: 'Markdown', accept: { 'text/markdown': ['.md'] } }] });
+      await finishSisterRunListAppend(await handle.getFile(), async (markdown) => {
+        try {
+          const writable = await handle.createWritable();
+          await writable.write(markdown);
+          await writable.close();
+          return true;
+        } catch (_) { return false; }
+      });
+    } catch (error) {
+      if (error?.name !== 'AbortError') renderSisterBatchControls(tr('The list could not be read.'));
+    }
   }
 
   function fallbackCopy(value) {
@@ -7580,6 +7844,7 @@
     $('mapSearchInput').addEventListener('keydown', (event) => {
       const options = [...$('mapSearchResults').querySelectorAll('.map-search-result')];
       if (event.key === 'Escape') { closeSearchSuggestions(); return; }
+      if (event.key === 'ArrowDown' && !options.length && !$('mapSearchInput').value.trim() && showRecentSearches()) { event.preventDefault(); return; }
       if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && options.length) {
         event.preventDefault();
         const direction = event.key === 'ArrowDown' ? 1 : -1;
@@ -7599,6 +7864,13 @@
       current.searchParams.set('lang', language);
       window.location.assign(`${current.pathname}${current.search}${current.hash}`);
     }, true);
+    // Opened by a click or ArrowDown, not by focus: the page refocuses the box after each choice.
+    $('mapSearchInput').addEventListener('click', () => {
+      if (!$('mapSearchInput').value.trim() && $('mapSearchResults').hidden) showRecentSearches();
+    });
+    document.addEventListener('pointerdown', (event) => {
+      if ($('mapSearchResults').classList.contains('is-recent') && !event.target.closest('.map-search-card')) closeSearchSuggestions();
+    });
     $('mapSearchInput').addEventListener('input', () => { if (!$('mapSearchInput').value.trim()) clearSearchMarker(); clearTimeout(state.searchTimer); state.searchTimer = setTimeout(() => submitSearch($('mapSearchInput').value), SEARCH_DEBOUNCE_MS); });
     $('locateButton').addEventListener('click', locate);
     $('shareButton').addEventListener('click', copyLink);
@@ -7625,11 +7897,25 @@
     $('refreshNplAsteFlorioAssetsButton')?.addEventListener('click', () => {
       void refreshNplAsteFlorioOverlay(true);
     });
+    $('sisterBatchToggle')?.addEventListener('click', () => setSisterBatchWindowOpen($('sisterBatchCard').hidden));
+    $('sisterBatchCloseButton')?.addEventListener('click', () => setSisterBatchWindowOpen(false));
+    $('sisterBatchCard')?.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape') return;
+      setSisterBatchWindowOpen(false);
+      $('sisterBatchToggle')?.focus();
+    });
     $('sisterBatchClickButton')?.addEventListener('click', () => setSisterBatchMode('click'));
     $('sisterBatchPolygonButton')?.addEventListener('click', () => setSisterBatchMode('polygon'));
     $('sisterBatchCircleButton')?.addEventListener('click', () => setSisterBatchMode('circle'));
     $('sisterBatchClearButton')?.addEventListener('click', clearSisterBatchSelection);
     $('sisterBatchExportButton')?.addEventListener('click', exportSisterBatch);
+    $('sisterBatchRunListButton')?.addEventListener('click', exportSisterRunList);
+    $('sisterBatchAppendButton')?.addEventListener('click', () => { void appendSisterRunList(); });
+    $('sisterBatchAppendFile')?.addEventListener('change', (event) => {
+      const [file] = event.target.files || [];
+      event.target.value = '';
+      if (file) finishSisterRunListAppend(file, null).catch(() => renderSisterBatchControls(tr('The list could not be read.')));
+    });
     $('sisterBatchList')?.addEventListener('click', (event) => {
       const button = event.target.closest('[data-sister-batch-remove]');
       if (!button) return;
@@ -7834,6 +8120,7 @@
       if (open) {
         $('mapLayersCard').hidden = true;
         $('layersToggle').setAttribute('aria-expanded', 'false');
+        setSisterBatchWindowOpen(false);
       }
       setBasemapPickerOpen(open);
     });
@@ -7859,7 +8146,7 @@
       const card = $('mapLayersCard');
       card.hidden = !card.hidden;
       $('layersToggle').setAttribute('aria-expanded', String(!card.hidden));
-      if (!card.hidden) setBasemapPickerOpen(false);
+      if (!card.hidden) { setBasemapPickerOpen(false); setSisterBatchWindowOpen(false); }
     });
     $('basemapEngineSelect').addEventListener('change', (event) => {
       state.basemapUserSelected = true;
