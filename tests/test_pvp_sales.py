@@ -548,3 +548,68 @@ def test_failed_load_backs_off_instead_of_restarting_a_multi_minute_query(monkey
         assert attempts == [1, 1]
 
     asyncio.run(scenario())
+
+
+_LOCAL_POINT_COLUMNS = {
+    "sale_id", "latitude", "longitude", "price", "sale_datetime", "property_type",
+    "coordinate_is_approximate", "description_hint",
+}
+
+
+def _bulk_reads(connection, relation):
+    return [sql for sql in connection.sql if f"FROM {relation}\n" in sql]
+
+
+def test_local_copy_is_preferred_and_details_still_use_the_live_view():
+    local = _Connection(_LOCAL_POINT_COLUMNS, rows=[_row(1, 37.03, 15.21)])
+    live = _Connection({"sale_id", "latitude", "longitude", "description"},
+                       detail={"sale_id": 1, "latitude": None, "longitude": None, "description": "Full notice"})
+    store = PvpSalesStore(_Source(live))
+    store._local_copy_source = _Source(local)
+
+    snapshot = asyncio.run(store._load())
+    detail = asyncio.run(store.sale_detail(1))
+
+    assert snapshot["relation"] == "pvp.map_sale_points_local"
+    assert snapshot["points"][0][:3] == [1, 15.21, 37.03]
+    assert _bulk_reads(local, "pvp.map_sale_points_local")
+    assert not any("SET LOCAL work_mem" in sql for sql in local.sql)
+    assert not _bulk_reads(live, "pvp.v_map_sale_points") and not _bulk_reads(live, "pvp.v_map_sales")
+    assert detail["description"] == "Full notice"
+
+
+def test_missing_local_copy_falls_back_to_the_live_views():
+    local = _Connection(set())  # relation not created yet
+    live = _Connection({"sale_id", "latitude", "longitude"}, rows=[_row(1, 37.03, 15.21)])
+    store = PvpSalesStore(_Source(live))
+    store._local_copy_source = _Source(local)
+
+    snapshot = asyncio.run(store._load())
+    assert snapshot["relation"] == "pvp.v_map_sales"
+
+
+def test_failing_local_copy_does_not_queue_live_view_queries():
+    class _Unpopulated(_Connection):
+        async def fetch(self, sql, *params, timeout=None):
+            if "pg_attribute" not in sql:
+                raise RuntimeError('materialized view "map_sale_points_local" has not been populated')
+            return await super().fetch(sql, *params, timeout=timeout)
+
+    local = _Unpopulated(_LOCAL_POINT_COLUMNS)
+    live = _Connection({"sale_id", "latitude", "longitude"}, rows=[_row(1, 37.03, 15.21)])
+    store = PvpSalesStore(_Source(live))
+    store._local_copy_source = _Source(local)
+
+    with pytest.raises(RuntimeError, match="has not been populated"):
+        asyncio.run(store._load())
+    assert not live.sql
+
+
+def test_timed_out_points_view_does_not_fall_through_to_the_slower_sales_view():
+    columns = {"sale_id", "latitude", "longitude"}
+    connection = _Connection(columns, rows=[_row(1, 37.03, 15.21)], point_columns=columns,
+                             points_error=asyncio.TimeoutError())
+    with pytest.raises(RuntimeError, match="No usable PVP map view"):
+        asyncio.run(PvpSalesStore(_Source(connection))._load())
+    assert _bulk_reads(connection, "pvp.v_map_sale_points")
+    assert not _bulk_reads(connection, "pvp.v_map_sales")

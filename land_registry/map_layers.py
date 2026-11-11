@@ -291,10 +291,10 @@ def color_mode_strings() -> list[str]:
 # be very wide. Map layers should use prepared spatial relations; raw landing
 # relations require bounded, source-filtered map queries.
 MAP_LAYERS: tuple[MapLayerSpec, ...] = (
-    MapLayerSpec("geo-boundaries-areas", "Geo Areas", "istat.v_ripartizioni_map", "geom", properties=("id", "geo_unit_id", "canonical_name", "unit_type", "generalization", "source_release"), group="administrative-boundaries", color="#86699a", z_order=8, min_zoom=5, fill_opacity=0.035, line_width=1.2, require_gist_index=False, tile_revision="istat-areas-1"),
-    MapLayerSpec("geo-boundaries", "Regions", "istat.v_regioni_map", "geom", properties=("id", "geo_unit_id", "canonical_name", "unit_type", "generalization", "source_release"), role="admin-substitute", group="administrative-boundaries", color="#526b84", z_order=10, min_zoom=5, fill_opacity=0.045, line_width=1.2, require_gist_index=False, tile_revision="istat-regions-1"),
-    MapLayerSpec("geo-boundaries-provinces", "Provinces", "istat.v_province_map", "geom", properties=("id", "geo_unit_id", "canonical_name", "unit_type", "generalization", "source_release"), group="administrative-boundaries", color="#367891", z_order=11, min_zoom=7, fill_opacity=0.025, line_width=1.0, require_gist_index=False, tile_revision="istat-provinces-1"),
-    MapLayerSpec("geo-boundaries-municipalities", "Municipalities", "istat.v_comuni_map", "geom", properties=("id", "geo_unit_id", "canonical_name", "unit_type", "generalization", "source_release"), group="administrative-boundaries", color="#3d927e", z_order=12, min_zoom=9, fill_opacity=0.015, line_width=0.8, require_gist_index=False, tile_revision="istat-municipalities-1"),
+    MapLayerSpec("geo-boundaries-areas", "Geo Areas", "public.v_ripartizioni_map", "geom", properties=("id", "geo_unit_id", "canonical_name", "unit_type", "generalization", "source_release"), group="administrative-boundaries", color="#86699a", z_order=8, min_zoom=5, fill_opacity=0.035, line_width=1.2, require_gist_index=False, tile_revision="istat-areas-1"),
+    MapLayerSpec("geo-boundaries", "Regions", "public.v_regioni_map", "geom", properties=("id", "geo_unit_id", "canonical_name", "unit_type", "generalization", "source_release"), role="admin-substitute", group="administrative-boundaries", color="#526b84", z_order=10, min_zoom=5, fill_opacity=0.045, line_width=1.2, require_gist_index=False, tile_revision="istat-regions-1"),
+    MapLayerSpec("geo-boundaries-provinces", "Provinces", "public.v_province_map", "geom", properties=("id", "geo_unit_id", "canonical_name", "unit_type", "generalization", "source_release"), group="administrative-boundaries", color="#367891", z_order=11, min_zoom=7, fill_opacity=0.025, line_width=1.0, require_gist_index=False, tile_revision="istat-provinces-1"),
+    MapLayerSpec("geo-boundaries-municipalities", "Municipalities", "public.v_comuni_map", "geom", properties=("id", "geo_unit_id", "canonical_name", "unit_type", "generalization", "source_release"), group="administrative-boundaries", color="#3d927e", z_order=12, min_zoom=9, fill_opacity=0.015, line_width=0.8, require_gist_index=False, tile_revision="istat-municipalities-1"),
     # Coverage changes as upstream publications are loaded. Do not hard-code a
     # region or a row count here; health() reports the current estimated extent
     # from PostGIS statistics when ANALYZE data is available.
@@ -303,19 +303,18 @@ MAP_LAYERS: tuple[MapLayerSpec, ...] = (
     # viewports can contain tens of thousands of parcels even at z14; keep
     # those reads small enough that a page of clipped geometries stays bounded.
     MapLayerSpec("cadastral-parcels", "Cadastral parcels", "spatial.cadastral_parcel", "geom", min_zoom=14, max_features=10000, size_column="area_sqm", geojson_max_area=0.04, geojson_page_max_area=0.0005, coverage="unknown", properties=("id", "canonical_reference", "national_cadastral_reference", "parcel", "sheet", "municipality_id", "area_sqm", "source_release", "has_visura", "is_auction_sale"), group="cadastral", color="#d97925", z_order=90, fill_opacity=0.04, line_width=0.8, tile_revision="regional-5"),
-    MapLayerSpec("urban-sections", "Cadastral urban sections", "sezioni_urbane.sezioni_urbane", "geom", id_column="OGC_FID", min_zoom=11, coverage="partial", coverage_note="Only municipalities that have urban sections (about 520, such as Rome, Genoa, Verona and Trieste); most of Italy has none", sparse=True, properties=("OGC_FID", "nationalcadastralzoningreference", "administrativeunit", "sezione_urbana"), group="cadastral", color="#7c3aed", z_order=95, fill_opacity=0.13, line_width=2.8, require_gist_index=False),
-    # DEPRECATED (2026-10-21): the Zornade-sourced zornade.zornade_zone_omi relation. Keep it serving
-    # tiles until a replacement source exists, but do not build new features on it.
-    # Tiles read the indexed local copy (scripts/sql/map-market-zones-local-copy.sql); the foreign
-    # table is only the fallback while that copy has not been created, and is ~1000x slower.
-    MapLayerSpec("market-zones", "OMI market zones", "zornade.omi_market_zone_map", "geom", id_column="OGC_FID",
-                 fallback_tables=("zornade.zornade_zone_omi",), min_zoom=10, properties=("OGC_FID", "codcom", "codzona", "zona_descr", "comune_descrizione", "cod_tip_prev", "descr_tip_prev", "descr_tipologia_en", "stato_prev", "compr_min", "compr_max", "loc_min", "loc_max"), group="cadastral", color="#7b61a8", z_order=30, require_gist_index=False, tile_revision="3"),
-    MapLayerSpec("postal-zones", "Postal zones", "cap_subcomunali.cap_subcomunali", "geom", id_column="OGC_FID", min_zoom=10, properties=("OGC_FID", "cap", "comune_cap", "comune", "provincia", "regione", "fonte"), group="administrative-boundaries", color="#8a7a3d", z_order=40, require_gist_index=False, tile_revision="3"),
+    MapLayerSpec("urban-sections", "Cadastral urban sections", "public.sezioni_urbane", "geom", id_column="OGC_FID", min_zoom=11, coverage="partial", coverage_note="Only municipalities that have urban sections (about 520, such as Rome, Genoa, Verona and Trieste); most of Italy has none", sparse=True, properties=("OGC_FID", "nationalcadastralzoningreference", "administrativeunit", "sezione_urbana"), group="cadastral", color="#7c3aed", z_order=95, fill_opacity=0.13, line_width=2.8, require_gist_index=False),
+    # DEPRECATED (2026-10-21): the Zornade-sourced zone polygons. Keep them serving tiles until a replacement
+    # source exists, but do not build new features on it. Tiles read the omi database's zornade.zone_omi
+    # directly (27k polygons, GiST-indexed); the old Stats-side copy and foreign-table chain are gone.
+    MapLayerSpec("market-zones", "OMI market zones", "zornade.zone_omi", "geom", id_column="OGC_FID",
+                 min_zoom=10, properties=("OGC_FID", "codcom", "codzona", "zona_descr", "comune_descrizione", "cod_tip_prev", "descr_tip_prev", "descr_tipologia_en", "stato_prev", "compr_min", "compr_max", "loc_min", "loc_max"), group="cadastral", color="#7b61a8", z_order=30, require_gist_index=False, tile_revision="3"),
+    MapLayerSpec("postal-zones", "Postal zones", "stats_export.cap_subcomunali", "geom", id_column="OGC_FID", min_zoom=10, properties=("OGC_FID", "cap", "comune_cap", "comune", "provincia", "regione", "fonte"), group="administrative-boundaries", color="#8a7a3d", z_order=40, require_gist_index=False, tile_revision="3"),
     MapLayerSpec("flood-hazard", "Flood hazard areas", "hazards.flood_hazard", "geom", id_column="scenario_code", min_zoom=8, max_features=3000, size_column="area_sqm", properties=("scenario_code", "scenario_label", "area_sqm"), group="risk", color="#2b7bb9", z_order=50, fill_opacity=0.2, require_gist_index=False, tile_revision="3"),
     MapLayerSpec("landslide-hazard", "Landslide hazard areas", "hazards.landslide_hazard", "geom", id_column="hazard_code", min_zoom=8, max_features=3000, size_column="area_sqm", properties=("hazard_code", "hazard_label", "area_sqm"), group="risk", color="#a0522d", z_order=51, fill_opacity=0.2, require_gist_index=False, tile_revision="3"),
-    MapLayerSpec("census-sections", "ISTAT census sections", "census.sections", "geom", id_column="sez21_id", source_srid=32632, min_zoom=13, max_features=3000, properties=("sez21_id", "procom", "cod_reg", "pop21", "fam21", "abi21", "edi21"), group="demographics", color="#3f8f73", z_order=60, fill_opacity=0.3, color_ramp=("pop21", ((0, "#e8f4ef"), (50, "#bfe3d2"), (200, "#7fc1a3"), (500, "#3f8f73"), (1500, "#1f5d49"))), fallback_tables=("census_sections.sections",), require_gist_index=False, tile_revision="1"),
+    MapLayerSpec("census-sections", "ISTAT census sections", "census_sections.sections", "geom", id_column="sez21_id", source_srid=32632, min_zoom=13, max_features=3000, properties=("sez21_id", "procom", "cod_reg", "pop21", "fam21", "abi21", "edi21"), group="demographics", color="#3f8f73", z_order=60, fill_opacity=0.3, color_ramp=("pop21", ((0, "#e8f4ef"), (50, "#bfe3d2"), (200, "#7fc1a3"), (500, "#3f8f73"), (1500, "#1f5d49"))), fallback_tables=("census_sections.sections",), require_gist_index=False, tile_revision="1"),
     MapLayerSpec(
-        "mef-irpef-income", "MEF / IRPEF mean taxable income", "istat.v_comuni_map", "geom",
+        "mef-irpef-income", "MEF / IRPEF mean taxable income", "lr_map.v_mef_income_comuni_map", "geom",
         id_column="geo_unit_id", min_zoom=9, max_features=3000, geojson_max_area=0.5,
         properties=(
             "geo_unit_id", "canonical_name", "tax_year", "taxpayers",
@@ -361,7 +360,7 @@ MAP_LAYERS: tuple[MapLayerSpec, ...] = (
     # unordered per-tile LIMIT silently dropped most of a dense tile (z11 Palermo: 3,000 of
     # 13,879), so the layer starts at z13 where the cap can never truncate.
     # DEPRECATED (2026-10-21): the Zornade EGMS summary is the source; do not build new features on it.
-    MapLayerSpec("surface-subsidence", "Ground movement (EGMS)", "geo_surface_change.egms_subsidenza", "geom", id_column="risk_index", min_zoom=13, max_features=3000, geojson_max_area=4.0, properties=("risk_index", "mean_velocity", "acceleration", "risk_class", "risk_class_label", "velocity_class", "velocity_class_label", "trend", "signal_quality"), group="risk", color="#c45c2d", z_order=115, fill_opacity=0.5, line_width=0.4, color_modes=_EGMS_COLOR_MODES, default_color_mode="risk-class", require_gist_index=False, tile_revision="4"),
+    MapLayerSpec("surface-subsidence", "Ground movement (EGMS)", "egms.egms_subsidenza", "geom", id_column="risk_index", min_zoom=13, max_features=3000, geojson_max_area=4.0, properties=("risk_index", "mean_velocity", "acceleration", "risk_class", "risk_class_label", "velocity_class", "velocity_class_label", "trend", "signal_quality"), group="risk", color="#c45c2d", z_order=115, fill_opacity=0.5, line_width=0.4, color_modes=_EGMS_COLOR_MODES, default_color_mode="risk-class", require_gist_index=False, tile_revision="4"),
     MapLayerSpec(
         "landscape-constraints", "Landscape constraints",
         "spatial.protection_area", "geom", min_zoom=8, max_features=3000,
@@ -385,7 +384,7 @@ MAP_LAYERS: tuple[MapLayerSpec, ...] = (
     # build new features on it.
     MapLayerSpec(
         "solar-potential", "Solar potential by municipality",
-        "solar.solar_potential_comuni", "geom", id_column="id",
+        "lr_map.v_solar_potential_comuni_map", "geom", id_column="id",
         properties=(
             "id", "geo_unit_id", "canonical_name", "n_buildings",
             "pvout_modern_kwh_year_total", "pvout_pessimistic_kwh_year_total",
@@ -400,7 +399,7 @@ MAP_LAYERS: tuple[MapLayerSpec, ...] = (
     ),
     MapLayerSpec(
         "maritime-concessions", "Maritime-domain concessions",
-        "agenziademanio.concessions", "geom",
+        "agenziademanio.v_concession_map_features", "geom",
         id_column="row_id", min_zoom=6, max_features=5000, cluster_below_zoom=12, geojson_max_area=4.0,
         coverage_note="MIT/SID snapshot; published coverage may be incomplete",
         properties=(
@@ -441,12 +440,36 @@ _PROTECTION_LAYER_TYPES = {
 }
 PROTECTION_LAYER_IDS = frozenset(_PROTECTION_LAYER_TYPES)
 _HAZARDS_SOURCE_RELATIONS = {
-    "flood-hazard": "public.flood_hazard",
-    "landslide-hazard": "public.landslide_hazard",
-    "mps04-points": "public.mps04_points",
-    "seismic-classification": "public.v_seismic_classification_map",
+    "flood-hazard": "hazards.flood_hazard",
+    "landslide-hazard": "hazards.landslide_hazard",
+    "mps04-points": "hazards.mps04_points",
+    "seismic-classification": "hazards.v_seismic_classification_map",
 }
-_EGMS_SOURCE_RELATIONS = {"surface-subsidence": "public.egms_subsidenza"}
+_EGMS_SOURCE_RELATIONS = {"surface-subsidence": "egms.egms_subsidenza"}
+_CENSUS_SOURCE_RELATION = "census_sections.sections"
+_NPL_SOURCE = "verdict asteflorio.npl_asteflorio_asset_map_data and asteflorio.npl_asteflorio_asset_map_summary"
+_SISTER_PROPERTY_SOURCE = "sister sister_legacy.v_sister_property_by_cadastral_parcel"
+# Layers served straight from the database that owns them: layer id ->
+# (source database, relation inside it). aecs4u-stats (the FDW mirror) is
+# deprecated, so none of these go through it. The two ``lr_map`` views join
+# municipality geometry to a metric table and are created by
+# scripts/sql/istat-municipality-metric-map-views.sql.
+_DIRECT_LAYER_SOURCES: dict[str, tuple[str, str]] = {
+    "geo-boundaries-areas": ("istat", "public.v_ripartizioni_map"),
+    "geo-boundaries": ("istat", "public.v_regioni_map"),
+    "geo-boundaries-provinces": ("istat", "public.v_province_map"),
+    "geo-boundaries-municipalities": ("istat", "public.v_comuni_map"),
+    "mef-irpef-income": ("istat", "lr_map.v_mef_income_comuni_map"),
+    "solar-potential": ("istat", "lr_map.v_solar_potential_comuni_map"),
+    "postal-zones": ("cap", "stats_export.cap_subcomunali"),
+    "urban-sections": ("sezioni_urbane", "public.sezioni_urbane"),
+    "maritime-concessions": ("agenziademanio", "agenziademanio.v_concession_map_features"),
+    "census-sections": ("census_sections", "census_sections.sections"),
+    "market-zones": ("omi", "zornade.zone_omi"),
+    # Former Stats-owned tables, now owned by the land_registry database.
+    "landscape-constraints": ("land_registry", "spatial.protection_area"),
+    "heritage-protections": ("land_registry", "spatial.protection_area"),
+}
 _ADMIN_BOUNDARY_UNIT_TYPES = {
     "geo-boundaries": "region",
     "geo-boundaries-provinces": "province",
@@ -465,7 +488,7 @@ def _istat_boundary_relation() -> str:
                NULL::text AS generalization,
                'ISTAT'::text AS source_release,
                geom
-        FROM istat.v_regioni_map
+        FROM public.v_regioni_map
         UNION ALL
         SELECT (2000000000 + cod_uts)::bigint AS id,
                cod_uts::bigint AS geo_unit_id,
@@ -474,7 +497,7 @@ def _istat_boundary_relation() -> str:
                NULL::text AS generalization,
                'ISTAT'::text AS source_release,
                geom
-        FROM istat.v_province_map
+        FROM public.v_province_map
         UNION ALL
         SELECT (3000000000 + pro_com)::bigint AS id,
                pro_com::bigint AS geo_unit_id,
@@ -483,7 +506,7 @@ def _istat_boundary_relation() -> str:
                NULL::text AS generalization,
                'ISTAT'::text AS source_release,
                geom
-        FROM istat.v_comuni_map
+        FROM public.v_comuni_map
         UNION ALL
         SELECT (4000000000 + cod_rip)::bigint AS id,
                cod_rip::bigint AS geo_unit_id,
@@ -492,69 +515,7 @@ def _istat_boundary_relation() -> str:
                NULL::text AS generalization,
                'ISTAT'::text AS source_release,
                geom
-        FROM istat.v_ripartizioni_map
-    )"""
-
-
-def _solar_potential_relation() -> str:
-    """Join canonical solar metrics to current ISTAT municipality geometry."""
-    return """(
-        SELECT u.pro_com::bigint AS id,
-               u.pro_com::bigint AS geo_unit_id,
-               u.name AS canonical_name,
-               s.n_buildings,
-               s.pvout_modern_kwh_year_total,
-               s.pvout_pessimistic_kwh_year_total,
-               s.kwp_max_total,
-               s.high_viability_pct,
-               s.medium_viability_pct,
-               s.low_viability_pct,
-               s.not_eligible_pct,
-               s.solar_data_version,
-               s.updated_at,
-               u.geom
-        FROM solar.solar_potential_comuni AS s
-        JOIN istat.v_comuni_map AS u
-          ON ltrim(s.pro_com_t::text, '0') = u.pro_com::text
-    )"""
-
-
-def _mef_income_relation() -> str:
-    """Join latest common-year MEF/IRPEF aggregates to municipality geometry."""
-    return """(
-        WITH latest_year AS (
-            SELECT max(anno) AS year
-            FROM serving.irpef_comuni
-            WHERE cod_istat IS NOT NULL
-              AND imponibile_amount IS NOT NULL
-              AND imponibile_freq > 0
-        ), income AS (
-            SELECT NULLIF(ltrim(t.cod_istat::text, '0'), '')::bigint AS istat_code,
-                   t.anno AS tax_year,
-                   t.imponibile_freq::bigint AS taxpayers,
-                   (t.imponibile_amount / NULLIF(t.imponibile_freq, 0))::double precision
-                       AS mean_taxable_income_eur,
-                   (t.bracket_over_120k_freq / NULLIF(t.imponibile_freq, 0) * 100)::double precision
-                       AS high_income_share_pct,
-                   ((COALESCE(t.bracket_le_0_freq, 0) + COALESCE(t.bracket_0_10k_freq, 0))
-                       / NULLIF(t.imponibile_freq, 0) * 100)::double precision
-                       AS low_income_share_pct
-            FROM serving.irpef_comuni AS t
-            JOIN latest_year AS y ON y.year = t.anno
-            WHERE t.cod_istat IS NOT NULL
-              AND t.imponibile_amount IS NOT NULL
-              AND t.imponibile_freq > 0
-        )
-        SELECT c.pro_com::bigint AS geo_unit_id,
-               c.name::text AS canonical_name,
-               income.tax_year::integer AS tax_year,
-               income.taxpayers,
-               income.mean_taxable_income_eur,
-               income.high_income_share_pct,
-               income.low_income_share_pct,
-               c.geom AS geom
-        FROM istat.v_comuni_map AS c
-        JOIN income ON income.istat_code = c.pro_com::bigint
+        FROM public.v_ripartizioni_map
     )"""
 
 
@@ -685,6 +646,16 @@ class _AsyncpgConnectionSource:
     # ~10 foreign servers behind the map. Four keeps a tile burst from using
     # up Postgres' connection slots; override with MAP_DB_POOL_MAX.
     DEFAULT_POOL_SIZE = 4
+    # PostGIS is installed in the database-named schema (not ``public``) in
+    # these source databases, so tile functions such as ST_TileEnvelope only
+    # resolve with that schema on the search path.
+    POSTGIS_SEARCH_PATHS = {
+        "cap": "cap,public",
+        "hazards": "hazards,public",
+        "egms": "egms,public",
+        "census_sections": "census_sections,public",
+        "land_registry": "land_registry,public",
+    }
     ACQUIRE_TIMEOUT_SECONDS = 15.0
 
     def __init__(
@@ -725,13 +696,34 @@ class _AsyncpgConnectionSource:
         return cls(dsn)
 
     @classmethod
+    def database_from_environment(cls, database: str) -> Optional["_AsyncpgConnectionSource"]:
+        """Connect straight to one source-owned database.
+
+        ``AECS4U_SOURCE_<DATABASE>_DATABASE_URL`` (or ``<DATABASE>_POSTGRES_DSN``)
+        wins; otherwise ``STATS_POSTGRES_DSN`` supplies only the host and
+        credentials and its database name is replaced with ``database``.
+        """
+        key = database.upper()
+        search_path = cls.POSTGIS_SEARCH_PATHS.get(database)
+        direct_dsn = os.getenv(f"AECS4U_SOURCE_{key}_DATABASE_URL") or os.getenv(f"{key}_POSTGRES_DSN")
+        if direct_dsn:
+            if direct_dsn.startswith(("postgres://", "postgresql://", "postgresql+")):
+                return cls(direct_dsn.replace("postgresql+psycopg2://", "postgresql://", 1), search_path=search_path)
+            return None
+        base = cls.from_environment()
+        if base is None:
+            return None
+        parsed = urlsplit(base.dsn)
+        return cls(urlunsplit(parsed._replace(path=f"/{database}")), search_path=search_path)
+
+    @classmethod
     def census_from_environment(cls) -> Optional["_AsyncpgConnectionSource"]:
         """Use the census database directly so its local GiST index serves tiles."""
         if os.getenv("STATS_POSTGRES_ENABLE", "").strip().lower() not in ("1", "true", "yes", "on"):
             return None
         direct_dsn = os.getenv("CENSUS_POSTGRES_DSN") or os.getenv("CENSUS_SECTIONS_POSTGRES_DSN")
         if direct_dsn:
-            return cls(direct_dsn)
+            return cls(direct_dsn, search_path=cls.POSTGIS_SEARCH_PATHS["census_sections"])
         stats_dsn = (
             os.getenv("STATS_POSTGRES_DSN")
             or os.getenv("AECS4U_STATS_DATABASE_URL")
@@ -745,7 +737,7 @@ class _AsyncpgConnectionSource:
         census_dsn = urlunsplit(
             (parsed.scheme, parsed.netloc, "/census_sections", parsed.query, parsed.fragment)
         )
-        return cls(census_dsn)
+        return cls(census_dsn, search_path=cls.POSTGIS_SEARCH_PATHS["census_sections"])
 
     @classmethod
     def hazards_from_environment(cls) -> Optional["_AsyncpgConnectionSource"]:
@@ -753,13 +745,13 @@ class _AsyncpgConnectionSource:
         direct_dsn = os.getenv("HAZARDS_POSTGRES_DSN") or os.getenv("AECS4U_STATS_HAZARDS_DATABASE_URL")
         if direct_dsn:
             if direct_dsn.startswith(("postgres://", "postgresql://", "postgresql+")):
-                return cls(direct_dsn)
+                return cls(direct_dsn, search_path=cls.POSTGIS_SEARCH_PATHS["hazards"])
             return None
         stats = cls.from_environment()
         if stats is None:
             return None
         parsed = urlsplit(stats.dsn)
-        return cls(urlunsplit(parsed._replace(path="/hazards")))
+        return cls(urlunsplit(parsed._replace(path="/hazards")), search_path=cls.POSTGIS_SEARCH_PATHS["hazards"])
 
     @classmethod
     def egms_from_environment(cls) -> Optional["_AsyncpgConnectionSource"]:
@@ -767,13 +759,13 @@ class _AsyncpgConnectionSource:
         direct_dsn = os.getenv("EGMS_POSTGRES_DSN") or os.getenv("AECS4U_STATS_EGMS_DATABASE_URL")
         if direct_dsn:
             if direct_dsn.startswith(("postgres://", "postgresql://", "postgresql+")):
-                return cls(direct_dsn)
+                return cls(direct_dsn, search_path=cls.POSTGIS_SEARCH_PATHS["egms"])
             return None
         stats = cls.from_environment()
         if stats is None:
             return None
         parsed = urlsplit(stats.dsn)
-        return cls(urlunsplit(parsed._replace(path="/egms")))
+        return cls(urlunsplit(parsed._replace(path="/egms")), search_path=cls.POSTGIS_SEARCH_PATHS["egms"])
 
     @classmethod
     def anncsu_from_environment(cls) -> Optional["_AsyncpgConnectionSource"]:
@@ -918,6 +910,8 @@ class PostgresMapLayerSource:
         self.corine_connection_source = corine_connection_source
         if self.corine_connection_source is None and use_environment and self.connection_source is not None:
             self.corine_connection_source = _AsyncpgConnectionSource.corine_from_environment()
+        self._use_direct_sources = use_environment and self.connection_source is not None
+        self._direct_sources: dict[str, Optional[_AsyncpgConnectionSource]] = {}
         self._hazards_routes: dict[str, tuple[Any, float]] = {}
         self._egms_routes: dict[str, tuple[Any, float]] = {}
         self._cadastral_routes: dict[str, tuple[Any, float]] = {}
@@ -927,7 +921,31 @@ class PostgresMapLayerSource:
         self._protection_layer_ids_cache: tuple[set[str], float] | None = None
         self._npl_asset_features_cache: tuple[list[dict[str, Any]], int, float] | None = None
 
+    def _database_source(self, database: str) -> Any:
+        """Connection source for one source-owned database.
+
+        An injected ``connection_source`` (tests, single-database setups) is
+        used for every database, so callers never need to special-case it.
+        """
+        if not self._use_direct_sources:
+            return self.connection_source
+        if database not in self._direct_sources:
+            self._direct_sources[database] = _AsyncpgConnectionSource.database_from_environment(database)
+        return self._direct_sources[database]
+
+    def _direct_source(self, layer: MapLayerSpec) -> Optional[_AsyncpgConnectionSource]:
+        """Source-owned database behind a layer in ``_DIRECT_LAYER_SOURCES``."""
+        direct = _DIRECT_LAYER_SOURCES.get(layer.id)
+        if direct is None or not self._use_direct_sources:
+            return None
+        return self._database_source(direct[0])
+
     def _source_for(self, layer: MapLayerSpec) -> Any:
+        if layer.id == "census-sections" and self.census_connection_source is not None:
+            return self.census_connection_source
+        direct = self._direct_source(layer)
+        if direct is not None:
+            return direct
         if layer.id == "census-sections" and self.census_connection_source is not None:
             return self.census_connection_source
         if layer.id in _HAZARDS_SOURCE_RELATIONS and self.hazards_connection_source is not None:
@@ -941,6 +959,11 @@ class PostgresMapLayerSource:
         return self.connection_source
 
     async def _layer_source_for(self, layer: MapLayerSpec) -> Any:
+        if layer.id == "census-sections" and self.census_connection_source is not None:
+            return self.census_connection_source
+        direct = self._direct_source(layer)
+        if direct is not None:
+            return direct
         if layer.id in _HAZARDS_SOURCE_RELATIONS and self.hazards_connection_source is not None:
             cached = self._hazards_routes.get(layer.id)
             if cached and cached[1] > time.monotonic():
@@ -982,49 +1005,10 @@ class PostgresMapLayerSource:
         cached = self._cadastral_routes.get(layer.id)
         if cached and cached[1] > time.monotonic():
             return cached[0]
-        # Preserve populated canonical installations; some deployments retain
-        # an empty compatibility view in stats after moving the regional data
-        # to the dedicated cadastral database.
-        selected = self.connection_source
-        if selected is not None:
-            try:
-                async with selected.connection() as connection:
-                    canonical_exists = await connection.fetchval("SELECT to_regclass($1)::text", layer.table)
-                    canonical_has_features = (
-                        await connection.fetchval(
-                            f"SELECT EXISTS (SELECT 1 FROM {layer.table} LIMIT 1)"
-                        )
-                        if canonical_exists
-                        else False
-                    )
-                    canonical_has_parcel_flags = (
-                        await connection.fetchval("""
-                            SELECT count(*) = 2
-                            FROM pg_attribute
-                            WHERE attrelid = to_regclass($1)
-                              AND attname::text IN ('has_visura', 'is_auction_sale')
-                              AND attnum > 0 AND NOT attisdropped
-                        """, layer.table)
-                        if canonical_exists and layer.id == "cadastral-parcels"
-                        else True
-                    )
-            except Exception as exc:
-                log.debug("Canonical cadastral source unavailable: %s", exc)
-                canonical_exists = False
-                canonical_has_features = False
-                canonical_has_parcel_flags = False
-            if canonical_exists and canonical_has_features and canonical_has_parcel_flags:
-                self._cadastral_routes[layer.id] = (selected, time.monotonic() + 300)
-                return selected
-        try:
-            async with self.cadastral_connection_source.connection() as connection:
-                if await connection.fetchval("SELECT to_regclass($1)::text", layer.table):
-                    selected = self.cadastral_connection_source
-        except Exception as exc:
-            log.debug("Dedicated cadastral source unavailable: %s", exc)
-        ttl = 300 if selected is self.cadastral_connection_source else 10
-        self._cadastral_routes[layer.id] = (selected, time.monotonic() + ttl)
-        return selected
+        # The cadastral layers are served by the dedicated ``cadastral`` database. The Stats-side canonical
+        # copy (aecs4u-stats is deprecated) is empty and is no longer consulted.
+        self._cadastral_routes[layer.id] = (self.cadastral_connection_source, time.monotonic() + 300)
+        return self.cadastral_connection_source
 
     async def _anncsu_region_catalog(self, layer_source: Any) -> list[dict[str, Any]]:
         cached = self._anncsu_region_cache
@@ -1311,8 +1295,11 @@ class PostgresMapLayerSource:
 
     async def _resolve_relation_for(self, layer: MapLayerSpec, layer_source: Any) -> str:
         """Resolve a configured schema fallback and cache it briefly."""
+        direct = _DIRECT_LAYER_SOURCES.get(layer.id)
+        if direct is not None and layer_source is self._direct_sources.get(direct[0]):
+            return direct[1]
         if layer.id == "census-sections" and layer_source is self.census_connection_source:
-            return "public.sections"
+            return _CENSUS_SOURCE_RELATION
         if layer_source is self.hazards_connection_source and layer.id in _HAZARDS_SOURCE_RELATIONS:
             return _HAZARDS_SOURCE_RELATIONS[layer.id]
         if layer_source is self.egms_connection_source and layer.id in _EGMS_SOURCE_RELATIONS:
@@ -1414,7 +1401,7 @@ class PostgresMapLayerSource:
                    ) AS gist_index_exists,
                    COALESCE((
                        SELECT gc.srid
-                       FROM public.geometry_columns gc
+                       FROM geometry_columns gc
                        WHERE gc.f_table_schema = r.schema_name
                          AND gc.f_table_name = r.table_name
                          AND gc.f_geometry_column = r.geometry_column
@@ -1468,6 +1455,11 @@ class PostgresMapLayerSource:
                     source_database = "anncsu"
                 elif layer_source is self.corine_connection_source:
                     source_database = "corine"
+                else:
+                    source_database = next(
+                        (name for name, direct in self._direct_sources.items() if direct is layer_source),
+                        source_database,
+                    )
                 if layer.id == "anncsu-addresses":
                     catalog = await self._anncsu_region_catalog(layer_source)
                     ready = self._anncsu_ready_regions(catalog)
@@ -1558,7 +1550,7 @@ class PostgresMapLayerSource:
                         # municipality geometry, so validate the geometry side
                         # of that virtual spatial source here.
                         geometry_srid = int(await connection.fetchval(
-                            "SELECT ST_SRID(geom) FROM istat.v_comuni_map "
+                            "SELECT ST_SRID(geom) FROM public.v_comuni_map "
                             "WHERE geom IS NOT NULL LIMIT 1"
                         ) or 0)
                         values = (values[0], values[1], values[2], geometry_srid > 0, values[4], geometry_srid)
@@ -1599,24 +1591,15 @@ class PostgresMapLayerSource:
                         "preflight_required": layer.preflight_required,
                     }
                     if layer.id == "mef-irpef-income":
-                        mef_relation_exists = bool(await connection.fetchval(
-                            "SELECT to_regclass('serving.irpef_comuni') IS NOT NULL"
-                        ))
+                        # The layer relation is the lr_map view over the MEF
+                        # source (a foreign table), so a failure to read it
+                        # means the MEF source is unreachable.
                         mef_data = None
-                        if mef_relation_exists:
-                            mef_data = await connection.fetchrow("""
-                                SELECT max(anno) FILTER (
-                                           WHERE cod_istat IS NOT NULL
-                                             AND imponibile_amount IS NOT NULL
-                                             AND imponibile_freq > 0
-                                       )::integer AS tax_year,
-                                       count(*) FILTER (
-                                           WHERE cod_istat IS NOT NULL
-                                             AND imponibile_amount IS NOT NULL
-                                             AND imponibile_freq > 0
-                                       )::bigint AS usable_rows
-                                FROM serving.irpef_comuni
-                            """)
+                        if values[1]:
+                            mef_data = await connection.fetchrow(
+                                "SELECT max(tax_year)::integer AS tax_year, "
+                                "count(*)::bigint AS usable_rows FROM " + relation
+                            )
                         check["data_source_ready"] = bool(
                             mef_data and int(mef_data["usable_rows"] or 0) > 0
                         )
@@ -1674,10 +1657,6 @@ class PostgresMapLayerSource:
     def _query_relation(layer: MapLayerSpec, resolved_relation: str) -> str:
         if layer.id in _ADMIN_BOUNDARY_UNIT_TYPES:
             return _istat_boundary_relation()
-        if layer.id == "mef-irpef-income":
-            return _mef_income_relation()
-        if layer.id == "solar-potential":
-            return _solar_potential_relation()
         if layer.id in _PROTECTION_LAYER_TYPES:
             protection_type = _PROTECTION_LAYER_TYPES[layer.id]
             return f"(SELECT * FROM {resolved_relation} WHERE protection_type = '{protection_type}')"
@@ -1689,7 +1668,7 @@ class PostgresMapLayerSource:
         if cached and cached[1] > time.monotonic():
             return set(cached[0])
         available: set[str] = set()
-        source = self.connection_source
+        source = self._database_source("land_registry")
         if source is not None:
             try:
                 async with source.connection() as connection:
@@ -1924,9 +1903,9 @@ class PostgresMapLayerSource:
             "coverage": unknown_coverage,
             "truncated": False,
             "reason": "not_built",
-            "source": "SITAP / Vincoli in Rete / Catalogo Generale via aecs4u-stats",
+            "source": "SITAP / Vincoli in Rete / Catalogo Generale (land_registry database)",
         }
-        source = self.connection_source
+        source = self._database_source("land_registry")
         if source is None:
             unavailable["reason"] = "source_unavailable"
             return unavailable
@@ -2007,7 +1986,7 @@ class PostgresMapLayerSource:
             "coverage": coverage,
             "truncated": truncated,
             "reason": None,
-            "source": "SITAP / Vincoli in Rete / Catalogo Generale via aecs4u-stats",
+            "source": "SITAP / Vincoli in Rete / Catalogo Generale (land_registry database)",
         }
 
     async def read_geojson(
@@ -2182,9 +2161,16 @@ class PostgresMapLayerSource:
                 "province": province.casefold(),
             })
 
-        async with stats_source.connection() as connection:
+        sister_source = self._database_source("sister")
+        names_source = self._database_source("eurostat")
+        if sister_source is None:
+            return {
+                "available": False, "type": "FeatureCollection", "features": [],
+                "count": 0, "source": _SISTER_PROPERTY_SOURCE,
+            }
+        async with sister_source.connection() as connection:
             sister_relation = await connection.fetchval(
-                "SELECT to_regclass('sister.v_sister_property_by_cadastral_parcel') IS NOT NULL"
+                "SELECT to_regclass('sister_legacy.v_sister_property_by_cadastral_parcel') IS NOT NULL"
             )
             if not sister_relation:
                 return {
@@ -2192,27 +2178,23 @@ class PostgresMapLayerSource:
                     "type": "FeatureCollection",
                     "features": [],
                     "count": 0,
-                    "source": "aecs4u-stats sister.v_sister_property_by_cadastral_parcel",
+                    "source": _SISTER_PROPERTY_SOURCE,
                 }
 
             municipality_by_code = {}
-            if missing_codes:
+            if missing_codes and names_source is not None:
                 try:
-                    municipality_rows = await connection.fetch(_asyncpg_sql("""
-                        SELECT gi_cad.code AS cadastral_code,
-                               u.canonical_name AS municipality_name,
-                               province.canonical_name AS province
-                        FROM geo.geo_identifier AS gi_cad
-                        JOIN geo.geo_unit AS u ON u.id = gi_cad.geo_unit_id
-                        LEFT JOIN geo.geo_relation AS province_relation
-                          ON province_relation.child_id = u.id
-                         AND province_relation.relation_type = 'contains'
-                        LEFT JOIN geo.geo_unit AS province
-                          ON province.id = province_relation.parent_id
-                         AND province.unit_type = 'province'
-                        WHERE gi_cad.scheme = 'CATASTALE_COMUNE'
-                          AND upper(gi_cad.code) = ANY(%s)
-                    """), sorted(missing_codes))
+                    # Municipality and province names come from the Eurostat
+                    # source database; SISTER holds only the cadastral rows.
+                    async with names_source.connection() as names_connection:
+                        municipality_rows = await names_connection.fetch(_asyncpg_sql("""
+                            SELECT upper(m.cadastral_code) AS cadastral_code,
+                                   m.italian_name AS municipality_name,
+                                   p.name AS province
+                            FROM stats_export.municipalities AS m
+                            LEFT JOIN stats_export.provinces AS p ON p.id = m.province_id
+                            WHERE upper(m.cadastral_code) = ANY(%s)
+                        """), sorted(missing_codes))
                     municipality_by_code = {
                         str(row["cadastral_code"]).upper(): (
                             str(row["municipality_name"] or "").strip().casefold(),
@@ -2222,8 +2204,8 @@ class PostgresMapLayerSource:
                     }
                 except Exception as exc:
                     # Dedicated regional rows already carry this context. If
-                    # the canonical geo spine is temporarily absent, those
-                    # rows can still be matched while other candidates skip.
+                    # the Eurostat database is unreachable, those rows can
+                    # still be matched while other candidates skip.
                     log.debug("SISTER map municipality context unavailable: %s", exc)
 
             for candidate in candidate_context:
@@ -2242,7 +2224,7 @@ class PostgresMapLayerSource:
                 section_exists = await connection.fetchval("""
                     SELECT EXISTS (
                         SELECT 1 FROM information_schema.columns
-                        WHERE table_schema = 'sister'
+                        WHERE table_schema = 'sister_legacy'
                           AND table_name = 'v_sister_property_by_cadastral_parcel'
                           AND column_name = 'section'
                     )
@@ -2258,7 +2240,7 @@ class PostgresMapLayerSource:
                            trim(coalesce(sheet, '')) AS sheet,
                            trim(split_part(coalesce(parcel, ''), '/', 1)) AS parcel,
                            {section_select} AS section
-                    FROM sister.v_sister_property_by_cadastral_parcel
+                    FROM sister_legacy.v_sister_property_by_cadastral_parcel
                     WHERE lower(trim(coalesce(province, ''))) = ANY(%s)
                       AND lower(trim(coalesce(municipality, ''))) = ANY(%s)
                       AND (trim(coalesce(sheet, '')) = ANY(%s)
@@ -2335,7 +2317,7 @@ class PostgresMapLayerSource:
             "features": matches[:feature_limit],
             "count": min(len(matches), feature_limit),
             "truncated": truncated,
-            "source": "aecs4u-stats sister.v_sister_property_by_cadastral_parcel",
+            "source": _SISTER_PROPERTY_SOURCE,
         }
 
     async def read_npl_asteflorio_assets(
@@ -2352,24 +2334,24 @@ class PostgresMapLayerSource:
         source adapter isolated so more precise parcel geometry can be used when
         the source view gains it.
         """
-        if self.connection_source is None:
+        verdict_source = self._database_source("verdict")
+        geography_source = self._database_source("eurostat")
+        if verdict_source is None or geography_source is None:
             return {
                 "available": False,
                 "type": "FeatureCollection",
                 "features": [],
                 "count": 0,
-                "source": "aecs4u-stats verdict.npl_asteflorio_asset_map_data",
+                "source": _NPL_SOURCE,
             }
 
         west, south, east, north = (float(value) for value in bbox)
         cached = self._npl_asset_features_cache
         if force_refresh or cached is None or cached[2] <= time.monotonic():
-            async with self.connection_source.connection() as connection:
+            async with verdict_source.connection() as connection:
                 source_ready = await connection.fetchval("""
-                    SELECT to_regclass('verdict.npl_asteflorio_asset_map_data') IS NOT NULL
-                       AND to_regclass('verdict.npl_asteflorio_asset_map_summary') IS NOT NULL
-                       AND to_regclass('geo.municipalities') IS NOT NULL
-                       AND to_regclass('geo.provinces') IS NOT NULL
+                    SELECT to_regclass('asteflorio.npl_asteflorio_asset_map_data') IS NOT NULL
+                       AND to_regclass('asteflorio.npl_asteflorio_asset_map_summary') IS NOT NULL
                 """)
                 if not source_ready:
                     return {
@@ -2377,26 +2359,29 @@ class PostgresMapLayerSource:
                         "type": "FeatureCollection",
                         "features": [],
                         "count": 0,
-                        "source": "aecs4u-stats verdict.npl_asteflorio_asset_map_data",
+                        "source": _NPL_SOURCE,
                     }
                 asset_rows = [dict(row) for row in await connection.fetch("""
                     SELECT map_asset_id, position_id, asset_number, position_title,
                            position_type, municipality, province_code, asset_type,
                            description, cadastral_category, consistency_text, floor,
                            gbv_eur, detail_url, location_precision, parcel_key_available
-                    FROM verdict.npl_asteflorio_asset_map_data
+                    FROM asteflorio.npl_asteflorio_asset_map_data
                     ORDER BY municipality, province_code, position_id, asset_number
                 """)]
                 summary_rows = [dict(row) for row in await connection.fetch("""
                     SELECT municipality, province_code, asset_count, position_count
-                    FROM verdict.npl_asteflorio_asset_map_summary
+                    FROM asteflorio.npl_asteflorio_asset_map_summary
                     ORDER BY municipality, province_code
                 """)]
+            # Municipality coordinates come from the Eurostat source database;
+            # the labels are matched in Python, so no cross-database join.
+            async with geography_source.connection() as connection:
                 municipality_rows = [dict(row) for row in await connection.fetch("""
                     SELECT m.id, m.italian_name, p.vehicle_code AS province_code,
                            p.name AS province_name, m.latitude, m.longitude
-                    FROM geo.municipalities AS m
-                    LEFT JOIN geo.provinces AS p ON p.id = m.province_id
+                    FROM stats_export.municipalities AS m
+                    LEFT JOIN stats_export.provinces AS p ON p.id = m.province_id
                     WHERE m.italian_name IS NOT NULL
                 """)]
 
@@ -2513,7 +2498,7 @@ class PostgresMapLayerSource:
             "count": len(visible_features),
             "asset_count": sum(int(feature["properties"]["asset_count"]) for feature in visible_features),
             "unlocated_asset_count": unlocated_asset_count,
-            "source": "aecs4u-stats verdict.npl_asteflorio_asset_map_data and verdict.npl_asteflorio_asset_map_summary",
+            "source": _NPL_SOURCE,
         }
 
     async def read_sister_batch_selection(
@@ -2638,7 +2623,7 @@ class PostgresMapLayerSource:
         of the result. Returns ``None`` when SISTER cannot be consulted so callers can
         tell "unknown" from "no visura".
         """
-        stats_source = self.connection_source
+        stats_source = self._database_source("sister")
         if stats_source is None or not features:
             return None
 
@@ -2675,7 +2660,7 @@ class PostgresMapLayerSource:
         parcels = sorted({value for item in candidates for value in item["parcel"]})
         async with stats_source.connection() as connection:
             if not await connection.fetchval(
-                "SELECT to_regclass('sister.v_sister_document_by_cadastral_parcel') IS NOT NULL"
+                "SELECT to_regclass('sister_legacy.v_sister_document_by_cadastral_parcel') IS NOT NULL"
             ):
                 return None
             document_rows = await connection.fetch(_asyncpg_sql("""
@@ -2684,7 +2669,7 @@ class PostgresMapLayerSource:
                        upper(trim(coalesce(section, ''))) AS section,
                        trim(coalesce(sheet, '')) AS sheet,
                        trim(split_part(coalesce(parcel, ''), '/', 1)) AS parcel
-                FROM sister.v_sister_document_by_cadastral_parcel
+                FROM sister_legacy.v_sister_document_by_cadastral_parcel
                 WHERE document_type = ANY(%s)
                   AND lower(trim(coalesce(province, ''))) = ANY(%s)
                   AND lower(trim(coalesce(municipality, ''))) = ANY(%s)
@@ -3038,7 +3023,7 @@ class PostgresMapLayerSource:
             }
             if layer_id != "maritime-concessions":
                 return result
-            result["source"] = "aecs4u-stats.agenziademanio"
+            result["source"] = "agenziademanio"
 
             async def related_rows(sql: str, *params: Any) -> list[dict[str, Any]]:
                 try:
@@ -3059,7 +3044,7 @@ class PostgresMapLayerSource:
             try:
                 detail_row = await connection.fetchrow(
                     _asyncpg_sql(
-                        "select details from agenziademanio.concession_details "
+                        "select details from agenziademanio.v_concession_details "
                         "where snapshot_id = %s and row_id = %s limit 1"
                     ),
                     snapshot_id,
@@ -3090,19 +3075,19 @@ class PostgresMapLayerSource:
             else:
                 result["related"]["document_gaps"] = await related_rows(
                     "select * "
-                    f"from {source_schema}.document_gaps "
+                    f"from {source_schema}.v_document_gaps "
                     "where source_row_id = %s order by gap_id",
                     source_row_id,
                 )
                 result["related"]["sicily_contracts"] = await related_rows(
                     "select * "
-                    f"from {source_schema}.sicily_contracts "
+                    f"from {source_schema}.v_sicily_contracts "
                     "where source_row_id = %s order by row_id",
                     source_row_id,
                 )
                 matches = await related_rows(
                     "select * "
-                    f"from {source_schema}.online_document_matches "
+                    f"from {source_schema}.v_online_document_matches "
                     "where snapshot_id = %s and idconc = %s order by match_id",
                     snapshot_id,
                     idconc,
@@ -3120,7 +3105,7 @@ class PostgresMapLayerSource:
                 })
                 result["related"]["institution_request_targets"] = await related_rows(
                     "select * "
-                    f"from {source_schema}.institution_request_targets "
+                    f"from {source_schema}.v_institution_request_targets "
                     "where snapshot_id = %s and institution_key = any(%s::text[]) "
                     "order by institution_key",
                     snapshot_id,
@@ -3128,7 +3113,7 @@ class PostgresMapLayerSource:
                 ) if institution_keys else []
                 result["related"]["online_documents"] = await related_rows(
                     "select * "
-                    f"from {source_schema}.online_documents "
+                    f"from {source_schema}.v_online_documents "
                     "where snapshot_id = %s "
                     "and (document_url = any(%s::text[]) or institution_key = any(%s::text[])) "
                     "order by institution_key, document_url",
@@ -3138,24 +3123,24 @@ class PostgresMapLayerSource:
                 ) if urls or institution_keys else []
                 result["related"]["snapshot"] = await related_rows(
                     "select * "
-                    f"from {source_schema}.snapshots where snapshot_id = %s",
+                    f"from {source_schema}.v_snapshots where snapshot_id = %s",
                     snapshot_id,
                 )
                 result["related"]["resources"] = await related_rows(
                     "select * "
-                    f"from {source_schema}.resources "
+                    f"from {source_schema}.v_resources "
                     "where snapshot_id = %s order by resource_id",
                     snapshot_id,
                 )
                 result["related"]["regional_source_audits"] = await related_rows(
                     "select * "
-                    f"from {source_schema}.regional_source_audits "
+                    f"from {source_schema}.v_regional_source_audits "
                     "where snapshot_id = %s order by region_name, source_url",
                     snapshot_id,
                 )
 
             # Spatial parcel links are source-owned in Agenzia and exposed in
-            # Stats through postgres_fdw.
+            # the layer database.
             result["related"]["cadastral_parcels"] = await related_rows(
                 "select * from agenziademanio.concession_parcel_links "
                 "where snapshot_id = %s and concession_row_id = %s "
@@ -3170,12 +3155,13 @@ class PostgresMapLayerSource:
     ) -> Optional[dict[str, Any]]:
         """Read the full Stats-side ISTAT municipality serving view.
 
-        ``istat.elenco_comuni`` is the stable foreign table over the active
-        ``istat.istat_comuni.elenco_comuni`` release. Match both the text code
+        ``stats_export.elenco_comuni`` in the ISTAT database is the stable
+        view over the active ``elenco_comuni`` release. Match both the text code
         and its numeric representation because map boundaries expose PRO_COM
         without leading zeroes while the source preserves the official code.
         """
-        if self.connection_source is None:
+        istat_source = self._database_source("istat")
+        if istat_source is None:
             return None
         try:
             code = str(int(str(istat_code).strip()))
@@ -3186,13 +3172,13 @@ class PostgresMapLayerSource:
 
         sql = """
             SELECT t.*
-            FROM istat.elenco_comuni AS t
+            FROM stats_export.elenco_comuni AS t
             WHERE ltrim(trim(t.code), '0') = ltrim(%s::text, '0')
                OR t.numeric_code = %s
             ORDER BY CASE WHEN t.code = %s THEN 0 ELSE 1 END
             LIMIT 1
         """
-        async with self.connection_source.connection() as connection:
+        async with istat_source.connection() as connection:
             row = await connection.fetchrow(_asyncpg_sql(sql), code, int(code), code)
         if row is None:
             return None
@@ -3204,7 +3190,7 @@ class PostgresMapLayerSource:
             return values if any(value is not None and value != "" for value in values.values()) else None
 
         return {
-            "source": "aecs4u-stats.istat.elenco_comuni",
+            "source": "istat stats_export.elenco_comuni",
             "municipality": municipality,
             "province": related_record((
                 "uts_code", "uts_name", "uts_type", "province_abbreviation",
@@ -3222,7 +3208,8 @@ class PostgresMapLayerSource:
         must remain useful before the map reaches parcel zoom, and it should
         return compact centroids rather than geometry for whole areas.
         """
-        if not self.connection_source:
+        istat_source = self._database_source("istat")
+        if not istat_source:
             return []
         normalized = str(query or "").strip()
         if len(normalized) < 2:
@@ -3238,7 +3225,7 @@ class PostgresMapLayerSource:
                    ST_YMin(Box2D(ST_Transform(t.geom, 4326))) AS south,
                    ST_XMax(Box2D(ST_Transform(t.geom, 4326))) AS east,
                    ST_YMax(Box2D(ST_Transform(t.geom, 4326))) AS north
-            FROM istat.v_comuni_map AS t
+            FROM public.v_comuni_map AS t
             WHERE t.name ILIKE %s
                OR t.pro_com::text ILIKE %s
             ORDER BY CASE
@@ -3252,7 +3239,7 @@ class PostgresMapLayerSource:
         prefix = f"{normalized}%"
         # Bind order follows the placeholders above: substring name match,
         # ISTAT-code prefix, then exact-name and name-prefix ranking.
-        async with self.connection_source.connection() as connection:
+        async with istat_source.connection() as connection:
             rows = await connection.fetch(
                 _asyncpg_sql(sql), pattern, prefix, normalized, prefix, min(max(int(limit), 1), 50)
             )

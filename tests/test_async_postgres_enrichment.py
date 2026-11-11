@@ -91,20 +91,28 @@ async def test_serving_municipality_population_queries_keep_code_filter_pushable
     result = await source._serving_municipality_by_cadastral_code("L781")
 
     profile_sql = source._fetchrow.await_args.args[0]
-    history_sql, history_params = history_fetch.await_args.args
+    # Eurostat history first, then the ISTAT series from its own database.
+    (eurostat_sql, eurostat_params), (istat_sql, istat_params) = (
+        call.args for call in history_fetch.await_args_list
+    )
     assert "comune_population_by_year" not in profile_sql
     assert "municipality_population_stats" not in profile_sql
-    assert "comune_code IN (%s, LPAD(%s, 6, '0'))" in history_sql
-    assert "LTRIM(comune_code" not in history_sql
-    assert history_params == (23091, "23091", "23091")
+    assert "municipality_population_stats" in eurostat_sql
+    assert eurostat_params == (23091,)
+    assert history_fetch.await_args_list[0].kwargs["database"] == "eurostat"
+    assert history_fetch.await_args_list[1].kwargs["database"] == "istat"
+    assert "comune_code IN (%s, LPAD(%s, 6, '0'))" in istat_sql
+    assert "LTRIM(comune_code" not in istat_sql
+    assert istat_params == ("23091", "23091")
     assert result["population"] == {"year": 2021, "resident_population": 257838}
     assert result["population_history"] == [
+        {"year": 2021, "resident_population": 257838},
         {"year": 2021, "resident_population": 257838},
     ]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("relation", ["facts.poi", "source_osm_pois.osm_pois"])
+@pytest.mark.parametrize("relation", ["osm_pois.osm_pois", "source_osm_pois.osm_pois"])
 async def test_async_poi_lookup_uses_available_relation(monkeypatch, relation):
     source = stats_service._AsyncPostgresSource("postgresql://localhost/stats")
     probe = AsyncMock(return_value={"relation": relation})
@@ -132,15 +140,11 @@ async def test_async_poi_lookup_uses_available_relation(monkeypatch, relation):
     assert "ST_DWithin" in sql
     assert "schools" in params
     assert 2000 in params
-    if relation == "facts.poi":
-        assert "JOIN facts.poi_category" in sql
-        assert "c.code IN (%s)" in sql
-    else:
-        assert "facts.poi_category" not in sql
-        assert "p.category IN (%s)" in sql
-        assert "p.latitude BETWEEN %s AND %s" in sql
-        assert "p.longitude BETWEEN %s AND %s" in sql
-        assert all(isinstance(value, (int, float)) for value in params[:-1])
+    assert "facts.poi_category" not in sql
+    assert "p.category IN (%s)" in sql
+    assert "p.latitude BETWEEN %s AND %s" in sql
+    assert "p.longitude BETWEEN %s AND %s" in sql
+    assert all(isinstance(value, (int, float)) for value in params[:-1])
     local.assert_not_called()
 
 
@@ -206,26 +210,11 @@ async def test_missing_postgres_and_local_poi_stores_return_empty(monkeypatch):
 @pytest.mark.asyncio
 async def test_async_parcel_context_includes_optional_municipal_solar_aggregates(monkeypatch):
     source = stats_service._AsyncPostgresSource("postgresql://localhost/stats")
-    municipality_row = {
-        "id": 17,
-        "canonical_name": "Roma",
-        "unit_type": "comune",
-        "istat_code": "058091",
+    municipality = {
         "cadastral_code": "H501",
-        "observation_count": 4,
-        "tax_fact_count": 2,
-        "total_imponibile": 1200,
-        "market_zone_count": 3,
-        "pv_n_buildings": None,
-        "pv_pvout_pessimistic_kwh_year_total": None,
-        "pv_pvout_modern_kwh_year_total": None,
-        "pv_pvout_per_capita_kwh": None,
-        "pv_kwp_max_total": None,
-        "pv_high_viability_pct": None,
-        "pv_medium_viability_pct": None,
-        "pv_low_viability_pct": None,
-        "pv_not_eligible_pct": None,
-        "pv_observation_count": None,
+        "istat_code": "058091",
+        "official_name": "Roma",
+        "province": "Roma",
     }
     solar_row = {
         "pv_n_buildings": 120,
@@ -239,16 +228,20 @@ async def test_async_parcel_context_includes_optional_municipal_solar_aggregates
         "solar_data_version": "solar-comuni-2026-09",
         "solar_updated_at": "2026-09-30",
     }
-    fetchrow = AsyncMock(side_effect=[municipality_row, solar_row, None, None, None])
-    fetch = AsyncMock(return_value=[])
+    fetchrow = AsyncMock(return_value=solar_row)
     monkeypatch.setattr(source, "_relations_available", AsyncMock(return_value=True))
     monkeypatch.setattr(source, "_fetchrow", fetchrow)
-    monkeypatch.setattr(source, "_fetch", fetch)
+    monkeypatch.setattr(source, "omi_zone_at_point", AsyncMock(return_value=None))
+    monkeypatch.setattr(source, "census_section_at_point", AsyncMock(return_value=None))
 
+    # The Stats-side canonical context is gone: the context is built from the source databases.
     context = await source.context_for_parcel(
         "IT.AGC.STAT.058091.001",
         "H501",
         {"lat": 41.9, "lng": 12.5},
+        municipality=municipality,
+        omi={"quotes": []},
+        income_profile={"year": 2022, "taxpayers": 10},
     )
 
     assert context is not None
@@ -257,10 +250,11 @@ async def test_async_parcel_context_includes_optional_municipal_solar_aggregates
     assert profile["pv_pvout_modern_kwh_year_total"] == 690000
     assert profile["solar_data_version"] == "solar-comuni-2026-09"
     assert profile["solar_updated_at"] == "2026-09-30"
-    assert profile["solar_source"] == "aecs4u-stats solar.solar_potential_comuni"
-    assert "FROM solar.solar_potential_comuni" in fetchrow.await_args_list[1].args[0]
-    assert "ltrim(pro_com_t::text, '0')" in fetchrow.await_args_list[1].args[0]
-    fetch.assert_awaited_once()
+    assert profile["solar_source"] == "solar public.solar_potential_comuni"
+    solar_call = fetchrow.await_args_list[-1]
+    assert solar_call.kwargs["database"] == "solar"
+    assert "FROM public.solar_potential_comuni" in solar_call.args[0]
+    assert "ltrim(pro_com_t::text, '0')" in solar_call.args[0]
 
 
 @pytest.mark.asyncio
@@ -289,14 +283,14 @@ async def test_municipality_solar_lookup_returns_aggregates_and_provenance(monke
     assert result == {
         "available": True,
         "data": {key: value for key, value in row.items() if key.startswith("pv_")},
-        "source": "aecs4u-stats solar.solar_potential_comuni",
+        "source": "solar public.solar_potential_comuni",
         "dataset_version": "solar-comuni-2026-09",
         "updated_at": "2026-09-30",
         "match_method": "cadastral municipality code",
         "spatial_resolution": "municipality",
     }
     sql, params = fetchrow.await_args.args
-    assert "FROM solar.solar_potential_comuni" in sql
+    assert "FROM public.solar_potential_comuni" in sql
     assert params == ("058091",)
 
 
@@ -698,7 +692,7 @@ async def test_feature_id_survives_local_panel_cache_fallback(monkeypatch):
 
 
 
-@pytest.mark.parametrize("relation", ["facts.poi", "source_osm_pois.osm_pois", None])
+@pytest.mark.parametrize("relation", ["osm_pois.osm_pois", "source_osm_pois.osm_pois", None])
 def test_sync_poi_lookup_uses_available_relation_or_local_fallback(monkeypatch, relation):
     source = stats_service._PostgresPoiSource("postgresql://localhost/stats")
     cursor = MagicMock()

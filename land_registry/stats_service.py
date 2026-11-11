@@ -22,6 +22,8 @@ of map requests — see ``land_registry.bulletin_store``.
 """
 
 import asyncio
+import contextvars
+import functools
 import csv
 import hashlib
 import json
@@ -40,6 +42,7 @@ from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
+from urllib.parse import urlsplit, urlunsplit
 from xml.etree import ElementTree
 
 from .source_catalog import find_source_catalog_entry
@@ -266,7 +269,7 @@ _SOLAR_PROFILE_QUERY = """
            not_eligible_pct AS pv_not_eligible_pct,
            solar_data_version,
            updated_at AS solar_updated_at
-    FROM solar.solar_potential_comuni
+    FROM public.solar_potential_comuni
     WHERE ltrim(pro_com_t::text, '0') = ltrim(%s::text, '0')
     LIMIT 1
 """
@@ -1120,8 +1123,6 @@ def sister_documents_available() -> bool:
 
 _POSTGRES_POI_RELATION_SQL = """
     SELECT CASE
-        WHEN to_regclass('facts.poi') IS NOT NULL
-         AND to_regclass('facts.poi_category') IS NOT NULL THEN 'facts.poi'
         WHEN to_regclass('osm_pois.osm_pois') IS NOT NULL
             THEN 'osm_pois.osm_pois'
         WHEN to_regclass('source_osm_pois.osm_pois') IS NOT NULL
@@ -1210,12 +1211,8 @@ _EUROSTAT_ADMINISTRATIVE_SERIES = (
 def _postgres_poi_query(
     relation: str, lat: float, lng: float, radius_km: float, categories: list[str] | None
 ) -> tuple[str, tuple]:
-    """Support both normalized POIs and the migrated source foreign table."""
-    if relation == "facts.poi":
-        category = "c.code"
-        geometry = "p.geom"
-        tables = "facts.poi p JOIN facts.poi_category c ON c.id = p.category_id"
-    elif relation in {"osm_pois.osm_pois", "source_osm_pois.osm_pois"}:
+    """Build the nearby-POI query over the osm_pois source table."""
+    if relation in {"osm_pois.osm_pois", "source_osm_pois.osm_pois"}:
         category = "p.category"
         geometry = "ST_SetSRID(ST_MakePoint(p.longitude, p.latitude), 4326)"
         tables = f"{relation} p"
@@ -1443,6 +1440,43 @@ class _PostgresStatsSourcePlaceholder(_PostgresPoiSource):
             return None
 
 
+# PostGIS is installed in the database-named schema (not ``public``) in these
+# source databases; the pool needs it on the search path to resolve ST_* calls.
+_POSTGIS_SEARCH_PATHS = {
+    "cap": "cap,public",
+    "hazards": "hazards,public",
+    "egms": "egms,public",
+    "census_sections": "census_sections,public",
+    "osm_pois": "osm_pois,public",
+    "land_registry": "land_registry,public",
+}
+
+
+# Source database used by _fetch/_fetchrow/_relations_available when a call does
+# not name one. ``None`` means the (deprecated) aecs4u-stats database, which is
+# now only used for the Stats-owned canonical tables.
+_ACTIVE_DATABASE: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "stats_service_active_database", default=None
+)
+
+
+def _on_database(database: str | None):
+    """Run an async method against one source-owned database."""
+
+    def decorator(method):
+        @functools.wraps(method)
+        async def wrapper(self, *args, **kwargs):
+            token = _ACTIVE_DATABASE.set(database)
+            try:
+                return await method(self, *args, **kwargs)
+            finally:
+                _ACTIVE_DATABASE.reset(token)
+
+        return wrapper
+
+    return decorator
+
+
 def _asyncpg_sql(sql: str) -> str:
     """Translate the adapter's DB-API placeholders to asyncpg placeholders."""
     index = 0
@@ -1473,6 +1507,7 @@ class _AsyncPostgresSource:
         self.dsn = dsn.replace("postgresql+asyncpg://", "postgresql://", 1)
         self.max_connections = max_connections
         self._pool = None
+        self._database_pools: dict[str, Any] = {}
         self._pool_lock = asyncio.Lock()
         self._retry_at = 0.0
         self._poi_relation_cache: tuple[str | None, float] | None = None
@@ -1485,38 +1520,74 @@ class _AsyncPostgresSource:
         ] | None = None
         self._census_relation_cache: tuple[str | None, float] | None = None
 
-    async def _get_pool(self):
-        if self._pool is not None:
-            return self._pool
+    def _database_dsn(self, database: str) -> str:
+        """DSN of one source-owned database (aecs4u-stats is deprecated).
+
+        ``AECS4U_SOURCE_<DATABASE>_DATABASE_URL`` wins; otherwise the stats DSN
+        supplies only host and credentials and its database name is replaced.
+        """
+        override = os.getenv(f"AECS4U_SOURCE_{database.upper()}_DATABASE_URL")
+        if override:
+            return override.replace("postgresql+asyncpg://", "postgresql://", 1).replace(
+                "postgresql+psycopg2://", "postgresql://", 1
+            )
+        parsed = urlsplit(self.dsn)
+        return urlunsplit(parsed._replace(path=f"/{database}"))
+
+    async def _get_pool(self, database: str | None = None):
+        """Pool for the stats DSN (``database=None``) or one source database."""
+        existing = self._pool if database is None else self._database_pools.get(database)
+        if existing is not None:
+            return existing
         async with self._pool_lock:
-            if self._pool is None:
+            existing = self._pool if database is None else self._database_pools.get(database)
+            if existing is None:
                 import asyncpg
 
-                self._pool = await asyncpg.create_pool(
-                    self.dsn,
+                options: dict[str, Any] = {}
+                if database in _POSTGIS_SEARCH_PATHS:
+                    # PostGIS lives in the database-named schema in these sources.
+                    options["server_settings"] = {"search_path": _POSTGIS_SEARCH_PATHS[database]}
+                existing = await asyncpg.create_pool(
+                    self.dsn if database is None else self._database_dsn(database),
                     min_size=1,
                     max_size=self.max_connections,
                     command_timeout=20,
                     statement_cache_size=0,
+                    **options,
                 )
-            return self._pool
+                if database is None:
+                    self._pool = existing
+                else:
+                    self._database_pools[database] = existing
+            return existing
 
     async def close(self):
         async with self._pool_lock:
-            if self._pool is not None:
-                pool, self._pool = self._pool, None
+            pools = [self._pool, *self._database_pools.values()]
+            self._pool = None
+            self._database_pools = {}
+        for pool in pools:
+            if pool is not None:
                 await pool.close()
 
-    async def _fetch(self, sql: str, params: tuple = ()):
-        pool = await self._get_pool()
+    async def _fetch(self, sql: str, params: tuple = (), *, database: str | None = None):
+        pool = await self._get_pool(database or _ACTIVE_DATABASE.get())
         async with pool.acquire() as connection:
             return await connection.fetch(_asyncpg_sql(sql), *params)
 
-    async def _fetchrow(self, sql: str, params: tuple = ()):
-        pool = await self._get_pool()
+    async def _fetch_in(self, database: str, sql: str, params: tuple = ()):
+        return await self._fetch(sql, params, database=database)
+
+    async def _fetchrow_in(self, database: str, sql: str, params: tuple = ()):
+        return await self._fetchrow(sql, params, database=database)
+
+    async def _fetchrow(self, sql: str, params: tuple = (), *, database: str | None = None):
+        pool = await self._get_pool(database or _ACTIVE_DATABASE.get())
         async with pool.acquire() as connection:
             return await connection.fetchrow(_asyncpg_sql(sql), *params)
 
+    @_on_database("sister")
     async def sister_buildings_for_parcel(
         self,
         national_reference: str,
@@ -1534,7 +1605,7 @@ class _AsyncPostgresSource:
         result with ``available=True`` means the query succeeded and found no
         matching property rows.
         """
-        source_name = "aecs4u-stats PostgreSQL sister.v_sister_property_by_cadastral_parcel"
+        source_name = "sister PostgreSQL sister_legacy.v_sister_property_by_cadastral_parcel"
 
         def result_empty(*, available: bool, match_method: str | None = None) -> Dict[str, Any]:
             return {
@@ -1558,7 +1629,7 @@ class _AsyncPostgresSource:
             or code != str(cadastral_code or "").strip().upper()
         ):
             return result_empty(available=False)
-        if not await self._relations_available(("sister.v_sister_property_by_cadastral_parcel",)):
+        if not await self._relations_available(("sister_legacy.v_sister_property_by_cadastral_parcel",)):
             return None
 
         municipality = municipality or {}
@@ -1586,7 +1657,7 @@ class _AsyncPostgresSource:
             SELECT cadastre_type, property_type, address, category, cadastral_class,
                    consistency, income, census_zone, area,
                    sheet, parcel, subunit
-            FROM sister.v_sister_property_by_cadastral_parcel
+            FROM sister_legacy.v_sister_property_by_cadastral_parcel
             WHERE upper(trim(coalesce(cadastre_type, ''))) IN ('F', 'T')
               AND lower(trim(coalesce(province, ''))) = ANY(%s)
               AND lower(trim(coalesce(municipality, ''))) = ANY(%s)
@@ -1702,6 +1773,7 @@ class _AsyncPostgresSource:
             "match_method": "municipality+province+section+sheet+parcel",
         }
 
+    @_on_database("land_registry")
     async def _read_model_status(self) -> dict[str, Any]:
         """Check cache provisioning and the privileges the request path needs.
 
@@ -1767,11 +1839,12 @@ class _AsyncPostgresSource:
             )
         return dict(status)
 
+    @_on_database("land_registry")
     async def _read_model_available(self) -> bool:
         """Return whether the cache is provisioned and usable by this role."""
         return bool((await self._read_model_status())["available"])
 
-    async def _relations_available(self, relations: tuple[str, ...]) -> bool:
+    async def _relations_available(self, relations: tuple[str, ...], *, database: str | None = None) -> bool:
         """Return whether an optional lookup's source tables are provisioned.
 
         These enrichment datasets are not installed in every stats database.
@@ -1779,6 +1852,9 @@ class _AsyncPostgresSource:
         instead of raising an expected UndefinedTableError for every request.
         """
         key = tuple(sorted(relations))
+        database = database or _ACTIVE_DATABASE.get()
+        if database is not None:
+            key = (f"@{database}", *key)
         now = time.monotonic()
         cached = self._optional_relations_cache.get(key)
         if cached is not None and now < cached[1]:
@@ -1788,7 +1864,8 @@ class _AsyncPostgresSource:
             SELECT bool_and(to_regclass(relation_name) IS NOT NULL) AS available
             FROM unnest($1::text[]) AS requested(relation_name)
             """,
-            (list(key),),
+            (list(key[1:] if database is not None else key),),
+            database=database,
         )
         available = bool(row and row["available"])
         self._optional_relations_cache[key] = (
@@ -1802,6 +1879,7 @@ class _AsyncPostgresSource:
             )
         return available
 
+    @_on_database("land_registry")
     async def coastal_dynamics_store_status(self) -> dict[str, Any]:
         """Distinguish an absent or empty snapshot from a usable local store."""
         now = time.monotonic()
@@ -1832,8 +1910,9 @@ class _AsyncPostgresSource:
         self._coastal_store_status_cache = (dict(status), now + 10)
         return status
 
+    @_on_database("quality_of_life")
     async def _quality_of_life_relation(self) -> Optional[tuple[str, dict[str, str]]]:
-        """Find the source view in the quality_of_life schema by its BES columns."""
+        """Find the source view in the public schema by its BES columns."""
         cached = self._quality_of_life_relation_cache
         now = time.monotonic()
         if cached is not None and now < cached[1]:
@@ -1845,7 +1924,7 @@ class _AsyncPostgresSource:
             WHERE table_schema = %s
             ORDER BY table_name, ordinal_position
             """,
-            ("quality_of_life",),
+            ("public",),
         )
         relations: dict[str, dict[str, str]] = {}
         for row in rows:
@@ -1891,6 +1970,7 @@ class _AsyncPostgresSource:
             logger.info("No BES source view with geography/indicator/year/value columns in quality_of_life")
         return result
 
+    @_on_database("census_sections")
     async def _census_relation(self) -> Optional[str]:
         """Resolve the canonical Census FT, accepting its current legacy schema alias."""
         cached = self._census_relation_cache
@@ -1900,7 +1980,6 @@ class _AsyncPostgresSource:
         row = await self._fetchrow(
             """
             SELECT CASE
-                     WHEN to_regclass('census.sections') IS NOT NULL THEN 'census.sections'
                      WHEN to_regclass('census_sections.sections') IS NOT NULL
                        THEN 'census_sections.sections'
                    END AS relation
@@ -1916,12 +1995,13 @@ class _AsyncPostgresSource:
     async def quality_of_life_available(self) -> bool:
         return await self._quality_of_life_relation() is not None
 
+    @_on_database("quality_of_life")
     async def quality_of_life_indicators(self, nuts3: str) -> Optional[list[str]]:
         relation = await self._quality_of_life_relation()
         if relation is None:
             return None
         table_name, columns = relation
-        table = f"quality_of_life.{_quote_pg_identifier(table_name)}"
+        table = f"public.{_quote_pg_identifier(table_name)}"
         ref_area = _quote_pg_identifier(columns["ref_area"])
         data_type = _quote_pg_identifier(columns["data_type"])
         rows = await self._fetch(
@@ -1936,6 +2016,7 @@ class _AsyncPostgresSource:
         )
         return [str(row["data_type"]) for row in rows if row["data_type"]]
 
+    @_on_database("quality_of_life")
     async def quality_of_life_indicator_clusters(
         self, nuts3: str
     ) -> Optional[Dict[str, Any]]:
@@ -1951,7 +2032,7 @@ class _AsyncPostgresSource:
         )
         if any(name not in columns for name in required):
             return None
-        table = f"quality_of_life.{_quote_pg_identifier(table_name)}"
+        table = f"public.{_quote_pg_identifier(table_name)}"
         field = {
             name: _quote_pg_identifier(columns[name])
             for name in required
@@ -2068,6 +2149,7 @@ class _AsyncPostgresSource:
             "clusters": result_clusters,
         }
 
+    @_on_database("quality_of_life")
     async def quality_of_life_series(
         self, nuts3: str, data_type_value: str, year: Optional[int] = None
     ) -> Optional[list[Dict[str, Any]]]:
@@ -2075,7 +2157,7 @@ class _AsyncPostgresSource:
         if relation is None:
             return None
         table_name, columns = relation
-        table = f"quality_of_life.{_quote_pg_identifier(table_name)}"
+        table = f"public.{_quote_pg_identifier(table_name)}"
         ref_area = _quote_pg_identifier(columns["ref_area"])
         data_type = _quote_pg_identifier(columns["data_type"])
         period = _quote_pg_identifier(columns["time_period"])
@@ -2127,6 +2209,7 @@ class _AsyncPostgresSource:
             for row in rows
         ]
 
+    @_on_database("relocation")
     async def relocation_quality_indicators(
         self, country_code: str = "IT"
     ) -> Optional[Dict[str, Any]]:
@@ -2136,12 +2219,12 @@ class _AsyncPostgresSource:
         of presenting the values as provincial or parcel measurements.
         """
         relations = (
-            "serving.relocation_climate_score",
-            "serving.relocation_healthcare_quality",
-            "serving.relocation_safety_index",
-            "serving.relocation_life_expectancy",
-            "serving.relocation_healthy_life_years",
-            "serving.relocation_connectivity",
+            "public.relocation_climate_score",
+            "public.relocation_healthcare_quality",
+            "public.relocation_safety_index",
+            "public.relocation_life_expectancy",
+            "public.relocation_healthy_life_years",
+            "public.relocation_connectivity",
         )
         relation_rows = await self._fetch(
             """
@@ -2163,7 +2246,7 @@ class _AsyncPostgresSource:
             WHERE table_schema = %s AND table_name = ANY(%s::text[])
             ORDER BY table_name, ordinal_position
             """,
-            ("serving", table_names),
+            ("public", table_names),
         )
         columns: dict[str, list[str]] = {}
         for row in column_rows:
@@ -2317,14 +2400,15 @@ class _AsyncPostgresSource:
             "country_name": country_name,
             "spatial_resolution": "country",
             "scope_note": "Country-level relocation indicators for {country}; these values do not describe the province or parcel.",
-            "source": "aecs4u-stats serving.relocation_* views",
+            "source": "aecs4u-stats public.relocation_* views",
         }
 
+    @_on_database("istat")
     async def municipality_demographic_indicators(
         self, cadastral_code: str
     ) -> Optional[Dict[str, Any]]:
         """Read the municipality population/age-band series from serving views."""
-        if not await self._relations_available(("serving.comune_population_by_year",)):
+        if not await self._relations_available(("stats_export.comune_population_by_year",)):
             return None
         municipality = await self._serving_municipality_by_cadastral_code(cadastral_code)
         istat_code = (municipality or {}).get("istat_code")
@@ -2336,7 +2420,7 @@ class _AsyncPostgresSource:
             FROM information_schema.columns
             WHERE table_schema = %s AND table_name = %s
             """,
-            ("serving", "comune_population_by_year"),
+            ("stats_export", "comune_population_by_year"),
         )
         columns = {
             str(row["column_name"]).lower(): str(row["column_name"])
@@ -2362,7 +2446,7 @@ class _AsyncPostgresSource:
             f"""
             SELECT {year_field} AS year, {population_field} AS population,
                    {lt12_sql} AS population_lt12, {ge12_sql} AS population_ge12
-            FROM serving.comune_population_by_year
+            FROM stats_export.comune_population_by_year
             WHERE LTRIM({municipality_field}::text, '0') = LTRIM(%s::text, '0')
             ORDER BY {year_field}
             """,
@@ -2387,7 +2471,7 @@ class _AsyncPostgresSource:
             "series_by_indicator": {key: series[key] for key in indicators},
             "municipality": municipality.get("official_name"),
             "spatial_resolution": "municipality",
-            "source": "ISTAT municipal population series via aecs4u-stats serving.comune_population_by_year",
+            "source": "ISTAT municipal population series via istat stats_export.comune_population_by_year",
         }
 
     async def municipality_demographic_series(
@@ -2408,6 +2492,7 @@ class _AsyncPostgresSource:
             "source": catalog.get("source"),
         }
 
+    @_on_database("agenziademanio")
     async def agenziademanio_concessions_for_parcel(self, parcel_id: int) -> Dict[str, Any]:
         """Read the optional spatial concession-to-parcel crosswalk."""
         relation = "agenziademanio.concession_parcel_links"
@@ -2448,84 +2533,17 @@ class _AsyncPostgresSource:
         }
 
     async def municipality_by_cadastral_code(self, cadastral_code: str) -> Optional[Dict[str, Any]]:
-        if not await self._relations_available((
-            "geo.geo_identifier", "geo.geo_unit", "geo.geo_relation", "serving.municipality_profile",
-        )):
-            return await self._serving_municipality_by_cadastral_code(cadastral_code)
-        row = await self._fetchrow(
-            """
-            SELECT gi_cad.code AS cadastral_code,
-                   gi_istat.code AS istat_code,
-                   u.canonical_name,
-                   province.canonical_name AS province,
-                   province_nuts.code AS nuts3,
-                   region.canonical_name AS region,
-                   mp.observation_count,
-                   mp.tax_fact_count,
-                   mp.total_imponibile
-            FROM geo.geo_identifier gi_cad
-            JOIN geo.geo_unit u ON u.id = gi_cad.geo_unit_id
-            LEFT JOIN geo.geo_identifier gi_istat
-              ON gi_istat.geo_unit_id = u.id
-             AND gi_istat.scheme = 'ISTAT_COMUNE'
-            LEFT JOIN geo.geo_relation province_relation
-              ON province_relation.child_id = u.id
-             AND province_relation.relation_type = 'contains'
-            LEFT JOIN geo.geo_unit province
-              ON province.id = province_relation.parent_id
-             AND province.unit_type = 'province'
-            LEFT JOIN geo.geo_identifier province_nuts
-              ON province_nuts.geo_unit_id = province.id
-             AND province_nuts.scheme = 'NUTS'
-            LEFT JOIN geo.geo_relation region_relation
-              ON region_relation.child_id = province.id
-             AND region_relation.relation_type = 'contains'
-            LEFT JOIN geo.geo_unit region
-              ON region.id = region_relation.parent_id
-             AND region.unit_type = 'region'
-            LEFT JOIN serving.municipality_profile mp
-              ON mp.geo_unit_id = u.id
-            WHERE gi_cad.scheme = 'CATASTALE_COMUNE'
-              AND UPPER(gi_cad.code) = UPPER(%s)
-            LIMIT 1
-            """,
-            (cadastral_code.strip().upper(),),
-        )
-        if row is None:
-            return await self._serving_municipality_by_cadastral_code(cadastral_code)
-        values = {key: _postgres_scalar(row[key]) for key in row.keys()}
-        istat_code = values.get("istat_code")
-        try:
-            procom = int(istat_code) if istat_code is not None else None
-        except (TypeError, ValueError):
-            procom = None
-        return {
-            "cadastral_code": values.get("cadastral_code"),
-            "istat_code": istat_code,
-            "official_name": values.get("canonical_name"),
-            "procom": procom,
-            "name": values.get("canonical_name"),
-            "province": values.get("province"),
-            "province_sigla": None,
-            "region": values.get("region"),
-            "nuts3_2021": values.get("nuts3"),
-            "nuts3": values.get("nuts3"),
-            "is_provincial_capital": False,
-            "latitude": None,
-            "longitude": None,
-            "postal_code": None,
-            "population": None,
-            "population_history": [],
-            "profile": {
-                key: values.get(key)
-                for key in ("observation_count", "tax_fact_count", "total_imponibile")
-            },
-            "source": "aecs4u-stats PostgreSQL via asyncpg",
-        }
+        """Municipality profile from the Eurostat and ISTAT source databases.
 
+        The former Stats-side canonical ``geo``/``serving.municipality_profile``
+        path is gone with the deprecated aecs4u-stats database.
+        """
+        return await self._serving_municipality_by_cadastral_code(cadastral_code)
+
+    @_on_database("solar")
     async def municipality_solar_profile(self, istat_code: str) -> dict[str, Any] | None:
         """Read one municipality's PV aggregates and their source release."""
-        if not await self._relations_available(("solar.solar_potential_comuni",)):
+        if not await self._relations_available(("public.solar_potential_comuni",)):
             return None
         row = await self._fetchrow(_SOLAR_PROFILE_QUERY, (str(istat_code),))
         if row is None:
@@ -2535,12 +2553,14 @@ class _AsyncPostgresSource:
     async def _serving_municipality_by_cadastral_code(
         self, cadastral_code: str
     ) -> Optional[Dict[str, Any]]:
-        """Read the current serving municipality profile exposed by aecs4u-stats."""
-        relations = (
-            "serving.municipalities", "serving.provinces", "serving.regions",
-            "serving.municipality_population_stats", "serving.comune_population_by_year",
-        )
-        if not await self._relations_available(relations):
+        """Read the municipality profile from the Eurostat and ISTAT source databases."""
+        if not await self._relations_available(
+            (
+                "stats_export.municipalities", "stats_export.provinces", "stats_export.regions",
+                "stats_export.municipality_population_stats",
+            ),
+            database="eurostat",
+        ):
             return None
         row = await self._fetchrow(
             """
@@ -2550,33 +2570,43 @@ class _AsyncPostgresSource:
                    p.name AS province, p.vehicle_code AS province_sigla,
                    p.nuts3_2021 AS nuts3,
                    r.name AS region
-            FROM serving.municipalities m
-            LEFT JOIN serving.provinces p ON p.id = m.province_id
-            LEFT JOIN serving.regions r ON r.id = m.region_id
+            FROM stats_export.municipalities m
+            LEFT JOIN stats_export.provinces p ON p.id = m.province_id
+            LEFT JOIN stats_export.regions r ON r.id = m.region_id
             WHERE UPPER(m.cadastral_code) = UPPER(%s)
             LIMIT 1
             """,
             (cadastral_code.strip().upper(),),
+            database="eurostat",
         )
         if row is None:
             return None
         values = {key: _postgres_scalar(row[key]) for key in row.keys()}
-        history = await self._fetch(
+        # The two population series live in different databases, so they are
+        # read separately and merged here (the previous UNION ALL ordered by year).
+        eurostat_history = await self._fetch(
             """
             SELECT year, resident_population
-            FROM (
-                SELECT year, resident_population
-                FROM serving.municipality_population_stats
-                WHERE municipality_id = %s
-                UNION ALL
-                SELECT reference_year::bigint AS year, population::bigint AS resident_population
-                FROM serving.comune_population_by_year
-                WHERE comune_code IN (%s, LPAD(%s, 6, '0'))
-            ) population_rows
-            ORDER BY year
+            FROM stats_export.municipality_population_stats
+            WHERE municipality_id = %s
             """,
-            (values["id"], str(values["id"]), str(values["id"])),
+            (values["id"],),
+            database="eurostat",
         )
+        try:
+            istat_history = await self._fetch(
+                """
+                SELECT reference_year::bigint AS year, population::bigint AS resident_population
+                FROM stats_export.comune_population_by_year
+                WHERE comune_code IN (%s, LPAD(%s, 6, '0'))
+                """,
+                (str(values["id"]), str(values["id"])),
+                database="istat",
+            )
+        except Exception as exc:
+            logger.info("ISTAT municipal population series unavailable: %s", exc)
+            istat_history = []
+        history = sorted([*eurostat_history, *istat_history], key=lambda item: int(item["year"]))
         population = None
         if history:
             latest = max(history, key=lambda item: int(item["year"]))
@@ -2612,50 +2642,21 @@ class _AsyncPostgresSource:
                 }
                 for item in history
             ],
-            "source": "ISTAT municipality profile via aecs4u-stats PostgreSQL",
+            "source": "ISTAT municipality profile via Eurostat and ISTAT source databases",
         }
 
     async def omi_zone_quote_history(
         self, cadastral_code: str, zone_code: str
     ) -> Optional[Dict[str, Any]]:
         """Read OMI history from the stats FDW, then its canonical snapshot."""
-        omi_relations = ("omi.omi_ref_zone", "omi.omi_fact_quotazioni_valori")
-        if await self._relations_available(omi_relations):
+        omi_relations = ("omi.zone_municipality", "omi.zone_version", "omi.quotation_fact")
+        if await self._relations_available(omi_relations, database="omi"):
             code = (cadastral_code or "").strip().upper()
             zone = (zone_code or "").strip().upper()
-            istat_keys = _omi_istat_keys(code)
-            if code.isdigit():
-                candidates: list[tuple[str, Any]] = [
-                    ("cod_comune_istat", float(istat_keys[0] if istat_keys else code)),
-                    ("cod_comune_amm", code),
-                    ("cod_comune_catastale", code),
-                ]
-            else:
-                candidates = []
-                if istat_keys:
-                    candidates.append(("cod_comune_istat", float(istat_keys[0])))
-                candidates.extend([
-                    ("cod_comune_amm", code),
-                    ("cod_comune_catastale", code),
-                ])
-
-            query_template = """
-                SELECT z.anno, z.semestre, z.zona, v.cod_tipologia, v.tipologia,
-                       v.stato_conservazione, v.prezzo_min, v.prezzo_max,
-                       v.locazione_min, v.locazione_max
-                FROM omi.omi_ref_zone AS z
-                JOIN omi.omi_fact_quotazioni_valori AS v ON v.zona_id = z.zona_id
-                WHERE z.{code_column} = %s AND z.zona = %s
-                ORDER BY z.anno, z.semestre, v.cod_tipologia, v.stato_conservazione
-            """
+            istat_code = await self._omi_istat_code(code)
             history_rows = []
-            for code_column, code_value in candidates:
-                # The identifier is selected from the fixed allowlist above.
-                history_rows = await self._fetch(
-                    query_template.format(code_column=code_column), (code_value, zone)
-                )
-                if history_rows:
-                    break
+            if istat_code:
+                history_rows = await self._fetch_in("omi", _OMI_ZONE_HISTORY_SQL, (istat_code, zone))
 
             if history_rows:
                 quotes = []
@@ -2688,168 +2689,63 @@ class _AsyncPostgresSource:
                     "zona": zone,
                     "quotes": quotes,
                     "dataset_version": _omi_period_dataset_version({"quotes": quotes}),
-                    "source": "Agenzia delle Entrate OMI via aecs4u-stats.omi foreign tables",
+                    "source": "Agenzia delle Entrate OMI via the omi source database",
                 }
 
-        relations = ("geo.geo_identifier", "spatial.market_zone", "facts.market_quote_fact")
-        if not await self._relations_available(relations):
-            snapshot = await self._zornade_omi_quotes_by_cadastral_code(cadastral_code)
-            if snapshot is None:
-                return None
-            return {
-                **snapshot,
-                "zona": zone_code,
-                "quotes": [
-                    quote for quote in snapshot.get("quotes", [])
-                    if str(quote.get("zona") or "").strip().upper() == zone_code.strip().upper()
-                ],
-            }
-        rows = await self._fetch(
-            """
-            SELECT mz.omi_zone_key, q.period, q.typology, q.condition,
-                   q.price_min, q.price_max, q.rent_min, q.rent_max
-            FROM geo.geo_identifier gi
-            JOIN spatial.market_zone mz ON mz.municipality_id = gi.geo_unit_id
-            JOIN facts.market_quote_fact q ON q.market_zone_id = mz.id
-            WHERE gi.scheme = 'CATASTALE_COMUNE'
-              AND UPPER(gi.code) = UPPER(%s)
-              AND UPPER(mz.omi_zone_key) = UPPER(%s)
-            ORDER BY q.period, q.typology, q.condition
-            """,
-            (cadastral_code.strip().upper(), zone_code.strip().upper()),
-        )
-        if not rows:
-            # The published zone snapshot carries a current quote when the
-            # canonical fact table has not yet been populated for this comune.
-            snapshot = await self._zornade_omi_quotes_by_cadastral_code(cadastral_code)
-            if snapshot is None:
-                return None
-            return {
-                **snapshot,
-                "zona": zone_code,
-                "quotes": [
-                    quote for quote in snapshot.get("quotes", [])
-                    if str(quote.get("zona") or "").strip().upper() == zone_code.strip().upper()
-                ],
-            }
-
-        quotes = []
-        for row in rows:
-            period = str(row["period"] or "")
-            match = re.match(r"^(\d{4})-S(\d)$", period)
-            quotes.append({
-                "zona": row["omi_zone_key"],
-                "period": period,
-                "anno": int(match.group(1)) if match else None,
-                "semestre": int(match.group(2)) if match else None,
-                "cod_tipologia": row["typology"],
-                "tipologia": row["typology"],
-                "stato_conservazione": row["condition"],
-                "prezzo_min": _postgres_scalar(row["price_min"]),
-                "prezzo_max": _postgres_scalar(row["price_max"]),
-                "locazione_min": _postgres_scalar(row["rent_min"]),
-                "locazione_max": _postgres_scalar(row["rent_max"]),
-            })
+        # The Stats-side canonical OMI facts are gone: fall back to the published zone snapshot.
+        snapshot = await self._zornade_omi_quotes_by_cadastral_code(cadastral_code)
+        if snapshot is None:
+            return None
         return {
-            "comune": cadastral_code,
+            **snapshot,
             "zona": zone_code,
-            "quotes": quotes,
-            "dataset_version": _omi_period_dataset_version({"quotes": quotes}),
-            "source": "Agenzia delle Entrate OMI via aecs4u-stats PostgreSQL facts.market_quote_fact",
+            "quotes": [
+                quote for quote in snapshot.get("quotes", [])
+                if str(quote.get("zona") or "").strip().upper() == zone_code.strip().upper()
+            ],
         }
 
-    async def _omi_istat_key_from_postgres(self, cadastral_code: str) -> Optional[int]:
-        """Resolve AdE's region-prefixed ISTAT key from the shared municipality table.
+    async def _omi_istat_code(self, cadastral_code: str) -> Optional[str]:
+        """Resolve a Belfiore (or numeric ISTAT) code to the ISTAT municipality key used by ``omi``.
 
-        The packaged ISTAT SQLite store is optional. When it is absent, the
-        canonical PostgreSQL municipality table still carries the two pieces
-        needed by ``omi_ref_zone.cod_comune_istat``.
+        The normalised OMI tables key municipalities by the 6-digit ISTAT code
+        (``omi.zone_municipality.istat_code``); the cadastral-to-ISTAT mapping is
+        owned by the ``istat`` database, which also lists comuni missing from the
+        ISTAT release (``origin = 'unverified'``).
         """
-        if not await self._relations_available(("geo.municipalities",)):
+        value = str(cadastral_code or "").strip().upper()
+        if not value:
             return None
-        code = str(cadastral_code or "").strip().upper()
-        if not code:
+        if value.isdigit():
+            return value.zfill(6) if len(value) <= 6 else None
+        try:
+            row = await self._fetchrow_in(
+                "istat",
+                "SELECT code FROM istat_comuni.comuni_with_unverified "
+                "WHERE upper(cadastral_code) = upper(%s) "
+                "ORDER BY (origin = 'release') DESC LIMIT 1",
+                (value,),
+            )
+        except Exception:
+            logger.debug("Could not resolve the ISTAT key for %s from the istat database", value, exc_info=True)
             return None
-        row = await self._fetchrow(
-            """
-            SELECT (lpad(m.region_id::text, 2, '0')
-                    || lpad(m.alphanumeric_code, 6, '0'))::bigint AS omi_istat_code
-            FROM geo.municipalities AS m
-            WHERE m.region_id IS NOT NULL
-              AND m.alphanumeric_code ~ '^[0-9]+$'
-              AND (
-                  upper(m.cadastral_code) = upper(%s)
-                  OR (%s ~ '^[0-9]+$'
-                      AND ltrim(m.alphanumeric_code, '0') = ltrim(%s, '0'))
-              )
-            ORDER BY CASE WHEN upper(m.cadastral_code) = upper(%s) THEN 0 ELSE 1 END
-            LIMIT 1
-            """,
-            (code, code, code, code),
-        )
-        if row is None or row["omi_istat_code"] is None:
-            return None
-        return int(row["omi_istat_code"])
+        return str(row["code"]) if row is not None else None
 
     async def omi_quotes_by_cadastral_code(self, cadastral_code: str) -> Optional[Dict[str, Any]]:
-        omi_relations = ("omi.omi_ref_zone", "omi.omi_fact_quotazioni_valori")
-        if await self._relations_available(omi_relations):
+        omi_relations = ("omi.zone_municipality", "omi.zone_version", "omi.quotation_fact")
+        if await self._relations_available(omi_relations, database="omi"):
             code = (cadastral_code or "").strip().upper()
-            istat_keys = _omi_istat_keys(code)
-            if not istat_keys:
-                try:
-                    postgres_key = await self._omi_istat_key_from_postgres(code)
-                    if postgres_key is not None:
-                        istat_keys = [postgres_key]
-                except Exception:
-                    logger.debug("Could not resolve OMI ISTAT key from PostgreSQL for %s", code, exc_info=True)
-            if code.isdigit():
-                candidates: list[tuple[str, Any]] = [
-                    ("cod_comune_istat", float(istat_keys[0] if istat_keys else code)),
-                    ("cod_comune_amm", code),
-                    ("cod_comune_catastale", code),
-                ]
-            else:
-                candidates = []
-                if istat_keys:
-                    candidates.append(("cod_comune_istat", float(istat_keys[0])))
-                candidates.extend([
-                    ("cod_comune_amm", code),
-                    ("cod_comune_catastale", code),
-                ])
-
-            latest_period_template = """
-                SELECT z.anno, z.semestre
-                FROM omi.omi_ref_zone AS z
-                WHERE z.{code_column} = %s
-                ORDER BY z.anno DESC, z.semestre DESC
-                LIMIT 1
-            """
-            quote_template = """
-                SELECT z.anno, z.semestre, z.zona, v.cod_tipologia, v.tipologia,
-                       v.stato_conservazione, v.stato_prevalente, v.prezzo_min, v.prezzo_max,
-                       v.locazione_min, v.locazione_max
-                FROM omi.omi_ref_zone AS z
-                JOIN omi.omi_fact_quotazioni_valori AS v ON v.zona_id = z.zona_id
-                WHERE z.{code_column} = %s
-                  AND z.anno = %s
-                  AND z.semestre = %s
-                ORDER BY z.zona, v.cod_tipologia, v.stato_conservazione
-            """
+            istat_code = await self._omi_istat_code(code)
             quote_rows = []
-            for code_column, code_value in candidates:
-                # Column names are selected from the fixed allowlist above.
-                latest_period = await self._fetchrow(
-                    latest_period_template.format(code_column=code_column), (code_value,)
+            latest_period = (
+                await self._fetchrow_in("omi", _OMI_LATEST_PERIOD_SQL, (istat_code,)) if istat_code else None
+            )
+            if latest_period is not None:
+                quote_rows = await self._fetch_in(
+                    "omi",
+                    _OMI_LATEST_QUOTES_SQL,
+                    (istat_code, latest_period["anno"], latest_period["semestre"]),
                 )
-                if latest_period is None:
-                    continue
-                quote_rows = await self._fetch(
-                    quote_template.format(code_column=code_column),
-                    (code_value, latest_period["anno"], latest_period["semestre"]),
-                )
-                if quote_rows:
-                    break
 
             if quote_rows:
                 quotes = []
@@ -2887,80 +2783,25 @@ class _AsyncPostgresSource:
                     "source": "Agenzia delle Entrate OMI via aecs4u-stats.omi foreign tables",
                 }
 
-        if not await self._relations_available((
-            "geo.geo_identifier", "spatial.market_zone", "facts.market_quote_fact",
-        )):
-            return await self._zornade_omi_quotes_by_cadastral_code(cadastral_code)
-        rows = await self._fetch(
-            """
-            SELECT mz.omi_zone_key, q.period, q.typology, q.condition,
-                   q.price_min, q.price_max, q.rent_min, q.rent_max
-            FROM geo.geo_identifier gi_cad
-            JOIN spatial.market_zone mz ON mz.municipality_id = gi_cad.geo_unit_id
-            JOIN facts.market_quote_fact q ON q.market_zone_id = mz.id
-            WHERE gi_cad.scheme = 'CATASTALE_COMUNE'
-              AND UPPER(gi_cad.code) = UPPER(%s)
-              AND q.period = (
-                  SELECT MAX(q_latest.period)
-                  FROM geo.geo_identifier gi_latest
-                  JOIN spatial.market_zone mz_latest
-                    ON mz_latest.municipality_id = gi_latest.geo_unit_id
-                  JOIN facts.market_quote_fact q_latest
-                    ON q_latest.market_zone_id = mz_latest.id
-                  WHERE gi_latest.scheme = 'CATASTALE_COMUNE'
-                    AND UPPER(gi_latest.code) = UPPER(%s)
-              )
-            ORDER BY mz.omi_zone_key, q.typology, q.condition
-            """,
-            (cadastral_code.strip().upper(), cadastral_code.strip().upper()),
-        )
-        if not rows:
-            # The quote tables exist but hold nothing for this municipality (for
-            # example while they are being loaded): the published zone snapshot
-            # still carries current quotes, so use it rather than showing none.
-            snapshot = await self._zornade_omi_quotes_by_cadastral_code(cadastral_code)
-            if snapshot:
-                return snapshot
-        quotes = []
-        for row in rows:
-            period = str(row["period"] or "")
-            match = re.match(r"^(\d{4})-S(\d)$", period)
-            quotes.append({
-                "zona": row["omi_zone_key"],
-                "period": period,
-                "anno": int(match.group(1)) if match else None,
-                "semestre": int(match.group(2)) if match else None,
-                "cod_tipologia": row["typology"],
-                "tipologia": row["typology"],
-                "stato_conservazione": row["condition"],
-                "prezzo_min": _postgres_scalar(row["price_min"]),
-                "prezzo_max": _postgres_scalar(row["price_max"]),
-                "locazione_min": _postgres_scalar(row["rent_min"]),
-                "locazione_max": _postgres_scalar(row["rent_max"]),
-            })
-        return {
-            "comune": cadastral_code,
-            "zona": None,
-            "quotes": quotes,
-            "dataset_version": _omi_period_dataset_version({"quotes": quotes}),
-            "source": "Agenzia delle Entrate OMI via aecs4u-stats PostgreSQL via asyncpg",
-        }
+        # The Stats-side canonical OMI facts are gone: fall back to the published zone snapshot.
+        return await self._zornade_omi_quotes_by_cadastral_code(cadastral_code)
 
+    @_on_database("zornade")
     async def _zornade_omi_quotes_by_cadastral_code(
         self, cadastral_code: str
     ) -> Optional[Dict[str, Any]]:
         """Read the current OMI quote fields carried by the published zone table.
 
-        Deprecated (2026-10-21): reads the Zornade-sourced zornade.zornade_zone_omi. It remains
+        Deprecated (2026-10-21): reads the Zornade-sourced stats_export.zornade_zone_omi. It remains
         the fallback when the canonical quote tables are missing or empty.
         """
-        if not await self._relations_available(("zornade.zornade_zone_omi",)):
+        if not await self._relations_available(("stats_export.zornade_zone_omi",)):
             return None
         rows = await self._fetch(
             """
             SELECT codzona, cod_tip_prev, descr_tipologia_en, stato_prev,
                    compr_min, compr_max, loc_min, loc_max
-            FROM zornade.zornade_zone_omi
+            FROM stats_export.zornade_zone_omi
             WHERE UPPER(codcom) = UPPER(%s)
             ORDER BY codzona, cod_tip_prev, stato_prev
             """,
@@ -2997,6 +2838,7 @@ class _AsyncPostgresSource:
             "source": "Agenzia delle Entrate OMI current zone snapshot via aecs4u-stats PostgreSQL",
         }
 
+    @_on_database("hazards")
     async def hazard_polygons_in_bbox(
         self, west: float, south: float, east: float, north: float, *, limit: int
     ) -> Optional[tuple[Dict[str, Any], Dict[str, Any]]]:
@@ -3039,6 +2881,7 @@ class _AsyncPostgresSource:
         )
         return landslide, flood
 
+    @_on_database("land_registry")
     async def coastal_changes_near_geometry(
         self, geometry: str, *, radius_m: float, limit: int
     ) -> Optional[list[dict[str, Any]]]:
@@ -3073,36 +2916,13 @@ class _AsyncPostgresSource:
         return [dict(row) for row in rows]
 
     async def egms_pushdown_ready(self) -> bool:
-        """Whether PostGIS predicates on the EGMS foreign table reach the source.
+        """EGMS is read straight from its source database, so spatial predicates always reach the index.
 
-        Without ``extensions=postgis`` on the foreign server every spatial
-        filter pulls all 8.5 million cells across the connection (tens of
-        seconds), so the PostgreSQL path stays off until it is configured.
+        (The foreign-table pushdown check of the deprecated aecs4u-stats mirror is gone.)
         """
-        now = time.monotonic()
-        cached = self._optional_relations_cache.get(("__egms_pushdown__",))
-        if cached is not None and now < cached[1]:
-            return cached[0]
-        row = await self._fetchrow(
-            """
-            SELECT EXISTS (
-                SELECT 1
-                FROM pg_foreign_table ft
-                JOIN pg_class r ON r.oid = ft.ftrelid
-                JOIN pg_namespace n ON n.oid = r.relnamespace
-                JOIN pg_foreign_server fs ON fs.oid = ft.ftserver
-                CROSS JOIN LATERAL unnest(fs.srvoptions) AS option_text
-                WHERE n.nspname = 'geo_surface_change'
-                  AND r.relname = 'egms_subsidenza'
-                  AND left(option_text, 11) = 'extensions='
-                  AND position('postgis' in option_text) > 0
-            ) AS ready
-            """
-        )
-        ready = bool(row and row["ready"])
-        self._optional_relations_cache[("__egms_pushdown__",)] = (ready, now + (300 if ready else 60))
-        return ready
+        return True
 
+    @_on_database("egms")
     async def egms_cells_in_bbox(
         self, west: float, south: float, east: float, north: float, *, limit: int
     ) -> Optional[Dict[str, Any]]:
@@ -3116,7 +2936,7 @@ class _AsyncPostgresSource:
             SELECT mean_velocity, acceleration, risk_class, risk_class_label,
                    velocity_class_label, trend, signal_quality,
                    ST_AsGeoJSON(geom, 7) AS geojson
-            FROM geo_surface_change.egms_subsidenza
+            FROM egms.egms_subsidenza
             WHERE geom && ST_MakeEnvelope(%s, %s, %s, %s, 4326)
             LIMIT %s
             """,
@@ -3142,6 +2962,7 @@ class _AsyncPostgresSource:
             "metadata": {"total_count": len(rows)},
         }
 
+    @_on_database("hazards")
     async def mps04_pga_at_point(
         self,
         lat: float,
@@ -3193,6 +3014,7 @@ class _AsyncPostgresSource:
             "pga_p84_g": row["value_p84"],
         }
 
+    @_on_database("zornade")
     async def omi_zone_at_point(
         self,
         province: str,
@@ -3202,9 +3024,9 @@ class _AsyncPostgresSource:
     ) -> Optional[Dict[str, Any]]:
         """Resolve an OMI zone from the current PostGIS zone table.
 
-        Deprecated (2026-10-21): the table is the Zornade-sourced zornade.zornade_zone_omi.
+        Deprecated (2026-10-21): the table is the Zornade-sourced stats_export.zornade_zone_omi.
         """
-        if not await self._relations_available(("zornade.zornade_zone_omi",)):
+        if not await self._relations_available(("stats_export.zornade_zone_omi",)):
             return None
         code_filter = "AND UPPER(codcom) = UPPER(%s)" if cadastral_code else ""
         params: tuple = (lng, lat)
@@ -3213,7 +3035,7 @@ class _AsyncPostgresSource:
         row = await self._fetchrow(
             f"""
             SELECT codzona, zona_descr
-            FROM zornade.zornade_zone_omi
+            FROM stats_export.zornade_zone_omi
             WHERE ST_Covers(
                 geom,
                 ST_Transform(
@@ -3240,60 +3062,10 @@ class _AsyncPostgresSource:
         }
 
     async def income_profile_by_cadastral_code(self, cadastral_code: str) -> Optional[Dict[str, Any]]:
-        # Prefer the stable MEF source projection so its additional geography
-        # labels and the dedicated average-income foreign tables can be used.
-        serving_profile = await self._serving_income_profile_by_cadastral_code(cadastral_code)
-        if serving_profile is not None:
-            return serving_profile
-        if not await self._relations_available(("facts.tax_fact", "geo.geo_identifier")):
-            return None
-        rows = await self._fetch(
-            """
-            SELECT t.year, t.measure, t.frequency, t.amount
-            FROM facts.tax_fact t
-            JOIN geo.geo_identifier gi
-              ON gi.geo_unit_id = t.municipality_id
-             AND gi.scheme = 'CATASTALE_COMUNE'
-            WHERE UPPER(gi.code) = UPPER(%s)
-            ORDER BY t.year DESC, t.measure
-            """,
-            (cadastral_code.strip().upper(),),
-        )
-        if not rows:
-            return None
-        latest_year = rows[0]["year"]
-        latest = [row for row in rows if row["year"] == latest_year]
-        by_measure = {str(row["measure"]): row for row in latest}
-        taxpayers = (by_measure.get("imponibile") or {}).get("frequency")
-        total_income = (by_measure.get("imponibile") or {}).get("amount")
-        try:
-            mean_income = float(total_income) / float(taxpayers)
-        except (TypeError, ValueError, ZeroDivisionError):
-            mean_income = None
-        distribution = []
-        for row in latest:
-            measure = str(row["measure"] or "")
-            if not measure.startswith("bracket_"):
-                continue
-            try:
-                pct = round(float(row["frequency"]) / float(taxpayers) * 100, 1)
-            except (TypeError, ValueError, ZeroDivisionError):
-                pct = None
-            distribution.append({
-                "bracket": measure.removeprefix("bracket_").replace("_", "–"),
-                "frequency": _postgres_scalar(row["frequency"]),
-                "pct": pct,
-            })
-        return {
-            "cadastral_code": cadastral_code,
-            "year": _postgres_scalar(latest_year),
-            "taxpayers": _postgres_scalar(taxpayers),
-            "mean_taxable_income_eur": round(mean_income, 2) if mean_income is not None else None,
-            "income_distribution": distribution,
-            "dataset_version": f"MEF_IRPEF_{latest_year}",
-            "source": "MEF/IRPEF via aecs4u-stats PostgreSQL via asyncpg",
-        }
+        # Read the MEF source database directly (the Stats-side canonical tax facts are gone).
+        return await self._serving_income_profile_by_cadastral_code(cadastral_code)
 
+    @_on_database("mef_irpef")
     async def _income_reference_averages(
         self,
         *,
@@ -3347,11 +3119,12 @@ class _AsyncPostgresSource:
             for row in rows
         }
 
+    @_on_database("mef_irpef")
     async def _serving_income_profile_by_cadastral_code(
         self, cadastral_code: str
     ) -> Optional[Dict[str, Any]]:
         """Adapt the current wide IRPEF view to the parcel panel's stable shape."""
-        if not await self._relations_available(("serving.irpef_comuni",)):
+        if not await self._relations_available(("mef_irpef.irpef_comuni",)):
             return None
         row = await self._fetchrow(
             """
@@ -3361,7 +3134,7 @@ class _AsyncPostgresSource:
                    bracket_le_0_freq, bracket_0_10k_freq, bracket_10_15k_freq,
                    bracket_15_26k_freq, bracket_26_55k_freq, bracket_55_75k_freq,
                    bracket_75_120k_freq, bracket_over_120k_freq
-            FROM serving.irpef_comuni
+            FROM mef_irpef.irpef_comuni
             WHERE UPPER(cod_catastale) = UPPER(%s)
             ORDER BY anno DESC
             LIMIT 1
@@ -3422,9 +3195,10 @@ class _AsyncPostgresSource:
             "benchmark_average_income_eur": national_average,
             "income_distribution": distribution,
             "dataset_version": f"MEF_IRPEF_{year}" if year is not None else None,
-            "source": "MEF/IRPEF via aecs4u-stats PostgreSQL serving.irpef_comuni",
+            "source": "MEF/IRPEF via aecs4u-stats PostgreSQL mef_irpef.irpef_comuni",
         }
 
+    @_on_database("osm_pois")
     async def _get_poi_relation(self) -> str | None:
         cached = self._poi_relation_cache
         if cached is not None and time.monotonic() < cached[1]:
@@ -3434,6 +3208,7 @@ class _AsyncPostgresSource:
         self._poi_relation_cache = (relation, time.monotonic() + (300 if relation else 60))
         return relation
 
+    @_on_database("osm_pois")
     async def pois_near(self, lat: float, lng: float, radius_km: float = 1.0, categories=None):
         relation = await self._get_poi_relation()
         if relation is None:
@@ -3450,6 +3225,7 @@ class _AsyncPostgresSource:
             })
         return grouped
 
+    @_on_database("census_sections")
     async def census_section_at_point(
         self, lat: float, lng: float, cadastral_code: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
@@ -3458,11 +3234,14 @@ class _AsyncPostgresSource:
         if relation is None:
             return None
         procom = None
-        if cadastral_code and await self._relations_available(("serving.municipalities",)):
-            municipality = await self._fetchrow(
+        if cadastral_code and await self._relations_available(
+            ("stats_export.municipalities",), database="eurostat"
+        ):
+            municipality = await self._fetchrow_in(
+                "eurostat",
                 """
                 SELECT id
-                FROM serving.municipalities
+                FROM stats_export.municipalities
                 WHERE UPPER(cadastral_code) = UPPER(%s)
                 LIMIT 1
                 """,
@@ -3470,11 +3249,14 @@ class _AsyncPostgresSource:
             )
             if municipality is not None:
                 procom = municipality["id"]
-        if procom is None and await self._relations_available(("serving.comuni",)):
-            municipality = await self._fetchrow(
+        if procom is None and await self._relations_available(
+            ("public.v_comuni_map",), database="istat"
+        ):
+            municipality = await self._fetchrow_in(
+                "istat",
                 """
                 SELECT pro_com
-                FROM serving.comuni
+                FROM public.v_comuni_map
                 WHERE ST_Covers(
                     geom,
                     ST_SetSRID(ST_MakePoint(%s, %s), 4326)
@@ -3498,7 +3280,7 @@ class _AsyncPostgresSource:
                 srid_row = await self._fetchrow(
                     """
                     SELECT srid
-                    FROM public.geometry_columns
+                    FROM geometry_columns
                     WHERE f_table_schema = %s
                       AND f_table_name = %s
                       AND f_geometry_column = 'geom'
@@ -3556,6 +3338,7 @@ class _AsyncPostgresSource:
             "source": "ISTAT Permanent Census 2021 via aecs4u-stats PostgreSQL",
         }
 
+    @_on_database("census_sections")
     async def census_sections_for_comune(
         self, procom: int, limit: int = 5000
     ) -> Optional[Dict[str, Any]]:
@@ -3604,6 +3387,7 @@ class _AsyncPostgresSource:
             },
         }
 
+    @_on_database("hazards")
     async def seismic_by_istat_code(self, istat_code: str | int) -> Optional[Dict[str, Any]]:
         """Read the municipality seismic classification from the current hazards view."""
         if not await self._relations_available(("hazards.v_seismic_classification",)):
@@ -3648,113 +3432,15 @@ class _AsyncPostgresSource:
         """Load optional spatial/tax context without leaving the event loop."""
         if not point:
             return None
-        if not await self._relations_available((
-            "geo.geo_identifier", "geo.geo_unit", "serving.municipality_profile",
-        )):
-            return await self._serving_context_for_parcel(
-                national_reference,
-                cadastral_code,
-                point,
-                municipality=municipality,
-                omi=omi,
-                income_profile=income_profile,
-            )
-        row = await self._fetchrow(
-            """
-            SELECT u.id, u.canonical_name, u.unit_type,
-                   gi_istat.code AS istat_code,
-                   gi_cad.code AS cadastral_code,
-                   mp.observation_count, mp.tax_fact_count,
-                   mp.total_imponibile, mp.market_zone_count,
-                   mp.pv_n_buildings, mp.pv_pvout_pessimistic_kwh_year_total,
-                   mp.pv_pvout_modern_kwh_year_total, mp.pv_pvout_per_capita_kwh,
-                   mp.pv_kwp_max_total, mp.pv_high_viability_pct,
-                   mp.pv_medium_viability_pct, mp.pv_low_viability_pct,
-                   mp.pv_not_eligible_pct, mp.pv_observation_count
-            FROM geo.geo_identifier gi_cad
-            JOIN geo.geo_unit u ON u.id = gi_cad.geo_unit_id
-            LEFT JOIN geo.geo_identifier gi_istat
-              ON gi_istat.geo_unit_id = u.id AND gi_istat.scheme = 'ISTAT_COMUNE'
-            LEFT JOIN serving.municipality_profile mp ON mp.geo_unit_id = u.id
-            WHERE gi_cad.scheme = 'CATASTALE_COMUNE'
-              AND UPPER(gi_cad.code) = UPPER(%s)
-            LIMIT 1
-            """,
-            (cadastral_code,),
+        # The Stats-side canonical geo/spatial context is gone; use the source-database context.
+        return await self._serving_context_for_parcel(
+            national_reference,
+            cadastral_code,
+            point,
+            municipality=municipality,
+            omi=omi,
+            income_profile=income_profile,
         )
-        if row is None:
-            return None
-        values = {key: _postgres_scalar(row[key]) for key in row.keys()}
-        municipality_id = values.pop("id")
-        profile_keys = (
-            "observation_count", "tax_fact_count", "total_imponibile", "market_zone_count",
-            "pv_n_buildings", "pv_pvout_pessimistic_kwh_year_total",
-            "pv_pvout_modern_kwh_year_total", "pv_pvout_per_capita_kwh", "pv_kwp_max_total",
-            "pv_high_viability_pct", "pv_medium_viability_pct", "pv_low_viability_pct",
-            "pv_not_eligible_pct", "pv_observation_count",
-        )
-        profile = {key: values.pop(key, None) for key in profile_keys}
-        if values.get("istat_code") and await self._relations_available(("solar.solar_potential_comuni",)):
-            solar_row = await self._fetchrow(_SOLAR_PROFILE_QUERY, (values["istat_code"],))
-            if solar_row:
-                profile.update({key: _postgres_scalar(solar_row[key]) for key in solar_row.keys()})
-                profile["solar_source"] = "aecs4u-stats solar.solar_potential_comuni"
-        x, y = point["lng"], point["lat"]
-        omi_row = await self._fetchrow(
-            """
-            SELECT mz.id, mz.omi_zone_key, mz.valid_from, mz.valid_to,
-                   mz.source_release, mz.dataset_release_id,
-                   mzs.quote_count, mzs.latest_period
-            FROM spatial.market_zone mz
-            LEFT JOIN serving.market_zone_snapshot mzs ON mzs.id = mz.id
-            WHERE mz.municipality_id = %s
-              AND ST_Covers(mz.geom, ST_SetSRID(ST_MakePoint(%s, %s), 4326))
-            LIMIT 1
-            """,
-            (municipality_id, x, y),
-        )
-        postal_row = await self._fetchrow(
-            """
-            SELECT pz.cap
-            FROM spatial.postal_zone pz
-            WHERE pz.municipality_id = %s
-              AND ST_Covers(pz.geom, ST_SetSRID(ST_MakePoint(%s, %s), 4326))
-            LIMIT 1
-            """,
-            (municipality_id, x, y),
-        )
-        tax_rows = await self._fetch(
-            """
-            SELECT year, measure, frequency, amount
-            FROM facts.tax_fact
-            WHERE municipality_id = %s
-            ORDER BY year DESC, measure
-            """,
-            (municipality_id,),
-        )
-        census = await self.census_section_at_point(
-            point["lat"], point["lng"], cadastral_code
-        )
-        municipality = values
-        municipality["profile"] = profile
-        return {
-            "parcel_spine_available": False,
-            "parcel_spine": None,
-            "parcel_spine_reference": national_reference,
-            "municipality": municipality,
-            "municipality_profile": profile,
-            "omi": (
-                {key: _postgres_scalar(omi_row[key]) for key in omi_row.keys()}
-                if omi_row else None
-            ),
-            "postal_code": _postgres_scalar(postal_row["cap"]) if postal_row else None,
-            "tax_facts": [
-                {key: _postgres_scalar(row[key]) for key in row.keys()}
-                for row in tax_rows
-            ],
-            "census": census,
-            "source": "aecs4u-stats PostgreSQL via asyncpg",
-        }
 
     async def _serving_context_for_parcel(
         self,
@@ -3808,12 +3494,14 @@ class _AsyncPostgresSource:
         )
         profile = municipality.get("profile") or {}
         istat_code = municipality.get("istat_code")
-        if istat_code and await self._relations_available(("solar.solar_potential_comuni",)):
+        if istat_code and await self._relations_available(
+            ("public.solar_potential_comuni",), database="solar"
+        ):
             try:
-                solar_row = await self._fetchrow(_SOLAR_PROFILE_QUERY, (istat_code,))
+                solar_row = await self._fetchrow_in("solar", _SOLAR_PROFILE_QUERY, (istat_code,))
                 if solar_row:
                     profile.update({key: _postgres_scalar(solar_row[key]) for key in solar_row.keys()})
-                    profile["solar_source"] = "aecs4u-stats solar.solar_potential_comuni"
+                    profile["solar_source"] = "solar public.solar_potential_comuni"
             except Exception:
                 logger.debug("Solar municipality profile lookup failed", exc_info=True)
         return {
@@ -3839,6 +3527,7 @@ class _AsyncPostgresSource:
             "source": "aecs4u-stats PostgreSQL serving views",
         }
 
+    @_on_database("land_registry")
     async def get_read_model(self, parcel_key: str) -> Optional[Dict[str, Any]]:
         if not await self._read_model_available():
             return None
@@ -3869,6 +3558,7 @@ class _AsyncPostgresSource:
         }
         return payload
 
+    @_on_database("land_registry")
     async def upsert_read_model(
         self, parcel_key: str, payload: Dict[str, Any], source_fingerprint: Optional[str]
     ) -> bool:
@@ -3987,7 +3677,7 @@ async def aget_municipality_solar_potential(istat_code: str) -> dict[str, Any] |
     return {
         "available": True,
         "data": data,
-        "source": "aecs4u-stats solar.solar_potential_comuni",
+        "source": "solar public.solar_potential_comuni",
         "dataset_version": profile.get("solar_data_version"),
         "updated_at": profile.get("solar_updated_at"),
         "match_method": "cadastral municipality code",
@@ -4017,6 +3707,44 @@ async def aget_omi_quotes(comune: str, zona: Optional[str] = None) -> Dict[str, 
             source._retry_at = time.monotonic() + 60
             logger.warning("Async PostgreSQL OMI lookup failed; using local fallback", exc_info=True)
     return await asyncio.to_thread(get_omi_quotes, comune, zona=zona, use_postgres=False)
+
+
+_OMI_QUOTE_FROM = """
+    FROM omi.zone_municipality AS zm
+    JOIN omi.zone_version AS z ON z.zone_municipality_id = zm.zone_municipality_id
+    JOIN omi.period AS p ON p.period_id = z.period_id
+    JOIN omi.quotation_fact AS f ON f.zone_version_id = z.zone_version_id
+    LEFT JOIN omi.property_type AS pt ON pt.property_type_id = f.property_type_id
+    LEFT JOIN omi.conservation_status AS cs ON cs.conservation_status_id = f.conservation_status_id
+    LEFT JOIN omi.prevalent_state AS ps ON ps.prevalent_state_id = f.prevalent_state_id
+"""
+_OMI_QUOTE_COLUMNS = """
+    p.year AS anno, p.semester AS semestre, z.zone_name AS zona,
+    pt.source_code AS cod_tipologia, pt.type_name AS tipologia,
+    cs.status_code AS stato_conservazione, ps.state_code AS stato_prevalente,
+    f.purchase_min::float8 AS prezzo_min, f.purchase_max::float8 AS prezzo_max,
+    f.rental_min::float8 AS locazione_min, f.rental_max::float8 AS locazione_max
+"""
+# Normalised OMI tables, keyed by the 6-digit ISTAT municipality key.
+_OMI_ZONE_HISTORY_SQL = (
+    "SELECT" + _OMI_QUOTE_COLUMNS + _OMI_QUOTE_FROM
+    + "WHERE zm.istat_code = %s AND z.zone_name = %s "
+    + "ORDER BY p.year, p.semester, pt.source_code, cs.status_code"
+)
+_OMI_LATEST_PERIOD_SQL = """
+    SELECT p.year AS anno, p.semester AS semestre
+    FROM omi.zone_municipality AS zm
+    JOIN omi.zone_version AS z ON z.zone_municipality_id = zm.zone_municipality_id
+    JOIN omi.period AS p ON p.period_id = z.period_id
+    WHERE zm.istat_code = %s
+    ORDER BY p.year DESC, p.semester DESC
+    LIMIT 1
+"""
+_OMI_LATEST_QUOTES_SQL = (
+    "SELECT" + _OMI_QUOTE_COLUMNS + _OMI_QUOTE_FROM
+    + "WHERE zm.istat_code = %s AND p.year = %s AND p.semester = %s "
+    + "ORDER BY z.zone_name, pt.source_code, cs.status_code"
+)
 
 
 def _omi_postgres_number(value: Any) -> Optional[float]:
@@ -4498,6 +4226,26 @@ class _PostgresStatsSource(_PostgresPoiSource):
         self._read_model_lock = threading.Lock()
         self._eurostat_relation_cache: tuple[set[str], float] | None = None
         self._eurostat_relation_lock = threading.Lock()
+        self._sibling_lock = threading.Lock()
+        self._siblings: dict[str, "_PostgresStatsSource"] = {}
+
+    def _sibling(self, database: str) -> "_PostgresStatsSource":
+        """Synchronous source on another source-owned database of the same server.
+
+        aecs4u-stats is deprecated; its DSN supplies host and credentials only.
+        ``AECS4U_SOURCE_<DATABASE>_DATABASE_URL`` overrides one database.
+        """
+        with self._sibling_lock:
+            siblings = self._siblings
+            if database not in siblings:
+                override = os.getenv(f"AECS4U_SOURCE_{database.upper()}_DATABASE_URL")
+                if override:
+                    dsn = override.replace("postgresql+asyncpg://", "postgresql://", 1)
+                else:
+                    parts = urlsplit(self.dsn)
+                    dsn = urlunsplit(parts._replace(path=f"/{database}"))
+                siblings[database] = _PostgresStatsSource(dsn, max_connections=self.max_connections)
+            return siblings[database]
 
     def _available_eurostat_relations(self, cursor) -> set[str]:
         cached = self._eurostat_relation_cache
@@ -4513,7 +4261,7 @@ class _PostgresStatsSource(_PostgresPoiSource):
                 SELECT c.relname
                 FROM pg_class AS c
                 JOIN pg_namespace AS n ON n.oid = c.relnamespace
-                WHERE n.nspname = 'eurostat'
+                WHERE n.nspname = 'stats_export'
                   AND c.relname = ANY(%s)
                   AND c.relkind IN ('r', 'v', 'm', 'f', 'p')
                 """,
@@ -4540,12 +4288,12 @@ class _PostgresStatsSource(_PostgresPoiSource):
             return None
         code_column, nuts_2021_column, nuts_2024_column = lookup[unit_type]
         try:
-            with self._connection() as connection:
+            with self._sibling("istat")._connection() as connection:
                 with connection.cursor() as cursor:
                     cursor.execute(
                         f"""
                         SELECT COALESCE({nuts_2021_column}, {nuts_2024_column})
-                        FROM istat.elenco_comuni
+                        FROM stats_export.elenco_comuni
                         WHERE LTRIM({code_column}, '0') = LTRIM(%s::text, '0')
                         ORDER BY numeric_code
                         LIMIT 1
@@ -4572,7 +4320,7 @@ class _PostgresStatsSource(_PostgresPoiSource):
             return None
 
         try:
-            with self._connection() as connection:
+            with self._sibling("istat")._connection() as connection:
                 try:
                     with connection.cursor() as cursor:
                         if unit_type == "municipality":
@@ -4581,7 +4329,7 @@ class _PostgresStatsSource(_PostgresPoiSource):
                                 SELECT name, uts_name, region_name, area_name,
                                        nuts1_2021, nuts2_2021, nuts3_2021,
                                        nuts1_2024, nuts2_2024, nuts3_2024
-                                FROM istat.elenco_comuni
+                                FROM stats_export.elenco_comuni
                                 WHERE numeric_code = %s
                                    OR LTRIM(TRIM(code), '0') = LTRIM(%s::text, '0')
                                 ORDER BY CASE WHEN numeric_code = %s THEN 0 ELSE 1 END
@@ -4601,7 +4349,7 @@ class _PostgresStatsSource(_PostgresPoiSource):
                                 SELECT {name_column} AS name,
                                        {nuts_2021_column} AS nuts_2021,
                                        {nuts_2024_column} AS nuts_2024
-                                FROM istat.elenco_comuni
+                                FROM stats_export.elenco_comuni
                                 WHERE LTRIM({code_column}, '0') = LTRIM(%s::text, '0')
                                 ORDER BY numeric_code
                                 LIMIT 1
@@ -4648,102 +4396,104 @@ class _PostgresStatsSource(_PostgresPoiSource):
                             if area["nuts_code"] and area["nuts_level"]
                         }
                         if not areas_by_code:
-                            return {"available": True, "areas": [], "source": "Eurostat via aecs4u-stats"}
+                            return {"available": True, "areas": [], "source": "Eurostat via the eurostat source database"}
 
-                        available = self._available_eurostat_relations(cursor)
-                        if not available:
-                            return {
-                                "available": False,
-                                "areas": [{
-                                    "nuts_code": nuts_code,
-                                    "nuts_level": area["nuts_level"],
-                                    "level_label": f"NUTS {area['nuts_level']}",
-                                    "area_type": area["area_type"],
-                                    "name": area["name"],
-                                    "datasets": [],
-                                } for nuts_code, area in areas_by_code.items()],
-                                "source": "Eurostat via aecs4u-stats",
-                            }
+                        with self._sibling("eurostat")._connection() as eurostat_connection:
+                            with eurostat_connection.cursor() as cursor:
+                                available = self._available_eurostat_relations(cursor)
+                                if not available:
+                                    return {
+                                        "available": False,
+                                        "areas": [{
+                                            "nuts_code": nuts_code,
+                                            "nuts_level": area["nuts_level"],
+                                            "level_label": f"NUTS {area['nuts_level']}",
+                                            "area_type": area["area_type"],
+                                            "name": area["name"],
+                                            "datasets": [],
+                                        } for nuts_code, area in areas_by_code.items()],
+                                        "source": "Eurostat via the eurostat source database",
+                                    }
 
-                        datasets_by_code: dict[str, dict[str, dict[str, Any]]] = {
-                            nuts_code: {} for nuts_code in areas_by_code
-                        }
-                        for series in _EUROSTAT_ADMINISTRATIVE_SERIES:
-                            relation = series["relation"]
-                            if relation not in available:
-                                continue
-                            relevant_codes = [
-                                nuts_code for nuts_code, area in areas_by_code.items()
-                                if area["nuts_level"] in series["levels"]
-                            ]
-                            if not relevant_codes:
-                                continue
-
-                            dimensions = list(series["dimensions"])
-                            partition = ["nuts_code", *dimensions]
-                            select_columns = ["nuts_code", "year", f"{series['metric']} AS value", *dimensions]
-                            result_columns = ["nuts_code", "year", "value", *dimensions]
-                            conditions = ["nuts_code = ANY(%s)"]
-                            params: list[Any] = [relevant_codes]
-                            for column, operator, value in series["filters"]:
-                                if operator == "ANY":
-                                    conditions.append(f"{column} = ANY(%s)")
-                                    params.append(list(value))
-                                else:
-                                    conditions.append(f"{column} {operator} %s")
-                                    params.append(value)
-                            sql = f"""
-                                SELECT {", ".join(result_columns)}
-                                FROM (
-                                    SELECT {", ".join(select_columns)},
-                                           ROW_NUMBER() OVER (
-                                               PARTITION BY {", ".join(partition)}
-                                               ORDER BY year DESC
-                                           ) AS period_rank
-                                    FROM eurostat.{relation}
-                                    WHERE {" AND ".join(conditions)}
-                                ) AS observations
-                                WHERE period_rank <= 6
-                                ORDER BY nuts_code, year DESC
-                                LIMIT {int(series['max_rows'])}
-                            """
-                            cursor.execute("SAVEPOINT municipality_eurostat_series")
-                            try:
-                                cursor.execute(sql, params)
-                                columns = [column.name for column in cursor.description]
-                                rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
-                            except Exception as exc:
-                                cursor.execute("ROLLBACK TO SAVEPOINT municipality_eurostat_series")
-                                cursor.execute("RELEASE SAVEPOINT municipality_eurostat_series")
-                                logger.debug("Eurostat series %s is unavailable: %s", relation, type(exc).__name__)
-                                continue
-                            cursor.execute("RELEASE SAVEPOINT municipality_eurostat_series")
-                            for row in rows:
-                                nuts_code = str(row.pop("nuts_code"))
-                                area = areas_by_code.get(nuts_code)
-                                if area is None:
-                                    continue
-                                dimensions_data = {
-                                    key: _postgres_scalar(row[key])
-                                    for key in dimensions
-                                    if row.get(key) is not None
+                                datasets_by_code: dict[str, dict[str, dict[str, Any]]] = {
+                                    nuts_code: {} for nuts_code in areas_by_code
                                 }
-                                dataset = datasets_by_code[nuts_code].setdefault(
-                                    relation,
-                                    {
-                                        "id": relation,
-                                        "title": series["title"],
-                                        "source_dataset": series["source_dataset"],
-                                        "rows": [],
-                                    },
-                                )
-                                unit = dimensions_data.get("unit") or series.get("unit_label")
-                                dataset["rows"].append({
-                                    "year": int(row["year"]) if row.get("year") is not None else None,
-                                    "value": _postgres_scalar(row.get("value")),
-                                    "unit": unit,
-                                    "dimensions": dimensions_data,
-                                })
+                                for series in _EUROSTAT_ADMINISTRATIVE_SERIES:
+                                    relation = series["relation"]
+                                    if relation not in available:
+                                        continue
+                                    relevant_codes = [
+                                        nuts_code for nuts_code, area in areas_by_code.items()
+                                        if area["nuts_level"] in series["levels"]
+                                    ]
+                                    if not relevant_codes:
+                                        continue
+
+                                    dimensions = list(series["dimensions"])
+                                    partition = ["nuts_code", *dimensions]
+                                    select_columns = ["nuts_code", "year", f"{series['metric']} AS value", *dimensions]
+                                    result_columns = ["nuts_code", "year", "value", *dimensions]
+                                    conditions = ["nuts_code = ANY(%s)"]
+                                    params: list[Any] = [relevant_codes]
+                                    for column, operator, value in series["filters"]:
+                                        if operator == "ANY":
+                                            conditions.append(f"{column} = ANY(%s)")
+                                            params.append(list(value))
+                                        else:
+                                            conditions.append(f"{column} {operator} %s")
+                                            params.append(value)
+                                    sql = f"""
+                                        SELECT {", ".join(result_columns)}
+                                        FROM (
+                                            SELECT {", ".join(select_columns)},
+                                                   ROW_NUMBER() OVER (
+                                                       PARTITION BY {", ".join(partition)}
+                                                       ORDER BY year DESC
+                                                   ) AS period_rank
+                                            FROM stats_export.{relation}
+                                            WHERE {" AND ".join(conditions)}
+                                        ) AS observations
+                                        WHERE period_rank <= 6
+                                        ORDER BY nuts_code, year DESC
+                                        LIMIT {int(series['max_rows'])}
+                                    """
+                                    cursor.execute("SAVEPOINT municipality_eurostat_series")
+                                    try:
+                                        cursor.execute(sql, params)
+                                        columns = [column.name for column in cursor.description]
+                                        rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+                                    except Exception as exc:
+                                        cursor.execute("ROLLBACK TO SAVEPOINT municipality_eurostat_series")
+                                        cursor.execute("RELEASE SAVEPOINT municipality_eurostat_series")
+                                        logger.debug("Eurostat series %s is unavailable: %s", relation, type(exc).__name__)
+                                        continue
+                                    cursor.execute("RELEASE SAVEPOINT municipality_eurostat_series")
+                                    for row in rows:
+                                        nuts_code = str(row.pop("nuts_code"))
+                                        area = areas_by_code.get(nuts_code)
+                                        if area is None:
+                                            continue
+                                        dimensions_data = {
+                                            key: _postgres_scalar(row[key])
+                                            for key in dimensions
+                                            if row.get(key) is not None
+                                        }
+                                        dataset = datasets_by_code[nuts_code].setdefault(
+                                            relation,
+                                            {
+                                                "id": relation,
+                                                "title": series["title"],
+                                                "source_dataset": series["source_dataset"],
+                                                "rows": [],
+                                            },
+                                        )
+                                        unit = dimensions_data.get("unit") or series.get("unit_label")
+                                        dataset["rows"].append({
+                                            "year": int(row["year"]) if row.get("year") is not None else None,
+                                            "value": _postgres_scalar(row.get("value")),
+                                            "unit": unit,
+                                            "dimensions": dimensions_data,
+                                        })
 
                         areas = []
                         for nuts_code, area in areas_by_code.items():
@@ -4759,7 +4509,7 @@ class _PostgresStatsSource(_PostgresPoiSource):
                         return {
                             "available": True,
                             "areas": areas,
-                            "source": "Eurostat via aecs4u-stats PostgreSQL",
+                            "source": "Eurostat via the eurostat source database",
                         }
                 finally:
                     connection.rollback()
@@ -4780,7 +4530,7 @@ class _PostgresStatsSource(_PostgresPoiSource):
         with self._read_model_lock:
             if self._read_model_ready:
                 return True
-            with self._connection() as connection:
+            with self._sibling("land_registry")._connection() as connection:
                 with connection.cursor() as cursor:
                     cursor.execute("SELECT to_regclass('serving.parcel_enrichment_read_model')")
                     self._read_model_ready = bool((cursor.fetchone() or (None,))[0])
@@ -4788,213 +4538,11 @@ class _PostgresStatsSource(_PostgresPoiSource):
                 logger.error("Serving parcel enrichment read model is not provisioned")
             return self._read_model_ready
 
-    def municipality_by_cadastral_code(self, cadastral_code: str) -> Optional[Dict[str, Any]]:
-        """Read the municipality hierarchy and profile from aecs4u-stats."""
-        with self._connection() as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT u.id,
-                           gi_cad.code AS cadastral_code,
-                           gi_istat.code AS istat_code,
-                           u.canonical_name,
-                           province.canonical_name AS province,
-                           province_istat.code AS province_istat_code,
-                           province_nuts.code AS nuts3,
-                           region.canonical_name AS region,
-                           mp.observation_count,
-                           mp.tax_fact_count,
-                           mp.total_imponibile
-                    FROM geo.geo_identifier gi_cad
-                    JOIN geo.geo_unit u ON u.id = gi_cad.geo_unit_id
-                    LEFT JOIN geo.geo_identifier gi_istat
-                      ON gi_istat.geo_unit_id = u.id
-                     AND gi_istat.scheme = 'ISTAT_COMUNE'
-                    LEFT JOIN geo.geo_relation province_relation
-                      ON province_relation.child_id = u.id
-                     AND province_relation.relation_type = 'contains'
-                    LEFT JOIN geo.geo_unit province
-                      ON province.id = province_relation.parent_id
-                     AND province.unit_type = 'province'
-                    LEFT JOIN geo.geo_identifier province_istat
-                      ON province_istat.geo_unit_id = province.id
-                     AND province_istat.scheme = 'ISTAT_PROVINCIA'
-                    LEFT JOIN geo.geo_identifier province_nuts
-                      ON province_nuts.geo_unit_id = province.id
-                     AND province_nuts.scheme = 'NUTS'
-                    LEFT JOIN geo.geo_relation region_relation
-                      ON region_relation.child_id = province.id
-                     AND region_relation.relation_type = 'contains'
-                    LEFT JOIN geo.geo_unit region
-                      ON region.id = region_relation.parent_id
-                     AND region.unit_type = 'region'
-                    LEFT JOIN serving.municipality_profile mp
-                      ON mp.geo_unit_id = u.id
-                    WHERE gi_cad.scheme = 'CATASTALE_COMUNE'
-                      AND UPPER(gi_cad.code) = UPPER(%s)
-                    LIMIT 1
-                    """,
-                    (cadastral_code.strip().upper(),),
-                )
-                row = cursor.fetchone()
-                if row is None:
-                    return None
-                columns = [column.name for column in cursor.description]
-
-        values = {
-            key: _postgres_scalar(value)
-            for key, value in zip(columns, row, strict=True)
-        }
-        istat_code = values.get("istat_code")
-        try:
-            procom = int(istat_code) if istat_code is not None else None
-        except (TypeError, ValueError):
-            procom = None
-        return {
-            "cadastral_code": values.get("cadastral_code"),
-            "istat_code": istat_code,
-            "official_name": values.get("canonical_name"),
-            "procom": procom,
-            "name": values.get("canonical_name"),
-            "province": values.get("province"),
-            "province_sigla": None,
-            "region": values.get("region"),
-            "nuts3_2021": values.get("nuts3"),
-            "nuts3": values.get("nuts3"),
-            "is_provincial_capital": False,
-            "latitude": None,
-            "longitude": None,
-            "postal_code": None,
-            "population": None,
-            "population_history": [],
-            "profile": {
-                key: values.get(key)
-                for key in ("observation_count", "tax_fact_count", "total_imponibile")
-            },
-            "source": "aecs4u-stats PostgreSQL",
-        }
-
-    def omi_quotes_by_cadastral_code(self, cadastral_code: str) -> Dict[str, Any]:
-        """Read the latest OMI quote period from PostgreSQL fact tables."""
-        with self._connection() as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT mz.omi_zone_key,
-                           q.period,
-                           q.typology,
-                           q.condition,
-                           q.price_min,
-                           q.price_max,
-                           q.rent_min,
-                           q.rent_max
-                    FROM geo.geo_identifier gi_cad
-                    JOIN spatial.market_zone mz
-                      ON mz.municipality_id = gi_cad.geo_unit_id
-                    JOIN facts.market_quote_fact q
-                      ON q.market_zone_id = mz.id
-                    WHERE gi_cad.scheme = 'CATASTALE_COMUNE'
-                      AND UPPER(gi_cad.code) = UPPER(%s)
-                      AND q.period = (
-                          SELECT MAX(q_latest.period)
-                          FROM geo.geo_identifier gi_latest
-                          JOIN spatial.market_zone mz_latest
-                            ON mz_latest.municipality_id = gi_latest.geo_unit_id
-                          JOIN facts.market_quote_fact q_latest
-                            ON q_latest.market_zone_id = mz_latest.id
-                          WHERE gi_latest.scheme = 'CATASTALE_COMUNE'
-                            AND UPPER(gi_latest.code) = UPPER(%s)
-                      )
-                    ORDER BY mz.omi_zone_key, q.typology, q.condition
-                    """,
-                    (cadastral_code.strip().upper(), cadastral_code.strip().upper()),
-                )
-                rows = cursor.fetchall()
-
-        quotes = []
-        for zone, period, typology, condition, price_min, price_max, rent_min, rent_max in rows:
-            period_text = str(period or "")
-            match = re.match(r"^(\d{4})-S(\d)$", period_text)
-            quotes.append({
-                "zona": zone,
-                "period": period_text,
-                "anno": int(match.group(1)) if match else None,
-                "semestre": int(match.group(2)) if match else None,
-                "cod_tipologia": typology,
-                "tipologia": typology,
-                "stato_conservazione": condition,
-                "prezzo_min": _postgres_scalar(price_min),
-                "prezzo_max": _postgres_scalar(price_max),
-                "locazione_min": _postgres_scalar(rent_min),
-                "locazione_max": _postgres_scalar(rent_max),
-            })
-        return {
-            "comune": cadastral_code,
-            "zona": None,
-            "quotes": quotes,
-            "dataset_version": _omi_period_dataset_version({"quotes": quotes}),
-            "source": "Agenzia delle Entrate OMI via aecs4u-stats PostgreSQL",
-        }
-
-    def income_profile_by_cadastral_code(self, cadastral_code: str) -> Optional[Dict[str, Any]]:
-        """Read the latest MEF/IRPEF facts for a municipality from PostgreSQL."""
-        with self._connection() as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT t.year, t.measure, t.frequency, t.amount
-                    FROM facts.tax_fact t
-                    JOIN geo.geo_identifier gi
-                      ON gi.geo_unit_id = t.municipality_id
-                     AND gi.scheme = 'CATASTALE_COMUNE'
-                    WHERE UPPER(gi.code) = UPPER(%s)
-                    ORDER BY t.year DESC, t.measure
-                    """,
-                    (cadastral_code.strip().upper(),),
-                )
-                rows = cursor.fetchall()
-
-        if not rows:
-            return None
-        latest_year = rows[0][0]
-        latest = [row for row in rows if row[0] == latest_year]
-        by_measure = {str(row[1]): row for row in latest}
-        taxpayers = (by_measure.get("imponibile") or (None, None, None, None))[2]
-        total_income = (by_measure.get("imponibile") or (None, None, None, None))[3]
-        try:
-            mean_income = float(total_income) / float(taxpayers)
-        except (TypeError, ValueError, ZeroDivisionError):
-            mean_income = None
-
-        distribution = []
-        for year, measure, frequency, amount in latest:
-            measure_text = str(measure or "")
-            if not measure_text.startswith("bracket_"):
-                continue
-            try:
-                pct = round(float(frequency) / float(taxpayers) * 100, 1)
-            except (TypeError, ValueError, ZeroDivisionError):
-                pct = None
-            distribution.append({
-                "bracket": measure_text.removeprefix("bracket_").replace("_", "–"),
-                "frequency": _postgres_scalar(frequency),
-                "pct": pct,
-            })
-        return {
-            "cadastral_code": cadastral_code,
-            "year": _postgres_scalar(latest_year),
-            "taxpayers": _postgres_scalar(taxpayers),
-            "mean_taxable_income_eur": round(mean_income, 2) if mean_income is not None else None,
-            "income_distribution": distribution,
-            "dataset_version": f"MEF_IRPEF_{latest_year}",
-            "source": "MEF/IRPEF via aecs4u-stats PostgreSQL",
-        }
-
     def get_read_model(self, parcel_key: str) -> Optional[Dict[str, Any]]:
         """Return one PostgreSQL materialized read-model payload."""
         if not self._ensure_read_model():
             return None
-        with self._connection() as connection:
+        with self._sibling("land_registry")._connection() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
@@ -5035,7 +4583,7 @@ class _PostgresStatsSource(_PostgresPoiSource):
         if not self._ensure_read_model():
             return False
         serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
-        with self._connection() as connection:
+        with self._sibling("land_registry")._connection() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
@@ -5052,298 +4600,6 @@ class _PostgresStatsSource(_PostgresPoiSource):
                 )
             connection.commit()
         return True
-
-    def context_for_parcel(
-        self,
-        national_reference: str,
-        cadastral_code: str,
-        point: Optional[Dict[str, float]],
-    ) -> Optional[Dict[str, Any]]:
-        """Load municipality, census, OMI, postal, and tax context."""
-        if not point:
-            return None
-        try:
-            solar_row = None
-            solar_columns = ()
-            with self._connection() as connection:
-                with connection.cursor() as cursor:
-                    cursor.execute("SET statement_timeout = '20s'")
-                    cursor.execute(
-                        """
-                        SELECT u.id, u.canonical_name, u.unit_type,
-                               gi_istat.code AS istat_code,
-                               gi_cad.code AS cadastral_code,
-                               mp.observation_count, mp.tax_fact_count,
-                               mp.total_imponibile, mp.market_zone_count,
-                               mp.pv_n_buildings, mp.pv_pvout_pessimistic_kwh_year_total,
-                               mp.pv_pvout_modern_kwh_year_total, mp.pv_pvout_per_capita_kwh,
-                               mp.pv_kwp_max_total, mp.pv_high_viability_pct,
-                               mp.pv_medium_viability_pct, mp.pv_low_viability_pct,
-                               mp.pv_not_eligible_pct, mp.pv_observation_count
-                        FROM geo.geo_identifier gi_cad
-                        JOIN geo.geo_unit u ON u.id = gi_cad.geo_unit_id
-                        LEFT JOIN geo.geo_identifier gi_istat
-                          ON gi_istat.geo_unit_id = u.id
-                         AND gi_istat.scheme = 'ISTAT_COMUNE'
-                        LEFT JOIN serving.municipality_profile mp ON mp.geo_unit_id = u.id
-                        WHERE gi_cad.scheme = 'CATASTALE_COMUNE'
-                          AND UPPER(gi_cad.code) = UPPER(%s)
-                        LIMIT 1
-                        """,
-                        (cadastral_code,),
-                    )
-                    municipality_row = cursor.fetchone()
-                    if municipality_row is None:
-                        return None
-                    municipality_columns = [column.name for column in cursor.description]
-                    municipality_values = dict(zip(municipality_columns, municipality_row, strict=True))
-
-                    cursor.execute("SELECT to_regclass('solar.solar_potential_comuni')")
-                    solar_relation = cursor.fetchone()
-                    if solar_relation and solar_relation[0] and municipality_values.get("istat_code"):
-                        cursor.execute(_SOLAR_PROFILE_QUERY, (municipality_values["istat_code"],))
-                        solar_row = cursor.fetchone()
-                        solar_columns = tuple(column.name for column in cursor.description)
-
-                    municipality_id = municipality_values["id"]
-                    point_sql = "ST_SetSRID(ST_MakePoint(%s, %s), 4326)"
-
-                    # The cadastral parcel spine is optional and, on older
-                    # deployments, has millions of rows without an index on
-                    # canonical_reference. Do not scan it during enrichment;
-                    # the selected FGB feature already supplies the parcel
-                    # identity and the remaining PostgreSQL joins are indexed.
-                    parcel_row = None
-                    parcel_columns = ()
-
-                    cursor.execute(
-                        f"""
-                        SELECT mz.id, mz.omi_zone_key, mz.valid_from, mz.valid_to,
-                               mz.source_release, mz.dataset_release_id,
-                               mzs.quote_count, mzs.latest_period
-                        FROM spatial.market_zone mz
-                        LEFT JOIN serving.market_zone_snapshot mzs ON mzs.id = mz.id
-                        WHERE mz.municipality_id = %s
-                          AND ST_Covers(mz.geom, {point_sql})
-                        LIMIT 1
-                        """,
-                        (municipality_id, point["lng"], point["lat"]),
-                    )
-                    omi_row = cursor.fetchone()
-                    omi_columns = [column.name for column in cursor.description]
-
-                    cursor.execute(
-                        f"""
-                        SELECT pz.cap
-                        FROM spatial.postal_zone pz
-                        WHERE pz.municipality_id = %s
-                          AND ST_Covers(pz.geom, {point_sql})
-                        LIMIT 1
-                        """,
-                        (municipality_id, point["lng"], point["lat"]),
-                    )
-                    postal_row = cursor.fetchone()
-
-                    cursor.execute(
-                        """
-                        SELECT year, measure, frequency, amount
-                        FROM facts.tax_fact
-                        WHERE municipality_id = %s
-                        ORDER BY year DESC, measure
-                        """,
-                        (municipality_id,),
-                    )
-                    tax_rows = cursor.fetchall()
-
-                    cursor.execute(
-                        """
-                        SELECT CASE
-                                 WHEN to_regclass('census.sections') IS NOT NULL
-                                   THEN 'census.sections'
-                                 WHEN to_regclass('census_sections.sections') IS NOT NULL
-                                   THEN 'census_sections.sections'
-                               END
-                        """
-                    )
-                    census_relation_row = cursor.fetchone()
-                    census_relation = census_relation_row[0] if census_relation_row else None
-                    census_row = None
-                    census_columns = []
-                    if census_relation is not None:
-                        # The relation name comes from the two allow-listed
-                        # schemas above; geometry uses its declared SRID.
-                        cursor.execute(
-                            f"""
-                            SELECT s.*, ST_Area(s.geom)::double precision AS area_sqm
-                            FROM {census_relation} s
-                            WHERE s.procom = %s
-                              AND ST_Covers(
-                                    s.geom,
-                                    ST_Transform(
-                                        {point_sql}, ST_SRID(s.geom)
-                                    )
-                                  )
-                            LIMIT 1
-                            """,
-                            (
-                                municipality_values["istat_code"],
-                                point["lng"], point["lat"],
-                            ),
-                        )
-                        census_row = cursor.fetchone()
-                        census_columns = [column.name for column in cursor.description]
-
-            municipality = {
-                key: _postgres_scalar(value)
-                for key, value in municipality_values.items()
-                if key != "id"
-            }
-            profile_keys = (
-                "observation_count", "tax_fact_count", "total_imponibile",
-                "market_zone_count", "pv_n_buildings",
-                "pv_pvout_pessimistic_kwh_year_total", "pv_pvout_modern_kwh_year_total",
-                "pv_pvout_per_capita_kwh", "pv_kwp_max_total", "pv_high_viability_pct",
-                "pv_medium_viability_pct", "pv_low_viability_pct", "pv_not_eligible_pct",
-                "pv_observation_count",
-            )
-            profile = {key: municipality.pop(key, None) for key in profile_keys}
-            if solar_row:
-                profile.update({
-                    key: _postgres_scalar(value)
-                    for key, value in zip(solar_columns, solar_row, strict=True)
-                })
-                profile["solar_source"] = "aecs4u-stats solar.solar_potential_comuni"
-            omi = None
-            if omi_row:
-                omi = {
-                    key: _postgres_scalar(value)
-                    for key, value in zip(omi_columns, omi_row, strict=True)
-                }
-            census = None
-            if census_row:
-                properties = {
-                    key: _postgres_scalar(value)
-                    for key, value in zip(census_columns, census_row, strict=True)
-                    if key != "geom"
-                }
-                properties["ratios"] = _census_ratios(properties)
-                census = {"type": "Feature", "properties": properties, "geometry": None}
-            tax = [
-                {
-                    key: _postgres_scalar(value)
-                    for key, value in zip(("year", "measure", "frequency", "amount"), row, strict=True)
-                }
-                for row in tax_rows
-            ]
-            return {
-                "parcel_spine_available": parcel_row is not None,
-                "parcel_spine": {
-                    key: _postgres_scalar(value)
-                    for key, value in zip(parcel_columns, parcel_row, strict=True)
-                } if parcel_row else None,
-                "parcel_spine_reference": national_reference,
-                "municipality": municipality,
-                "municipality_profile": profile,
-                "omi": omi,
-                "postal_code": _postgres_scalar(postal_row[0]) if postal_row else None,
-                "tax_facts": tax,
-                "census": census,
-                "source": "aecs4u-stats PostgreSQL",
-            }
-        except Exception as exc:
-            # A failed context lookup must suppress the optional write-back
-            # attempt below.  Without this circuit-breaker, an unreachable
-            # PostgreSQL source is contacted once here and again by
-            # ``upsert_read_model`` while the local FGB/SQLite fallback is
-            # already sufficient to serve the panel.  The two connection
-            # timeouts can exceed the frontend's request timeout and make the
-            # otherwise available coverage appear empty.
-            self._retry_at = time.monotonic() + 60
-            logger.warning("Postgres parcel context lookup failed for %s: %s", cadastral_code, exc)
-            return None
-
-
-def _external_postgres_dsn(
-    *names: str,
-    sibling_env: Optional[tuple[Path, str]] = None,
-) -> Optional[str]:
-    """Read a separately configured read-only PostgreSQL source.
-
-    These databases are not part of ``aecs4u-stats`` and must never be
-    confused with the application's ``DATABASE_URL``.  Supporting the
-    producer projects' existing names makes deployment configuration simple,
-    while the AECS4U-prefixed names are the recommended land-registry names.
-    """
-    for name in names:
-        value = os.getenv(name, "").strip()
-        if value.startswith(("postgres://", "postgresql://", "postgresql+")):
-            return value
-    # Local checkouts keep the source-specific credentials in their own
-    # repository .env files. Read only the explicitly named source variable;
-    # in particular, never import a sibling DATABASE_URL into this process.
-    if sibling_env:
-        path, name = sibling_env
-        try:
-            from dotenv import dotenv_values
-
-            value = str(dotenv_values(path).get(name) or "").strip()
-            if value.startswith(("postgres://", "postgresql://", "postgresql+")):
-                return value
-        except (OSError, TypeError, ValueError):
-            pass
-    return None
-
-
-def _external_postgres_lookup_isolated(
-    source_name: str,
-    dsn: str,
-    national_reference: str,
-    municipality: Optional[Dict[str, Any]],
-    timeout: float = 12,
-) -> Dict[str, Any]:
-    """Query an external PostgreSQL source outside the API process.
-
-    ``psycopg2-binary`` contains native libpq code.  A malformed/incompatible
-    native client can terminate the interpreter with SIGSEGV, which cannot be
-    caught by Python's exception handling or by ``asyncio.wait_for``.  The
-    external OpenData/PVP databases are optional, so process isolation is the
-    appropriate failure boundary: a crashed worker becomes an unavailable
-    source while the map/API remains alive.
-    """
-    request = json.dumps({
-        "source": source_name,
-        "dsn": dsn,
-        "national_reference": national_reference,
-        "municipality": municipality,
-    })
-    try:
-        completed = subprocess.run(
-            [sys.executable, "-m", "land_registry.external_postgres_worker"],
-            input=request,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-            env=os.environ.copy(),
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        logger.warning("External %s PostgreSQL worker failed: %s", source_name, exc)
-        return _external_unavailable(f"{source_name} PostgreSQL")
-
-    if completed.returncode != 0:
-        logger.warning(
-            "External %s PostgreSQL worker exited with code %s%s",
-            source_name,
-            completed.returncode,
-            " (native crash)" if completed.returncode < 0 else "",
-        )
-        return _external_unavailable(f"{source_name} PostgreSQL")
-    try:
-        result = json.loads(completed.stdout)
-    except (TypeError, ValueError, json.JSONDecodeError):
-        logger.warning("External %s PostgreSQL worker returned invalid JSON", source_name)
-        return _external_unavailable(f"{source_name} PostgreSQL")
-    return result if isinstance(result, dict) else _external_unavailable(f"{source_name} PostgreSQL")
 
 
 class _ExternalPostgresSource(_PostgresPoiSource):
@@ -7075,11 +6331,11 @@ async def aenrichment_status() -> Dict[str, Any]:
         probe.cancel()
         raise
     source = await _get_async_postgres_source()
-    for key, relations, needs_pushdown in (
-        ("hazards_mps04", _MPS04_POSTGRES_RELATIONS, False),
-        ("hazards_ispra_mosaics", _ISPRA_POSTGRES_RELATIONS, False),
-        ("egms_subsidence", _EGMS_POSTGRES_RELATIONS, True),
-        ("ispra_coastal_dynamics", _COASTAL_DYNAMICS_RELATIONS, False),
+    for key, relations, needs_pushdown, relation_database in (
+        ("hazards_mps04", _MPS04_POSTGRES_RELATIONS, False, "hazards"),
+        ("hazards_ispra_mosaics", _ISPRA_POSTGRES_RELATIONS, False, "hazards"),
+        ("egms_subsidence", _EGMS_POSTGRES_RELATIONS, True, "egms"),
+        ("ispra_coastal_dynamics", _COASTAL_DYNAMICS_RELATIONS, False, None),
     ):
         if status.get(key, {}).get("available"):
             continue
@@ -7098,11 +6354,13 @@ async def aenrichment_status() -> Dict[str, Any]:
                 **status.get(key, {}),
                 **coast_status,
                 "source": _COASTAL_DYNAMICS_SOURCE,
-                "storage": "aecs4u-stats PostgreSQL",
+                "storage": "PostgreSQL (Stats-owned spatial schema)",
             }
             continue
         try:
-            provisioned = bool(await asyncio.wait_for(source._relations_available(relations), timeout=6))
+            provisioned = bool(await asyncio.wait_for(
+                source._relations_available(relations, database=relation_database), timeout=6
+            ))
             if provisioned and needs_pushdown:
                 provisioned = bool(await asyncio.wait_for(source.egms_pushdown_ready(), timeout=6))
         except Exception:
@@ -7377,23 +6635,6 @@ def get_municipality_by_cadastral_code(
 
     Returns ``None`` when the store is missing or the code is unknown.
     """
-    postgres_source = _get_postgres_stats_source() if use_postgres else None
-    if postgres_source is not None and postgres_source.available():
-        try:
-            result = _call_with_hard_timeout(
-                postgres_source.municipality_by_cadastral_code,
-                6,
-                cadastral_code,
-            )
-            if result is not None:
-                return result
-        except Exception:
-            postgres_source._retry_at = time.monotonic() + 60
-            logger.warning(
-                "Postgres municipality lookup failed; using local ISTAT fallback",
-                exc_info=True,
-            )
-
     if not istat_db_available():
         return None
 
@@ -7998,26 +7239,6 @@ def get_omi_quotes(
     ``comune`` accepts either the catasto code (e.g. ``C773``) or the ISTAT
     numeric code. Pass ``zona`` (e.g. ``B1``) to filter to one OMI zone.
     """
-    postgres_source = _get_postgres_stats_source() if use_postgres else None
-    if postgres_source is not None and postgres_source.available():
-        try:
-            result = _call_with_hard_timeout(
-                postgres_source.omi_quotes_by_cadastral_code,
-                8,
-                comune,
-            )
-            result["quotes"] = _omi_quote_derived_metrics(result.get("quotes", []))
-            if zona:
-                result["quotes"] = [quote for quote in result["quotes"] if str(quote.get("zona", "")).upper() == zona.strip().upper()]
-            result["derived_metrics_model"] = "omi-quote-metrics-v1"
-            return result
-        except Exception:
-            postgres_source._retry_at = time.monotonic() + 60
-            logger.warning(
-                "Postgres OMI lookup failed; using local OMI fallback",
-                exc_info=True,
-            )
-
     db_path = _omi_sqlite_path()
     latest = _latest_omi_semester(db_path)
     kwargs = {"db_path": db_path}
@@ -8249,22 +7470,6 @@ def get_income_profile(
     MEF/IRPEF income profile for a comune by catasto code: taxpayer count,
     mean taxable income, and the 8-bracket income distribution.
     """
-    postgres_source = _get_postgres_stats_source() if use_postgres else None
-    if postgres_source is not None and postgres_source.available():
-        try:
-            result = _call_with_hard_timeout(
-                postgres_source.income_profile_by_cadastral_code,
-                8,
-                cadastral_code,
-            )
-            if result is not None and (year is None or result.get("year") == year):
-                return _income_profile_with_benchmark(result)
-        except Exception:
-            postgres_source._retry_at = time.monotonic() + 60
-            logger.warning(
-                "Postgres IRPEF lookup failed; using local MEF fallback",
-                exc_info=True,
-            )
     result = income_by_cadastral_code(cadastral_code, year=year, db_path=_mef_sqlite_path())
     if result is not None and result.get("year") and not result.get("dataset_version"):
         result["dataset_version"] = f"MEF_IRPEF_{result['year']}"
@@ -8323,7 +7528,7 @@ _MPS04_BASE: Dict[str, Any] = {
 }
 _MPS04_POSTGRES_RELATIONS = ("hazards.mps04_points", "hazards.mps04_hazard_curve")
 _ISPRA_POSTGRES_RELATIONS = ("hazards.landslide_hazard", "hazards.flood_hazard")
-_EGMS_POSTGRES_RELATIONS = ("geo_surface_change.egms_subsidenza",)
+_EGMS_POSTGRES_RELATIONS = ("egms.egms_subsidenza",)
 _COASTAL_DYNAMICS_RELATIONS = ("spatial.ispra_coastal_dynamics",)
 _COASTAL_DYNAMICS_SOURCE = "ISPRA Dinamica Litoranea 2006-2020"
 _COASTAL_DYNAMICS_SOURCE_URL = (
@@ -8372,7 +7577,7 @@ async def aget_parcel_hazard_intersections(geometry: Dict[str, Any]) -> Dict[str
 
 
 async def aget_parcel_subsidence_intersections(geometry: Dict[str, Any]) -> Dict[str, Any]:
-    """PostgreSQL-first parcel EGMS summary, used only once PostGIS pushdown is set up."""
+    """PostgreSQL-first parcel EGMS summary, read straight from the EGMS source database."""
     bounds = _parcel_bounds(geometry)
     source = await _get_async_postgres_source() if bounds else None
     if bounds and source is not None and time.monotonic() >= source._retry_at:
@@ -8391,16 +7596,6 @@ async def aget_parcel_subsidence_intersections(geometry: Dict[str, Any]) -> Dict
                 )
                 return {**result, "storage": _POSTGRES_STORAGE_LABEL}
     result = await asyncio.to_thread(get_parcel_subsidence_intersections, geometry)
-    if result.get("reason") == "egms_not_built" and source is not None:
-        # Say why the shared database was not used, so an operator can act on it.
-        try:
-            provisioned = await asyncio.wait_for(
-                source._relations_available(_EGMS_POSTGRES_RELATIONS), timeout=6
-            )
-        except Exception:
-            provisioned = False
-        if provisioned:
-            return {**result, "reason": "egms_postgres_pushdown_not_configured"}
     return result
 
 
@@ -10217,12 +9412,8 @@ def _build_parcel_enrichment(
         else income_override
     )
 
-    postgres_source = _get_postgres_stats_source()
-    postgres_context = (
-        None if postgres_context_override is _MISSING else postgres_context_override
-    )
-    if postgres_context_override is _MISSING and postgres_source is not None and postgres_source.available():
-        postgres_context = postgres_source.context_for_parcel(national_reference, cadastral_code, point)
+    # The Stats-side canonical context query is gone with aecs4u-stats; a context is only used when supplied.
+    postgres_context = None if postgres_context_override is _MISSING else postgres_context_override
 
     # PostgreSQL is authoritative when its indexed municipality context is
     # available. The local ISTAT profile remains only a compatibility path
@@ -10454,7 +9645,7 @@ def _build_parcel_enrichment(
         "solar": _detail_block(
             solar_data,
             source=(municipality_profile or {}).get("solar_source")
-            or "aecs4u-stats serving.municipality_profile",
+            or "ISTAT / Eurostat municipality profile",
             dataset_version=(municipality_profile or {}).get("solar_data_version")
             if isinstance(municipality_profile, dict) else None,
             updated_at=(municipality_profile or {}).get("solar_updated_at")

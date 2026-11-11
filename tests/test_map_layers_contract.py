@@ -22,24 +22,25 @@ def test_catalog_covers_every_allow_listed_spatial_relation():
     # sources) instead of the former canonical ``facts``/``serving`` relations.
     tables = {layer.table for layer in MAP_LAYERS}
     assert {
-        "istat.v_ripartizioni_map",
-        "istat.v_regioni_map",
-        "istat.v_province_map",
-        "istat.v_comuni_map",
+        "public.v_ripartizioni_map",
+        "public.v_regioni_map",
+        "public.v_province_map",
+        "public.v_comuni_map",
         "spatial.cadastral_parcel",
         "spatial.cadastral_sheet",
-        "sezioni_urbane.sezioni_urbane",
-        "zornade.omi_market_zone_map",
-        "cap_subcomunali.cap_subcomunali",
+        "public.sezioni_urbane",
+        "zornade.zone_omi",
+        "stats_export.cap_subcomunali",
         "hazards.flood_hazard",
         "hazards.landslide_hazard",
         "hazards.mps04_points",
         "hazards.v_seismic_classification_map",
-        "geo_surface_change.egms_subsidenza",
-        "census.sections",
+        "egms.egms_subsidenza",
+        "census_sections.sections",
         "spatial.protection_area",
-        "solar.solar_potential_comuni",
-        "agenziademanio.concessions",
+        "lr_map.v_solar_potential_comuni_map",
+        "lr_map.v_mef_income_comuni_map",
+        "agenziademanio.v_concession_map_features",
         "public.r19__addresses",
         "public.r19__corine_clc2018",
     } == tables
@@ -115,7 +116,7 @@ def test_boundary_tile_joins_unit_name_and_type():
 
     # One union over the region, province and municipality views; each branch
     # names its own level, so no join to a unit table is needed.
-    for view in ("istat.v_regioni_map", "istat.v_province_map", "istat.v_comuni_map"):
+    for view in ("public.v_regioni_map", "public.v_province_map", "public.v_comuni_map"):
         assert view in connection.sql
     for level in ("region", "province", "municipality"):
         assert f"'{level}'::text AS unit_type" in connection.sql
@@ -157,7 +158,7 @@ def test_mvt_query_is_allowlisted_and_attribute_bearing():
     source = PostgresMapLayerSource(_ConnectionSource(connection))
 
     assert asyncio.run(source.read_mvt("market-zones", 12, 2100, 1500)) == b"mvt"
-    assert "zornade.omi_market_zone_map" in connection.sql
+    assert "zornade.zone_omi" in connection.sql
     assert '"codzona"' in connection.sql
     assert "ST_AsMVT" in connection.sql
     assert "%s" not in connection.sql and "$2::text" in connection.sql
@@ -397,7 +398,7 @@ def test_municipality_search_returns_compact_profiles_with_centroids():
     # Substring name match first ($1), ISTAT prefix ($2), then the exact and
     # prefix ranking terms; binding the bare query to $1 made "Rom" find nothing.
     assert "t.name ILIKE $1" in connection.sql and "t.pro_com::text ILIKE $2" in connection.sql
-    assert "FROM istat.v_comuni_map AS t" in connection.sql
+    assert "FROM public.v_comuni_map AS t" in connection.sql
     assert connection.params == ("%Roma%", "Roma%", "Roma", "Roma%", 20)
 
 
@@ -792,21 +793,15 @@ def test_feature_details_quote_mixed_case_id_column():
     assert connection.params == (26937,)
 
 
-def test_market_zones_prefer_the_indexed_copy_and_fall_back_to_the_foreign_table():
-    # The foreign OMI table cannot be indexed and made every tile a 3-6 s remote
-    # scan. The layer reads the local copy when it exists.
+def test_market_zones_read_the_omi_source_table_directly():
+    # The layer used to read a Stats-side materialized copy of a foreign-table chain. It now reads the omi
+    # database's indexed zornade.zone_omi, with no fallback relations.
+    from land_registry.map_layers import _DIRECT_LAYER_SOURCES
+
     layer = get_map_layer("market-zones")
-    assert layer.table == "zornade.omi_market_zone_map"
-    assert layer.fallback_tables == ("zornade.zornade_zone_omi",)
-
-    class _MissingCopy(_Connection):
-        async def fetchval(self, sql, *params):
-            self._record(sql, params)
-            return None if params == ("zornade.omi_market_zone_map",) else params[0]
-
-    source = PostgresMapLayerSource(_ConnectionSource(_MissingCopy()))
-    relation = asyncio.run(source._resolve_relation_for(layer, source._source_for(layer)))
-    assert relation == "zornade.zornade_zone_omi"
+    assert layer.table == "zornade.zone_omi"
+    assert layer.fallback_tables == ()
+    assert _DIRECT_LAYER_SOURCES["market-zones"] == ("omi", "zornade.zone_omi")
 
 
 def test_egms_layer_offers_selectable_colour_modes():

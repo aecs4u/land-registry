@@ -215,7 +215,7 @@ def test_solar_block_exposes_only_available_municipal_aggregates(monkeypatch):
     assert solar["data"] == profile
     assert solar["spatial_resolution"] == "municipality"
     assert solar["match_method"] == "municipality"
-    assert solar["source"] == "aecs4u-stats serving.municipality_profile"
+    assert solar["source"] == "ISTAT / Eurostat municipality profile"
     assert solar["dataset_version"] == "solar-2026"
     assert solar["updated_at"] == "2026-09-30"
 

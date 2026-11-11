@@ -24,8 +24,11 @@ from land_registry.datashader_service import DatashaderTileService
 
 
 @pytest.fixture
-def service():
-    """Service with no db."""
+def service(monkeypatch):
+    """Service with no db (the PostGIS boundary source is disabled so a local .env cannot reach a real database)."""
+    from land_registry.datashader_service import PostgresCadastralBoundarySource
+
+    monkeypatch.setattr(PostgresCadastralBoundarySource, "from_environment", classmethod(lambda cls: None))
     return DatashaderTileService(cadastral_db=None)
 
 

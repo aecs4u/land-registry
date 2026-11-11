@@ -109,7 +109,7 @@ async def test_unprovisioned_hazards_fall_back_to_the_local_store(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_egms_without_postgis_pushdown_reports_why(monkeypatch):
+async def test_egms_source_unavailable_falls_back_to_local_reason(monkeypatch):
     _use_source(monkeypatch, _Source(egms=None, provisioned=True))
     monkeypatch.setattr(
         stats_service, "get_parcel_subsidence_intersections",
@@ -119,7 +119,7 @@ async def test_egms_without_postgis_pushdown_reports_why(monkeypatch):
     result = await stats_service.aget_parcel_subsidence_intersections(PARCEL)
 
     assert result["available"] is False
-    assert result["reason"] == "egms_postgres_pushdown_not_configured"
+    assert result["reason"] == "egms_not_built"
 
 
 @pytest.mark.asyncio

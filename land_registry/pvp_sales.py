@@ -8,6 +8,10 @@ repeating the detail view's indexed lookups for every sale. The map reads
 geocoded rows once,
 keeps a compact in-memory copy (refreshed hourly, the last good copy kept if
 a refresh fails) and filters that copy per request.
+
+Both live views geocode every sale on each read. When the materialized copy
+``pvp.map_sale_points_local`` exists in aecs4u-stats it is the only bulk
+source read; the live views remain the fallback while it does not exist.
 """
 
 from __future__ import annotations
@@ -30,6 +34,11 @@ from land_registry.map_layers import _asyncpg_sql, _AsyncpgConnectionSource, get
 log = logging.getLogger(__name__)
 
 SALES_RELATION = "pvp.v_map_sales"
+# Materialized copy of pvp.v_map_sale_points in aecs4u-stats
+# (scripts/sql/pvp-map-sale-points-local-copy.sql). The live views geocode
+# every sale on each read and can exceed the load's time limit; once the copy
+# exists it is the only bulk source used.
+LOCAL_POINTS_RELATION = "pvp.map_sale_points_local"
 
 # Mainland Italy, Sardinia, Sicily and the minor islands.  Rows outside are
 # geocoding placeholders ((1, 1), (683, 684), ...) or foreign addresses.
@@ -155,6 +164,15 @@ def _period_start_end(period: str, today: date) -> tuple[Optional[date], Optiona
     return None, None
 
 
+def _is_timeout(exc: BaseException) -> bool:
+    """True for a client timeout or a server-side statement cancellation."""
+    return (
+        isinstance(exc, (asyncio.TimeoutError, TimeoutError))
+        or type(exc).__name__ == "QueryCanceledError"
+        or "statement timeout" in str(exc).lower()
+    )
+
+
 class PvpSalesStore:
     """Compact, periodically refreshed copy of the geocoded PVP sales."""
 
@@ -179,6 +197,7 @@ class PvpSalesStore:
         self._active_source: Any = connection_source
         self._active_relation = SALES_RELATION
         self._source_candidates: Optional[list[tuple[Any, str]]] = None
+        self._local_copy_source: Any = None
         self.last_error: Optional[str] = None
         self._failed_at: Optional[float] = None
 
@@ -190,8 +209,8 @@ class PvpSalesStore:
             return self._source_candidates
 
         # The enriched PVP database owns the complete view. Prefer its direct
-        # publication when configured; aecs4u-stats can serve the same view
-        # through postgres_fdw as a deployment-compatible fallback.
+        # publication when configured or derivable from the server settings;
+        # the deprecated aecs4u-stats copy is only the last-resort fallback.
         names = (
             "AECS4U_PVP_ENRICHED_POSTGRES_DSN",
             "PVP_ENRICHED_MODELVIEW_POSTGRES_DSN",
@@ -229,12 +248,20 @@ class PvpSalesStore:
                 break
 
         candidates: list[tuple[Any, str]] = []
+        layer_source = get_map_layer_source()
         if dsn.startswith(("postgres://", "postgresql://", "postgresql+")):
             pvp_source = _AsyncpgConnectionSource(dsn)
             candidates.extend((pvp_source, relation) for relation in ("modelview.v_map_sales", "public.v_map_sales"))
-        stats_source = get_map_layer_source().connection_source
+        else:
+            # No explicit DSN: use the pvp_enriched database on the same server
+            # (the stats DSN supplies host and credentials only).
+            derived = layer_source._database_source("pvp_enriched")
+            if derived is not None and derived is not layer_source.connection_source:
+                candidates.append((derived, "modelview.v_map_sales"))
+        stats_source = layer_source.connection_source
         if stats_source is not None:
             candidates.append((stats_source, SALES_RELATION))
+            self._local_copy_source = stats_source
         self._source_candidates = candidates
         return candidates
 
@@ -339,17 +366,25 @@ class PvpSalesStore:
         west, south, east, north = ITALY_BOUNDS
         failures = []
         published: Optional[dict[str, Any]] = None
-        candidates = [
+        sources = self._sources()
+        # (source, bulk relation, detail relation); the local copy has no detail
+        # columns, so sale details keep using the live views.
+        candidates: list[tuple[Any, str, Optional[str]]] = []
+        if self._local_copy_source is not None:
+            candidates.append((self._local_copy_source, LOCAL_POINTS_RELATION, None))
+        candidates.extend(
             (source, relation, detail_relation)
-            for source, detail_relation in self._sources()
+            for source, detail_relation in sources
             for relation in (detail_relation.replace("v_map_sales", "v_map_sale_points"), detail_relation)
-        ]
+        )
         for source, relation, detail_relation in candidates:
+            relation_exists = False
             try:
                 async with source.connection() as connection:
                     columns = await self._columns(connection, relation)
                     if not columns:
                         raise RuntimeError(f"{relation} is not published in this database")
+                    relation_exists = True
                     if "sale_id" not in columns:
                         raise RuntimeError(f"{relation} has no sale_id column")
                     latitude, longitude = self._location_sql(columns, relation)
@@ -392,17 +427,30 @@ class PvpSalesStore:
                             else "pvp_enriched_modelview" if detail_relation == "public.v_map_sales"
                             else "aecs4u-stats"
                         )
-                        self._active_source, self._active_relation = source, detail_relation
+                        if detail_relation is not None:
+                            self._active_source, self._active_relation = source, detail_relation
+                        else:
+                            # sale_detail() finds and pins the first live view that answers.
+                            self._active_source = None
                         published = snapshot
                         self._publish(snapshot)
                         log.info(
                             "PVP sales loaded from %s: %d geocoded sales in %.0f ms",
                             relation, len(snapshot["points"]), (time.perf_counter() - started) * 1000,
                         )
+                        sale_ids = [row["sale_id"] for row in rows if row["sale_id"] is not None]
                         asset_references = []
                         if relation in {"modelview.v_map_sale_points", "modelview.v_map_sales"}:
+                            asset_references = await self._asset_cadastral_references(connection, sale_ids)
+                if relation == LOCAL_POINTS_RELATION:
+                    # The asset descriptions live only in the enriched database.
+                    modelview_source = next(
+                        (candidate for candidate, detail in sources if detail == "modelview.v_map_sales"), None
+                    )
+                    if modelview_source is not None:
+                        async with modelview_source.connection() as modelview_connection:
                             asset_references = await self._asset_cadastral_references(
-                                connection, [row["sale_id"] for row in rows if row["sale_id"] is not None]
+                                modelview_connection, sale_ids
                             )
                 cadastral_points = await self._resolve_cadastral_points(asset_references)
                 refined = self._with_cadastral_points(snapshot, cadastral_points)
@@ -421,6 +469,11 @@ class PvpSalesStore:
                     return published
                 failures.append(f"{relation}: {exc}")
                 log.debug("PVP map source %s unavailable: %s", relation, exc)
+                if (relation == LOCAL_POINTS_RELATION and relation_exists) or _is_timeout(exc):
+                    # The remaining candidates are the live views, which are
+                    # slower still: falling through would only queue more
+                    # multi-minute queries. Back off and retry this source.
+                    break
         raise RuntimeError("No usable PVP map view found (" + "; ".join(failures) + ")")
 
     @staticmethod
@@ -465,11 +518,16 @@ class PvpSalesStore:
                AND asset.description ~* '(particella|part\.?|p\.lla|mappale|mapp\.?)[[:space:]]*[0-9]+'
         """)
         try:
-            rows = await connection.fetch(sql, sale_ids, timeout=120)
+            # Map-layer pools default to an 8s server-side statement_timeout.
+            # The per-fetch asyncpg timeout does not override PostgreSQL's
+            # setting, so lift it locally for this optional, national lookup.
+            async with connection.transaction():
+                await connection.execute("SET LOCAL statement_timeout = '120s'")
+                rows = await connection.fetch(sql, sale_ids, timeout=120)
         except Exception:
             # Older/enriched installations can omit one of the modelview
             # relations. Auction address points remain usable in that case.
-            log.info("PVP asset cadastral references are unavailable", exc_info=True)
+            log.info("PVP asset cadastral reference lookup failed", exc_info=True)
             return []
         return [
             (

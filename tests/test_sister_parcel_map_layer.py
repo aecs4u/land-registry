@@ -37,7 +37,7 @@ class _SisterConnection:
             return "spatial.cadastral_parcel"
         if "information_schema.columns" in sql:
             return True
-        if "to_regclass('sister.v_sister_property_by_cadastral_parcel')" in sql:
+        if "to_regclass('sister_legacy.v_sister_property_by_cadastral_parcel')" in sql:
             return True
         raise AssertionError(f"Unexpected fetchval query: {sql}")
 
@@ -45,7 +45,7 @@ class _SisterConnection:
         self.queries.append((sql, params))
         if "SELECT t.id, t.canonical_reference" in sql:
             return self.candidate_rows
-        if "FROM sister.v_sister_property_by_cadastral_parcel" in sql:
+        if "FROM sister_legacy.v_sister_property_by_cadastral_parcel" in sql:
             return self.sister_rows
         raise AssertionError(f"Unexpected fetch query: {sql}")
 
@@ -73,7 +73,7 @@ def test_sister_overlay_matches_fixed_width_sheet_and_section():
     assert feature["geometry"]["type"] == "Polygon"
     sister_sql, sister_params = next(
         (sql, params) for sql, params in connection.queries
-        if "FROM sister.v_sister_property_by_cadastral_parcel" in sql
+        if "FROM sister_legacy.v_sister_property_by_cadastral_parcel" in sql
     )
     assert "upper(trim(coalesce(section, ''))) = ANY($7)" in sister_sql
     assert "28" in sister_params[2]
@@ -124,13 +124,13 @@ class _VisuraConnection:
         self.queries = []
 
     async def fetchval(self, sql, *params):
-        if "to_regclass('sister.v_sister_document_by_cadastral_parcel')" in sql:
+        if "to_regclass('sister_legacy.v_sister_document_by_cadastral_parcel')" in sql:
             return True
         raise AssertionError(f"Unexpected fetchval query: {sql}")
 
     async def fetch(self, sql, *params):
         self.queries.append((sql, params))
-        if "FROM sister.v_sister_document_by_cadastral_parcel" in sql:
+        if "FROM sister_legacy.v_sister_document_by_cadastral_parcel" in sql:
             return self.document_rows
         raise AssertionError(f"Unexpected fetch query: {sql}")
 

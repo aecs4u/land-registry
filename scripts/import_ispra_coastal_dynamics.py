@@ -74,6 +74,7 @@ def _database_dsn() -> str:
         (
             str(values[name]).strip()
             for name in (
+                "LAND_REGISTRY_POSTGRES_DSN",
                 "STATS_POSTGRES_DSN",
                 "AECS4U_STATS_POSTGRES_DSN",
                 "AECS4U_STATS_DATABASE_URL",
@@ -86,9 +87,17 @@ def _database_dsn() -> str:
     dsn = dsn.replace("postgresql+asyncpg://", "postgresql://", 1)
     if not dsn.startswith(("postgres://", "postgresql://")):
         raise RuntimeError(
-            "Set STATS_POSTGRES_DSN or AECS4U_STATS_DATABASE_URL to the aecs4u-stats database"
+            "Set LAND_REGISTRY_POSTGRES_DSN, or STATS_POSTGRES_DSN (host and credentials only) to reach the "
+            "land_registry database"
         )
-    return dsn
+    # aecs4u-stats is deprecated: the snapshot lives in the land_registry database. The stats DSN supplies
+    # host and credentials only.
+    from urllib.parse import urlsplit, urlunsplit
+
+    parts = urlsplit(dsn)
+    if parts.path.strip("/") != "land_registry":
+        parts = parts._replace(path="/land_registry")
+    return urlunsplit(parts)
 
 
 def _chunks(values: list[int], size: int) -> Iterable[list[int]]:

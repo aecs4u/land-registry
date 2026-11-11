@@ -1,5 +1,8 @@
 -- One-time provisioning for the versioned ISPRA 2006–2020 shoreline-change
 -- snapshot. The refresh script stages a complete import before replacing it.
+-- Run against the land_registry database (PostGIS lives in its `land_registry` schema):
+--   PGOPTIONS='-c search_path=land_registry,public' psql -X -U postgres -d land_registry \
+--     -f scripts/sql/ispra-coastal-dynamics.sql
 CREATE SCHEMA IF NOT EXISTS spatial;
 
 CREATE TABLE IF NOT EXISTS spatial.ispra_coastal_dynamics (

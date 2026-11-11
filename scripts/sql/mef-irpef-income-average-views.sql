@@ -1,14 +1,15 @@
--- Build taxpayer-weighted average taxable income views in the MEF source DB,
--- then expose them to aecs4u-stats through its existing mef_irpef FDW server.
+-- Build taxpayer-weighted average taxable income views in the MEF source DB.
+-- (The aecs4u-stats foreign tables that used to expose them are gone: consumers read this database directly.)
 --
--- Run from aecs4u-stats as a role with access to both databases:
---   psql -X -U postgres -d aecs4u-stats -v stats_reader_role=<role> \
---     -f scripts/sql/mef-irpef-income-average-views.sql
+-- NOTE: the live mef_irpef database keeps these views in the schema `mef_irpef`; this script was written for
+-- `public`. Adjust the schema before re-running it.
+--
+--   psql -X -U postgres -v reader_role=<role> -f scripts/sql/mef-irpef-income-average-views.sql
 
 \set ON_ERROR_STOP on
-\if :{?stats_reader_role}
+\if :{?reader_role}
 \else
-\echo 'Set -v stats_reader_role=<database-role> to the Stats application reader role.'
+\echo 'Set -v reader_role=<database-role> to the application reader role.'
 \quit 2
 \endif
 
@@ -98,63 +99,4 @@ GRANT SELECT ON public.income_average_comune,
                 public.income_average_provincia,
                 public.income_average_regione,
                 public.income_average_italia
-   TO :"stats_reader_role";
-
-\connect aecs4u-stats
-
-CREATE SCHEMA IF NOT EXISTS mef_irpef;
-
-CREATE FOREIGN TABLE IF NOT EXISTS mef_irpef.income_average_comune (
-    anno bigint,
-    codice text,
-    nome text,
-    provincia text,
-    regione text,
-    imponibile_freq numeric,
-    imponibile_amount numeric,
-    average_income_eur numeric
-) SERVER mef_irpef_source
-  OPTIONS (schema_name 'public', table_name 'income_average_comune');
-
-CREATE FOREIGN TABLE IF NOT EXISTS mef_irpef.income_average_provincia (
-    anno bigint,
-    codice text,
-    nome text,
-    provincia text,
-    regione text,
-    imponibile_freq numeric,
-    imponibile_amount numeric,
-    average_income_eur numeric
-) SERVER mef_irpef_source
-  OPTIONS (schema_name 'public', table_name 'income_average_provincia');
-
-CREATE FOREIGN TABLE IF NOT EXISTS mef_irpef.income_average_regione (
-    anno bigint,
-    codice text,
-    nome text,
-    provincia text,
-    regione text,
-    imponibile_freq numeric,
-    imponibile_amount numeric,
-    average_income_eur numeric
-) SERVER mef_irpef_source
-  OPTIONS (schema_name 'public', table_name 'income_average_regione');
-
-CREATE FOREIGN TABLE IF NOT EXISTS mef_irpef.income_average_italia (
-    anno bigint,
-    codice text,
-    nome text,
-    provincia text,
-    regione text,
-    imponibile_freq numeric,
-    imponibile_amount numeric,
-    average_income_eur numeric
-) SERVER mef_irpef_source
-  OPTIONS (schema_name 'public', table_name 'income_average_italia');
-
-GRANT USAGE ON SCHEMA mef_irpef TO :"stats_reader_role";
-GRANT SELECT ON mef_irpef.income_average_comune,
-                mef_irpef.income_average_provincia,
-                mef_irpef.income_average_regione,
-                mef_irpef.income_average_italia
-   TO :"stats_reader_role";
+   TO :"reader_role";

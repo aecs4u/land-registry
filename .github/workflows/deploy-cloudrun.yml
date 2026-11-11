@@ -14,10 +14,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  GCP_PROJECT_ID: apps-aecs4u
-  GCP_REGION:     europe-west1
-  SERVICE_NAME:   land-registry-service
-  IMAGE_BASE:     europe-west1-docker.pkg.dev/apps-aecs4u/cloud-run-source-deploy/land-registry-service
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID || 'apps-aecs4u' }}
+  GCP_REGION:     ${{ vars.GCP_REGION || 'europe-west1' }}
+  SERVICE_NAME: ${{ vars.CLOUD_RUN_SERVICE || 'land-registry-service' }}
+  IMAGE_BASE: ${{ vars.ARTIFACT_REGISTRY_IMAGE || 'europe-west1-docker.pkg.dev/apps-aecs4u/cloud-run-source-deploy/land-registry-service' }}
 
 jobs:
   test:
@@ -35,8 +35,8 @@ jobs:
         id: auth
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER || secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT || secrets.GCP_SERVICE_ACCOUNT }}
 
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
@@ -76,8 +76,8 @@ jobs:
         id: auth
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER || secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT || secrets.GCP_SERVICE_ACCOUNT }}
           token_format: access_token
 
       - name: Set up Cloud SDK
@@ -128,17 +128,17 @@ jobs:
             --service-account=land-registry-runtime@apps-aecs4u.iam.gserviceaccount.com \
             --allow-unauthenticated \
             --ingress=all \
-            --memory=512Mi \
-            --cpu=1 \
-            --min-instances=0 \
-            --max-instances=3 \
-            --concurrency=80 \
-            --execution-environment=gen2 \
-            --port=8080 \
-            --timeout=300 \
+            --memory="${{ vars.CLOUDRUN_MEMORY || '512Mi' }}" \
+            --cpu="${{ vars.CLOUDRUN_CPU || '1' }}" \
+            --min-instances="${{ vars.CLOUDRUN_MIN_INSTANCES || '0' }}" \
+            --max-instances="${{ vars.CLOUDRUN_MAX_INSTANCES || '3' }}" \
+            --concurrency="${{ vars.CLOUDRUN_CONCURRENCY || '80' }}" \
+            --execution-environment="${{ vars.CLOUDRUN_EXECUTION_ENV || 'gen2' }}" \
+            --port="${{ vars.CLOUDRUN_PORT || '8080' }}" \
+            --timeout="${{ vars.CLOUDRUN_TIMEOUT || '300' }}" \
             --cpu-boost \
             --cpu-throttling \
-            --set-env-vars="ENVIRONMENT=production,DEBUG=false,LOG_LEVEL=INFO,AUTH_MODE=clerk_and_local,STATS_POSTGRES_ENABLE=1,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_Y2hhbXBpb24tbXVsbGV0LTc2LmNsZXJrLmFjY291bnRzLmRldiQ,CLERK_JWKS_URL=https://champion-mullet-76.clerk.accounts.dev/.well-known/jwks.json" \
+            --set-env-vars="ENVIRONMENT=production,DEBUG=false,LOG_LEVEL=INFO,AUTH_MODE=clerk_and_local,STATS_POSTGRES_ENABLE=1,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ vars.AECS4U_LAND_REGISTRY_CLERK_PUBLISHABLE_KEY || 'pk_test_Y2hhbXBpb24tbXVsbGV0LTc2LmNsZXJrLmFjY291bnRzLmRldiQ' }},CLERK_JWKS_URL=${{ vars.AECS4U_LAND_REGISTRY_CLERK_JWKS_URL || 'https://champion-mullet-76.clerk.accounts.dev/.well-known/jwks.json' }}" \
             --set-secrets="SECRET_KEY=LAND_REGISTRY_SECRET_KEY:latest,SESSION_SECRET_KEY=LAND_REGISTRY_SESSION_SECRET_KEY:latest,DATABASE_URL=LAND_REGISTRY_DATABASE_URL:latest,STATS_POSTGRES_DSN=STATS_POSTGRES_DSN:latest,CLERK_SECRET_KEY=LAND_REGISTRY_CLERK_SECRET_KEY:latest,LOGFIRE_TOKEN=LAND_REGISTRY_LOGFIRE_TOKEN:latest"
 
           URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \

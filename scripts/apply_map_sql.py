@@ -1,21 +1,20 @@
 #!/usr/bin/env python
-"""Apply the map's idempotent index/statistics SQL to the stats database.
+"""Apply the map's idempotent index SQL to the source databases that own the indexed relations.
 
-Rebuilding the database used to mean remembering which scripts in
-``scripts/sql`` to run and in what order. This runs them in dependency order,
-one statement at a time in autocommit mode (``CREATE INDEX CONCURRENTLY``
-cannot run inside a transaction or a multi-statement batch).
+aecs4u-stats is deprecated, so nothing here targets it any more. Each script names the database it belongs to;
+``STATS_POSTGRES_DSN`` supplies only host and credentials, and ``AECS4U_SOURCE_<DATABASE>_DATABASE_URL``
+overrides one database. Statements run one at a time in autocommit mode (``CREATE INDEX CONCURRENTLY`` cannot
+run inside a transaction or a multi-statement batch).
 
     python scripts/apply_map_sql.py --dry-run
-    STATS_POSTGRES_DSN=postgresql://... python scripts/apply_map_sql.py
+    python scripts/apply_map_sql.py --database hazards
 
-Every script here is safe to re-run. Scripts that change data or touch other
-databases are deliberately not in the list; run them by hand:
-``map-parcel-field-backfill.sql`` (bulk UPDATE),
-``map-market-zones-local-copy.sql`` (copies the OMI zones, ~300 MB) and
-``pvp-enriched-modelview-map-view.sql`` and
-``pvp-enriched-modelview-map-points.sql`` and
-``solar-map-foreign-tables.sql`` (foreign data wrapper setup).
+Every script here is safe to re-run. Scripts that change data or create cross-database objects are deliberately
+not in the list; run them by hand:
+``istat-municipality-metric-map-views.sql`` (ISTAT database: foreign tables + materialized views; refresh with
+``python -m land_registry.metric_views``), ``pvp-enriched-modelview-map-view.sql`` and
+``pvp-enriched-modelview-map-points.sql`` (pvp_enriched database), ``parcel-enrichment-read-model.sql`` and
+``ispra-coastal-dynamics.sql`` (land_registry database).
 """
 
 import argparse
@@ -23,18 +22,15 @@ import asyncio
 import os
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 SQL_DIR = Path(__file__).parent / "sql"
 
-# Indexes first, ANALYZE-only script last so it sees the new indexes.
-# map-concession-tiles-index.sql is comment-only (the index lives in the source
-# database; statistics come from map-layer-statistics.sql), so it is not run.
-ORDER = (
-    "map-reference-indexes.sql",
-    "mps04-map-index.sql",
-    "omi-period-index.sql",
-    "map-layer-statistics.sql",
-)
+# database -> scripts, in dependency order.
+PLAN = {
+    "hazards": ("mps04-map-index.sql",),
+}
+ORDER = tuple(name for names in PLAN.values() for name in names)
 
 
 def split_statements(sql: str) -> list[str]:
@@ -60,6 +56,18 @@ def load_plan(sql_dir: Path = SQL_DIR) -> list[tuple[str, list[str]]]:
     return [(name, split_statements((sql_dir / name).read_text(encoding="utf-8"))) for name in ORDER]
 
 
+def database_dsn(database: str, base: str = "") -> str:
+    """DSN for one source database: an explicit override, else the base DSN with its database replaced."""
+    override = os.getenv(f"AECS4U_SOURCE_{database.upper()}_DATABASE_URL")
+    if override:
+        return override.replace("postgresql+asyncpg://", "postgresql://", 1)
+    base = base or os.getenv("STATS_POSTGRES_DSN", "")
+    if not base:
+        raise SystemExit("Set STATS_POSTGRES_DSN (host and credentials) or AECS4U_SOURCE_<DATABASE>_DATABASE_URL")
+    parts = urlsplit(base.replace("postgresql+asyncpg://", "postgresql://", 1))
+    return urlunsplit(parts._replace(path=f"/{database}"))
+
+
 async def apply(dsn: str, plan: list[tuple[str, list[str]]]) -> int:
     import asyncpg
 
@@ -83,19 +91,23 @@ async def apply(dsn: str, plan: list[tuple[str, list[str]]]) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--dry-run", action="store_true", help="print the statements without running them")
-    parser.add_argument("--dsn", default=os.getenv("STATS_POSTGRES_DSN", ""), help="default: $STATS_POSTGRES_DSN")
+    parser.add_argument("--database", choices=sorted(PLAN), help="apply only this database's scripts (default: all)")
+    parser.add_argument("--dsn", default="", help="base DSN (host and credentials); default: $STATS_POSTGRES_DSN")
     args = parser.parse_args()
 
-    plan = load_plan()
-    if args.dry_run:
-        for name, statements in plan:
-            for statement in statements:
-                print(f"{name}: {' '.join(statement.split())}")
-        return 0
-    if not args.dsn:
-        print("Set STATS_POSTGRES_DSN or pass --dsn", file=sys.stderr)
-        return 2
-    return 1 if asyncio.run(apply(args.dsn, plan)) else 0
+    plan = dict(load_plan())
+    failures = 0
+    for database, names in PLAN.items():
+        if args.database and database != args.database:
+            continue
+        scripts = [(name, plan[name]) for name in names]
+        if args.dry_run:
+            for name, statements in scripts:
+                for statement in statements:
+                    print(f"{database}/{name}: {' '.join(statement.split())}")
+            continue
+        failures += asyncio.run(apply(database_dsn(database, args.dsn), scripts))
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":

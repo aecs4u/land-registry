@@ -1,4 +1,0 @@
--- The map relation is a postgres_fdw foreign table, so it cannot have a local
--- GiST index. The remote view agenziademanio.v_concession_map_features reads
--- the native geometry GiST index on agenziademanio.public.concessions. Local planner
--- statistics are refreshed by map-layer-statistics.sql.

@@ -123,7 +123,7 @@ def test_from_environment_prefers_the_dedicated_cadastral_dsn(monkeypatch):
     assert "aecs4u-stats" not in source.dsn
 
 
-def test_from_environment_stays_opt_in_and_falls_back_to_stats_dsn(monkeypatch):
+def test_from_environment_stays_opt_in_and_derives_cadastral_database_from_stats_dsn(monkeypatch):
     monkeypatch.delenv("STATS_POSTGRES_ENABLE", raising=False)
     monkeypatch.setenv("CADASTRAL_POSTGRES_DSN", "postgresql://u@localhost/cadastral")
     assert PostgresCadastralBoundarySource.from_environment() is None
@@ -131,7 +131,10 @@ def test_from_environment_stays_opt_in_and_falls_back_to_stats_dsn(monkeypatch):
     monkeypatch.setenv("STATS_POSTGRES_ENABLE", "true")
     monkeypatch.delenv("CADASTRAL_POSTGRES_DSN")
     monkeypatch.setenv("STATS_POSTGRES_DSN", "postgresql://u@localhost/aecs4u-stats")
-    assert "aecs4u-stats" in PostgresCadastralBoundarySource.from_environment().dsn
+    # aecs4u-stats is deprecated: its DSN supplies host/credentials, the database is ``cadastral``.
+    dsn = PostgresCadastralBoundarySource.from_environment().dsn
+    assert dsn.endswith("/cadastral") or "/cadastral?" in dsn
+    assert "aecs4u-stats" not in dsn
 
 
 def test_empty_tile_is_not_cached_while_the_postgres_source_is_failing(tmp_path, monkeypatch):

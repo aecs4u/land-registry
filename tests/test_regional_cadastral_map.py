@@ -63,15 +63,17 @@ def regional_source(*, row=None, rows=()):
     return PostgresMapLayerSource(stats, cadastral_connection_source=regional), stats, regional
 
 
-def test_legacy_canonical_installations_keep_their_existing_source():
+def test_stats_database_is_never_consulted_even_when_it_has_the_relation():
+    # aecs4u-stats is deprecated: a populated Stats-side copy no longer takes precedence over the dedicated database.
     stats = Source(Connection(relation="spatial.cadastral_parcel"))
-    regional = Source(Connection())
+    regional = Source(Connection(relation="spatial.cadastral_parcel"))
     source = PostgresMapLayerSource(stats, cadastral_connection_source=regional)
     assert asyncio.run(source.read_mvt("cadastral-parcels", 16, 35000, 23000)) == b"regional-tile"
-    assert not regional.conn.calls
+    assert not stats.conn.calls
+    assert regional.conn.calls
 
 
-def test_tiles_resolve_missing_canonical_relations_to_regional_views_and_cache_the_route():
+def test_tiles_use_the_dedicated_database_and_cache_the_route():
     source, stats, regional = regional_source()
 
     async def run():
@@ -79,8 +81,7 @@ def test_tiles_resolve_missing_canonical_relations_to_regional_views_and_cache_t
         assert await source.read_mvt("cadastral-parcels", 16, 35001, 23000) == b"regional-tile"
 
     asyncio.run(run())
-    assert len(stats.conn.calls) == 1
-    assert all("to_regclass" in sql for sql, _ in stats.conn.calls)
+    assert not stats.conn.calls
     assert "ST_AsMVT" in regional.conn.calls[-1][0]
     assert 't."municipality_name"' in regional.conn.calls[-1][0]
 
@@ -97,7 +98,7 @@ def test_all_cadastral_reads_use_the_resolved_database(method, args):
     source, stats, regional = regional_source(row=row, rows=[row])
     payload = asyncio.run(getattr(source, method)(*args))
     assert payload
-    assert len(stats.conn.calls) == 1
+    assert not stats.conn.calls
     assert "spatial.cadastral_" in regional.conn.calls[-1][0]
     if isinstance(payload, dict) and "properties" in payload:
         assert payload["properties"]["municipality_name"] == "ACQUAFONDATA"

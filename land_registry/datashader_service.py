@@ -108,13 +108,22 @@ class PostgresCadastralBoundarySource:
             return None
         # The cadastre may live in its own database (the stats one then has empty spatial.cadastral_* tables);
         # map_layers.cadastral_from_environment already honours the same override for the vector layers.
-        dsn = (
-            os.getenv("CADASTRAL_POSTGRES_DSN")
-            or os.getenv("STATS_POSTGRES_DSN")
-            or os.getenv("AECS4U_STATS_DATABASE_URL")
-            or os.getenv("AECS4U_STATS_SPATIAL_DATABASE_URL")
-            or os.getenv("DATABASE_URL")
-        )
+        dsn = os.getenv("CADASTRAL_POSTGRES_DSN")
+        if not dsn:
+            # aecs4u-stats is deprecated and its spatial.cadastral_* tables are empty: the stats DSN
+            # now supplies host and credentials only, and the database is the dedicated ``cadastral`` one
+            # (which publishes spatial.cadastral_sheet / spatial.cadastral_parcel).
+            base = (
+                os.getenv("STATS_POSTGRES_DSN")
+                or os.getenv("AECS4U_STATS_DATABASE_URL")
+                or os.getenv("AECS4U_STATS_SPATIAL_DATABASE_URL")
+            )
+            if base and base.startswith(("postgres://", "postgresql://", "postgresql+")):
+                from urllib.parse import urlsplit, urlunsplit
+
+                parts = urlsplit(base.replace("postgresql+asyncpg://", "postgresql://", 1))
+                dsn = urlunsplit(parts._replace(path="/cadastral"))
+        dsn = dsn or os.getenv("DATABASE_URL")
         if not dsn:
             try:
                 from aecs4u_stats.web.config import get_databases

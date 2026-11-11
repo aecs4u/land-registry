@@ -319,6 +319,12 @@ def test_map_sql_runner_covers_every_listed_script_and_splits_statements():
 
     plan = module.load_plan()
     assert [name for name, _ in plan] == list(module.ORDER)
+    # Every script belongs to a source database; none targets the deprecated aecs4u-stats database.
+    assert set(module.PLAN) == {"hazards"}
+    assert "aecs4u-stats" not in module.database_dsn("hazards", "postgresql://u@h:5432/aecs4u-stats")
+    assert module.database_dsn("hazards", "postgresql://u@h:5432/aecs4u-stats?sslmode=require").endswith(
+        "/hazards?sslmode=require"
+    )
     for name, statements in plan:
         assert statements, name
         assert all(s.rstrip().endswith(";") for s in statements), name

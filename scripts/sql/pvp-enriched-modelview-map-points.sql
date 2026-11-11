@@ -147,23 +147,3 @@ SELECT location.sale_id,
 
 COMMENT ON VIEW modelview.v_map_sale_points IS
     'Live bulk auction map points; batched address ranking and municipality coordinate validation preserve v_map_sales locations.';
-
-\connect aecs4u-stats
-
-CREATE FOREIGN TABLE IF NOT EXISTS pvp.v_map_sale_points (
-    sale_id bigint,
-    latitude double precision,
-    longitude double precision,
-    price double precision,
-    sale_datetime timestamp without time zone,
-    property_type character varying,
-    coordinate_is_approximate boolean,
-    description_hint text
-) SERVER pvp_enriched_modelview_source
-  OPTIONS (schema_name 'modelview', table_name 'v_map_sale_points', fetch_size '10000');
-
--- Transfer the bulk result in larger batches when only the stats DSN is
--- configured. postgres_fdw otherwise fetches just 100 records per round trip.
-
-COMMENT ON FOREIGN TABLE pvp.v_map_sale_points IS
-    'Compact live map points from pvp_enriched; sale details remain in pvp.v_map_sales.';

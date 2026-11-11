@@ -1,5 +1,4 @@
--- Publish all enriched PVP sales with best-available addresses, then expose
--- the view through aecs4u-stats without copying its rows.
+-- Publish all enriched PVP sales with best-available addresses in the pvp_enriched database.
 --
 -- Run as a PostgreSQL role with access to both local databases:
 --   psql -X -U postgres -d postgres -f scripts/sql/pvp-enriched-modelview-map-view.sql
@@ -12,19 +11,24 @@ CREATE SCHEMA IF NOT EXISTS modelview;
 
 -- The normalized coordinate FK can point at another locality after source
 -- database merges. Use ISTAT municipality geometry to catch those bad links.
-CREATE SERVER IF NOT EXISTS aecs4u_stats_map_reference
+-- Municipality geometry comes from the ISTAT source database (public.v_comuni_map). It is copied into
+-- modelview.istat_municipalities below, so the published views never read across databases at query time.
+-- (This used to read the deprecated aecs4u-stats database; that server and its foreign table are replaced.)
+DROP FOREIGN TABLE IF EXISTS istat_boundaries.comuni;
+DROP SERVER IF EXISTS aecs4u_stats_map_reference CASCADE;
+CREATE SERVER IF NOT EXISTS istat_map_reference
     FOREIGN DATA WRAPPER postgres_fdw
-    OPTIONS (host '/var/run/postgresql', port '5432', dbname 'aecs4u-stats');
+    OPTIONS (host '/var/run/postgresql', port '5432', dbname 'istat');
 
 DO $$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_user_mappings
-         WHERE srvname = 'aecs4u_stats_map_reference'
+         WHERE srvname = 'istat_map_reference'
            AND usename = current_user
     ) THEN
         EXECUTE format(
-            'CREATE USER MAPPING FOR %I SERVER aecs4u_stats_map_reference OPTIONS (user %L)',
+            'CREATE USER MAPPING FOR %I SERVER istat_map_reference OPTIONS (user %L)',
             current_user,
             current_user
         );
@@ -40,8 +44,8 @@ CREATE FOREIGN TABLE IF NOT EXISTS istat_boundaries.comuni (
     cod_rip integer,
     name text,
     geom geometry(Geometry, 4326)
-) SERVER aecs4u_stats_map_reference
-  OPTIONS (schema_name 'istat_boundaries', table_name 'comuni');
+) SERVER istat_map_reference
+  OPTIONS (schema_name 'public', table_name 'v_comuni_map');
 
 CREATE TABLE IF NOT EXISTS modelview.istat_municipalities (
     pro_com integer PRIMARY KEY,
@@ -273,64 +277,5 @@ SELECT s.id AS sale_id,
 
 COMMENT ON VIEW modelview.v_map_sales IS
     'All enriched Italian PVP sales with best-available address fields; geom is a WGS84 point when a valid linked coordinate exists.';
-
-\connect aecs4u-stats
-
-CREATE EXTENSION IF NOT EXISTS postgres_fdw;
-CREATE EXTENSION IF NOT EXISTS postgis;
-
-CREATE SERVER IF NOT EXISTS pvp_enriched_modelview_source
-    FOREIGN DATA WRAPPER postgres_fdw
-    OPTIONS (host '/var/run/postgresql', port '5432', dbname 'pvp_enriched');
-
-ALTER SERVER pvp_enriched_modelview_source OPTIONS (SET dbname 'pvp_enriched');
-
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_user_mappings
-         WHERE srvname = 'pvp_enriched_modelview_source'
-           AND usename = current_user
-    ) THEN
-        EXECUTE format(
-            'CREATE USER MAPPING FOR %I SERVER pvp_enriched_modelview_source OPTIONS (user %L)',
-            current_user,
-            current_user
-        );
-    END IF;
-END
-$$;
-
-CREATE SCHEMA IF NOT EXISTS pvp;
-
--- Recreate this foreign table when the source view's projection changes.
-DROP FOREIGN TABLE IF EXISTS pvp.v_map_sales;
-CREATE FOREIGN TABLE pvp.v_map_sales (
-    sale_id bigint,
-    detail_id bigint,
-    source text,
-    city text,
-    province text,
-    postal_code text,
-    municipality_code text,
-    street text,
-    house_number text,
-    address text,
-    address_source text,
-    property_type text,
-    description text,
-    price double precision,
-    sale_datetime timestamp without time zone,
-    url text,
-    latitude double precision,
-    longitude double precision,
-    geocoding_source text,
-    geom geometry(Point, 4326),
-    coordinate_is_approximate boolean
-) SERVER pvp_enriched_modelview_source
-  OPTIONS (schema_name 'modelview', table_name 'v_map_sales');
-
-COMMENT ON FOREIGN TABLE pvp.v_map_sales IS
-    'Live foreign table for pvp_enriched.modelview.v_map_sales; all sale rows and address data remain in the source database.';
 
 \ir pvp-enriched-modelview-map-points.sql
