@@ -73,13 +73,18 @@ def test_direct_map_has_a_no_preload_cadastral_parcel_finder():
         ):
             assert f'id="{element_id}"' in template
     for path in (
-        "/api/v1/get-regions/",
-        "/api/v1/get-provinces/?regions=",
-        "/api/v1/get-municipalities/?",
-        "/api/v1/enrichment/fogli/",
-        "/api/v1/map/search?query=",
+        "/api/v1/map/cadastral/regions",
+        "/api/v1/map/cadastral/provinces?region=",
+        "/api/v1/map/cadastral/municipalities?",
+        "/api/v1/map/cadastral/sheets?",
+        "/api/v1/map/cadastral/parcels?",
     ):
         assert path in SCRIPT
+    # The finder reads the cadastral map database, not the legacy file tree or the stats store.
+    finder = MAP_SCRIPT[MAP_SCRIPT.index("function loadParcelFinderRegions()"):MAP_SCRIPT.index("function setupParcelFinder()")]
+    assert "/api/v1/get-regions/" not in finder and "/api/v1/enrichment/fogli/" not in finder
+    for route in ("regions", "provinces", "municipalities", "sheets", "parcels"):
+        assert f'@api_router.get("/map/cadastral/{route}")' in API
     assert "setupParcelFinder()" in SCRIPT
 
 

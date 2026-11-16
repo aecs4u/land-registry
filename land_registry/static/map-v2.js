@@ -4323,19 +4323,16 @@
 
   function loadParcelFinderRegions() {
     setParcelFinderStatus(tr('Loading...'));
-    parcelFinderRequest('/api/v1/get-regions/', (payload) => {
+    // The finder reads the cadastral map database, the same source as the parcels on the map.
+    parcelFinderRequest('/api/v1/map/cadastral/regions', (payload) => {
       const regions = Array.isArray(payload.regions) ? payload.regions : [];
       const count = fillParcelFinderSelect(
-        'parcelFinderRegion', 'Select a region', regions, (region) => region, (region) => region,
+        'parcelFinderRegion', 'Select a region', regions, (region) => region.id, (region) => region.name,
       );
       setParcelFinderStatus(count ? tr('Select a region to continue.') : tr('No cadastral areas available.'), !count);
     }, (error) => {
       state.parcelFinderRegionsLoaded = false;
-      // 404: the cadastral file tree is not provisioned on this server, so retrying cannot help.
-      if (error.status === 404) {
-        setParcelFinderStatus(tr('Browsing by cadastral hierarchy is not available on this server. Use the search box.'), true);
-        return true;
-      }
+      // Let the next opening of the finder retry: the database may only be starting.
       return false;
     });
   }
@@ -4344,7 +4341,7 @@
     resetParcelFinderAfter('province');
     if (!region) { setParcelFinderStatus(tr('Select a region to continue.')); return; }
     setParcelFinderStatus(tr('Loading...'));
-    parcelFinderRequest(`/api/v1/get-provinces/?regions=${encodeURIComponent(region)}`, (payload) => {
+    parcelFinderRequest(`/api/v1/map/cadastral/provinces?region=${encodeURIComponent(region)}`, (payload) => {
       const provinces = Array.isArray(payload.provinces) ? payload.provinces : [];
       const count = fillParcelFinderSelect(
         'parcelFinderProvince', 'Select a province', provinces, (province) => province, (province) => province,
@@ -4357,10 +4354,10 @@
     resetParcelFinderAfter('municipality');
     if (!region || !province) return;
     setParcelFinderStatus(tr('Loading...'));
-    const params = new URLSearchParams({ regions: region, provinces: province });
-    parcelFinderRequest(`/api/v1/get-municipalities/?${params}`, (payload) => {
+    const params = new URLSearchParams({ region, province });
+    parcelFinderRequest(`/api/v1/map/cadastral/municipalities?${params}`, (payload) => {
       const municipalities = Array.isArray(payload.municipalities) ? payload.municipalities : [];
-      const usable = municipalities.filter((municipality) => municipality.code && municipality.code !== 'N/A');
+      const usable = municipalities.filter((municipality) => municipality.code);
       const count = fillParcelFinderSelect(
         'parcelFinderMunicipality', 'Select a municipality', usable,
         (municipality) => municipality.code, (municipality) => municipality.name,
@@ -4373,11 +4370,11 @@
     resetParcelFinderAfter('sheet');
     if (!comuneCode) return;
     setParcelFinderStatus(tr('Loading...'));
-    parcelFinderRequest(`/api/v1/enrichment/fogli/${encodeURIComponent(comuneCode)}`, (payload) => {
-      const sheets = Array.isArray(payload.fogli) ? payload.fogli : [];
+    const params = new URLSearchParams({ region: $('parcelFinderRegion').value, municipality: comuneCode });
+    parcelFinderRequest(`/api/v1/map/cadastral/sheets?${params}`, (payload) => {
+      const sheets = Array.isArray(payload.sheets) ? payload.sheets : [];
       const count = fillParcelFinderSelect(
-        'parcelFinderSheet', 'Select a sheet', sheets,
-        (sheet) => sheet.sheet_number, (sheet) => sheet.sheet_number,
+        'parcelFinderSheet', 'Select a sheet', sheets, (sheet) => sheet, (sheet) => sheet,
       );
       const parcelInput = $('parcelFinderParcel');
       parcelInput.disabled = !count;
@@ -4395,10 +4392,11 @@
     clearTimeout(state.searchTimer);
     state.searchController?.abort();
     state.searchRequest += 1;
-    const query = `${comune} ${foglio} ${particella}`;
     setParcelFinderStatus(tr('Searching…'));
-    const url = `/api/v1/map/search?query=${encodeURIComponent(query)}`;
-    parcelFinderRequest(url, (payload) => {
+    const params = new URLSearchParams({
+      region: $('parcelFinderRegion').value, municipality: comune, sheet: foglio, parcel: particella,
+    });
+    parcelFinderRequest(`/api/v1/map/cadastral/parcels?${params}`, (payload) => {
       const results = Array.isArray(payload.results) ? payload.results.filter((item) => item.kind === 'parcel') : [];
       state.searchActiveIndex = results.length ? 0 : -1;
       renderSearchResults(results);

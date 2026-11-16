@@ -22,7 +22,9 @@ from dataclasses import asdict, dataclass
 from typing import Any, AsyncIterator, Optional
 from urllib.parse import urlsplit, urlunsplit
 
-from land_registry.cadastral_map_views import CADASTRAL_LAYER_IDS, REGIONAL_PROPERTIES, identity_sql, regional_health
+from land_registry.cadastral_map_views import (
+    CADASTRAL_LAYER_IDS, REGIONAL_PROPERTIES, REGIONAL_TABLE, identity_sql, regional_health,
+)
 
 log = logging.getLogger(__name__)
 
@@ -915,6 +917,7 @@ class PostgresMapLayerSource:
         self._hazards_routes: dict[str, tuple[Any, float]] = {}
         self._egms_routes: dict[str, tuple[Any, float]] = {}
         self._cadastral_routes: dict[str, tuple[Any, float]] = {}
+        self._cadastral_regions_cache: tuple[list[dict[str, str]], float] | None = None
         self._resolved_relations: dict[str, tuple[str, float]] = {}
         self._anncsu_region_cache: tuple[list[dict[str, Any]], float] | None = None
         self._corine_region_cache: tuple[list[dict[str, Any]], float] | None = None
@@ -3200,6 +3203,129 @@ class PostgresMapLayerSource:
             "geographic_area": related_record(("area_code", "area_name")),
             "population_history": [],
         }
+
+    # --- Cadastral hierarchy (region > province > municipality > sheet > parcel) ---
+    #
+    # The finder on /map reads the regional tables of the ``cadastral`` database
+    # directly. ``spatial.cadastral_sheet`` / ``spatial.cadastral_parcel`` are
+    # UNION ALL views over them with no index on the administrative columns, so
+    # a national DISTINCT there runs past the statement timeout; one regional
+    # ``__fogli`` table is a few tens of thousands of rows.
+
+    async def cadastral_regions(self) -> list[dict[str, str]]:
+        """Loaded regions as ``{"id": table slug, "name": region label}``."""
+        source = self.cadastral_connection_source
+        if source is None:
+            return []
+        cached = self._cadastral_regions_cache
+        if cached and cached[1] > time.monotonic():
+            return list(cached[0])
+        async with source.connection() as connection:
+            rows = await connection.fetch(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = 'public' AND table_name LIKE '%\\_\\_fogli' ORDER BY table_name"
+            )
+            regions: list[dict[str, str]] = []
+            for row in rows:
+                table = row["table_name"]
+                if not REGIONAL_TABLE.fullmatch(table):
+                    continue
+                name = await connection.fetchval(f'SELECT region FROM public."{table}" WHERE region IS NOT NULL LIMIT 1')
+                if name:
+                    regions.append({"id": table[: -len("__fogli")], "name": str(name).strip()})
+        regions.sort(key=lambda region: region["name"])
+        self._cadastral_regions_cache = (regions, time.monotonic() + 600)
+        return list(regions)
+
+    async def _cadastral_region_table(self, region: str, kind: str) -> Optional[str]:
+        """Quoted regional table for a region id from ``cadastral_regions`` (an allow-list)."""
+        slug = str(region or "").strip().lower()
+        if not any(item["id"] == slug for item in await self.cadastral_regions()):
+            return None
+        table = f"{slug}__{kind}"
+        return f'public."{table}"' if REGIONAL_TABLE.fullmatch(table) else None
+
+    async def cadastral_provinces(self, region: str) -> Optional[list[str]]:
+        """Province codes of a region; ``None`` when the region is not loaded."""
+        table = await self._cadastral_region_table(region, "fogli")
+        if table is None:
+            return None
+        async with self.cadastral_connection_source.connection() as connection:
+            rows = await connection.fetch(
+                f"SELECT DISTINCT upper(btrim(province)) AS province FROM {table} "
+                "WHERE btrim(coalesce(province, '')) <> '' ORDER BY 1"
+            )
+        return [row["province"] for row in rows]
+
+    async def cadastral_municipalities(self, region: str, province: str) -> Optional[list[dict[str, str]]]:
+        table = await self._cadastral_region_table(region, "fogli")
+        if table is None:
+            return None
+        async with self.cadastral_connection_source.connection() as connection:
+            rows = await connection.fetch(
+                f"SELECT DISTINCT municipality_code AS code, btrim(municipality_name) AS name FROM {table} "
+                "WHERE upper(btrim(province)) = $1 AND btrim(coalesce(municipality_code, '')) <> '' "
+                "ORDER BY 2, 1",
+                str(province or "").strip().upper(),
+            )
+        return [{"code": row["code"], "name": row["name"] or row["code"]} for row in rows]
+
+    async def cadastral_sheets(self, region: str, municipality_code: str) -> Optional[list[str]]:
+        """Sheet numbers of a municipality in natural order (2 before 10, 122 before 122A)."""
+        table = await self._cadastral_region_table(region, "fogli")
+        if table is None:
+            return None
+        async with self.cadastral_connection_source.connection() as connection:
+            rows = await connection.fetch(
+                f"SELECT DISTINCT upper(btrim(sheet_number)) AS sheet FROM {table} "
+                "WHERE municipality_code = $1 AND btrim(coalesce(sheet_number, '')) <> ''",
+                str(municipality_code or "").strip().upper(),
+            )
+
+        def natural(sheet: str) -> tuple[int, int, str]:
+            digits = re.match(r"\d+", sheet)
+            return (0, int(digits.group()), sheet) if digits else (1, 0, sheet)
+
+        return sorted((row["sheet"] for row in rows), key=natural)
+
+    async def find_cadastral_parcels(
+        self, region: str, municipality_code: str, sheet: str, parcel: str, limit: int = 20,
+    ) -> Optional[list[dict[str, Any]]]:
+        """Parcels by municipality, sheet and parcel number.
+
+        Uses each regional table's ``*_muni_map_lookup_idx`` expression index
+        (municipality name, province, sheet, parcel), so the municipality code is
+        first resolved to its name and province on the small sheet table.
+        """
+        sheets = await self._cadastral_region_table(region, "fogli")
+        parcels = await self._cadastral_region_table(region, "particelle")
+        if sheets is None or parcels is None:
+            return None
+        code = str(municipality_code or "").strip().upper()
+        identity = identity_sql("cadastral-parcels", "p.national_cadastral_reference")
+        async with self.cadastral_connection_source.connection() as connection:
+            rows = await connection.fetch(
+                f"""
+                WITH municipality AS (
+                    SELECT DISTINCT lower(btrim(municipality_name)) AS name, upper(btrim(province)) AS province
+                    FROM {sheets} WHERE municipality_code = $1
+                )
+                SELECT DISTINCT {identity} AS id, p.national_cadastral_reference AS reference,
+                       btrim(p.municipality_name) AS municipality_name, btrim(p.sheet_number) AS sheet
+                FROM municipality AS m
+                JOIN {parcels} AS p
+                  ON lower(btrim(p.municipality_name)) = m.name
+                 AND upper(btrim(p.province)) = m.province
+                 AND upper(btrim(p.sheet_number)) = $2
+                 AND upper(btrim(p.parcel_number)) = $3
+                WHERE p.municipality_code = $1 AND p.national_cadastral_reference IS NOT NULL
+                ORDER BY 2
+                LIMIT $4
+                """,
+                code, str(sheet or "").strip().upper(), str(parcel or "").strip().upper(),
+                min(max(int(limit), 1), 50),
+            )
+        return [_json_row(row) for row in rows]
 
     async def search_municipalities(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
         """Search the canonical ISTAT municipality map relation.

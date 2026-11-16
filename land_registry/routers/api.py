@@ -4725,6 +4725,82 @@ async def _search_addresses(query: str, search_source: Any, limit: int) -> list[
     return results[:limit]
 
 
+async def _cadastral_hierarchy(call: Any) -> Any:
+    """Run one hierarchy read on the cadastral database with the finder's error contract."""
+    source = get_map_search_source()
+    if source.cadastral_connection_source is None:
+        raise HTTPException(
+            status_code=503, detail="Cadastral map source unavailable",
+            headers={"Retry-After": "5", "Cache-Control": "no-store"},
+        )
+    try:
+        result = await asyncio.wait_for(call(source), timeout=8.0)
+    except Exception as exc:
+        logger.warning("Cadastral hierarchy lookup failed: %s", exc)
+        raise HTTPException(
+            status_code=503, detail="Cadastral hierarchy temporarily unavailable",
+            headers={"Retry-After": "5", "Cache-Control": "no-store"},
+        ) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="Region not loaded")
+    return result
+
+
+_HIERARCHY_REGION = Query(..., min_length=2, max_length=40, pattern=r"^[A-Za-z][A-Za-z_]*$")
+_HIERARCHY_MUNICIPALITY = Query(..., min_length=4, max_length=5, pattern=r"^[A-Za-z]\d{3}[A-Za-z]?$")
+
+
+@api_router.get("/map/cadastral/regions")
+async def map_cadastral_regions():
+    """Regions loaded in the cadastral database, for the /map hierarchy finder."""
+    return {"regions": await _cadastral_hierarchy(lambda source: source.cadastral_regions())}
+
+
+@api_router.get("/map/cadastral/provinces")
+async def map_cadastral_provinces(region: str = _HIERARCHY_REGION):
+    return {"provinces": await _cadastral_hierarchy(lambda source: source.cadastral_provinces(region))}
+
+
+@api_router.get("/map/cadastral/municipalities")
+async def map_cadastral_municipalities(
+    region: str = _HIERARCHY_REGION,
+    province: str = Query(..., min_length=2, max_length=2, pattern=r"^[A-Za-z]{2}$"),
+):
+    return {
+        "municipalities": await _cadastral_hierarchy(
+            lambda source: source.cadastral_municipalities(region, province)
+        )
+    }
+
+
+@api_router.get("/map/cadastral/sheets")
+async def map_cadastral_sheets(region: str = _HIERARCHY_REGION, municipality: str = _HIERARCHY_MUNICIPALITY):
+    return {"sheets": await _cadastral_hierarchy(lambda source: source.cadastral_sheets(region, municipality))}
+
+
+@api_router.get("/map/cadastral/parcels")
+async def map_cadastral_parcels(
+    region: str = _HIERARCHY_REGION,
+    municipality: str = _HIERARCHY_MUNICIPALITY,
+    sheet: str = Query(..., min_length=1, max_length=12, pattern=r"^[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*$"),
+    parcel: str = Query(..., min_length=1, max_length=24, pattern=r"^[A-Za-z0-9]+(?:[_/.-][A-Za-z0-9]+)*$"),
+    limit: int = Query(20, ge=1, le=50),
+):
+    """Parcels matching a municipality, sheet and parcel number, shaped like /map/search results."""
+    matches = await _cadastral_hierarchy(
+        lambda source: source.find_cadastral_parcels(region, municipality, sheet, parcel, limit)
+    )
+    return {
+        "results": [
+            {
+                "kind": "parcel", "id": item["id"], "label": item["reference"], "reference": item["reference"],
+                "municipality_name": item.get("municipality_name"), "sheet": item.get("sheet"),
+            }
+            for item in matches
+        ]
+    }
+
+
 @api_router.get("/map/search")
 async def search_map(
     response: Response,
