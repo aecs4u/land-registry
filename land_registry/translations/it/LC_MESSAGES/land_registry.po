@@ -5950,32 +5950,32 @@ msgstr "Quota di contribuenti nella fascia MEF oltre 120.000 €."
 msgid "Share of taxpayers with taxable income below €10,000."
 msgstr "Quota di contribuenti con reddito imponibile inferiore a 10.000 €."
 
-msgid "Show NPL Aste Florio assets"
-msgstr "Mostra beni NPL Aste Florio"
+msgid "Show NPL assets"
+msgstr "Mostra beni NPL"
 
-msgid "NPL Aste Florio asset locations are approximate municipality points."
-msgstr "Le posizioni dei beni NPL Aste Florio sono punti approssimativi a livello comunale."
+msgid "NPL asset locations are approximate municipality points."
+msgstr "Le posizioni dei beni NPL sono punti approssimativi a livello comunale."
 
 msgid "Locations are at municipality level; exact cadastral parcels are not available yet."
 msgstr "Le posizioni sono a livello comunale; le particelle catastali esatte non sono ancora disponibili."
 
-msgid "Loading NPL Aste Florio assets…"
-msgstr "Caricamento dei beni NPL Aste Florio…"
+msgid "Loading NPL assets…"
+msgstr "Caricamento dei beni NPL…"
 
-msgid "NPL Aste Florio asset layer is temporarily unavailable."
-msgstr "Il livello dei beni NPL Aste Florio non è temporaneamente disponibile."
+msgid "NPL asset layer is temporarily unavailable."
+msgstr "Il livello dei beni NPL non è temporaneamente disponibile."
 
 msgid "{n} municipality locations with {assets} NPL assets in this view."
 msgstr "{n} comuni con {assets} beni NPL in questa vista."
 
-msgid "No NPL Aste Florio assets in this view."
-msgstr "Nessun bene NPL Aste Florio in questa vista."
+msgid "No NPL assets in this view."
+msgstr "Nessun bene NPL in questa vista."
 
-msgid "Some NPL Aste Florio assets have no matching municipality location."
-msgstr "Alcuni beni NPL Aste Florio non hanno un comune corrispondente."
+msgid "Some NPL assets have no matching municipality location."
+msgstr "Alcuni beni NPL non hanno un comune corrispondente."
 
-msgid "NPL Aste Florio assets"
-msgstr "Beni NPL Aste Florio"
+msgid "NPL assets"
+msgstr "Beni NPL"
 
 msgid "NPL asset"
 msgstr "Bene NPL"

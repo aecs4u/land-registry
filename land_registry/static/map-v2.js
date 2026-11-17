@@ -6027,7 +6027,7 @@
         : '';
       return `<article class="npl-asset-popup-item"><strong>${titleHtml}</strong>${description}<div class="npl-asset-detail-grid">${rows}</div>${link}</article>`;
     }).join('');
-    const heading = [properties.municipality, properties.province].filter(Boolean).join(' · ') || tr('NPL Aste Florio assets');
+    const heading = [properties.municipality, properties.province].filter(Boolean).join(' · ') || tr('NPL assets');
     const summary = `<p class="npl-asset-popup-summary">${escapeHtml(tr('Assets'))}: ${escapeHtml(properties.asset_count ?? assets.length)} · ${escapeHtml(tr('Positions'))}: ${escapeHtml(properties.position_count ?? '—')}</p>`;
     const locationNote = `<p class="npl-asset-location-note">${escapeHtml(tr('Municipality-level location; this point does not identify a cadastral parcel.'))}</p>`;
     const details = assets.length
@@ -6104,11 +6104,11 @@
     const controller = new AbortController();
     nplAsteFlorioOverlay.controller = controller;
     const timeout = setTimeout(() => controller.abort(), 45000);
-    if (status) status.textContent = tr('Loading NPL Aste Florio assets…');
-    const task = beginMapProgress('npl-asteflorio-assets', 'Loading NPL Aste Florio assets…');
+    if (status) status.textContent = tr('Loading NPL assets…');
+    const task = beginMapProgress('npl-asteflorio-assets', 'Loading NPL assets…');
     try {
       const response = await fetch(`/api/v1/map/npl-asteflorio-assets?${params}`, { signal: controller.signal });
-      if (!response.ok) throw new Error(tr('NPL Aste Florio asset layer is temporarily unavailable.'));
+      if (!response.ok) throw new Error(tr('NPL asset layer is temporarily unavailable.'));
       const payload = await response.json();
       if (token !== nplAsteFlorioOverlay.fetchToken || !nplAsteFlorioOverlay.active) return;
       const features = Array.isArray(payload.features) ? payload.features : [];
@@ -6130,9 +6130,9 @@
       if (status) {
         status.textContent = features.length
           ? tr('{n} municipality locations with {assets} NPL assets in this view.', { n: features.length, assets: payload.asset_count || 0 })
-          : tr('No NPL Aste Florio assets in this view.');
+          : tr('No NPL assets in this view.');
         if (payload.unlocated_asset_count) {
-          status.textContent += ` ${tr('Some NPL Aste Florio assets have no matching municipality location.')}`;
+          status.textContent += ` ${tr('Some NPL assets have no matching municipality location.')}`;
         }
       }
     } catch (error) {
@@ -6141,7 +6141,7 @@
       nplAsteFlorioOverlay.leafletLayer?.remove();
       nplAsteFlorioOverlay.leafletLayer = null;
       if (count) count.textContent = '';
-      if (status) status.textContent = error.message || tr('NPL Aste Florio asset layer is temporarily unavailable.');
+      if (status) status.textContent = error.message || tr('NPL asset layer is temporarily unavailable.');
     } finally {
       clearTimeout(timeout);
       task.finish();
