@@ -356,7 +356,7 @@ test('omi renders zone states, a surface prompt for large parcels and the quote 
   assert.match(detected.body, /All OMI quotes for this municipality \(3\)/);
   assert.match(detected.body, /<th scope="row">B31<\/th><td>Abitazioni civili<\/td>/);
   assert.ok(detected.body.includes('Sale range (€/m²)'));
-  assert.match(detected.body, /<td>A1<\/td><td>Abitazioni civili<\/td><td>NORMALE<\/td><td>—<\/td><td>11–14<\/td>/);
+  assert.match(detected.body, /<th scope="row">A1<\/th><td>Abitazioni civili<\/td><td>NORMALE<\/td><td>—<\/td><td>11–14<\/td>/);
   assert.equal(detected.badge, 3);
   assert.equal(detected.meta.dataset_version, '2025/2');
   assert.match(detected.body, /id="parcelOmiArea"[^>]*value=""/);
