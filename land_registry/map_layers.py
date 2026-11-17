@@ -472,6 +472,10 @@ _DIRECT_LAYER_SOURCES: dict[str, tuple[str, str]] = {
     "landscape-constraints": ("land_registry", "spatial.protection_area"),
     "heritage-protections": ("land_registry", "spatial.protection_area"),
 }
+_MAP_SOURCE_DATABASES = frozenset(
+    {database for database, _relation in _DIRECT_LAYER_SOURCES.values()}
+    | {"eurostat", "sister", "verdict"}
+)
 _ADMIN_BOUNDARY_UNIT_TYPES = {
     "geo-boundaries": "region",
     "geo-boundaries-provinces": "province",
@@ -660,6 +664,19 @@ class _AsyncpgConnectionSource:
     }
     ACQUIRE_TIMEOUT_SECONDS = 15.0
 
+    @staticmethod
+    def source_database_fallback_enabled() -> bool:
+        """Whether the shared Stats DSN may be reused for source databases."""
+        return os.getenv("STATS_POSTGRES_SOURCE_FALLBACK_ENABLE", "").strip().lower() in (
+            "1", "true", "yes", "on"
+        )
+
+    @classmethod
+    def _fallback_base_from_environment(cls) -> Optional["_AsyncpgConnectionSource"]:
+        if not cls.source_database_fallback_enabled():
+            return None
+        return cls.from_environment()
+
     def __init__(
         self,
         dsn: str,
@@ -702,8 +719,8 @@ class _AsyncpgConnectionSource:
         """Connect straight to one source-owned database.
 
         ``AECS4U_SOURCE_<DATABASE>_DATABASE_URL`` (or ``<DATABASE>_POSTGRES_DSN``)
-        wins; otherwise ``STATS_POSTGRES_DSN`` supplies only the host and
-        credentials and its database name is replaced with ``database``.
+        wins. The shared Stats DSN supplies the host and credentials only when
+        ``STATS_POSTGRES_SOURCE_FALLBACK_ENABLE`` is explicitly enabled.
         """
         key = database.upper()
         search_path = cls.POSTGIS_SEARCH_PATHS.get(database)
@@ -712,7 +729,7 @@ class _AsyncpgConnectionSource:
             if direct_dsn.startswith(("postgres://", "postgresql://", "postgresql+")):
                 return cls(direct_dsn.replace("postgresql+psycopg2://", "postgresql://", 1), search_path=search_path)
             return None
-        base = cls.from_environment()
+        base = cls._fallback_base_from_environment()
         if base is None:
             return None
         parsed = urlsplit(base.dsn)
@@ -721,21 +738,13 @@ class _AsyncpgConnectionSource:
     @classmethod
     def census_from_environment(cls) -> Optional["_AsyncpgConnectionSource"]:
         """Use the census database directly so its local GiST index serves tiles."""
-        if os.getenv("STATS_POSTGRES_ENABLE", "").strip().lower() not in ("1", "true", "yes", "on"):
-            return None
         direct_dsn = os.getenv("CENSUS_POSTGRES_DSN") or os.getenv("CENSUS_SECTIONS_POSTGRES_DSN")
         if direct_dsn:
             return cls(direct_dsn, search_path=cls.POSTGIS_SEARCH_PATHS["census_sections"])
-        stats_dsn = (
-            os.getenv("STATS_POSTGRES_DSN")
-            or os.getenv("AECS4U_STATS_DATABASE_URL")
-            or os.getenv("AECS4U_STATS_SPATIAL_DATABASE_URL")
-        )
-        if not stats_dsn or not stats_dsn.startswith(("postgres://", "postgresql://", "postgresql+")):
+        stats = cls._fallback_base_from_environment()
+        if stats is None:
             return None
-        parsed = urlsplit(stats_dsn.replace("postgresql+asyncpg://", "postgresql://", 1))
-        if not parsed.scheme or not parsed.netloc:
-            return None
+        parsed = urlsplit(stats.dsn)
         census_dsn = urlunsplit(
             (parsed.scheme, parsed.netloc, "/census_sections", parsed.query, parsed.fragment)
         )
@@ -749,7 +758,7 @@ class _AsyncpgConnectionSource:
             if direct_dsn.startswith(("postgres://", "postgresql://", "postgresql+")):
                 return cls(direct_dsn, search_path=cls.POSTGIS_SEARCH_PATHS["hazards"])
             return None
-        stats = cls.from_environment()
+        stats = cls._fallback_base_from_environment()
         if stats is None:
             return None
         parsed = urlsplit(stats.dsn)
@@ -763,7 +772,7 @@ class _AsyncpgConnectionSource:
             if direct_dsn.startswith(("postgres://", "postgresql://", "postgresql+")):
                 return cls(direct_dsn, search_path=cls.POSTGIS_SEARCH_PATHS["egms"])
             return None
-        stats = cls.from_environment()
+        stats = cls._fallback_base_from_environment()
         if stats is None:
             return None
         parsed = urlsplit(stats.dsn)
@@ -782,7 +791,7 @@ class _AsyncpgConnectionSource:
                 direct_dsn = direct_dsn.replace("postgresql+psycopg2://", "postgresql://", 1)
                 return cls(direct_dsn, search_path=cls._ANNCSU_SEARCH_PATH)
             return None
-        stats = cls.from_environment()
+        stats = cls._fallback_base_from_environment()
         if stats is None:
             return None
         parsed = urlsplit(stats.dsn)
@@ -800,7 +809,7 @@ class _AsyncpgConnectionSource:
                 direct_dsn = direct_dsn.replace("postgresql+psycopg2://", "postgresql://", 1)
                 return cls(direct_dsn)
             return None
-        stats = cls.from_environment()
+        stats = cls._fallback_base_from_environment()
         if stats is None:
             return None
         parsed = urlsplit(stats.dsn)
@@ -809,13 +818,16 @@ class _AsyncpgConnectionSource:
 
     @classmethod
     def cadastral_from_environment(cls) -> Optional["_AsyncpgConnectionSource"]:
-        """Use prepared views in the dedicated database when stats has none."""
-        stats = cls.from_environment()
+        """Use prepared views in the dedicated database when explicitly configured."""
+        direct_dsn = (
+            os.getenv("AECS4U_SOURCE_CADASTRAL_DATABASE_URL")
+            or os.getenv("CADASTRAL_POSTGRES_DSN")
+        )
+        if direct_dsn:
+            return cls(direct_dsn.replace("postgresql+psycopg2://", "postgresql://", 1))
+        stats = cls._fallback_base_from_environment()
         if stats is None:
             return None
-        direct_dsn = os.getenv("CADASTRAL_POSTGRES_DSN")
-        if direct_dsn:
-            return cls(direct_dsn)
         parsed = urlsplit(stats.dsn)
         return cls(urlunsplit(parsed._replace(path="/cadastral")))
 
@@ -897,22 +909,24 @@ class PostgresMapLayerSource:
             connection_source = _AsyncpgConnectionSource.from_environment()
         self.connection_source = connection_source
         self.census_connection_source = census_connection_source
+        if self.census_connection_source is None and use_environment:
+            self.census_connection_source = _AsyncpgConnectionSource.census_from_environment()
         self.cadastral_connection_source = cadastral_connection_source
-        if self.cadastral_connection_source is None and use_environment and self.connection_source is not None:
+        if self.cadastral_connection_source is None and use_environment:
             self.cadastral_connection_source = _AsyncpgConnectionSource.cadastral_from_environment()
         self.hazards_connection_source = hazards_connection_source
-        if self.hazards_connection_source is None and use_environment and self.connection_source is not None:
+        if self.hazards_connection_source is None and use_environment:
             self.hazards_connection_source = _AsyncpgConnectionSource.hazards_from_environment()
         self.egms_connection_source = egms_connection_source
-        if self.egms_connection_source is None and use_environment and self.connection_source is not None:
+        if self.egms_connection_source is None and use_environment:
             self.egms_connection_source = _AsyncpgConnectionSource.egms_from_environment()
         self.anncsu_connection_source = anncsu_connection_source
-        if self.anncsu_connection_source is None and use_environment and self.connection_source is not None:
+        if self.anncsu_connection_source is None and use_environment:
             self.anncsu_connection_source = _AsyncpgConnectionSource.anncsu_from_environment()
         self.corine_connection_source = corine_connection_source
-        if self.corine_connection_source is None and use_environment and self.connection_source is not None:
+        if self.corine_connection_source is None and use_environment:
             self.corine_connection_source = _AsyncpgConnectionSource.corine_from_environment()
-        self._use_direct_sources = use_environment and self.connection_source is not None
+        self._use_direct_sources = use_environment
         self._direct_sources: dict[str, Optional[_AsyncpgConnectionSource]] = {}
         self._hazards_routes: dict[str, tuple[Any, float]] = {}
         self._egms_routes: dict[str, tuple[Any, float]] = {}
@@ -949,12 +963,21 @@ class PostgresMapLayerSource:
         direct = self._direct_source(layer)
         if direct is not None:
             return direct
+        if self._use_direct_sources and layer.id in _DIRECT_LAYER_SOURCES:
+            return None
         if layer.id == "census-sections" and self.census_connection_source is not None:
             return self.census_connection_source
         if layer.id in _HAZARDS_SOURCE_RELATIONS and self.hazards_connection_source is not None:
             return self.hazards_connection_source
         if layer.id in _EGMS_SOURCE_RELATIONS and self.egms_connection_source is not None:
             return self.egms_connection_source
+        if layer.id in CADASTRAL_LAYER_IDS and self.cadastral_connection_source is not None:
+            return self.cadastral_connection_source
+        if self._use_direct_sources and not _AsyncpgConnectionSource.source_database_fallback_enabled():
+            if layer.id in _HAZARDS_SOURCE_RELATIONS or layer.id in _EGMS_SOURCE_RELATIONS:
+                return None
+            if layer.id in CADASTRAL_LAYER_IDS and self.cadastral_connection_source is None:
+                return None
         if layer.id == "anncsu-addresses":
             return self.anncsu_connection_source
         if layer.id == "corine-landcover":
@@ -967,11 +990,18 @@ class PostgresMapLayerSource:
         direct = self._direct_source(layer)
         if direct is not None:
             return direct
+        if self._use_direct_sources and layer.id in _DIRECT_LAYER_SOURCES:
+            return None
         if layer.id in _HAZARDS_SOURCE_RELATIONS and self.hazards_connection_source is not None:
             cached = self._hazards_routes.get(layer.id)
             if cached and cached[1] > time.monotonic():
                 return cached[0]
-            selected = self.connection_source
+            selected = (
+                self.connection_source
+                if not self._use_direct_sources
+                or _AsyncpgConnectionSource.source_database_fallback_enabled()
+                else None
+            )
             try:
                 async with self.hazards_connection_source.connection() as connection:
                     if await connection.fetchval(
@@ -987,7 +1017,12 @@ class PostgresMapLayerSource:
             cached = self._egms_routes.get(layer.id)
             if cached and cached[1] > time.monotonic():
                 return cached[0]
-            selected = self.connection_source
+            selected = (
+                self.connection_source
+                if not self._use_direct_sources
+                or _AsyncpgConnectionSource.source_database_fallback_enabled()
+                else None
+            )
             try:
                 async with self.egms_connection_source.connection() as connection:
                     if await connection.fetchval(
@@ -1341,7 +1376,16 @@ class PostgresMapLayerSource:
 
     @property
     def available(self) -> bool:
-        return self.connection_source is not None
+        return any((
+            self.connection_source,
+            self.census_connection_source,
+            self.cadastral_connection_source,
+            self.hazards_connection_source,
+            self.egms_connection_source,
+            self.anncsu_connection_source,
+            self.corine_connection_source,
+            *(self._database_source(database) for database in _MAP_SOURCE_DATABASES),
+        ))
 
     async def close(self) -> None:
         sources = {
@@ -1350,7 +1394,7 @@ class PostgresMapLayerSource:
                 self.connection_source, self.census_connection_source,
                 self.cadastral_connection_source, self.hazards_connection_source,
                 self.egms_connection_source, self.anncsu_connection_source,
-                self.corine_connection_source,
+                self.corine_connection_source, *self._direct_sources.values(),
             )
             if source is not None
         }

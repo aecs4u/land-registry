@@ -18,6 +18,7 @@ env:
   GCP_REGION:     ${{ vars.GCP_REGION || 'europe-west1' }}
   SERVICE_NAME: ${{ vars.CLOUD_RUN_SERVICE || 'land-registry-service' }}
   IMAGE_BASE: ${{ vars.ARTIFACT_REGISTRY_IMAGE || 'europe-west1-docker.pkg.dev/apps-aecs4u/cloud-run-source-deploy/land-registry-service' }}
+  STATS_POSTGRES_SOURCE_FALLBACK_ENABLE: ${{ vars.STATS_POSTGRES_SOURCE_FALLBACK_ENABLE || '0' }}
 
 jobs:
   test:
@@ -120,6 +121,11 @@ jobs:
       - name: Deploy to Cloud Run
         id: deploy
         run: |
+          SECRET_BINDINGS="SECRET_KEY=LAND_REGISTRY_SECRET_KEY:latest,SESSION_SECRET_KEY=LAND_REGISTRY_SESSION_SECRET_KEY:latest,DATABASE_URL=LAND_REGISTRY_DATABASE_URL:latest,CLERK_SECRET_KEY=LAND_REGISTRY_CLERK_SECRET_KEY:latest,LOGFIRE_TOKEN=LAND_REGISTRY_LOGFIRE_TOKEN:latest"
+          FALLBACK_VALUE=$(printf '%s' "$STATS_POSTGRES_SOURCE_FALLBACK_ENABLE" | tr '[:upper:]' '[:lower:]')
+          if [[ "$FALLBACK_VALUE" =~ ^(1|true|yes|on)$ ]]; then
+            SECRET_BINDINGS="$SECRET_BINDINGS,STATS_POSTGRES_DSN=STATS_POSTGRES_DSN:latest"
+          fi
           gcloud run deploy ${{ env.SERVICE_NAME }} \
             --image=${{ env.IMAGE_BASE }}:sha-${{ steps.img.outputs.sha_short }} \
             --region=${{ env.GCP_REGION }} \
@@ -138,8 +144,8 @@ jobs:
             --timeout="${{ vars.CLOUDRUN_TIMEOUT || '300' }}" \
             --cpu-boost \
             --cpu-throttling \
-            --set-env-vars="ENVIRONMENT=production,DEBUG=false,LOG_LEVEL=INFO,AUTH_MODE=clerk_and_local,STATS_POSTGRES_ENABLE=1,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ vars.AECS4U_LAND_REGISTRY_CLERK_PUBLISHABLE_KEY || 'pk_test_Y2hhbXBpb24tbXVsbGV0LTc2LmNsZXJrLmFjY291bnRzLmRldiQ' }},CLERK_JWKS_URL=${{ vars.AECS4U_LAND_REGISTRY_CLERK_JWKS_URL || 'https://champion-mullet-76.clerk.accounts.dev/.well-known/jwks.json' }}" \
-            --set-secrets="SECRET_KEY=LAND_REGISTRY_SECRET_KEY:latest,SESSION_SECRET_KEY=LAND_REGISTRY_SESSION_SECRET_KEY:latest,DATABASE_URL=LAND_REGISTRY_DATABASE_URL:latest,STATS_POSTGRES_DSN=STATS_POSTGRES_DSN:latest,CLERK_SECRET_KEY=LAND_REGISTRY_CLERK_SECRET_KEY:latest,LOGFIRE_TOKEN=LAND_REGISTRY_LOGFIRE_TOKEN:latest"
+            --set-env-vars="ENVIRONMENT=production,DEBUG=false,LOG_LEVEL=INFO,AUTH_MODE=clerk_and_local,STATS_POSTGRES_ENABLE=1,STATS_POSTGRES_SOURCE_FALLBACK_ENABLE=$STATS_POSTGRES_SOURCE_FALLBACK_ENABLE,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ vars.AECS4U_LAND_REGISTRY_CLERK_PUBLISHABLE_KEY || 'pk_test_Y2hhbXBpb24tbXVsbGV0LTc2LmNsZXJrLmFjY291bnRzLmRldiQ' }},CLERK_JWKS_URL=${{ vars.AECS4U_LAND_REGISTRY_CLERK_JWKS_URL || 'https://champion-mullet-76.clerk.accounts.dev/.well-known/jwks.json' }}" \
+            --set-secrets="$SECRET_BINDINGS"
 
           URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
             --region=${{ env.GCP_REGION }} \

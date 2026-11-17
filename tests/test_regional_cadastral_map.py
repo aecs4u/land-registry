@@ -156,11 +156,13 @@ def test_regional_health_checks_every_backing_spatial_index_and_estimates_extent
 
 def test_regional_database_dsn_preserves_connection_options(monkeypatch):
     monkeypatch.setenv("STATS_POSTGRES_ENABLE", "1")
+    monkeypatch.setenv("STATS_POSTGRES_SOURCE_FALLBACK_ENABLE", "1")
     monkeypatch.setenv("STATS_POSTGRES_DSN", "postgresql+asyncpg://user:secret@localhost:5432/aecs4u-stats?sslmode=require")
     monkeypatch.delenv("CADASTRAL_POSTGRES_DSN", raising=False)
     assert _AsyncpgConnectionSource.cadastral_from_environment().dsn == "postgresql://user:secret@localhost:5432/cadastral?sslmode=require"
     monkeypatch.setenv("CADASTRAL_POSTGRES_DSN", "postgresql://other:secret@localhost/custom")
     assert _AsyncpgConnectionSource.cadastral_from_environment().dsn.endswith("/custom")
+    monkeypatch.delenv("CADASTRAL_POSTGRES_DSN")
     monkeypatch.setenv("STATS_POSTGRES_ENABLE", "0")
     assert _AsyncpgConnectionSource.cadastral_from_environment() is None
 
