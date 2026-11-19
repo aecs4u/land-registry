@@ -42,9 +42,15 @@ try:
     _templates = Jinja2Templates(directory=_template_dirs)
     # Expose the theme's own pages under a prefix so an override can extend the
     # page it shadows (a template cannot extend itself by name).
-    _templates.env.loader = ChoiceLoader(
-        [_templates.env.loader, PrefixLoader({"aecs4u_theme": FileSystemLoader(str(_theme_templates_dir))})]
-    )
+    _prefixes = {"aecs4u_theme": FileSystemLoader(str(_theme_templates_dir))}
+    # aecs4u-auth ships the unified sign-in page (Clerk + local email/password)
+    # that OpenData extends; consume the same one rather than the bare theme page.
+    import aecs4u_auth
+
+    _auth_templates_dir = Path(aecs4u_auth.__file__).parent / "templates"
+    if (_auth_templates_dir / "auth" / "login.html").exists():
+        _prefixes["aecs4u-auth"] = FileSystemLoader(str(_auth_templates_dir))
+    _templates.env.loader = ChoiceLoader([_templates.env.loader, PrefixLoader(_prefixes)])
     # Theme releases differ: older ones ship auth/{login,register}_base.html and
     # expect apps to extend them; newer ones make auth/{login,register}.html the
     # canonical page. Resolve the parent from what is installed so a theme
@@ -55,6 +61,8 @@ try:
             if (_theme_templates_dir / "auth" / f"{_page}_base.html").exists()
             else f"aecs4u_theme/auth/{_page}.html"
         )
+    if "aecs4u-auth" in _prefixes:
+        _templates.env.globals["theme_auth_login_parent"] = "aecs4u-auth/auth/login.html"
     _templates.env.filters["clerk_appearance"] = _clerk_appearance_filter
     _templates.env.globals["_"] = _cvgt
     _templates.env.globals["get_locale"] = _get_locale
@@ -90,6 +98,12 @@ def _ctx(request: Request, **extra) -> dict:
         "auth_register_url": "/auth/register",
         "auth_callback_url": "/auth/callback",
         "next_url": auth_settings.after_sign_in_url,
+        # Flat names consumed by aecs4u-auth's unified login (as in OpenData):
+        # the Clerk widget plus the local email/password form.
+        "clerk_enabled": bool(clerk.get("enabled")),
+        "publishable_key": clerk.get("publishable_key") or getattr(config, "clerk_publishable_key", ""),
+        "login_api_url": "/auth/login",
+        "register_url": "/auth/register",
     }
     context.update(extra)
     # aecs4u-theme's shared navbar uses this separate variable for its Sign In
