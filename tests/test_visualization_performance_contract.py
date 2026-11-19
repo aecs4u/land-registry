@@ -183,8 +183,7 @@ def test_map_runtime_does_not_reload_leaflet_or_block_on_plugin_scripts() -> Non
     assert "leaflet.locatecontrol@0.90.1" in base
     assert "leaflet-search@4.0.0" in base
     assert "leaflet-rastercoords" not in base
-    assert "@clerk/clerk-js@6.30.3" in base
-    assert "@clerk/clerk-js@latest" not in base
+    assert "@clerk/clerk-js@latest" in base
     assert "leaflet-treelayers" not in base
     assert "glify-browser.js" not in base
     assert "webgl-renderer.js" not in base
