@@ -17,7 +17,6 @@ from __future__ import annotations
 import logging
 import os
 import sys
-from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 import psycopg2
@@ -61,9 +60,6 @@ def refresh(dsn: str | None = None) -> dict[str, int]:
 
 
 def main() -> int:
-    from dotenv import load_dotenv
-
-    load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
         counts = refresh()

@@ -1,5 +1,6 @@
 from bokeh.embed import server_document
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.staticfiles import StaticFiles
@@ -20,7 +21,7 @@ import secrets
 import threading
 from pathlib import Path
 from types import SimpleNamespace
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 import duckdb
 import pandas as pd
 import panel as pn
@@ -76,10 +77,40 @@ if _AUTH_AVAILABLE:
     )
     from aecs4u_auth.middleware import SecurityHeadersMiddleware
 
-    # The shared middleware's default still permits eval-based script loading.
-    # Keep its existing inline compatibility for the legacy templates while
-    # removing eval from every page served by this app.
-    SecurityHeadersMiddleware.DEFAULT_CSP = SecurityHeadersMiddleware.DEFAULT_CSP.replace(" 'unsafe-eval'", "")
+    # This app adds a nonce to each inline script and hashes its inline event
+    # handlers, so the shared default does not need blanket inline/eval access.
+    # Keep only the external sources used by this app and add protections that
+    # are safe for the production origin.
+    _csp_directives = []
+    for _directive in SecurityHeadersMiddleware.DEFAULT_CSP.split(";"):
+        _parts = _directive.split()
+        if not _parts:
+            continue
+        _name, *_sources = _parts
+        if _name.lower() == "script-src":
+            _sources = [
+                source for source in _sources
+                if source not in {"'unsafe-inline'", "'unsafe-eval'", "blob:"}
+                and source not in {"https://cdn.tailwindcss.com", "https://maps.googleapis.com"}
+            ]
+        elif _name.lower() in {"style-src", "connect-src"}:
+            _sources = [
+                source for source in _sources
+                if source not in {"https://cdn.tailwindcss.com", "https://maps.googleapis.com"}
+            ]
+            if _name.lower() == "style-src":
+                _sources = [source for source in _sources if source != "https://fonts.googleapis.com"]
+        elif _name.lower() == "font-src":
+            _sources = [
+                source for source in _sources
+                if source not in {"https://fonts.googleapis.com", "https://fonts.gstatic.com"}
+            ]
+        _csp_directives.append(" ".join([_name, *_sources]))
+    if not any(item.startswith("object-src ") for item in _csp_directives):
+        _csp_directives.append("object-src 'none'")
+    if not app_settings.debug and "upgrade-insecure-requests" not in _csp_directives:
+        _csp_directives.append("upgrade-insecure-requests")
+    SecurityHeadersMiddleware.DEFAULT_CSP = "; ".join(_csp_directives)
     try:
         # Newer aecs4u-auth versions re-export this factory at package level;
         # older compatible versions keep it in the local router module.
@@ -567,25 +598,33 @@ app.add_middleware(ServiceHealthMiddleware)
 
 
 class _StaticCacheMiddleware:
-    """Cache-Control for /static.
+    """Set conservative HTML caching and immutable caching for stamped assets.
 
     ``asset_url`` stamps every asset with ``?v=<mtime-size>``, so a versioned
     URL can never go stale and is cached for a year. Unversioned requests keep
-    revalidating through the ETag StaticFiles already sends.
+    revalidating through the ETag StaticFiles already sends. HTML can contain
+    account state or locale-specific copy, so it is never shared or retained.
     """
 
     def __init__(self, app):
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "http" and scope["path"].startswith("/static/"):
+        if scope["type"] == "http":
+            is_static = scope["path"].startswith("/static/")
             versioned = b"v=" in scope.get("query_string", b"")
 
             async def send_wrapper(message):
-                if message["type"] == "http.response.start" and message.get("status") == 200:
-                    headers = [(k, v) for k, v in message["headers"] if k.lower() != b"cache-control"]
-                    value = b"public, max-age=31536000, immutable" if versioned else b"no-cache"
-                    headers.append((b"cache-control", value))
+                if message["type"] == "http.response.start":
+                    headers = list(message["headers"])
+                    header_map = {key.lower(): value for key, value in headers}
+                    if is_static and message.get("status") == 200:
+                        headers = [(key, value) for key, value in headers if key.lower() != b"cache-control"]
+                        value = b"public, max-age=31536000, immutable" if versioned else b"no-cache"
+                        headers.append((b"cache-control", value))
+                    elif header_map.get(b"content-type", b"").lower().startswith(b"text/html") \
+                        and b"cache-control" not in header_map:
+                        headers.append((b"cache-control", b"private, no-store"))
                     message["headers"] = headers
                 await send(message)
 
@@ -674,6 +713,14 @@ class _HtmlScriptPolicyMiddleware:
         async def send_wrapper(message):
             nonlocal response_start, response_body
             if message["type"] == "http.response.start":
+                headers = [
+                    (key, value)
+                    for key, value in message.get("headers", [])
+                    if key.lower() != b"x-frame-options"
+                ]
+                headers.append((b"x-frame-options", b"SAMEORIGIN"))
+                message = dict(message)
+                message["headers"] = headers
                 content_type = next(
                     (value.lower() for key, value in message.get("headers", []) if key.lower() == b"content-type"),
                     b"",
@@ -875,7 +922,7 @@ if _AUTH_AVAILABLE:
                 # tile hosts must be allowed here, not only under img-src.
                 "https://server.arcgisonline.com",
                 "https://services.arcgisonline.com",
-                "https://a.tile.openstreetmap.org",
+                "https://tile.openstreetmap.org",
                 "https://mt1.google.com",
                 "https://cartodb-basemaps-a.global.ssl.fastly.net",
             ],
@@ -906,7 +953,9 @@ if _THEME_AVAILABLE:
     _theme_overrides_dir = Path(__file__).parent / "templates" / "theme_overrides"
     _theme_setup = setup_theme(
         app,
-        config=ThemeConfig(site_name="Land Registry"),
+        # Use the visitor's system font stack instead of requesting Inter and
+        # Lexend from Google Fonts on every theme-rendered page.
+        config=ThemeConfig(site_name="Land Registry", fonts_css_url=""),
         static_url_path="/static/aecs4u-theme",
         templates_dir=_theme_overrides_dir,
     )
@@ -1048,20 +1097,130 @@ async def private_openapi_schema():
 
 
 @app.get("/docs", response_class=HTMLResponse, include_in_schema=False, dependencies=[Depends(_require_private_template)])
-async def private_swagger_docs():
-    return get_swagger_ui_html(openapi_url="/openapi.json", title=f"{app.title} - API")
+async def private_swagger_docs(request: Request):
+    locale = detect_locale(request)
+    gettext = make_gettext(locale)
+    swagger_js_url = "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui-bundle.js"
+    swagger_css_url = "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui.css"
+    response = get_swagger_ui_html(
+        openapi_url="/openapi.json",
+        title=f"{gettext('API reference')} · Land Registry",
+        swagger_js_url=swagger_js_url,
+        swagger_css_url=swagger_css_url,
+        swagger_favicon_url="/favicon.ico",
+        swagger_ui_parameters={"validatorUrl": None},
+    )
+    page = response.body.decode("utf-8")
+    page = page.replace("<html>", f'<html lang="{locale}">', 1)
+    page = page.replace(
+        f'<link type="text/css" rel="stylesheet" href="{swagger_css_url}">',
+        f'<link type="text/css" rel="stylesheet" href="{swagger_css_url}" '
+        'integrity="sha384-wxLW6kwyHktdDGr6Pv1zgm/VGJh99lfUbzSn6HNHBENZlCN7W602k9VkGdxuFvPn" '
+        'crossorigin="anonymous">',
+        1,
+    )
+    page = page.replace(
+        f'<script src="{swagger_js_url}"></script>',
+        f'<script src="{swagger_js_url}" '
+        'integrity="sha384-wmyclcVGX/WhUkdkATwhaK1X1JtiNrr2EoYJ+diV3vj4v6OC5yCeSu+yW13SYJep" '
+        'crossorigin="anonymous"></script>',
+        1,
+    )
+    page = page.replace(
+        "</head>",
+        '<meta name="description" content="Land Registry API reference">'
+        f'<link rel="stylesheet" href="{asset_url("css/api-docs.css")}"></head>',
+        1,
+    )
+    page = page.replace(
+        "<body>",
+        '<body><main id="main-content" class="api-docs-page">'
+        f'<h1>{html_lib.escape(gettext("Land Registry API"))}</h1>',
+        1,
+    )
+    page = page.replace("</body>", "</main></body>", 1)
+    return HTMLResponse(content=page, status_code=response.status_code)
 
 
 @app.get("/redoc", response_class=HTMLResponse, include_in_schema=False, dependencies=[Depends(_require_private_template)])
-async def private_redoc_docs():
-    return get_redoc_html(openapi_url="/openapi.json", title=f"{app.title} - ReDoc")
+async def private_redoc_docs(request: Request):
+    locale = detect_locale(request)
+    gettext = make_gettext(locale)
+    redoc_js_url = "https://cdn.redoc.ly/redoc/v2.5.0/bundles/redoc.standalone.js"
+    response = get_redoc_html(
+        openapi_url="/openapi.json",
+        title=f"{gettext('API reference')} · Land Registry",
+        redoc_js_url=redoc_js_url,
+        redoc_favicon_url="/favicon.ico",
+        with_google_fonts=False,
+    )
+    page = response.body.decode("utf-8").replace("<html>", f'<html lang="{locale}">', 1)
+    page = page.replace(
+        "</head>",
+        '<meta name="description" content="Land Registry API reference">'
+        f'<link rel="stylesheet" href="{asset_url("css/api-docs.css")}"></head>',
+        1,
+    )
+    page = page.replace(
+        "<body>",
+        '<body><main id="main-content" class="api-docs-page">'
+        f'<h1>{html_lib.escape(gettext("Land Registry API"))}</h1>',
+        1,
+    )
+    page = page.replace("</redoc>", "</redoc></main>", 1)
+    page = page.replace(
+        f'<script src="{redoc_js_url}"> </script>',
+        f'<script src="{redoc_js_url}" '
+        'integrity="sha384-4vOjrBu7SuDWXcAw1qFznVLA/sKL+0l4nn+J1HY8w7cpa6twQEYuh4b0Cwuo7CyX" '
+        'crossorigin="anonymous"> </script>',
+        1,
+    )
+    return HTMLResponse(content=page, status_code=response.status_code)
+
+
+def public_base_url(request: Request) -> str:
+    """Use the configured HTTPS origin for public URLs behind TLS proxies."""
+    configured = (app_settings.public_base_url or "").strip().rstrip("/")
+    if configured:
+        parsed = urlsplit(configured)
+        if parsed.scheme == "https" and parsed.netloc and not parsed.query and not parsed.fragment:
+            return configured
+    return str(request.base_url).rstrip("/")
+
+
+@app.get("/.well-known/security.txt", include_in_schema=False)
+async def security_txt(request: Request):
+    base_url = public_base_url(request)
+    expires = (datetime.now(timezone.utc) + timedelta(days=180)).replace(microsecond=0)
+    return PlainTextResponse(
+        "\n".join(
+            (
+                "Contact: mailto:security@aecs4u.com",
+                f"Expires: {expires.isoformat().replace('+00:00', 'Z')}",
+                "Preferred-Languages: en, it",
+                f"Canonical: {base_url}/.well-known/security.txt",
+                "",
+            )
+        ),
+        media_type="text/plain",
+    )
 
 
 @app.get("/robots.txt", include_in_schema=False)
 async def robots_txt(request: Request):
-    base_url = (app_settings.public_base_url or str(request.base_url)).rstrip("/")
+    base_url = public_base_url(request)
     return PlainTextResponse(
-        "User-agent: *\nDisallow: /\nAllow: /landing\nAllow: /static/\n"
+        "User-agent: *\n"
+        "Disallow: /\n"
+        "Allow: /.well-known/security.txt$\n"
+        "Allow: /landing$\n"
+        "Allow: /privacy$\n"
+        "Allow: /terms$\n"
+        "Allow: /help$\n"
+        "Allow: /contact$\n"
+        "Allow: /data-sources$\n"
+        "Allow: /manifest.json$\n"
+        "Allow: /static/\n"
         f"Sitemap: {base_url}/sitemap.xml\n",
         media_type="text/plain",
     )
@@ -1069,16 +1228,58 @@ async def robots_txt(request: Request):
 
 @app.get("/sitemap.xml", include_in_schema=False)
 async def sitemap_xml(request: Request):
-    base_url = (app_settings.public_base_url or str(request.base_url)).rstrip("/")
-    landing_url = html_lib.escape(f"{base_url}/landing", quote=True)
+    base_url = public_base_url(request)
+    public_paths = ("/landing", "/privacy", "/terms", "/help", "/contact", "/data-sources")
+    urls = "".join(
+        f"<url><loc>{html_lib.escape(base_url + path, quote=True)}</loc></url>"
+        for path in public_paths
+    )
     return Response(
         content=(
             '<?xml version="1.0" encoding="UTF-8"?>'
             '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
-            f"<url><loc>{landing_url}</loc></url>"
+            f"{urls}"
             "</urlset>"
         ),
         media_type="application/xml",
+    )
+
+
+@app.get("/manifest.json", include_in_schema=False)
+async def web_manifest():
+    return JSONResponse(
+        {
+            "name": "Land Registry",
+            "short_name": "Land Registry",
+            "description": "Search Italian municipalities and cadastral parcels.",
+            "start_url": "/map",
+            "scope": "/",
+            "display": "standalone",
+            "background_color": "#f7f8fa",
+            "theme_color": "#1a5490",
+            "icons": [
+                {
+                    "src": "/static/land-registry-icon.svg",
+                    "sizes": "any",
+                    "type": "image/svg+xml",
+                    "purpose": "any",
+                },
+                {
+                    "src": "/static/land-registry-icon-192.png",
+                    "sizes": "192x192",
+                    "type": "image/png",
+                    "purpose": "any",
+                },
+                {
+                    "src": "/static/land-registry-icon-512.png",
+                    "sizes": "512x512",
+                    "type": "image/png",
+                    "purpose": "any maskable",
+                }
+            ],
+        },
+        media_type="application/manifest+json",
+        headers={"Cache-Control": "public, max-age=3600"},
     )
 
 
@@ -1126,10 +1327,10 @@ if _theme_setup is not None:
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
-    # aecs4u-theme's icons/favicon.png 404s in this environment; the app's
-    # own cadastral-icon SVG (already used as tabulator.html's inline
-    # favicon) is a real, always-available asset in this repo.
-    return FileResponse(Path(__file__).parent / "static" / "favicon.svg", media_type="image/svg+xml")
+    return FileResponse(
+        Path(__file__).parent / "static" / "favicon.ico",
+        media_type="image/vnd.microsoft.icon",
+    )
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -1423,25 +1624,40 @@ async def _serve_legacy_map_shell(request: Request):
 
 @app.get("/map", response_class=HTMLResponse, dependencies=[Depends(_require_private_template)])
 async def serve_map_shell(request: Request, user=Depends(get_current_user_optional)):
-    """Serve the direct map as the primary experience.
-
-    ``?legacy=1`` remains a compatibility escape hatch for upload and
-    analysis workflows while the Folium page is being retired. Mapping-view
-    deep links stay on the compatibility shell because that view owns the
-    saved-zone workflow context.
-    """
-    if (
-        request.query_params.get("legacy") == "1"
-        or request.query_params.get("view") == "mapping"
-    ):
-        return await _serve_legacy_map_shell(request)
+    """Serve the direct map and redirect retired compatibility query modes."""
+    if request.query_params.get("legacy") == "1" or request.query_params.get("view") == "mapping":
+        params = [
+            (key, value)
+            for key, value in request.query_params.multi_items()
+            if key not in {"legacy", "view"}
+        ]
+        if request.query_params.get("view") == "mapping" and not any(key == "panel" for key, _ in params):
+            params.append(("panel", "table"))
+        target = "/map" + (f"?{urlencode(params)}" if params else "")
+        return RedirectResponse(url=target, status_code=308)
     return await serve_direct_map(request, user)
 
 
-@app.get("/map-legacy", response_class=HTMLResponse, dependencies=[Depends(_require_private_template)])
+@app.get(
+    "/map-legacy",
+    response_class=HTMLResponse,
+    deprecated=True,
+    dependencies=[Depends(_require_private_template)],
+)
 async def serve_legacy_map_shell(request: Request):
-    """Serve the Folium/upload compatibility map explicitly."""
-    return await _serve_legacy_map_shell(request)
+    """Redirect the retired compatibility page to the canonical map."""
+    params = [
+        (key, value)
+        for key, value in request.query_params.multi_items()
+        if key not in {"legacy", "view"}
+    ]
+    if request.query_params.get("view") == "mapping" and not any(key == "panel" for key, _ in params):
+        params.append(("panel", "table"))
+    target = "/map" + (f"?{urlencode(params)}" if params else "")
+    response = RedirectResponse(url=target, status_code=308)
+    response.headers["Deprecation"] = "true"
+    response.headers["Link"] = '</map>; rel="successor-version"'
+    return response
 
 
 @app.get("/map-v2", include_in_schema=False)
@@ -1454,11 +1670,11 @@ async def redirect_map_v2(request: Request):
 async def serve_direct_map(request: Request, user=Depends(get_current_user_optional)):
     """Serve the direct, vector-tile map experience.
 
-    The Folium/upload compatibility page is available at ``/map-legacy`` or
-    ``/map?legacy=1`` while the migration target described by MAP_SRS.md is
-    rolled out.
+    The deprecated Folium/upload compatibility page now redirects to this
+    canonical map, which provides the supported map and attribute-table tools.
     """
     locale = detect_locale(request)
+    request.state.locale = locale
     gettext = make_gettext(locale)
     i18n_strings = translation_map(locale)
     i18n_strings.update({
@@ -1479,7 +1695,7 @@ async def serve_direct_map(request: Request, user=Depends(get_current_user_optio
             "Showing cached municipality data from the last 15 minutes.",
             "Collapse parcel details", "Expand parcel details", "Loading · retry after {n}s",
             "Sales data is still loading. Try again shortly.", "Nearby auction sales are unavailable.",
-            "Unavailable", "Available", "Not available", "Needs configuration",
+            "Unavailable", "Available", "Not available",
             "This table is not available in the current map. Use the parcel analysis tools instead.",
             *(layer["title"] for layer in map_layer_catalog()),
         )
@@ -1487,7 +1703,7 @@ async def serve_direct_map(request: Request, user=Depends(get_current_user_optio
     context = {
         "_": gettext,
         "locale": locale,
-        "public_base_url": (app_settings.public_base_url or str(request.base_url)).rstrip("/"),
+        "public_base_url": public_base_url(request),
         "i18n_strings": i18n_strings,
         "carto_enabled": map_generator.controls_manager.settings.carto_enabled,
         "carto_api_key": map_generator.controls_manager.settings.carto_api_key,
@@ -1526,6 +1742,7 @@ async def serve_embedded_cadastral_map(request: Request, user=Depends(get_curren
     """Preview the reusable cadastral-map component used by sibling apps."""
     if _theme_setup is None:
         return HTMLResponse("The shared cadastral map component requires aecs4u-theme.", status_code=503)
+    request.state.locale = detect_locale(request)
     return _theme_setup.render(
         "map_embed.html",
         request,
@@ -1553,6 +1770,7 @@ async def serve_omi_valuation_page(
         return HTMLResponse("The OMI valuation page requires aecs4u-theme.", status_code=503)
 
     locale = detect_locale(request)
+    request.state.locale = locale
     gettext = make_gettext(locale)
     normalized_comune = (comune or "").strip().upper()
     normalized_zona = (zona or "").strip().upper()
@@ -1936,6 +2154,7 @@ async def _render_account_page(request: Request, user, template_name: str, title
     if _theme_setup is None:
         raise HTTPException(status_code=503, detail="Account pages require aecs4u-theme")
     locale = detect_locale(request)
+    request.state.locale = locale
     gettext = make_gettext(locale)
     return _theme_setup.render(
         template_name,
@@ -1944,6 +2163,8 @@ async def _render_account_page(request: Request, user, template_name: str, title
         sidebar_enabled=_sidebar_enabled(user),
         _=gettext,
         locale=locale,
+        page_lang=locale,
+        site_name="Land Registry",
         page_title=gettext(title),
         nav_items=_account_nav_items(gettext),
         **context,
@@ -1986,8 +2207,15 @@ async def account_settings(request: Request, user=Depends(get_current_user_optio
 
 def _make_info_page(key: str):
     async def info_page(request: Request):
-        gettext = make_gettext(detect_locale(request))
-        context = {"_": gettext, **build_page(key, gettext)}
+        locale = detect_locale(request)
+        gettext = make_gettext(locale)
+        context = {
+            "_": gettext,
+            "locale": locale,
+            "page_lang": locale,
+            "public_base_url": public_base_url(request),
+            **build_page(key, gettext),
+        }
         return templates.TemplateResponse(request, "legal.html", context)
 
     info_page.__name__ = f"info_page_{key}"
@@ -1996,20 +2224,23 @@ def _make_info_page(key: str):
 
 # The footer, cookie banner and header link to these; they used to 404.
 for _page_key in PAGE_KEYS:
+    _page_dependencies = [] if _page_key in {"privacy", "terms", "help", "contact"} else [Depends(_require_private_template)]
     app.add_api_route(
         f"/{_page_key}",
         _make_info_page(_page_key),
         methods=["GET"],
         response_class=HTMLResponse,
         include_in_schema=False,
-        dependencies=[Depends(_require_private_template)],
+        dependencies=_page_dependencies,
     )
 
 
-@app.get("/data-sources", response_class=HTMLResponse, dependencies=[Depends(_require_private_template)])
+@app.get("/data-sources", response_class=HTMLResponse)
 async def data_sources_page(request: Request):
     """Publish provider attribution plus parcel-API field methodology and freshness."""
-    gettext = make_gettext(detect_locale(request))
+    locale = detect_locale(request)
+    request.state.locale = locale
+    gettext = make_gettext(locale)
     basis_labels = {
         "official_terms_reviewed": gettext("Official provider terms reviewed"),
         "official_methodology_reviewed": gettext("Official provider methodology reviewed"),
@@ -2058,10 +2289,12 @@ async def data_sources_page(request: Request):
     ]
     context = {
         "_": gettext,
+        "locale": locale,
+        "page_lang": locale,
         "sources": sources,
         "parcel_fields": parcel_fields,
         "page_title": gettext("Data sources and reuse"),
-        "clerk_publishable_key": get_auth_config().clerk_publishable_key,
+        "public_base_url": public_base_url(request),
     }
     return templates.TemplateResponse(request, "data_sources.html", context)
 
@@ -2081,7 +2314,7 @@ async def show_map_table(request: Request):
         tabulator = ""
     return templates.TemplateResponse(request, "tabulator.html", {
         "tabulator": tabulator,
-        "title": f"{contextvar_gettext('Map Table')} - {contextvar_gettext('Land Registry Viewer')}",
+        "title": f"{contextvar_gettext('Map Table')} · {contextvar_gettext('Land Registry')}",
         "page_description": contextvar_gettext("Explore cadastral parcels in an interactive attribute table."),
         "replacement_url": "/map?panel=table&notice=table",
         "replacement_label": contextvar_gettext("Open the map attribute table"),
@@ -2104,7 +2337,7 @@ async def show_adjacency_table(request: Request):
         tabulator = ""
     return templates.TemplateResponse(request, "tabulator.html", {
         "tabulator": tabulator,
-        "title": f"{contextvar_gettext('Adjacency Table')} - {contextvar_gettext('Land Registry Viewer')}",
+        "title": f"{contextvar_gettext('Adjacency Table')} · {contextvar_gettext('Land Registry')}",
         "page_description": contextvar_gettext("Review parcels adjacent to the selected cadastral parcel."),
         "replacement_url": "/map?notice=adjacency",
         "replacement_label": contextvar_gettext("Open cadastral map"),
@@ -2127,9 +2360,9 @@ async def show_mapping_table(request: Request):
         tabulator = ""
     return templates.TemplateResponse(request, "tabulator.html", {
         "tabulator": tabulator,
-        "title": f"{contextvar_gettext('Mapping Table')} - {contextvar_gettext('Land Registry Viewer')}",
+        "title": f"{contextvar_gettext('Mapping Table')} · {contextvar_gettext('Land Registry')}",
         "page_description": contextvar_gettext("Use drawing and zoning tools with cadastral map data."),
-        "replacement_url": "/map-legacy?view=mapping",
+        "replacement_url": "/map?panel=table",
         "replacement_label": contextvar_gettext("Open drawing and zone tools"),
         "fallback_message": contextvar_gettext("The mapping table is part of the file and drawing workspace."),
     })
@@ -2143,26 +2376,65 @@ async def redirect_root_to_map():
 
 @app.exception_handler(404)
 async def not_found_handler(request: Request, exc: Exception):
-    """Styled 404 for browsers; API clients keep the JSON body.
-
-    Only paths outside ``/api`` that ask for HTML get the page. Everything else
-    (including 404s raised by API handlers with their own detail) is unchanged.
-    """
+    """Render a public branded 404 for browser navigation and JSON for APIs."""
     detail = getattr(exc, "detail", "Not Found")
     wants_html = "text/html" in request.headers.get("accept", "")
     if wants_html and not request.url.path.startswith(("/api", "/static", "/docs", "/redoc", "/openapi")):
-        user = await get_current_user_optional(request)
-        if user is None:
-            target = request.url.path
-            if request.url.query:
-                target = f"{target}?{request.url.query}"
-            next_url = quote(target, safe="/")
-            return RedirectResponse(url=f"/auth/login?next={next_url}", status_code=302)
         locale = detect_locale(request)
         return templates.TemplateResponse(
-            request, "not_found.html", {"_": make_gettext(locale), "locale": locale}, status_code=404,
+            request,
+            "not_found.html",
+            {"_": make_gettext(locale), "locale": locale, "page_lang": locale},
+            status_code=404,
+            headers={"Cache-Control": "no-store"},
         )
     return JSONResponse({"detail": detail}, status_code=404)
+
+
+def _wants_branded_error_page(request: Request) -> bool:
+    return (
+        "text/html" in request.headers.get("accept", "")
+        and not request.url.path.startswith(("/api", "/static", "/docs", "/redoc", "/openapi"))
+    )
+
+
+async def _branded_server_error(request: Request, status_code: int):
+    locale = detect_locale(request)
+    gettext = make_gettext(locale)
+    message = gettext("The service is temporarily unavailable. Please try again.") if status_code == 503 else gettext(
+        "Something went wrong. Please try again."
+    )
+    return templates.TemplateResponse(
+        request,
+        "server_error.html",
+        {
+            "_": gettext,
+            "locale": locale,
+            "page_lang": locale,
+            "status_code": status_code,
+            "error_message": message,
+        },
+        status_code=status_code,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    if exc.status_code in {500, 503}:
+        if _wants_branded_error_page(request):
+            return await _branded_server_error(request, exc.status_code)
+        detail = "Service temporarily unavailable" if exc.status_code == 503 else "Internal server error"
+        return JSONResponse({"detail": detail}, status_code=exc.status_code, headers=exc.headers)
+    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception("unhandled_request_error", extra={"path": request.url.path})
+    if _wants_branded_error_page(request):
+        return await _branded_server_error(request, 500)
+    return JSONResponse({"detail": "Internal server error"}, status_code=500)
 
 
 @app.get("/landing", response_class=HTMLResponse)
@@ -2177,7 +2449,7 @@ async def landing_page(request: Request):
     return templates.TemplateResponse(request, "landing.html", {
         "_": make_gettext(locale),
         "locale": locale,
-        "public_base_url": (app_settings.public_base_url or str(request.base_url)).rstrip("/"),
+        "public_base_url": public_base_url(request),
         "app_name": app_settings.app_name,
         "app_version": app_settings.app_version,
     })
@@ -2190,9 +2462,12 @@ async def show_cadastral_data(request: Request):
         # Load cadastral data using utility (offloaded — see /map route comment)
         cadastral = await asyncio.to_thread(load_cadastral_structure)
         if not cadastral:
-            raise HTTPException(
-                status_code=404,
-                detail="Cadastral structure file not found in S3 or locally"
+            locale = detect_locale(request)
+            return templates.TemplateResponse(
+                request,
+                "cadastral_data_unavailable.html",
+                {"_": make_gettext(locale), "locale": locale, "page_lang": locale},
+                status_code=503,
             )
 
         cadastral_data = cadastral.data

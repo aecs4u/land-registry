@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="{{ page_lang|default(locale|default('it')) }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <meta name="theme-color" content="#1a5490">
+  <title>{{ error_message }} · Land Registry</title>
+  <link rel="icon" type="image/svg+xml" href="/static/land-registry-icon.svg">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/land-registry-icon-32.png">
+  <link rel="icon" type="image/vnd.microsoft.icon" href="/favicon.ico">
+  <link rel="apple-touch-icon" sizes="180x180" href="/static/land-registry-icon-180.png">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="stylesheet" href="{{ asset_url('css/pages/landing.css') }}">
+</head>
+<body>
+  <main id="main-content" class="container" style="min-height:70vh;display:grid;align-content:center;justify-items:center;text-align:center;padding-block:4rem">
+    <p class="eyebrow">{{ status_code }} · {{ _('Land Registry') }}</p>
+    <h1>{{ error_message }}</h1>
+    <p>{{ _('The map and your account are safe. Wait a moment, then try again.') }}</p>
+    <div class="hero-actions">
+      <a href="{{ request.url.path }}{% if request.url.query %}?{{ request.url.query }}{% endif %}" class="btn-primary">{{ _('Try again') }}</a>
+      <a href="/landing" class="btn-secondary">{{ _('About this service') }}</a>
+    </div>
+  </main>
+</body>
+</html>

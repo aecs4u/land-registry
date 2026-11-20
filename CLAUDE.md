@@ -124,10 +124,11 @@ The dev server runs on **port 8000**. Panel/Bokeh dashboard runs on **port 5006*
 - `POST /api/v1/generate-map/` - Generate static Folium map from uploads
 
 ### Cadastral Data Loading
-- `GET /api/v1/map/search` - Search canonical municipalities, exact parcel references and civic addresses (ANNCSU; `kind: "address"` with `match_level`; disable with `MAP_ADDRESS_SEARCH_ENABLED=0`)
+- `GET /api/v1/map/layers` - Allow-listed canonical map-layer catalog (`/api/v1/map/catalog` is a deprecated compatibility alias)
+- `GET /api/v1/map/search` - Search canonical municipalities, exact parcel references and civic addresses (accepts `query=` or `q=`; ANNCSU `kind: "address"` with `match_level`; disable with `MAP_ADDRESS_SEARCH_ENABLED=0`)
 - `GET /api/v1/map/geocode` - Server-side OpenStreetMap Nominatim fallback for places/addresses (explicit submit only; cached, 1 request/s)
 - `GET /api/v1/map/cadastral/{regions,provinces,municipalities,sheets,parcels}` - Hierarchy finder on `/map` ("Browse by cadastral hierarchy"); reads the regional `<region>__fogli` / `<region>__particelle` tables of the `cadastral` database, not the legacy file tree or the stats store
-- `GET /api/v1/map/metrics` - Privacy-preserving map request diagnostics
+- `GET /api/v1/map/metrics` - Privacy-preserving map request diagnostics; returns 404 unless `MAP_PUBLIC_METRICS=1` (or another truthy value) is explicitly enabled
 - `GET /api/v1/get-cadastral-structure/` - Load Italian cadastral hierarchy (cached)
 - `POST /api/v1/load-cadastral-files/` - Load multiple cadastral files (parallel, returns all at once)
 - `POST /api/v1/load-cadastral-files-stream/` - **Streaming** loader (NDJSON, progressive rendering)
@@ -150,7 +151,7 @@ The dev server runs on **port 8000**. Panel/Bokeh dashboard runs on **port 5006*
 
 ## Operations
 
-- `GET /health` is liveness only. `GET /ready` returns 503 when the PostGIS map source is missing, unreachable, or has no usable layer; the deploy workflow reports it as a warning.
+- `GET /health` is liveness only. `GET /ready` returns 503 when the PostGIS map source is missing, unreachable, or has no usable layer; the deploy workflow keeps the current revision serving traffic unless the candidate passes readiness and map-health checks.
 - `GET /api/v1/map/search` returns 503 (not an empty 200) when the map source is down.
 - `/privacy`, `/terms`, `/help`, `/contact`, `/notifications` are served from `land_registry/legal_pages.py`; set `LEGAL_CONTACT_EMAIL` to show a contact address. Review the wording before relying on it as legal text.
 - Loaded map data (`_map_state`) is per browser session (`SessionScopedMapState`, max 16 live sessions); outside a request it uses a shared default.
@@ -189,6 +190,8 @@ The dev server runs on **port 8000**. Panel/Bokeh dashboard runs on **port 5006*
 - **Local Cadastral Data**: `/data/catasto/ITALIA/` (auto-detected in development)
 - **S3 Support**: Production mode uses unsigned S3 client for cadastral data
 - **WebGL**: The legacy renderer is optional and not loaded by the canonical map templates
+- **ANBSC layer**: `anbsc-confiscated-assets` reads `anbsc_v2_ref.v_municipality_map` from the `anbsc` database (`ANBSC_POSTGRES_DSN`; municipality-level points, optional source). Only the `anbsc_v2_ref` export schema is a stable interface; see `docs/CANONICAL_MAP_LAYERS.md`.
+- **ANNCSU data**: the civic-address map layer (`anncsu-addresses`), the address search (`land_registry/anncsu_lookup.py`) and the parcel panel's ANNCSU block read only the export schema `anncsu_v2_ref` of the `anncsu` database (`ANNCSU_POSTGRES_DSN`; views `v_address_map`, `v_address`, `v_street`, `v_municipality`, `v_region`, `v_dataset_release`). The per-region tables (`rNN__addresses` …) and the schemas `zzz_deprecated_anncsu` / `zzz_deprecated_stats_export` are deprecated and no longer read. `istat_code` there is the current ISTAT code (`legacy_istat_codes` lists superseded ones). PostGIS lives in its own `postgis` schema, so connections use `search_path = anncsu_v2_ref, postgis`. Check a deployment with `scripts/check_anncsu_address_store.py`.
 - **Layer colour modes**: a `MapLayerSpec` can declare `color_modes` (`MapLayerColorMode`: `ramp` over a numeric property or exact-value `classes`) so visitors choose the entity to plot; `/map` shows a "Plot" selector, a floating legend, and keeps the choice in `?color=layer:mode`. Every mode property must be in the layer's `properties`, and new user-facing text needs an Italian `.po` entry (`tests/test_map_layers_contract.py` enforces both). EGMS ground movement (`surface-subsidence`) is the first user.
 
 ## Deployment

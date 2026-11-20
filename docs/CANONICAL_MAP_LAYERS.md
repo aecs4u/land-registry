@@ -1,21 +1,20 @@
 # Canonical database map layers
 
-The map consumes an allow-listed catalog of canonical aecs4u-stats PostGIS
-relations. The catalog is exposed at `GET /api/v1/map/layers`; deployment
+The map consumes an allow-listed catalog of PostGIS relations in their
+source-owned databases. The catalog is exposed at `GET /api/v1/map/layers`; deployment
 readiness is exposed at `GET /api/v1/map/layers/health`.
 
 ## Enablement
 
-Apply the aecs4u-stats serving migrations, then configure the map process with:
+Configure an explicit DSN for each source database used by the deployment.
+Map layers do not read Stats-side copies or derive source connections from
+`STATS_POSTGRES_DSN`. Source DSNs use `AECS4U_SOURCE_<DATABASE>_DATABASE_URL`
+or `<DATABASE>_POSTGRES_DSN`; cadastral map layers use
+`CADASTRAL_POSTGRES_DSN`. `STATS_POSTGRES_ENABLE` controls Stats-backed
+services separately.
 
-```dotenv
-STATS_POSTGRES_DSN=postgresql://…/aecs4u-stats
-STATS_POSTGRES_ENABLE=1
-```
-
-The application role needs `SELECT` on the canonical and serving relations.
-When cadastral sheets and parcels have moved to the dedicated `cadastral`
-database, prepare map views over its `public.<region>__fogli` and
+Prepare cadastral map views over the dedicated database's
+`public.<region>__fogli` and
 `public.<region>__particelle` tables:
 
 ```bash
@@ -43,14 +42,10 @@ Populate or refresh the stored parcel flags after preparing the regional view:
 .venv/bin/python scripts/refresh_cadastral_parcel_auction.py --apply
 ```
 
-The refresh also adds `has_visura` when `spatial.cadastral_parcel` is a
-populated physical table in the stats database. SISTER-unavailable batches
-are left unchanged; unmatched references are not marked false. Rerun the map
-preparation after adding a regional table, then refresh its SISTER flags. The
-app prefers existing canonical relations in aecs4u-stats and uses these views
-when those relations are absent.
-`CADASTRAL_POSTGRES_DSN` overrides the dedicated connection; by default it
-uses the stats connection's host and credentials with database `cadastral`.
+SISTER-unavailable batches are left unchanged; unmatched references are not
+marked false. Rerun map preparation after adding a regional table, then
+refresh its SISTER flags. The map requires `CADASTRAL_POSTGRES_DSN` (or
+`AECS4U_SOURCE_CADASTRAL_DATABASE_URL`) and does not fall back to Stats.
 The application role needs `SELECT` on these views and `USAGE` on their schema.
 Health checks inspect the views' regional tables and geometry GiST indexes,
 sum their estimated row counts, and report an approximate statistical extent.
@@ -65,43 +60,37 @@ multiple imported polygon parts with the same reference share that ID.
 > features should depend on them. Licence and attribution text for these
 > sources is unchanged in `source_catalog.py`.
 
-Map layers use the consolidated `aecs4u-stats` relations directly: municipal,
-province, and region boundaries from `istat.v_*_map`; OMI zones from the
-indexed local copy `zornade.omi_market_zone_map` (created by
-`scripts/sql/map-market-zones-local-copy.sql`, falling back to the foreign table
-`zornade.zornade_zone_omi`, which is ~1000x slower per tile; refresh the copy with
-`REFRESH MATERIALIZED VIEW CONCURRENTLY zornade.omi_market_zone_map` after the
-source is reloaded); urban sections from `sezioni_urbane.sezioni_urbane`;
-postal areas from the `cap_subcomunali.cap_subcomunali` view over
-`geo_postal.cap_subcomunali`; and EGMS data from `geo_surface_change`.
-Flood, landslide, MPS04, and seismic-classification tiles connect directly to
-the corresponding `hazards.public` relations so their local GiST indexes serve
-tile requests. EGMS ground-movement tiles connect directly to
-`egms.public.egms_subsidenza` for the same reason. Configure
-`EGMS_POSTGRES_DSN` or `AECS4U_STATS_EGMS_DATABASE_URL` to override the
-default connection, which derives the `egms` database URL from
-`STATS_POSTGRES_DSN`. Configure `HAZARDS_POSTGRES_DSN` or
-`AECS4U_STATS_HAZARDS_DATABASE_URL`; when neither is set, the app derives a
-`hazards` database URL from `STATS_POSTGRES_DSN`.
-The solar layer joins `solar.solar_potential_comuni` to the canonical ISTAT
-municipality map at query time because the solar relation contains metrics but
-does not duplicate boundary geometry. These foreign-table sources have no
-local GiST index, so their foreign servers must push down spatial predicates
-for efficient tile reads. If either direct database is unavailable, map reads
-fall back to the stats foreign tables; apply
-`scripts/sql/map-hazards-fdw-pushdown.sql` on `aecs4u-stats` to enable PostGIS
-bbox pushdown for hazards fallback. The serving role must own `hazards_source`
-or run the script as a superuser. EGMS fallback requires `postgis` in the
-`egms_source` foreign server's `extensions` option for bbox pushdown.
-The census layer reads the stats database's `census_sections.sections` foreign
-table, mapped to `public.sections` in the `census_sections` database. Its
-foreign server must list `postgis` in its `extensions` option on both sides;
-otherwise PostGIS bbox filters stay local and every source geometry crosses
-the FDW connection for each tile. Apply
-`scripts/sql/map-census-sections-fdw-pushdown.sql` on aecs4u-stats to enable
-that pushdown while preserving other listed extensions. The parcel enrichment
-cache is provisioned by `migration.canonical_views.ensure_serving_schema`;
-request handlers do not perform DDL.
+Each map layer connects to its owning database. Municipal, province, and
+region boundaries and municipal metric maps use the `istat` database; OMI
+zones use `zornade.zone_omi`; urban sections use `public.sezioni_urbane`;
+postal areas use `stats_export.cap_subcomunali`; and census sections use
+`census_sections.sections`. Flood, landslide, MPS04, and seismic-classification
+tiles connect to their corresponding `hazards` relations. EGMS ground-movement
+tiles connect to `egms.egms_subsidenza`. Configure direct database URLs with
+`HAZARDS_POSTGRES_DSN` and `EGMS_POSTGRES_DSN` (or the matching
+`AECS4U_SOURCE_<DATABASE>_DATABASE_URL`). If a source DSN is missing or its
+database is unavailable, that layer has no map source; it does not fall back
+to Stats or an FDW mirror.
+ANBSC confiscated assets (`anbsc-confiscated-assets`) come from the `anbsc`
+database and read only its export schema, `anbsc_v2_ref.v_municipality_map`
+(one point per ISTAT municipality, keyed by `istat_code`, with asset counts and
+the summed estimated value of the properties). Never read the internal
+`anbsc_v2` tables: `anbsc_v2_ref` is the stable contract and the reader role
+cannot reach anything else. The public ANBSC data has no asset locations, so
+the layer is municipality-level only (coverage `partial`, `sparse`). Configure
+`ANBSC_POSTGRES_DSN` (or `AECS4U_SOURCE_ANBSC_DATABASE_URL`); the connecting
+role needs `anbsc_reader`. PostGIS lives in the `postgis` schema of that
+database, so the connection uses `search_path = anbsc_v2_ref, postgis`. The
+layer is optional: without the DSN it is listed but never blocks preflight.
+Two colour modes are offered: number of assets and estimated value.
+
+The solar layer joins `lr_map.v_solar_potential_comuni_map` to the ISTAT
+municipality geometry in the `istat` database. These map reads use
+source-owned database connections and do not require Stats FDW fallback
+relations. The census layer reads `census_sections.sections` directly from
+the census database. The parcel enrichment cache is provisioned by
+`migration.canonical_views.ensure_serving_schema`; request handlers do not
+perform DDL.
 
 Before publishing regional cadastral stores, run the read-only source
 preflight:

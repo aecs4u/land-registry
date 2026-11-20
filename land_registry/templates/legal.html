@@ -1,10 +1,17 @@
 <!DOCTYPE html>
-<html lang="{{ request.state.lr_locale | default('it') }}">
+<html lang="{{ page_lang|default(locale|default('it')) }}">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>{{ page_title }} · {{ _('Land Registry Viewer') }}</title>
+  <title>{{ page_title }} · Land Registry</title>
   <meta name="description" content="{{ lead }}" />
+  <meta name="theme-color" content="#1a5490" />
+  <link rel="canonical" href="{{ public_base_url }}{{ request.url.path }}" />
+  <link rel="icon" type="image/svg+xml" href="/static/land-registry-icon.svg" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/land-registry-icon-32.png" />
+  <link rel="icon" type="image/vnd.microsoft.icon" href="/favicon.ico" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/static/land-registry-icon-180.png" />
+  <link rel="manifest" href="/manifest.json" />
   <style>
     :root { --bg: #f7f8fa; --fg: #1d2733; --muted: #5a6877; --card: #fff; --line: #dde2e8; --accent: #1a5490; }
     @media (prefers-color-scheme: dark) {
@@ -22,10 +29,18 @@
     .lead, .updated { color: var(--muted); }
     a { color: var(--accent); }
     nav.legal-links { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 20px; font-size: .9rem; }
+    nav.language-links { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+    nav.language-links a, nav.legal-links a { display: inline-flex; align-items: center; min-height: 44px; }
   </style>
 </head>
 <body>
-  <header><a href="/map">&larr; {{ _('Back to the map') }}</a></header>
+  <header>
+    <a href="/landing">&larr; {{ _('About this service') }}</a>
+    <nav class="language-links" aria-label="{{ _('Language') }}">
+      <a href="{{ request.url.path }}?lang=it" lang="it"{% if locale == 'it' %} aria-current="page"{% endif %}>Italiano</a>
+      <a href="{{ request.url.path }}?lang=en" lang="en"{% if locale == 'en' %} aria-current="page"{% endif %}>English</a>
+    </nav>
+  </header>
   <main>
     <article>
       <h1>{{ page_title }}</h1>
@@ -33,6 +48,7 @@
       {% for section in sections %}
       <h2>{{ section.heading }}</h2>
       {% for paragraph in section.paragraphs %}<p>{{ paragraph }}</p>{% endfor %}
+      {% if section.email %}<p><a href="mailto:{{ section.email }}">{{ section.email }}</a></p>{% endif %}
       {% endfor %}
     </article>
     <nav class="legal-links" aria-label="{{ _('Legal and support') }}">
@@ -40,6 +56,7 @@
       <a href="/terms">{{ _('Terms') }}</a>
       <a href="/help">{{ _('Help') }}</a>
       <a href="/contact">{{ _('Contact') }}</a>
+      <a href="/data-sources">{{ _('Data sources') }}</a>
     </nav>
   </main>
 </body>

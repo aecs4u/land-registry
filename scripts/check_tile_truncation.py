@@ -21,11 +21,12 @@ import math
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
-
 ROOT = Path(__file__).resolve().parents[1]
-load_dotenv(ROOT / ".env")
 sys.path.insert(0, str(ROOT))
+
+from land_registry.environment import load_environment  # noqa: E402
+
+load_environment()
 
 from land_registry.map_layers import MAP_LAYERS, _asyncpg_sql, _one_pixel_area_m2, get_map_layer_source  # noqa: E402
 

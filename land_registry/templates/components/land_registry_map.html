@@ -1,16 +1,18 @@
 {% macro cadastral_map_assets(
     leaflet_css_url='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
+    leaflet_css_integrity='sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=',
     static_base='/land-registry/static'
 ) -%}
-<link rel="stylesheet" href="{{ leaflet_css_url }}">
+<link rel="stylesheet" href="{{ leaflet_css_url }}" integrity="{{ leaflet_css_integrity }}" crossorigin="anonymous">
 <link rel="stylesheet" href="{{ static_base }}/land_registry_map.css?v=20261023a">
 {%- endmacro %}
 
 {% macro cadastral_map_scripts(
     static_base='/land-registry/static',
-    leaflet_js_url='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
+    leaflet_js_url='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
+    leaflet_js_integrity='sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo='
 ) -%}
-<script src="{{ leaflet_js_url }}" defer></script>
+<script src="{{ leaflet_js_url }}" integrity="{{ leaflet_js_integrity }}" crossorigin="anonymous" defer></script>
 <script src="{{ static_base }}/consumer-map.js" defer></script>
 <script src="{{ static_base }}/land-registry-map.js?v=20261023a" defer></script>
 {%- endmacro %}

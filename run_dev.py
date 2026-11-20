@@ -1,31 +1,16 @@
 #!/usr/bin/env python3
-"""
-Development server runner with optimized shutdown settings.
-"""
+"""Compatibility entry point for the development start profile."""
 
-import uvicorn
-import signal
+from __future__ import annotations
+
+import os
+from pathlib import Path
 import sys
 
 
-def signal_handler(sig, frame):
-    """Handle Ctrl+C gracefully with faster shutdown."""
-    print("\nReceived interrupt signal. Shutting down...")
-    sys.exit(0)
-
-
 if __name__ == "__main__":
-    # Set up signal handler for faster Ctrl+C response
-    signal.signal(signal.SIGINT, signal_handler)
-
-    # Run uvicorn with faster shutdown settings
-    uvicorn.run(
-        "land_registry.main:app",
-        host="127.0.0.1",
-        port=8000,
-        reload=True,
-        reload_delay=0.25,  # Faster reload detection
-        timeout_graceful_shutdown=3,  # Faster shutdown (default is 30s)
-        timeout_keep_alive=2,  # Faster connection cleanup
-        log_level="info"
+    start_script = Path(__file__).resolve().parent / "scripts" / "start.sh"
+    os.execv(
+        str(start_script),
+        [str(start_script), "--host", "127.0.0.1", "--port", "8000", *sys.argv[1:]],
     )

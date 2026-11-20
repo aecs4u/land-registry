@@ -8,15 +8,6 @@ from pydantic import Field
 from typing import Optional, List
 import os
 
-from dotenv import load_dotenv
-
-# pydantic-settings' env_file= only feeds its own Settings subclasses — plain
-# os.getenv() calls elsewhere in the app (DSN resolution in stats_service.py,
-# datashader_service.py, etc.) never see .env values without this. A shell
-# export always wins (override=False), so this only fills gaps.
-load_dotenv(override=False)
-
-
 class AppSettings(BaseSettings):
     """Main application settings"""
 
@@ -46,7 +37,6 @@ class AppSettings(BaseSettings):
 
     class Config:
         env_prefix = "LAND_REGISTRY_"
-        env_file=("../.env", ".env")
         case_sensitive = False
         extra = "ignore"
 
@@ -81,7 +71,6 @@ class PublicApiSettings(BaseSettings):
 
     class Config:
         env_prefix = "PUBLIC_API_"
-        env_file = ("../.env", ".env")
         case_sensitive = False
         extra = "ignore"
 
@@ -369,6 +358,8 @@ ghsl_settings = GHSLSettings()
 if os.getenv("DATABASE_URL"):
     db_settings.use_neon = True
     db_settings.database_url = os.getenv("DATABASE_URL")
+    if "DB_USE_SQLITE" not in os.environ:
+        db_settings.use_sqlite = False
 
 
 def get_cadastral_structure_path() -> Optional[str]:
@@ -409,31 +400,16 @@ def get_drawn_polygons_directory() -> str:
     return drawn_dir
 
 
-# Environment-specific overrides
-if os.getenv("ENVIRONMENT") == "production":
+# ``DEBUG`` is shared across packages; the prefixed setting remains available
+# for an explicit app-only override.
+if "LAND_REGISTRY_DEBUG" not in os.environ:
+    app_settings.debug = os.getenv("DEBUG", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+# A cloud runtime must stay safe even if its environment selector is missing.
+if os.getenv("K_SERVICE"):
     app_settings.debug = False
     app_settings.reload = False
-    cadastral_settings.use_local_files = False  # Use S3 in production
-elif os.getenv("ENVIRONMENT") == "development":
-    app_settings.debug = True
-    app_settings.reload = True
-    cadastral_settings.use_local_files = True  # Use local files in development
-else:
-    # Auto-detect: if local cadastral data exists, use it (development mode)
-    root_folder = os.path.dirname(os.path.abspath(__file__))
-    local_path = os.path.join(root_folder, "..", cadastral_settings.local_cadastral_data_path or "")
-    if os.path.exists(local_path) and os.path.isdir(local_path):
-        cadastral_settings.use_local_files = True
-        app_settings.debug = True
-    else:
-        cadastral_settings.use_local_files = False
-
-
-# The Starlette debug page prints source lines and absolute server paths, so it
-# must never be served from a deployed service, whatever the auto-detection
-# above concluded. Cloud Run always sets K_SERVICE.
-if os.getenv("K_SERVICE") or os.getenv("ENVIRONMENT") == "production":
-    app_settings.debug = False
+    cadastral_settings.use_local_files = False
 
 
 def get_cadastral_data_root() -> Optional[str]:

@@ -18,7 +18,6 @@ env:
   GCP_REGION:     ${{ vars.GCP_REGION || 'europe-west1' }}
   SERVICE_NAME: ${{ vars.CLOUD_RUN_SERVICE || 'land-registry-service' }}
   IMAGE_BASE: ${{ vars.ARTIFACT_REGISTRY_IMAGE || 'europe-west1-docker.pkg.dev/apps-aecs4u/cloud-run-source-deploy/land-registry-service' }}
-  STATS_POSTGRES_SOURCE_FALLBACK_ENABLE: ${{ vars.STATS_POSTGRES_SOURCE_FALLBACK_ENABLE || '0' }}
 
 jobs:
   test:
@@ -84,6 +83,40 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
+      - name: Validate production data and Clerk configuration
+        env:
+          CLERK_PUBLISHABLE_KEY: ${{ vars.AECS4U_LAND_REGISTRY_CLERK_PUBLISHABLE_KEY }}
+          CLERK_JWKS_URL: ${{ vars.AECS4U_LAND_REGISTRY_CLERK_JWKS_URL }}
+        run: |
+          set -euo pipefail
+          gcloud secrets describe LAND_REGISTRY_CADASTRAL_POSTGRES_DSN \
+            --project="${{ env.GCP_PROJECT_ID }}" >/dev/null || {
+              echo "::error::Create Secret Manager secret LAND_REGISTRY_CADASTRAL_POSTGRES_DSN with the dedicated map-source DSN before deploying."
+              exit 1
+            }
+          case "$CLERK_PUBLISHABLE_KEY" in
+            pk_live_*) ;;
+            *) echo "::error::Production requires the pk_live Clerk publishable key in AECS4U_LAND_REGISTRY_CLERK_PUBLISHABLE_KEY."; exit 1 ;;
+          esac
+          case "$CLERK_JWKS_URL" in
+            https://*'/.well-known/jwks.json') ;;
+            *) echo "::error::Set AECS4U_LAND_REGISTRY_CLERK_JWKS_URL to the HTTPS JWKS endpoint for the production Clerk instance."; exit 1 ;;
+          esac
+          case "$CLERK_JWKS_URL" in
+            *.clerk.accounts.dev/*|*.clerk.dev/*)
+              echo "::error::Production cannot use a Clerk development-domain JWKS endpoint."
+              exit 1
+              ;;
+          esac
+          CLERK_SECRET_KEY=$(gcloud secrets versions access latest \
+            --secret=LAND_REGISTRY_CLERK_SECRET_KEY \
+            --project="${{ env.GCP_PROJECT_ID }}")
+          case "$CLERK_SECRET_KEY" in
+            sk_live_*) ;;
+            *) unset CLERK_SECRET_KEY; echo "::error::LAND_REGISTRY_CLERK_SECRET_KEY must contain a production Clerk secret key."; exit 1 ;;
+          esac
+          unset CLERK_SECRET_KEY
+
       - name: Log in to Artifact Registry
         uses: docker/login-action@v3
         with:
@@ -121,14 +154,8 @@ jobs:
       - name: Deploy to Cloud Run
         id: deploy
         run: |
+          CLOUD_RUN_TAG="preflight-${{ steps.img.outputs.sha_short }}"
           SECRET_UPDATES="SECRET_KEY=LAND_REGISTRY_SECRET_KEY:latest,SESSION_SECRET_KEY=LAND_REGISTRY_SESSION_SECRET_KEY:latest,DATABASE_URL=LAND_REGISTRY_DATABASE_URL:latest,CLERK_SECRET_KEY=LAND_REGISTRY_CLERK_SECRET_KEY:latest,LOGFIRE_TOKEN=LAND_REGISTRY_LOGFIRE_TOKEN:latest"
-          FALLBACK_VALUE=$(printf '%s' "$STATS_POSTGRES_SOURCE_FALLBACK_ENABLE" | tr '[:upper:]' '[:lower:]')
-          if [[ "$FALLBACK_VALUE" =~ ^(1|true|yes|on)$ ]]; then
-            SECRET_UPDATES="$SECRET_UPDATES,STATS_POSTGRES_DSN=STATS_POSTGRES_DSN:latest"
-            SECRET_REMOVALS=""
-          else
-            SECRET_REMOVALS="--remove-secrets=STATS_POSTGRES_DSN"
-          fi
           gcloud run deploy ${{ env.SERVICE_NAME }} \
             --image=${{ env.IMAGE_BASE }}:sha-${{ steps.img.outputs.sha_short }} \
             --region=${{ env.GCP_REGION }} \
@@ -139,7 +166,9 @@ jobs:
             --ingress=all \
             --memory="${{ vars.CLOUDRUN_MEMORY || '512Mi' }}" \
             --cpu="${{ vars.CLOUDRUN_CPU || '1' }}" \
-            --min-instances="${{ vars.CLOUDRUN_MIN_INSTANCES || '0' }}" \
+            --min-instances="0" \
+            --no-traffic \
+            --tag="$CLOUD_RUN_TAG" \
             --max-instances="${{ vars.CLOUDRUN_MAX_INSTANCES || '3' }}" \
             --concurrency="${{ vars.CLOUDRUN_CONCURRENCY || '80' }}" \
             --execution-environment="${{ vars.CLOUDRUN_EXECUTION_ENV || 'gen2' }}" \
@@ -147,17 +176,21 @@ jobs:
             --timeout="${{ vars.CLOUDRUN_TIMEOUT || '300' }}" \
             --cpu-boost \
             --cpu-throttling \
-            --update-env-vars="ENVIRONMENT=production,DEBUG=false,LOG_LEVEL=INFO,AUTH_MODE=clerk_and_local,STATS_POSTGRES_ENABLE=1,STATS_POSTGRES_SOURCE_FALLBACK_ENABLE=$STATS_POSTGRES_SOURCE_FALLBACK_ENABLE,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ vars.AECS4U_LAND_REGISTRY_CLERK_PUBLISHABLE_KEY || 'pk_test_Y2hhbXBpb24tbXVsbGV0LTc2LmNsZXJrLmFjY291bnRzLmRldiQ' }},CLERK_JWKS_URL=${{ vars.AECS4U_LAND_REGISTRY_CLERK_JWKS_URL || 'https://champion-mullet-76.clerk.accounts.dev/.well-known/jwks.json' }}" \
-            --update-secrets="$SECRET_UPDATES" \
-            $SECRET_REMOVALS
+            --update-env-vars="ENVIRONMENT=production,LAND_REGISTRY_PUBLIC_BASE_URL=https://land-registry.aecs4u.com,STATS_POSTGRES_ENABLE=1,CLERK_PUBLISHABLE_KEY=${{ vars.AECS4U_LAND_REGISTRY_CLERK_PUBLISHABLE_KEY }},CLERK_JWKS_URL=${{ vars.AECS4U_LAND_REGISTRY_CLERK_JWKS_URL }}" \
+            --remove-env-vars="DEBUG,LOG_LEVEL,AUTH_MODE,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,STATS_POSTGRES_SOURCE_FALLBACK_ENABLE" \
+            --update-secrets="$SECRET_UPDATES,CADASTRAL_POSTGRES_DSN=LAND_REGISTRY_CADASTRAL_POSTGRES_DSN:latest"
 
-          URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
+          SERVICE_JSON=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
             --region=${{ env.GCP_REGION }} \
             --project=${{ env.GCP_PROJECT_ID }} \
-            --format='value(status.url)')
+            --format=json)
+          REVISION=$(python -c 'import json,sys; print(json.load(sys.stdin)["status"]["latestCreatedRevisionName"])' <<< "$SERVICE_JSON")
+          URL=$(python -c 'import json,sys; tag=sys.argv[1]; d=json.load(sys.stdin); print(next((item.get("url", "") for item in d["status"].get("traffic", []) if item.get("tag") == tag), ""))' "$CLOUD_RUN_TAG" <<< "$SERVICE_JSON")
+          [ -n "$URL" ] || { echo "::error::Could not resolve the tagged Cloud Run candidate URL."; exit 1; }
           echo "url=${URL}" >> "$GITHUB_OUTPUT"
+          echo "revision=${REVISION}" >> "$GITHUB_OUTPUT"
 
-      - name: Run health check
+      - name: Check candidate health
         run: |
           URL="${{ steps.deploy.outputs.url }}"
           for i in $(seq 1 10); do
@@ -168,10 +201,9 @@ jobs:
           done
           echo "/health did not return 200 after 10 attempts"; exit 1
 
-      # /health is liveness only. /ready reports whether the map source can
-      # serve data; surface it as a warning rather than failing the deploy,
-      # since a database outage is not caused by (or fixed by) this release.
-      - name: Report map readiness
+      # Keep the previous revision serving traffic unless the candidate's
+      # canonical map source is ready.
+      - name: Require candidate map readiness
         run: |
           URL="${{ steps.deploy.outputs.url }}"
           CODE=$(curl -s -o /tmp/ready.json -w "%{http_code}" --max-time 30 "$URL/ready" || true)
@@ -185,11 +217,26 @@ jobs:
             cat /tmp/ready.json 2>/dev/null || echo '{}'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          [ "$CODE" = "200" ] || echo "::warning::/ready returned $CODE: the map data source is not serving"
+          [ "$CODE" = "200" ] || { echo "::error::/ready returned $CODE: the canonical map data source is not serving"; exit 1; }
 
-      - name: Verify map health endpoint
+      - name: Verify candidate map health endpoint
         run: |
           URL="${{ steps.deploy.outputs.url }}"
           curl --fail --silent --show-error --max-time 30 \
             "$URL/api/v1/map/layers/health" > /tmp/canonical-map-health.json
           python -c 'import json; d=json.load(open("/tmp/canonical-map-health.json")); print("map health endpoint passed; postgis_available=", d.get("available"), "layers=", len(d.get("layers", [])))'
+
+      - name: Promote ready revision
+        run: |
+          gcloud run services update-traffic "${{ env.SERVICE_NAME }}" \
+            --project="${{ env.GCP_PROJECT_ID }}" \
+            --region="${{ env.GCP_REGION }}" \
+            --to-revisions="${{ steps.deploy.outputs.revision }}=100"
+
+      - name: Verify promoted service
+        run: |
+          URL=$(gcloud run services describe "${{ env.SERVICE_NAME }}" \
+            --project="${{ env.GCP_PROJECT_ID }}" \
+            --region="${{ env.GCP_REGION }}" \
+            --format='value(status.url)')
+          curl --fail --silent --show-error --max-time 30 "$URL/health"

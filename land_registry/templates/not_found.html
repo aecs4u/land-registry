@@ -4,14 +4,20 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="robots" content="noindex" />
-  <title>{{ _('Page not found') }} · {{ _('Land Registry Viewer') }}</title>
+  <meta name="theme-color" content="#1a5490" />
+  <title>{{ _('Page not found') }} · Land Registry</title>
+  <link rel="icon" type="image/svg+xml" href="/static/land-registry-icon.svg">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/land-registry-icon-32.png">
+  <link rel="icon" type="image/vnd.microsoft.icon" href="/favicon.ico">
+  <link rel="apple-touch-icon" sizes="180x180" href="/static/land-registry-icon-180.png">
+  <link rel="manifest" href="/manifest.json">
   <link rel="stylesheet" href="{{ asset_url('css/pages/landing.css') }}">
 </head>
 <body>
   <main id="main-content" class="container" style="padding-top: 5rem; text-align: center;">
     <h1>{{ _('Page not found') }}</h1>
     <p style="margin: 1rem auto 2rem;">{{ _('The page you asked for does not exist or has moved.') }}</p>
-    <p><a href="/map" class="btn-primary" style="display:inline-block; padding:.6rem 1.2rem; border-radius:8px; background:#1d4ed8; color:#fff; text-decoration:none;">{{ _('Back to the map') }}</a></p>
+    <p><a href="/landing" class="btn-primary" style="display:inline-block; min-height:44px; padding:.6rem 1.2rem; border-radius:8px; background:#1d4ed8; color:#fff; text-decoration:none;">{{ _('Back to the service') }}</a></p>
   </main>
   <script src="{{ asset_url('theme-sync.js') }}"></script>
 </body>

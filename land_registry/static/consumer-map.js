@@ -36,7 +36,7 @@
 
         map.createPane('cadastralPane').style.zIndex = String(options.cadastralZIndex || 440);
 
-        var streets = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        var streets = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
             maxZoom: 22,
             maxNativeZoom: 19,
             attribution: '&copy; OpenStreetMap contributors'

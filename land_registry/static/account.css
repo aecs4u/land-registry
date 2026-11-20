@@ -78,6 +78,18 @@
 
 .account-recent-copy { min-width: 0; overflow-wrap: anywhere; }
 
+/* Account navigation and actions remain comfortable to activate on touchscreens. */
+.settings-nav .nav-link,
+.account-page .btn,
+.account-page .btn-sm,
+.site-footer a { min-height: 44px; }
+.settings-nav .nav-link,
+.site-footer a { display: inline-flex; align-items: center; }
+#main-content .btn,
+#main-content .btn-sm,
+#main-content a.nav-link { min-height: 44px; }
+#main-content a.nav-link { display: inline-flex; align-items: center; }
+
 @media (max-width: 575.98px) {
   .account-stats > div { padding: .75rem .8rem; }
   .account-stats dt { font-size: .66rem; letter-spacing: .03em; }

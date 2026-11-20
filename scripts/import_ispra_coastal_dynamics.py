@@ -23,6 +23,7 @@ import httpx
 from shapely.geometry import LineString, MultiLineString
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 ENDPOINT = (
     "https://sinacloud.isprambiente.it/arcgisadv/rest/services/coste/"
     "Assetto_costiero_anno_2020/FeatureServer/1/query"
@@ -67,9 +68,10 @@ FROM _ispra_coastal_dynamics_stage
 
 
 def _database_dsn() -> str:
-    from dotenv import dotenv_values
+    from land_registry.environment import load_environment
 
-    values = {**dotenv_values(ROOT / ".env"), **os.environ}
+    load_environment()
+    values = os.environ
     dsn = next(
         (
             str(values[name]).strip()

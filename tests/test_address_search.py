@@ -187,15 +187,32 @@ def test_address_search_degrades_quietly_when_the_store_is_missing(monkeypatch):
         scoped.setattr("land_registry.anncsu_lookup.find_addresses", unreachable)
         assert asyncio.run(api._search_addresses("via goethe 1, Palermo", Source(), 5)) == []
 
-    # No region with both tables: the lookup itself returns [] rather than raising.
+    # No streets for the municipality in the export schema: the lookup itself returns []
+    # rather than raising.
     from land_registry import anncsu_lookup
 
+    class Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, *args, **kwargs):
+            pass
+
+        def fetchall(self):
+            return []
+
     class Conn:
+        def cursor(self, *args, **kwargs):
+            return Cursor()
+
         def close(self):
             pass
 
+    anncsu_lookup._streets_cache.clear()
     monkeypatch.setattr(anncsu_lookup, "_connect", lambda: Conn())
-    monkeypatch.setattr(anncsu_lookup, "_loaded_regions", lambda conn: {})
     assert anncsu_lookup.find_addresses("082053", first("via goethe 1, Palermo")) == []
 
 

@@ -11,7 +11,6 @@ import logging
 import os
 import re
 from datetime import UTC, date, datetime, timedelta
-from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
 
@@ -182,9 +181,6 @@ def get_bulletin(*, target_day: date | None = None) -> dict | None:
 
 
 def main() -> int:
-    from dotenv import load_dotenv
-
-    load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--initialize", action="store_true", help="create the table before the first import")
     args = parser.parse_args()

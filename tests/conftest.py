@@ -7,6 +7,11 @@ from unittest.mock import patch, Mock
 from fastapi.testclient import TestClient
 import geopandas as gpd
 
+# Load the testing profile before importing the application. Automated tests
+# use fixtures or temporary stores instead of opening a configured app DB.
+os.environ["ENVIRONMENT"] = "testing"
+os.environ["DATABASE_URL"] = ""
+
 # Optional imports - gracefully handle if not available
 try:
     import boto3
@@ -53,12 +58,9 @@ def authenticated_client(monkeypatch):
 def isolate_database_environment(monkeypatch):
     """Keep local database credentials from affecting unit tests.
 
-    Importing the application loads the developer's ``.env`` file before
-    pytest starts individual tests.  Database tests need to be able to verify
-    both configured and unconfigured settings without ever opening a real
-    PostgreSQL connection, so remove those values for each test.  Tests that
-    exercise environment loading can still set them explicitly via
-    ``monkeypatch``.
+    The testing profile and blank database URL are selected before the app
+    import. Tests can set database variables explicitly with ``monkeypatch``
+    when they exercise configuration behavior.
     """
     database_environment = (
         "DATABASE_URL",

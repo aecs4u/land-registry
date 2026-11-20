@@ -61,7 +61,10 @@ class _ConnectionSource:
 
 def test_sister_overlay_matches_fixed_width_sheet_and_section():
     connection = _SisterConnection()
-    source = PostgresMapLayerSource(_ConnectionSource(connection))
+    source = PostgresMapLayerSource(
+        _ConnectionSource(connection),
+        cadastral_connection_source=_ConnectionSource(connection),
+    )
 
     result = asyncio.run(source.read_sister_parcels((12, 41, 12.01, 41.01)))
 

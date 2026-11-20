@@ -1511,8 +1511,8 @@ msgstr "Usiamo cookie e archiviazione del browser per la sessione, la lingua del
 msgid "Third-party services"
 msgstr "Servizi di terze parti"
 
-msgid "Basemap tiles are loaded from third-party tile providers, which see your IP address. Place and address searches that find no cadastral or address-registry match are forwarded by our server to OpenStreetMap Nominatim, which receives the text you searched for but not your IP address."
-msgstr "Le tessere della mappa di base sono caricate da fornitori esterni, che vedono il tuo indirizzo IP. Le ricerche di luoghi e indirizzi senza corrispondenze nel catasto o nell'archivio indirizzi sono inoltrate dal nostro server a OpenStreetMap Nominatim, che riceve il testo cercato ma non il tuo indirizzo IP."
+msgid "Basemap tiles are loaded directly from the provider you select (OpenStreetMap, Esri or Google; CARTO may appear when configured). These providers receive your IP address, browser request metadata and the map tile coordinates requested. The browser downloads some pinned application libraries from jsDelivr and unpkg; signed-in visitors who open the alternative API reference also download ReDoc from Redocly. These services receive your IP address and request metadata when an asset is requested. The application makes no third-party web-font requests and uses locally available fonts with system fallbacks. Place and address searches that find no cadastral or address-registry match are forwarded by our server to OpenStreetMap Nominatim, which receives the text you searched for but not your IP address."
+msgstr "Le tessere della mappa di base vengono caricate direttamente dal fornitore selezionato (OpenStreetMap, Esri o Google; CARTO può comparire quando configurato). Questi fornitori ricevono il tuo indirizzo IP, i metadati della richiesta del browser e le coordinate delle tessere richieste. Il browser scarica alcune librerie applicative con versione fissata da jsDelivr e unpkg; gli utenti autenticati che aprono la documentazione API alternativa scaricano anche ReDoc da Redocly. Questi servizi ricevono il tuo indirizzo IP e i metadati della richiesta quando viene richiesto un asset. L'applicazione non richiede font web a fornitori terzi e usa i font disponibili localmente con alternative di sistema. Le ricerche di luoghi e indirizzi senza corrispondenze nel catasto o nell'archivio indirizzi sono inoltrate dal nostro server a OpenStreetMap Nominatim, che riceve il testo cercato ma non il tuo indirizzo IP."
 
 msgid "Diagnostics"
 msgstr "Diagnostica"
@@ -1585,6 +1585,9 @@ msgstr "Contatti"
 
 msgid "Questions, corrections and data requests."
 msgstr "Domande, correzioni e richieste sui dati."
+
+msgid "Email our support team for questions, corrections and data requests."
+msgstr "Scrivi al nostro team di supporto per domande, correzioni e richieste sui dati."
 
 msgid "Get in touch"
 msgstr "Mettiti in contatto"
@@ -4642,6 +4645,12 @@ msgstr "Inserisci il numero di particella."
 msgid "Search service unavailable; try again."
 msgstr "Ricerca non disponibile; riprova."
 
+msgid "Search places"
+msgstr "Cerca località"
+
+msgid "Place results are from OpenStreetMap."
+msgstr "I risultati delle località provengono da OpenStreetMap."
+
 msgid "No result"
 msgstr "Nessun risultato"
 
@@ -5848,9 +5857,6 @@ msgstr "Scegli una zona OMI e una tipologia immobiliare per visualizzare la quot
 msgid "Loading · retry after {n}s"
 msgstr "Caricamento · riprova tra {n}s"
 
-msgid "Needs configuration"
-msgstr "Richiede configurazione"
-
 msgid "Sales data is still loading. Try again shortly."
 msgstr "I dati delle vendite sono ancora in caricamento. Riprova tra poco."
 
@@ -6042,3 +6048,183 @@ msgstr "Nessuna particella catastale trovata a questo indirizzo"
 
 msgid "Nearest parcel, within {m} m of the address point."
 msgstr "Particella più vicina, entro {m} m dal punto dell'indirizzo."
+
+msgid "Search municipality or parcel"
+msgstr "Cerca un comune o una particella"
+
+msgid "Filter the attribute table"
+msgstr "Filtra la tabella degli attributi"
+
+msgid "Total"
+msgstr "Totale"
+
+msgid "Open"
+msgstr "Apri"
+
+msgid "No parcels match the shortlist filters."
+msgstr "Nessuna particella corrisponde ai filtri dell'elenco."
+
+msgid "Switch to light theme"
+msgstr "Passa al tema chiaro"
+
+msgid "Switch to dark theme"
+msgstr "Passa al tema scuro"
+
+msgid "Cadastral parcel data is not available right now. Other map layers may still be available."
+msgstr "I dati catastali non sono disponibili al momento. Gli altri livelli della mappa potrebbero essere accessibili."
+
+msgid "Not available right now"
+msgstr "Non disponibile al momento"
+
+msgid "API reference"
+msgstr "Documentazione API"
+
+msgid "Land Registry API"
+msgstr "API Land Registry"
+
+msgid "Sign in to access your account."
+msgstr "Accedi per entrare nel tuo account."
+
+msgid "By continuing, you agree to our"
+msgstr "Continuando, accetti i nostri"
+
+msgid "Terms of Service"
+msgstr "Termini di servizio"
+
+msgid "Privacy Policy"
+msgstr "Informativa sulla privacy"
+
+msgid "and"
+msgstr "e"
+
+msgid "Create account"
+msgstr "Crea un account"
+
+msgid "Main navigation"
+msgstr "Navigazione principale"
+
+msgid "Sign out?"
+msgstr "Vuoi uscire?"
+
+msgid "Sign out of your Land Registry account."
+msgstr "Esci dal tuo account Land Registry."
+
+msgid "You will be signed out of this browser. You can sign in again at any time."
+msgstr "Uscirai da questo browser. Potrai accedere di nuovo in qualsiasi momento."
+
+msgid "Land Registry account"
+msgstr "Account Land Registry"
+
+msgid "Cadastral data"
+msgstr "Dati catastali"
+
+msgid "Data catalog"
+msgstr "Catalogo dati"
+
+msgid "Cadastral data is temporarily unavailable"
+msgstr "I dati catastali non sono temporaneamente disponibili"
+
+msgid "The cadastral data catalog is temporarily unavailable."
+msgstr "Il catalogo dei dati catastali non è temporaneamente disponibile."
+
+msgid "The cadastral structure catalog is not available in this environment. Please try again later or return to the map."
+msgstr "Il catalogo della struttura catastale non è disponibile in questo ambiente. Riprova più tardi oppure torna alla mappa."
+
+msgid "Completing sign in"
+msgstr "Completamento dell'accesso"
+
+msgid "Please wait while we finish signing you in."
+msgstr "Attendi mentre completiamo l'accesso."
+
+msgid "Loading sign-in options…"
+msgstr "Caricamento delle opzioni di accesso…"
+
+msgid "or sign in with email"
+msgstr "oppure accedi con email"
+
+msgid "Sign in with email"
+msgstr "Accedi con email"
+
+msgid "Don't have an account?"
+msgstr "Non hai un account?"
+
+msgid "Signing in…"
+msgstr "Accesso in corso…"
+
+msgid "Sign-in successful."
+msgstr "Accesso effettuato."
+
+msgid "Invalid credentials."
+msgstr "Credenziali non valide."
+
+msgid "Connection error. Please try again."
+msgstr "Errore di connessione. Riprova."
+
+msgid "Online sign-in is temporarily unavailable. Use the email and password option below."
+msgstr "L'accesso online non è temporaneamente disponibile. Usa l'opzione email e password qui sotto."
+
+msgid "Session active as"
+msgstr "Sessione attiva come"
+
+msgid "Continue"
+msgstr "Continua"
+
+msgid "Switch account"
+msgstr "Cambia account"
+
+msgid "Use email and password"
+msgstr "Usa email e password"
+
+msgid "Sign in to your Land Registry account."
+msgstr "Accedi al tuo account Land Registry."
+
+msgid "The map link had invalid coordinates or zoom. A safe default view is shown."
+msgstr "Il collegamento alla mappa contiene coordinate o zoom non validi. È stata mostrata una vista predefinita sicura."
+
+msgid "The service is temporarily unavailable. Please try again."
+msgstr "Il servizio non è temporaneamente disponibile. Riprova."
+
+msgid "Something went wrong. Please try again."
+msgstr "Si è verificato un errore. Riprova."
+
+msgid "The map and your account are safe. Wait a moment, then try again."
+msgstr "La mappa e il tuo account sono al sicuro. Attendi un momento, poi riprova."
+
+msgid "Try again"
+msgstr "Riprova"
+
+msgid "About this service"
+msgstr "Informazioni sul servizio"
+
+msgid "Back to the service"
+msgstr "Torna al servizio"
+
+msgid "Information"
+msgstr "Informazioni"
+
+msgid "Create an account to use the Land Registry map and save parcels."
+msgstr "Crea un account per usare la mappa Land Registry e salvare le particelle."
+
+#: land_registry/map_layers.py
+msgid "Confiscated assets (ANBSC)"
+msgstr "Beni confiscati (ANBSC)"
+
+#: land_registry/map_layers.py
+msgid "Municipality level only: ANBSC does not publish asset locations"
+msgstr "Solo a livello comunale: l'ANBSC non pubblica l'ubicazione dei beni"
+
+#: land_registry/map_layers.py
+msgid "Confiscated assets"
+msgstr "Beni confiscati"
+
+#: land_registry/map_layers.py
+msgid "Number of confiscated properties and companies ANBSC lists in the municipality."
+msgstr "Numero di immobili e aziende confiscati che l'ANBSC elenca nel comune."
+
+#: land_registry/map_layers.py
+msgid "Estimated value of properties"
+msgstr "Valore stimato degli immobili"
+
+#: land_registry/map_layers.py
+msgid "Sum of the estimated value of the municipality's confiscated properties. Companies carry no estimate."
+msgstr "Somma del valore stimato degli immobili confiscati del comune. Le aziende non hanno una stima."

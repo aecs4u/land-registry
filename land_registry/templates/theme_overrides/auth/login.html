@@ -1,28 +1,272 @@
-{#
-  Local override of the aecs4u-theme login page.
-
-  The theme's auth_base.html links its own /static/aecs4u-theme/css/auth.css,
-  which does not define .btn-gradient or .btn-modern — the classes the theme's
-  own submit button carries. The result was a primary "Sign in" action with a
-  transparent background and a transparent border, rendering as plain body text
-  while the secondary navbar link was a filled button (design audit finding B3).
-
-  This repo already ships a complete /static/css/auth.css that defines both
-  classes; it was simply never linked. Load it after the theme's copy so the
-  button styling resolves, and keep everything else the theme provides.
-#}
+{# Keep the shared auth shell while translating both the local form and Clerk. #}
 {% extends theme_auth_login_parent %}
+
+{% block auth_page_title %}{{ _('Sign in') }} · Land Registry{% endblock %}
+{% block auth_title %}{{ _('Sign in') }}{% endblock %}
+{% block auth_subtitle %}{{ _('Sign in to access your account.') }}{% endblock %}
+
+{% block auth_header %}
+<header class="auth-login-header text-center mb-4">
+  <a href="/map" class="d-inline-block mb-3">
+    <img src="{{ auth_logo_url | default(static_url_path ~ '/img/aecs4u.png') }}"
+         alt="{{ _('Land Registry') }}" height="56">
+  </a>
+  <h1 class="fw-bold fs-3">{{ _('Sign in') }}</h1>
+  <p class="small mt-1 mb-0">{{ _('Sign in to access your account.') }}</p>
+</header>
+{% endblock %}
+
+{% block auth_card %}
+<section class="auth-card auth-login-card p-4" aria-label="{{ _('Sign in') }}">
+  <div id="message" role="status" aria-live="polite"></div>
+
+  {% if clerk_enabled %}
+  <div id="clerk-sign-in" class="auth-clerk-sign-in"></div>
+  <p id="clerk-status" class="auth-clerk-status small" role="status" aria-live="polite">
+    {{ _('Loading sign-in options…') }}
+  </p>
+  <details class="auth-email-fallback">
+    <summary>{{ _('Use email and password') }}</summary>
+  {% endif %}
+
+  <form id="login-form" novalidate>
+    <div>
+      <label class="form-label" for="email">{{ _('Email') }}</label>
+      <input class="form-control" type="email" id="email" name="email" autocomplete="email"
+             inputmode="email" required>
+    </div>
+    <div>
+      <label class="form-label" for="password">{{ _('Password') }}</label>
+      <input class="form-control" type="password" id="password" name="password"
+             autocomplete="current-password" required>
+    </div>
+    <button class="btn btn-primary" type="submit">{{ _('Sign in with email') }}</button>
+  </form>
+
+  <p class="auth-login-register text-center mb-0">
+    {{ _("Don't have an account?") }}
+    <a href="{{ register_url | default('/auth/register') }}?lang={{ locale }}&amp;next={{ next_url | urlencode }}">{{ _('Create account') }}</a>
+  </p>
+  {% if clerk_enabled %}</details>{% endif %}
+</section>
+{% endblock %}
+
+{% block auth_footer %}
+<footer class="auth-login-footer text-center mt-3 small">
+  <p class="mb-0">{{ _('By continuing, you agree to our') }}
+    <a href="/terms">{{ _('Terms of Service') }}</a> {{ _('and') }}
+    <a href="/privacy">{{ _('Privacy Policy') }}</a>.
+  </p>
+</footer>
+{% endblock %}
 
 {% block auth_extra_head %}
   {{ super() }}
+  <meta name="description" content="{{ _('Sign in to your Land Registry account.') }}">
+  <meta name="theme-color" content="#1a5490">
+  <meta property="og:title" content="{{ _('Sign in') }} · Land Registry">
+  <meta property="og:description" content="{{ _('Sign in to access your account.') }}">
+  <link rel="canonical" href="{{ public_base_url }}/auth/login">
+  <link rel="icon" type="image/svg+xml" href="/static/land-registry-icon.svg">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/land-registry-icon-32.png">
+  <link rel="icon" type="image/vnd.microsoft.icon" href="/favicon.ico">
+  <link rel="apple-touch-icon" sizes="180x180" href="/static/land-registry-icon-180.png">
+  <link rel="manifest" href="/manifest.json">
   <link rel="stylesheet" href="{{ asset_url('css/auth.css') }}" />
   <script>
     document.addEventListener('DOMContentLoaded', function () {
       const next = new URLSearchParams(window.location.search).get('next') || '/map';
-      const signInLink = Array.from(document.querySelectorAll('a')).find(a => a.textContent.trim() === 'Sign In');
-      if (signInLink) signInLink.href = '/auth/login?next=' + encodeURIComponent(next);
+      document.querySelectorAll('a[href^="/auth/login"]').forEach((link) => {
+        link.href = '/auth/login?lang={{ locale }}&next=' + encodeURIComponent(next);
+      });
     });
   </script>
+{% endblock %}
+
+{% block auth_scripts %}
+{% if clerk_enabled %}
+<script
+    crossorigin="anonymous"
+    data-clerk-publishable-key="{{ publishable_key }}"
+    src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5.125.7/dist/clerk.browser.js"
+    integrity="sha384-xTSiC5q9fn6XYC+tqofnjiXQCkzjXWYX3I8IFNghDpueEFnqSf6NTxYXnXqA57JD"
+    type="text/javascript"></script>
+<script
+    crossorigin="anonymous"
+    data-clerk-publishable-key="{{ publishable_key }}"
+    src="https://cdn.jsdelivr.net/npm/@clerk/ui@1.42.4/dist/ui.browser.js"
+    integrity="sha384-COjFs7nypluhh9Ul7Gbey/MeR3s+/FJ2/8mnygqiTKb5zQTYg0McJXLKmSQuEw0E"
+    type="text/javascript"></script>
+<script>
+(async function () {
+  const status = document.getElementById('clerk-status');
+  const mount = document.getElementById('clerk-sign-in');
+  const copy = {
+    unavailable: {{ _('Online sign-in is temporarily unavailable. Use the email and password option below.') | tojson }},
+    activeAs: {{ _('Session active as') | tojson }},
+    continueLabel: {{ _('Continue') | tojson }},
+    switchAccount: {{ _('Switch account') | tojson }},
+    nextUrl: {{ next_url | default('/map') | tojson }},
+    registerUrl: {{ register_url | default('/auth/register') | tojson }}
+  };
+
+  const addAutocompleteHints = () => {
+    mount.querySelectorAll('input[type="email"]').forEach((input) => {
+      if (!input.hasAttribute('autocomplete')) input.setAttribute('autocomplete', 'email');
+    });
+    mount.querySelectorAll('input[name="identifier"]').forEach((input) => {
+      if (!input.hasAttribute('autocomplete')) input.setAttribute('autocomplete', 'username');
+    });
+    mount.querySelectorAll('input[type="password"]').forEach((input) => {
+      if (!input.hasAttribute('autocomplete')) input.setAttribute('autocomplete', 'current-password');
+    });
+  };
+  const clerkFieldsObserver = new MutationObserver(addAutocompleteHints);
+  clerkFieldsObserver.observe(mount, { childList: true, subtree: true, attributes: true, attributeFilter: ['type', 'autocomplete'] });
+  addAutocompleteHints();
+
+  function waitForClerk(maxAttempts, delayMs) {
+    return new Promise((resolve) => {
+      let attempts = 0;
+      const check = () => {
+        if (window.Clerk && window.__internal_ClerkUICtor) {
+          resolve({ Clerk: window.Clerk, ClerkUI: window.__internal_ClerkUICtor });
+        } else if (++attempts >= maxAttempts) {
+          resolve(null);
+        } else {
+          window.setTimeout(check, delayMs);
+        }
+      };
+      check();
+    });
+  }
+
+  function showUnavailable() {
+    status.textContent = copy.unavailable;
+    const emailFallback = document.querySelector('.auth-email-fallback');
+    if (emailFallback) emailFallback.open = true;
+  }
+
+  const globals = await waitForClerk(80, 100);
+  if (!globals) {
+    showUnavailable();
+    return;
+  }
+
+  try {
+    const options = { ui: { ClerkUI: globals.ClerkUI } };
+    if ({{ locale | tojson }} === 'it') {
+      try {
+        const italian = await import('https://cdn.jsdelivr.net/npm/@clerk/localizations@3.37.11/+esm');
+        options.localization = italian.itIT;
+      } catch (_error) {
+        showUnavailable();
+        return;
+      }
+    }
+
+    await globals.Clerk.load(options);
+    if (globals.Clerk.user) {
+      const token = globals.Clerk.session ? await globals.Clerk.session.getToken() : null;
+      if (token) {
+        await fetch('/auth/clerk/session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+          body: JSON.stringify({ token })
+        });
+      }
+
+      const identity = globals.Clerk.user.fullName || globals.Clerk.user.primaryEmailAddress?.emailAddress || '';
+      status.replaceChildren();
+      const message = document.createElement('p');
+      message.className = 'mb-2';
+      message.append(document.createTextNode(copy.activeAs + ' '));
+      const name = document.createElement('strong');
+      name.textContent = identity;
+      message.append(name);
+      const actions = document.createElement('div');
+      actions.className = 'auth-clerk-actions';
+      const proceed = document.createElement('a');
+      proceed.className = 'btn btn-primary btn-sm';
+      proceed.href = copy.nextUrl;
+      proceed.textContent = copy.continueLabel;
+      const switchAccount = document.createElement('button');
+      switchAccount.className = 'btn btn-outline-secondary btn-sm';
+      switchAccount.type = 'button';
+      switchAccount.textContent = copy.switchAccount;
+      switchAccount.addEventListener('click', async () => {
+        await globals.Clerk.signOut();
+        window.location.reload();
+      });
+      actions.append(proceed, switchAccount);
+      status.append(message, actions);
+      return;
+    }
+
+    status.hidden = true;
+    const signUpUrl = new URL(copy.registerUrl, window.location.origin);
+    signUpUrl.searchParams.set('lang', {{ locale | tojson }});
+    signUpUrl.searchParams.set('next', copy.nextUrl);
+    await globals.Clerk.mountSignIn(mount, {
+      signUpUrl: signUpUrl.toString(),
+      signInFallbackRedirectUrl: '/auth/clerk/callback?next=' + encodeURIComponent(copy.nextUrl)
+    });
+  } catch (_error) {
+    showUnavailable();
+  }
+})();
+</script>
+{% endif %}
+
+<script>
+try {
+  window.localStorage.removeItem('access_token');
+  window.localStorage.removeItem('refresh_token');
+} catch (_error) { /* storage may be disabled */ }
+
+document.getElementById('login-form').addEventListener('submit', async function (event) {
+  event.preventDefault();
+  const form = this;
+  const message = document.getElementById('message');
+  const button = form.querySelector('button[type="submit"]');
+  const buttonLabel = button.textContent;
+  const copy = {
+    signingIn: {{ _('Signing in…') | tojson }},
+    success: {{ _('Sign-in successful.') | tojson }},
+    invalidCredentials: {{ _('Invalid credentials.') | tojson }},
+    connectionError: {{ _('Connection error. Please try again.') | tojson }}
+  };
+
+  message.textContent = '';
+  button.disabled = true;
+  button.textContent = copy.signingIn;
+  try {
+    const response = await fetch({{ login_api_url | default('/auth/login') | tojson }}, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: document.getElementById('email').value,
+        password: document.getElementById('password').value
+      })
+    });
+    if (response.ok) {
+      message.className = 'alert alert-success';
+      message.textContent = copy.success;
+      window.setTimeout(() => { window.location.href = {{ next_url | default('/map') | tojson }}; }, 800);
+      return;
+    }
+    const data = await response.json();
+    message.className = 'alert alert-danger';
+    message.textContent = data.detail || copy.invalidCredentials;
+  } catch (_error) {
+    message.className = 'alert alert-danger';
+    message.textContent = copy.connectionError;
+  } finally {
+    button.disabled = false;
+    button.textContent = buttonLabel;
+  }
+});
+</script>
 {% endblock %}
 
 {% block cookie_consent %}{% endblock %}

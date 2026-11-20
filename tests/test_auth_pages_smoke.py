@@ -265,3 +265,10 @@ def test_production_script_policy_removes_loopback_panel_origins(monkeypatch):
     assert "'unsafe-eval'" in next(
         part.strip() for part in table_policy.split(";") if part.strip().startswith("script-src ")
     )
+
+
+def test_map_legacy_is_marked_deprecated():
+    from land_registry.main import app as _app
+
+    schema = _app.openapi()
+    assert schema["paths"]["/map-legacy"]["get"]["deprecated"] is True

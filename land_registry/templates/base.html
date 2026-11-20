@@ -3,11 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>{% block title %}{{ _('Land Registry Viewer') }}{% endblock %}</title>
+    <title>{% block title %}Land Registry{% endblock %}</title>
     {% block meta_description %}<meta name="description" content="{{ _('Search Italian municipalities and cadastral parcels on one map, see the data around them and download a parcel dossier.') }}" />{% endblock %}
-
     <!-- Favicon -->
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect fill='%231a5490' width='32' height='32' rx='4'/%3E%3Cpath fill='%23fff' d='M6 8h8v6H6zM16 8h10v6H16zM6 16h10v8H6zM18 16h8v8h-8z'/%3E%3Cpath fill='%2328a745' d='M7 9h6v4H7zM17 9h8v4h-8zM7 17h8v6H7zM19 17h6v6h-6z'/%3E%3C/svg%3E" />
+    <link rel="icon" type="image/svg+xml" href="/static/land-registry-icon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/land-registry-icon-32.png" />
+    <link rel="icon" type="image/vnd.microsoft.icon" href="/favicon.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/static/land-registry-icon-180.png" />
+    <link rel="manifest" href="/manifest.json" />
 
     <!-- Bootstrap 5 (required by aecs4u-theme layout) -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
@@ -21,10 +24,12 @@
     <link rel="stylesheet" href="/static/aecs4u-theme/css/layout.css" />
     <link rel="stylesheet" href="/static/aecs4u-theme/css/components.css" />
 
-    <!-- Leaflet and map plugin CSS. Folium embeds Leaflet itself on /map. -->
+    <!-- Legacy Folium assets are limited to the retired map templates. The
+         canonical map and map embed declare their own renderer dependencies. -->
     {% block external_css %}
-    {% if request.url.path != '/map' %}
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    {% if request.url.path in ['/', '/map-legacy'] %}
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="anonymous" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.fullscreen/2.4.0/Control.FullScreen.css" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-measure@3.1.0/dist/leaflet-measure.css" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder@4.0.0/dist/Control.Geocoder.css" />
@@ -34,8 +39,8 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet.locatecontrol@0.90.1/dist/L.Control.Locate.min.css" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet-search@4.0.0/dist/leaflet-search.min.css" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-mouse-position@1.2.0/src/L.Control.MousePosition.css" />
-    {% endif %}
     <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
+    {% endif %}
     {% endblock %}
 
     <!-- Application CSS (overrides theme tokens where needed) -->
@@ -53,7 +58,8 @@
     <!-- Clerk SDK (required by clerk-auth.js) — loaded via aecs4u-auth module -->
     <script async crossorigin="anonymous"
             data-clerk-publishable-key="{{ clerk_publishable_key }}"
-            src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@latest/dist/clerk.browser.js"
+            src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5.125.7/dist/clerk.browser.js"
+            integrity="sha384-xTSiC5q9fn6XYC+tqofnjiXQCkzjXWYX3I8IFNghDpueEFnqSf6NTxYXnXqA57JD"
             type="text/javascript"></script>
     <script src="/static/aecs4u-auth/js/clerk-auth.js"></script>
     {% endif %}
@@ -62,8 +68,9 @@
 
     <!-- Leaflet + map plugins -->
     {% block external_js %}
-    {% if request.url.path != '/map' %}
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
+    {% if request.url.path in ['/', '/map-legacy'] %}
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="anonymous" defer></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.fullscreen/2.4.0/Control.FullScreen.js" defer></script>
     <script src="https://cdn.jsdelivr.net/npm/leaflet-measure@3.1.0/dist/leaflet-measure.js" defer></script>
     <script src="https://unpkg.com/leaflet-control-geocoder@4.0.0/dist/Control.Geocoder.js" defer></script>
@@ -74,7 +81,7 @@
     <script src="https://cdn.jsdelivr.net/npm/leaflet-mouse-position@1.2.0/src/L.Control.MousePosition.js" defer></script>
     <!-- map.js and folium-interface.js build L.Control.Draw on the legacy map. -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js" defer></script>
-    {% else %}
+    {% elif request.url.path == '/map' %}
     <!-- Leaflet vector fallback is lazy-loaded by map-v2.js only if WebGL is unavailable. -->
     <!-- Parses the Civil Protection bulletin's TopoJSON in enrichment-layers.js -->
     <script src="https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/topojson-client.min.js" integrity="sha384-Ukv1p/xTma6P4/2bY5KzWBw+ydSpXmhCMtyciIQVDJ1RmOxtCYNMF1uXT9T63H67" crossorigin="anonymous" defer></script>
@@ -91,9 +98,11 @@
     <script src="{{ asset_url('map-workbench.js') }}"></script>
 
     {% block map_js %}
+    {% if request.url.path in ['/', '/map-legacy'] %}
     <script src="{{ asset_url('progressive-loader.js') }}"></script>
     <script src="{{ asset_url('map.js') }}"></script>
     <script src="{{ asset_url('location-search.js') }}"></script>
+    {% endif %}
     {% endblock %}
     <script src="{{ asset_url('table-manager.js') }}"></script>
 

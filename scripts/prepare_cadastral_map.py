@@ -30,13 +30,13 @@ from land_registry.cadastral_map_views import (
 
 
 def _dsn() -> str:
-    from dotenv import dotenv_values
+    from land_registry.environment import load_environment
 
-    values = {**dotenv_values(Path(__file__).resolve().parents[1] / ".env"), **os.environ}
-    direct = values.get("CADASTRAL_POSTGRES_DSN")
+    load_environment()
+    direct = os.environ.get("CADASTRAL_POSTGRES_DSN")
     if direct:
         return direct.replace("postgresql+asyncpg://", "postgresql://", 1)
-    stats = values.get("STATS_POSTGRES_DSN") or values.get("AECS4U_STATS_POSTGRES_DSN")
+    stats = os.environ.get("STATS_POSTGRES_DSN") or os.environ.get("AECS4U_STATS_POSTGRES_DSN")
     if not stats:
         raise RuntimeError("Set CADASTRAL_POSTGRES_DSN or STATS_POSTGRES_DSN")
     parsed = urlsplit(stats.replace("postgresql+asyncpg://", "postgresql://", 1))

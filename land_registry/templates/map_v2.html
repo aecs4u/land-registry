@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}{{ _('Cadastral Map') }} - AECS4U{% endblock %}
+{% block title %}{{ _('Cadastral map') }} · Land Registry{% endblock %}
 
 {% block body_class %}direct-map-page{% endblock %}
 
@@ -10,7 +10,6 @@
 <link rel="stylesheet" href="{{ asset_url('map-v2.css') }}" />
 {# Shared look for the docked detail sheets (aecs4u-theme). A plain link, not the
    components macro: an older theme install then only loses styling, not the page. #}
-<link rel="stylesheet" href="{{ static_url_path|default('/static/aecs4u-theme') }}/css/components/map_detail_sheet.css{{ theme_asset_v|default('') }}" />
 <link rel="stylesheet" href="{{ asset_url('cadastral-purchases.css') }}" />
 {% endblock %}
 
@@ -26,8 +25,8 @@
       <span>Land Registry</span>
     </a>
     <div class="direct-map-header-actions">
-      <button type="button" class="map-action-button" id="themeButton" title="{{ _('Toggle theme') }}" aria-label="{{ _('Toggle theme') }}" aria-pressed="false">◐</button>
-      <a class="map-action-button map-action-link" href="/map-legacy" title="{{ _('Open analysis map') }}">{{ _('Analysis map') }}</a>
+      <button type="button" class="map-action-button" id="themeToggle" title="{{ _('Switch to dark theme') }}" aria-label="{{ _('Switch to dark theme') }}" aria-pressed="false">◐</button>
+      <a class="map-action-button map-action-link" href="/map?panel=table" title="{{ _('Open the map attribute table') }}">{{ _('Attribute table') }}</a>
       <a class="map-action-button map-action-link map-data-sources-link" href="/data-sources" title="{{ _('Data sources and reuse') }}" aria-label="{{ _('Data sources and reuse') }}"><span class="map-data-sources-label">{{ _('Data Sources') }}</span><span class="map-data-sources-compact" aria-hidden="true">ⓘ</span></a>
       <a class="map-action-button map-action-link" href="/settings" title="{{ _('Map and account settings') }}">{{ _('Settings') }}</a>
     </div>
@@ -40,7 +39,7 @@
       <form class="map-search-row" id="mapSearchForm">
         <span class="map-search-icon" aria-hidden="true">⌕</span>
         <input id="mapSearchInput" type="search" autocomplete="off" spellcheck="false"
-               placeholder="{{ _('Search municipality or parcel reference') }}"
+               placeholder="{{ _('Search municipality or parcel') }}"
                role="combobox" aria-autocomplete="list" aria-haspopup="listbox"
                aria-controls="mapSearchResults" aria-expanded="false">
         <button id="mapSearchSubmit" type="submit" title="{{ _('Search') }}" aria-label="{{ _('Search') }}">↵</button>
@@ -65,18 +64,14 @@
           <label class="map-parcel-finder-number">{{ _('Parcel number') }}
             <input id="parcelFinderParcel" type="text" inputmode="search" autocomplete="off" maxlength="40" disabled>
           </label>
-          <button id="parcelFinderSubmit" type="submit" disabled>{{ _('Find parcel') }}</button>
+          <button id="parcelFinderSubmit" type="submit" aria-label="{{ _('Find parcel') }}" disabled>{{ _('Find parcel') }}</button>
         </form>
         <p id="parcelFinderStatus" class="map-parcel-finder-status" aria-live="polite">{{ _('Choose an area to start.') }}</p>
       </details>
       <div id="mapSearchResults" class="map-search-results" role="listbox" hidden></div>
     </div>
 
-    <div id="directMap" class="direct-map" role="region" aria-label="{{ _('Interactive cadastral map') }}"></div>
-    <output id="mapCoordinates" class="map-coordinate-readout" aria-live="off" hidden></output>
-    <div id="mapMiniMap" class="map-minimap" aria-label="{{ _('Map overview') }}" hidden></div>
-
-    <div class="map-utility-stack" aria-label="{{ _('Map actions') }}">
+    <div class="map-utility-stack" role="group" aria-label="{{ _('Map actions') }}">
       <div class="map-basemap-control">
         <button type="button" class="map-round-button" id="basemapToggle" title="{{ _('Basemap') }}" aria-label="{{ _('Basemap') }}" aria-controls="mapBasemapPopover" aria-expanded="false">▧</button>
         <div class="map-basemap-popover" id="mapBasemapPopover" role="group" aria-label="{{ _('Basemap') }}" hidden>
@@ -124,6 +119,11 @@
       <button type="button" class="map-round-button" id="streetViewButton" title="{{ _('Open Street View') }}" aria-label="{{ _('Open Street View') }}">S</button>
     </div>
 
+    <div id="directMap" class="direct-map" role="region" aria-label="{{ _('Interactive cadastral map') }}"></div>
+    <output id="mapCoordinates" class="map-coordinate-readout" aria-live="off" hidden></output>
+    <div id="mapMiniMap" class="map-minimap" aria-label="{{ _('Map overview') }}" hidden></div>
+
+
     <aside class="map-table-card" id="mapTableCard" aria-label="{{ _('Attribute table') }}" hidden>
       <div class="map-card-heading">
         <div><span class="map-eyebrow">{{ _('Viewport') }}</span><h2>{{ _('Attributes') }}</h2></div>
@@ -138,7 +138,7 @@
       <div class="map-table-toolbar">
         <label class="visually-hidden" for="mapTableLayerSelect">{{ _('Layer') }}</label>
         <select id="mapTableLayerSelect"></select>
-        <input type="search" id="mapTableFilter" placeholder="{{ _('Filter…') }}">
+        <input type="search" id="mapTableFilter" aria-label="{{ _('Filter the attribute table') }}" placeholder="{{ _('Filter…') }}">
         <label class="map-table-page-size-label" for="mapTablePageSize">{{ _('Rows') }}</label>
         <select id="mapTablePageSize" aria-label="{{ _('Rows per page') }}"><option>25</option><option selected>100</option><option>250</option><option>500</option></select>
         <button type="button" class="secondary-action compact" id="mapTableRefreshButton" aria-label="{{ _('Refresh') }}: {{ _('Table') }}">{{ _('Refresh') }}</button>
@@ -166,7 +166,7 @@
             <option value="gt">{{ _('Greater than') }}</option><option value="gte">{{ _('At least') }}</option><option value="lt">{{ _('Less than') }}</option><option value="lte">{{ _('At most') }}</option>
             <option value="empty">{{ _('Is empty') }}</option><option value="not_empty">{{ _('Is not empty') }}</option>
           </select>
-          <input type="search" id="mapAttributeValue" placeholder="{{ _('Attribute value') }}">
+          <input type="search" id="mapAttributeValue" aria-label="{{ _('Attribute value') }}" placeholder="{{ _('Attribute value') }}">
           <button type="button" class="secondary-action compact" id="mapApplyAttributeFilter">{{ _('Filter rows') }}</button>
           <button type="button" class="secondary-action compact" id="mapClearAttributeFilter">{{ _('Clear field filter') }}</button>
           <button type="button" class="secondary-action compact" id="mapSelectByAttributeButton">{{ _('Select matches') }}</button>
@@ -207,7 +207,7 @@
         <div class="map-workbench-action-row">
           <button type="button" class="secondary-action compact" id="mapExportDrawingsButton" disabled>{{ _('Export GeoJSON') }}</button>
           <button type="button" class="secondary-action compact" id="mapImportDrawingsButton">{{ _('Import GeoJSON') }}</button>
-          <input type="file" id="mapDrawingsFile" accept=".geojson,.json,application/geo+json,application/json" hidden>
+          <input type="file" id="mapDrawingsFile" aria-label="{{ _('Import GeoJSON') }}" accept=".geojson,.json,application/geo+json,application/json" hidden>
           <button type="button" class="secondary-action compact" id="mapSaveDrawingsButton" disabled>{{ _('Save drawings') }}</button>
           <button type="button" class="secondary-action compact" id="mapLoadDrawingsButton">{{ _('Load drawings') }}</button>
           <button type="button" class="secondary-action compact" id="mapClearDrawingsButton" disabled>{{ _('Clear drawings') }}</button>
@@ -236,7 +236,7 @@
         <button type="button" class="secondary-action compact sister-batch-export" id="sisterBatchExportButton" disabled>{{ _('Create SISTER CSV') }}</button>
         <button type="button" class="secondary-action compact sister-batch-export" id="sisterBatchRunListButton" disabled>{{ _('Create SISTER run-list') }}</button>
         <button type="button" class="secondary-action compact" id="sisterBatchAppendButton" disabled>{{ _('Add to an existing list…') }}</button>
-        <input type="file" id="sisterBatchAppendFile" accept=".md,text/markdown" hidden>
+        <input type="file" id="sisterBatchAppendFile" aria-label="{{ _('Add to an existing list…') }}" accept=".md,text/markdown" hidden>
       </div>
       <p class="map-layer-meta">{{ _('Downloads analytical historical visura requests for land and buildings, as a CSV or as a Markdown list for sister batch run-list; the selection can also be added to a list you already have. Nothing is submitted automatically.') }}</p>
       </div>
@@ -262,7 +262,7 @@
       <p class="map-muted" id="mapLayerFilterEmpty" hidden>{{ _('No layers match this search.') }}</p>
       <p class="map-muted map-layer-meta maritime-layer-disclosure">{{ _('MIT/SID snapshot; published coverage may be incomplete. Orange polygons are concession footprints; blue points are point records. A marker is hidden when its matching footprint is drawable in the same tile. Use “Zoom to polygons” to move the map to available footprints.') }}</p>
       <p class="map-muted map-layer-meta solar-layer-disclosure">{{ _('Solar potential is aggregated by municipality from the Zornade PV model. Shading represents the share of assessed roof area with high suitability; values are estimates, not a permit or engineering assessment.') }}</p>
-      <div id="mapCoverageStatus" class="map-coverage-status" aria-live="polite"></div>
+          <div id="mapCoverageStatus" class="map-coverage-status"></div>
 
       <div class="layer-section-title">{{ _('Live layers') }}</div>
       <div class="map-live-layers" id="mapLiveLayers">
@@ -302,7 +302,7 @@
             </label>
             <button type="button" class="secondary-action compact" id="refreshVisuraFlagsButton" aria-label="{{ _('Refresh') }}: {{ _('Highlight requests') }}">{{ _('Refresh') }}</button>
           </div>
-          <div id="sisterParcelsStatus" class="map-layer-meta" aria-live="polite"></div>
+          <div id="sisterParcelsStatus" class="map-layer-meta"></div>
           <div class="map-live-layer-row">
             <label class="map-live-checkbox" title="{{ _('Enriched PVP auction listings, filtered below') }}">
               <input type="checkbox" id="toggleAuctionHighlight" aria-describedby="auctionParcelsStatus">
@@ -310,7 +310,7 @@
             </label>
             <button type="button" class="secondary-action compact" id="refreshAuctionFlagsButton" aria-label="{{ _('Refresh') }}: {{ _('Highlight auction sales') }}">{{ _('Refresh') }}</button>
           </div>
-          <div id="auctionParcelsStatus" class="map-layer-meta" aria-live="polite"></div>
+          <div id="auctionParcelsStatus" class="map-layer-meta"></div>
           <div class="map-live-layer-row">
             <label class="map-live-checkbox" title="{{ _('NPL asset locations are approximate municipality points.') }}">
               <input type="checkbox" id="toggleNplAsteFlorioAssets" aria-describedby="nplAsteFlorioAssetsStatus nplAsteFlorioAssetsDisclosure">
@@ -318,14 +318,14 @@
             </label>
             <button type="button" class="secondary-action compact" id="refreshNplAsteFlorioAssetsButton" aria-label="{{ _('Refresh') }}: {{ _('Show NPL assets') }}">{{ _('Refresh') }}</button>
           </div>
-          <div id="nplAsteFlorioAssetsStatus" class="map-layer-meta" aria-live="polite"></div>
+          <div id="nplAsteFlorioAssetsStatus" class="map-layer-meta"></div>
           <div id="nplAsteFlorioAssetsDisclosure" class="map-layer-meta">{{ _('Locations are at municipality level; exact cadastral parcels are not available yet.') }}</div>
         </div>
         <section class="map-urban-contour-tools" aria-labelledby="urbanContourHeading">
           <h3 id="urbanContourHeading" class="layer-section-title">{{ _('Urban contour') }}</h3>
           <label class="map-live-checkbox"><input type="checkbox" id="urbanContourEnabled" checked><span>{{ _('Enable overlay') }}</span></label>
           <label class="map-market-filter"><span>{{ _('Mode') }}</span><select id="urbanContourMode"><option value="broad">{{ _('Broad urban classes') }}</option><option value="strict">{{ _('Strict urban classes') }}</option></select></label>
-          <div id="urbanContourStatus" class="map-layer-meta" aria-live="polite">{{ _('Uses urban-class attributes in the current table results.') }}</div>
+          <div id="urbanContourStatus" class="map-layer-meta">{{ _('Uses urban-class attributes in the current table results.') }}</div>
         </section>
     </div>
 
@@ -343,8 +343,8 @@
           <label><span>{{ _('Administrative layer') }}</span><select id="salesGeoLayerType"><option value="none">{{ _('None') }}</option><option value="region">{{ _('Regions') }}</option><option value="province">{{ _('Provinces') }}</option><option value="municipality">{{ _('Municipalities') }}</option></select></label>
           <label><span>{{ _('Color by') }}</span><select id="salesGeoMetric"><option value="none">{{ _('Default') }}</option></select></label>
         </div>
-        <div id="salesGeoHint" class="map-layer-meta" aria-live="polite"></div>
-        <div id="salesMapStatus" class="map-layer-meta" aria-live="polite"></div>
+        <div id="salesGeoHint" class="map-layer-meta"></div>
+        <div id="salesMapStatus" class="map-layer-meta"></div>
       </div>
       <div class="map-live-layers" id="mapMarketLayer">
         <div class="map-live-layer-row">
@@ -384,7 +384,7 @@
       </button>
     </div>
 
-    <aside class="parcel-shortlist-card" id="parcelShortlistCard" aria-label="{{ _('Parcel shortlist') }}">
+    <aside class="parcel-shortlist-card" id="parcelShortlistCard" aria-label="{{ _('Parcel shortlist') }}" hidden>
       <div class="map-card-heading">
         <div>
           <span class="map-eyebrow">{{ _('Workspace') }}</span>
@@ -451,7 +451,7 @@
           <button type="button" id="parcelSheetExpandButton" class="secondary-action compact parcel-sheet-expand" aria-expanded="false" aria-controls="directParcelPanel" aria-label="{{ _('Expand parcel details') }}" title="{{ _('Expand parcel details') }}"><i class="fas fa-expand-alt" aria-hidden="true"></i></button>
           <button type="button" id="parcelFavoriteButton" class="secondary-action compact parcel-favorite-button" aria-pressed="false" title="{{ _('Add to favourites') }}" aria-label="{{ _('Add to favourites') }}"><span aria-hidden="true">☆</span></button>
           <button type="button" id="parcelShareButton" class="secondary-action compact" title="{{ _('Copy link') }}" aria-label="{{ _('Copy link') }}"><i class="fas fa-link" aria-hidden="true"></i></button>
-          <a id="parcelReportLink" class="secondary-action compact" href="/api/v1/enrichment/parcel/dossier/" title="{{ _('Download PDF') }}" aria-label="{{ _('Download PDF') }}" aria-live="polite" aria-busy="false"><i class="fas fa-file-pdf" aria-hidden="true"></i></a>
+          <a id="parcelReportLink" class="secondary-action compact" href="/api/v1/enrichment/parcel/dossier/" title="{{ _('Download PDF') }}" aria-label="{{ _('Download PDF') }}" aria-busy="false"><i class="fas fa-file-pdf" aria-hidden="true"></i></a>
           <button type="button" class="map-card-close map-sheet-close" id="parcelCloseButton" aria-label="{{ _('Close parcel details') }}">×</button>
         </div>
       </header>
@@ -469,12 +469,12 @@
                   title="{{ _('SISTER building records for the selected parcel') }}">
             {{ _('SISTER building records') }} <span id="sisterBuildingsCount"></span>
           </button>
-          <a id="legacyAnalysisLink" class="map-sheet-action-link" href="/map-legacy">{{ _('Open analysis') }}</a>
+          <a id="legacyAnalysisLink" class="map-sheet-action-link" href="/map?panel=table">{{ _('Open the map attribute table') }}</a>
           <button type="button" id="parcelClearButton" class="map-sheet-action-link">{{ _('Clear selection') }}</button>
         </div>
-        <div id="sisterBuildingsStatus" class="map-layer-meta map-sheet-action-status" aria-live="polite"></div>
+        <div id="sisterBuildingsStatus" class="map-layer-meta map-sheet-action-status"></div>
       </div>
-      <div id="parcelAdjacentResults" class="parcel-adjacent-results" aria-live="polite"></div>
+      <div id="parcelAdjacentResults" class="parcel-adjacent-results"></div>
     </aside>
 
     <aside class="parcel-detail-card parcel-sheet municipality-detail-sheet map-sheet-accent" id="municipalityDetailPanel" aria-labelledby="municipalityDetailTitle" hidden>
@@ -490,7 +490,7 @@
       </header>
       <div class="parcel-stat-strip map-sheet-strip" id="municipalityStatStrip"></div>
       <nav class="parcel-section-nav" id="municipalitySectionNav" aria-label="{{ _('Area sections') }}"></nav>
-      <div id="municipalityDetailContent" class="parcel-detail-content map-sheet-body" aria-live="polite"></div>
+      <div id="municipalityDetailContent" class="parcel-detail-content map-sheet-body"></div>
     </aside>
 
     <aside class="parcel-detail-card parcel-sheet municipality-detail-sheet map-sheet-accent" id="cadastralSheetPanel" aria-labelledby="cadastralSheetTitle" hidden>
@@ -504,7 +504,7 @@
           <button type="button" class="map-card-close map-sheet-close" id="cadastralSheetClose" aria-label="{{ _('Close cadastral sheet details') }}">×</button>
         </div>
       </header>
-      <div id="cadastralSheetContent" class="parcel-detail-content map-sheet-body" aria-live="polite"></div>
+      <div id="cadastralSheetContent" class="parcel-detail-content map-sheet-body"></div>
     </aside>
 
     <aside class="parcel-detail-card parcel-sheet municipality-detail-sheet map-sheet-accent" id="cadastralUrbanSectionPanel" aria-labelledby="cadastralUrbanSectionTitle" hidden>
@@ -518,7 +518,7 @@
           <button type="button" class="map-card-close map-sheet-close" id="cadastralUrbanSectionClose" aria-label="{{ _('Close urban section details') }}">×</button>
         </div>
       </header>
-      <div id="cadastralUrbanSectionContent" class="parcel-detail-content map-sheet-body" aria-live="polite"></div>
+      <div id="cadastralUrbanSectionContent" class="parcel-detail-content map-sheet-body"></div>
     </aside>
 
     <aside class="parcel-detail-card parcel-sheet municipality-detail-sheet map-sheet-accent" id="omiMarketZonePanel" aria-labelledby="omiMarketZoneTitle" hidden>
@@ -532,7 +532,7 @@
           <button type="button" class="map-card-close map-sheet-close" id="omiMarketZoneClose" aria-label="{{ _('Close OMI market zone details') }}">×</button>
         </div>
       </header>
-      <div id="omiMarketZoneContent" class="parcel-detail-content map-sheet-body" aria-live="polite"></div>
+      <div id="omiMarketZoneContent" class="parcel-detail-content map-sheet-body"></div>
     </aside>
 
     <aside class="parcel-detail-card parcel-sheet maritime-concession-sheet map-sheet-accent" id="maritimeConcessionPanel" aria-labelledby="maritimeConcessionTitle" hidden>
@@ -546,7 +546,7 @@
           <button type="button" class="map-card-close map-sheet-close" id="maritimeConcessionClose" aria-label="{{ _('Close concession details') }}">×</button>
         </div>
       </header>
-      <div id="maritimeConcessionContent" class="parcel-detail-content map-sheet-body" aria-live="polite"></div>
+      <div id="maritimeConcessionContent" class="parcel-detail-content map-sheet-body"></div>
     </aside>
 
     {% include "partials/cadastral_purchases.html" %}
@@ -564,7 +564,7 @@
         </header>
         <p id="mapWelcomeIntro">{{ _('A quick guide to finding parcels and exploring map data.') }}</p>
         <p><a href="/data-sources">{{ _('Data sources and reuse') }}</a></p>
-        <div class="map-welcome-steps" aria-live="polite" aria-atomic="true">
+        <div class="map-welcome-steps">
           <section data-map-tour-step>
             <h3>{{ _('Find a place or parcel') }}</h3>
             <p>{{ _('Search by municipality or cadastral reference, or browse from region to parcel number.') }}</p>

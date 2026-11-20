@@ -67,7 +67,7 @@ async def canonical_map_layers() -> dict:
     from land_registry.map_layers import get_map_layer_source, map_layer_catalog
 
     source = get_map_layer_source()
-    return {"source": "aecs4u-stats PostgreSQL/PostGIS", "available": source.available, "layers": map_layer_catalog()}
+    return {"source": "Source-owned PostgreSQL/PostGIS databases", "available": source.available, "layers": map_layer_catalog()}
 
 
 @consumer_router.get("/map/layers/health")

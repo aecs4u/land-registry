@@ -1,15 +1,14 @@
 #!/usr/bin/env python
 """Report whether the ANNCSU address store can serve the map address search.
 
-Run it against each environment (local, staging, production) with that
-environment's ``STATS_POSTGRES_DSN`` / ``AECS4U_STATS_POSTGRES_DSN``:
+Reads only the export schema ``anncsu_v2_ref`` of the ``anncsu`` database. Point it at an
+environment with ``ANNCSU_POSTGRES_DSN`` (or ``STATS_POSTGRES_DSN`` for the host):
 
     python scripts/check_anncsu_address_store.py [--region 19] [--probe "via goethe 1, Palermo:082053"]
 
-Prints, per loaded region: schema, street and address counts, geocoded share,
-source vintage, and the indexes on the address table; then runs the optional
-probe through the same parser and lookup the API uses. Exit code 1 when no
-region is loaded or the probe does not find an exact address.
+Prints, per loaded region: street and address counts, geocoded share and the dataset
+release; then runs the optional probe through the same parser and lookup the API uses.
+Exit code 1 when no region is loaded or the probe does not find an exact address.
 """
 
 from __future__ import annotations
@@ -21,8 +20,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from land_registry.address_search import parse_address  # noqa: E402
 from land_registry import anncsu_lookup  # noqa: E402
+from land_registry.address_search import parse_address  # noqa: E402
 
 
 def main() -> int:
@@ -36,40 +35,30 @@ def main() -> int:
     except Exception as exc:
         print(f"FAIL cannot connect to the anncsu database: {type(exc).__name__}: {exc}")
         return 1
-    regions = anncsu_lookup._loaded_regions(conn)
-    if args.region:
-        regions = {k: v for k, v in regions.items() if k == args.region}
-    if not regions:
-        print("FAIL no region with both streets and addresses tables in schema 'anncsu' or 'public'")
-        return 1
-    for code, schema in sorted(regions.items()):
-        addresses = anncsu_lookup._qualified(schema, code, "addresses")
-        streets = anncsu_lookup._qualified(schema, code, "streets")
+    try:
+        regions = anncsu_lookup._loaded_regions(conn)
+        if args.region:
+            regions = {k: v for k, v in regions.items() if k == args.region}
+        if not regions:
+            print(f"FAIL no region with addresses in {anncsu_lookup.EXPORT_SCHEMA}.v_region")
+            return 1
         with conn.cursor() as cur:
-            cur.execute(f"SELECT count(*), count(*) FILTER (WHERE longitude IS NOT NULL) FROM {addresses}")
-            n_addr, n_geo = cur.fetchone()
-            cur.execute(f"SELECT count(*) FROM {streets}")
-            n_streets = cur.fetchone()[0]
-            cur.execute("SELECT indexname FROM pg_indexes WHERE schemaname=%s AND tablename=%s",
-                        (schema, f"r{code:02d}__addresses"))
-            indexes = sorted(r[0] for r in cur.fetchall())
-            cur.execute(
-                "SELECT to_regclass(%s)", (f'"{schema}"."r{code:02d}__anncsu_provenance"',))
-            prov = None
-            if cur.fetchone()[0]:
-                cur.execute(f'SELECT source_version FROM "{schema}"."r{code:02d}__anncsu_provenance" LIMIT 1')
-                row = cur.fetchone()
-                prov = row[0] if row else None
-        if schema != "public":
-            print(f"WARN region {code:02d}: tables are in schema '{schema}', not 'public' (the layout the package "
-                  f"importer writes). Address search, the 'anncsu-addresses' map layer and the parcel panel's ANNCSU "
-                  f"block all handle this through schema-aware readers; other aecs4u_stats consumers read only 'public'. "
-                  f"To normalise: ALTER TABLE \"{schema}\".r{code:02d}__addresses SET SCHEMA public (same for "
-                  f"__streets, __municipality_coverage, __anncsu_provenance).")
-        share = f"{100 * n_geo / n_addr:.0f}%" if n_addr else "n/a"
-        print(f"region {code:02d} schema={schema} streets={n_streets} addresses={n_addr} geocoded={share} "
-              f"version={prov} indexes={indexes}")
-    conn.close()
+            cur.execute(f"SELECT contract_version FROM {anncsu_lookup.EXPORT_SCHEMA}.v_meta")
+            contract = cur.fetchone()[0]
+            for code in sorted(regions):
+                info = anncsu_lookup._all_regions(conn)[code]
+                cur.execute(
+                    f"SELECT count(*) FROM {anncsu_lookup.EXPORT_SCHEMA}.v_street s "
+                    f"JOIN {anncsu_lookup.EXPORT_SCHEMA}.v_municipality m USING (istat_code) WHERE m.region_code = %s",
+                    (code,),
+                )
+                n_streets = cur.fetchone()[0]
+                release = anncsu_lookup._release_for(cur, code) or {}
+                share = f"{100 * info['geocoded'] / info['total']:.0f}%" if info["total"] else "n/a"
+                print(f"region {code:02d} {info['name']} streets={n_streets} addresses={info['total']} "
+                      f"geocoded={share} version={release.get('source_version')} contract={contract}")
+    finally:
+        conn.close()
 
     if args.probe:
         text, _, istat = args.probe.rpartition(":")

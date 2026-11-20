@@ -3,10 +3,11 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>{{ _('Land Registry Viewer') }}</title>
+  <title>{{ _('Land Registry') }}</title>
+  <meta name="theme-color" content="#1a5490" />
   <meta name="description" content="{{ _('Search Italian municipalities and cadastral parcels on one map, see the data around them and download a parcel dossier.') }}" />
   <meta property="og:type" content="website" />
-  <meta property="og:title" content="{{ _('Land Registry Viewer') }}" />
+  <meta property="og:title" content="{{ _('Land Registry') }}" />
   <meta property="og:description" content="{{ _('Search Italian municipalities and cadastral parcels on one map, see the data around them and download a parcel dossier.') }}" />
   <meta property="og:url" content="{{ public_base_url }}/landing" />
   <meta property="og:image" content="{{ public_base_url }}{{ asset_url('land-registry-social.png') }}" />
@@ -16,7 +17,13 @@
   <meta property="og:image:alt" content="{{ _('Illustrated map of cadastral parcels in Italy') }}" />
   <meta name="twitter:card" content="summary_large_image" />
   <link rel="canonical" href="{{ public_base_url }}/landing" />
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.0/css/all.min.css">
+  <link rel="icon" type="image/svg+xml" href="/static/land-registry-icon.svg" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/land-registry-icon-32.png" />
+  <link rel="icon" type="image/vnd.microsoft.icon" href="/favicon.ico" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/static/land-registry-icon-180.png" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.0/css/all.min.css"
+        integrity="sha384-/o6I2CkkWC//PSjvWC/eYN7l3xM3tJm8ZzVkCOfp//W05QcE3mlGskpoHB6XqI+B" crossorigin="anonymous">
   <link rel="stylesheet" href="{{ asset_url('css/pages/landing.css') }}">
 </head>
 <body>
@@ -31,11 +38,11 @@
       {{ _('Land Registry') }}
     </a>
     <div class="nav-actions">
-      <select id="langSelect" aria-label="{{ _('Language') }}" onchange="changeLang(this.value)" title="{{ _('Language') }}" autocomplete="off">
-        <option value="it" {% if request.state.lr_locale == 'it' %}selected{% endif %}>🇮🇹 IT</option>
-        <option value="en" {% if request.state.lr_locale == 'en' %}selected{% endif %}>🇬🇧 EN</option>
+      <select id="langSelect" aria-label="{{ _('Language') }}" title="{{ _('Language') }}" autocomplete="off">
+        <option value="it" {% if locale == 'it' %}selected{% endif %}>Italiano</option>
+        <option value="en" {% if locale == 'en' %}selected{% endif %}>English</option>
       </select>
-      <button onclick="toggleDarkMode()" id="themeToggleBtn" title="{{ _('Toggle dark mode') }}" aria-label="{{ _('Toggle dark mode') }}">
+      <button id="themeToggleBtn" type="button" title="{{ _('Toggle dark mode') }}" aria-label="{{ _('Toggle dark mode') }}">
         <i class="fas fa-moon" id="themeIcon" aria-hidden="true"></i>
       </button>
     </div>
@@ -43,7 +50,7 @@
 
   <main id="main-content">
     <header class="hero">
-      <h1>{{ _('Land Registry Viewer') }}</h1>
+      <h1>{{ _('Land Registry') }}</h1>
       <p>
         {{ _('Search Italian municipalities and cadastral parcels on one map, see the data around them and download a parcel dossier.') }}
       </p>
@@ -96,8 +103,13 @@
 
   <footer>
     {{ app_name }} v{{ app_version }}
-    &middot; <a href="/privacy">{{ _('Privacy') }}</a>
-    &middot; <a href="/docs">{{ _('API documentation') }}</a>
+    <nav class="landing-footer-links" aria-label="{{ _('Information') }}">
+      <a href="/privacy">{{ _('Privacy') }}</a>
+      <a href="/terms">{{ _('Terms') }}</a>
+      <a href="/help">{{ _('Help') }}</a>
+      <a href="/contact">{{ _('Contact') }}</a>
+      <a href="/data-sources">{{ _('Data sources') }}</a>
+    </nav>
   </footer>
 
   <script src="{{ asset_url('theme-sync.js') }}"></script>
@@ -107,6 +119,8 @@
       document.cookie = 'language=' + lang + '; path=/; max-age=31536000; SameSite=Lax';
       window.location.reload();
     }
+    document.getElementById('langSelect')?.addEventListener('change', event => changeLang(event.target.value));
+    document.getElementById('themeToggleBtn')?.addEventListener('click', () => window.toggleDarkMode?.());
   </script>
 </body>
 </html>

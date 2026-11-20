@@ -77,6 +77,10 @@ data/catasto
 docs/Screenshot_*.png
 *.png
 !land_registry/static/land-registry-social.png
+!land_registry/static/land-registry-icon-32.png
+!land_registry/static/land-registry-icon-180.png
+!land_registry/static/land-registry-icon-192.png
+!land_registry/static/land-registry-icon-512.png
 test_datashader_webgl.py
 
 # Local tool config
@@ -158,6 +162,9 @@ celerybeat.pid
 
 # Environments
 .env
+.env.*
+!.env.example
+!.env.*.example
 .envrc
 .venv
 env/

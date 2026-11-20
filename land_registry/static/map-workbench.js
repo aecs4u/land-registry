@@ -115,7 +115,7 @@
       },
       {
         id: 'osm', label: 'OpenStreetMap', legacyLabel: 'OpenStreetMap',
-        base: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+        base: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
         maxzoom: 19, displayMaxzoom: 22, background: '#e9e4d6', attribution: '© OpenStreetMap contributors',
       },
       {

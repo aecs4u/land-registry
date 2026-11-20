@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from jinja2 import ChoiceLoader, FileSystemLoader, PrefixLoader, TemplateNotFound
 
-from land_registry.config import auth_settings
+from land_registry.config import app_settings, auth_settings
 from land_registry.i18n import contextvar_gettext as _cvgt
 from land_registry.i18n import detect_locale as _get_locale
 
@@ -79,6 +79,8 @@ except ImportError:
 
 def _ctx(request: Request, **extra) -> dict:
     config = get_auth_config()
+    locale = _get_locale(request)
+    request.state.locale = locale
     # auth/login_base.html and auth/register_base.html branch on
     # `clerk.enabled` (a nested dict), not the flat `clerk_publishable_key`
     # auth_base.html itself uses to decide whether to load Clerk's JS SDK.
@@ -89,7 +91,22 @@ def _ctx(request: Request, **extra) -> dict:
     clerk = get_clerk_ctx() if get_clerk_ctx else {"enabled": False}
     context = {
         "request": request,
-        "clerk_publishable_key": getattr(config, "clerk_publishable_key", ""),
+        "locale": locale,
+        "page_lang": locale,
+        "public_base_url": (app_settings.public_base_url or str(request.base_url)).rstrip("/"),
+        # Keep theme CSS pinned with SRI and avoid its default Google Fonts
+        # request; local/system font stacks remain available.
+        "theme_assets": {
+            "fonts_css": "",
+            "bootstrap_css_sri": "sha384-T3c6CoIi6uLrA9TneNEoa7RxnatzjcDSCmG1MXxSR1GAsXEV/Dwwykc2MPK8M2HN",
+            "fontawesome_css_sri": "sha384-/o6I2CkkWC//PSjvWC/eYN7l3xM3tJm8ZzVkCOfp//W05QcE3mlGskpoHB6XqI+B",
+        },
+        # Auth pages load their own pinned Clerk SDK in the page template. Do
+        # not expose this key to auth_base.html or the shared base layout,
+        # which would inject an additional @latest bundle and a second Clerk
+        # initializer. The page-specific `publishable_key` below remains the
+        # sole input to those pinned scripts.
+        "clerk_publishable_key": "",
         "clerk": clerk,
         "static_url_path": "/static/aecs4u-theme",
         "site_name": "Land Registry",
@@ -160,16 +177,7 @@ async def callback_page(request: Request):
 async def logout_confirm(request: Request):
     """Ask before signing out. A GET must be safe: link checkers, prefetching
     and a stray <img src> would otherwise end the user's session."""
-    return HTMLResponse(
-        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
-        '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        "<title>Sign out</title></head>"
-        '<body style="font:16px system-ui,sans-serif;max-width:420px;margin:15vh auto;padding:0 16px">'
-        "<h1>Sign out?</h1>"
-        '<form method="post" action="/auth/signout">'
-        '<button type="submit" style="font:inherit;padding:8px 16px">Sign out</button> '
-        '<a href="/map">Cancel</a></form></body></html>'
-    )
+    return _theme_response("auth/logout.html", _ctx(request))
 
 
 @router.post("/signout")

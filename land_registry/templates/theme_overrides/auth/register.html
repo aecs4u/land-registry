@@ -5,8 +5,34 @@
 #}
 {% extends theme_auth_register_parent %}
 
+{% block auth_page_title %}{{ _('Create account') }} · Land Registry{% endblock %}
+
 {% block auth_extra_head %}
   {{ super() }}
+  {% if clerk_enabled %}
+  <script
+      crossorigin="anonymous"
+      data-clerk-publishable-key="{{ publishable_key }}"
+      src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5.125.7/dist/clerk.browser.js"
+      integrity="sha384-xTSiC5q9fn6XYC+tqofnjiXQCkzjXWYX3I8IFNghDpueEFnqSf6NTxYXnXqA57JD"
+      type="text/javascript"></script>
+  <script
+      crossorigin="anonymous"
+      data-clerk-publishable-key="{{ publishable_key }}"
+      src="https://cdn.jsdelivr.net/npm/@clerk/ui@1.42.4/dist/ui.browser.js"
+      integrity="sha384-COjFs7nypluhh9Ul7Gbey/MeR3s+/FJ2/8mnygqiTKb5zQTYg0McJXLKmSQuEw0E"
+      type="text/javascript"></script>
+  {% endif %}
+  <meta name="description" content="{{ _('Create an account to use the Land Registry map and save parcels.') }}">
+  <meta name="theme-color" content="#1a5490">
+  <meta property="og:title" content="{{ _('Create account') }} · Land Registry">
+  <meta property="og:description" content="{{ _('Create an account to use the Land Registry map and save parcels.') }}">
+  <link rel="canonical" href="{{ public_base_url }}/auth/register">
+  <link rel="icon" type="image/svg+xml" href="/static/land-registry-icon.svg">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/land-registry-icon-32.png">
+  <link rel="icon" type="image/vnd.microsoft.icon" href="/favicon.ico">
+  <link rel="apple-touch-icon" sizes="180x180" href="/static/land-registry-icon-180.png">
+  <link rel="manifest" href="/manifest.json">
   <link rel="stylesheet" href="{{ asset_url('css/auth.css') }}" />
 {% endblock %}
 

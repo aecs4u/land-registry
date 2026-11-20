@@ -4804,7 +4804,8 @@ async def map_cadastral_parcels(
 @api_router.get("/map/search")
 async def search_map(
     response: Response,
-    query: str = Query(..., min_length=2, max_length=120),
+    query: str | None = Query(None, min_length=2, max_length=120, description="Search term; use this or q."),
+    q: str | None = Query(None, min_length=2, max_length=120, description="Short alias for query."),
     limit: int = Query(20, ge=1, le=50),
 ):
     """Search stable parcel references and canonical municipality profiles.
@@ -4813,7 +4814,11 @@ async def search_map(
     relation.  Exact parcel references use the shared cadastral adapter, so
     the direct map works without loading a user file first.
     """
-    normalized = query.strip()
+    if query and q and query.strip() != q.strip():
+        raise HTTPException(status_code=422, detail="Use either 'query' or 'q', or provide the same value in both.")
+    normalized = (query or q or "").strip()
+    if len(normalized) < 2:
+        raise HTTPException(status_code=422, detail="A search term of at least 2 characters is required.")
     lookup_reference = normalized.upper()
     if _address_search_enabled() and get_map_layer_source().available:
         _warm_municipality_index(get_map_search_source())
@@ -4974,7 +4979,7 @@ async def search_map(
             }
             for item in municipalities
         ],
-        "source": "aecs4u-stats canonical map source",
+        "source": "Source-owned canonical map databases",
     }
     _map_search_cache[(normalized.casefold(), limit)] = (time.monotonic(), payload)
     if len(_map_search_cache) > 512:
@@ -5091,6 +5096,7 @@ async def geocode_map_place(
     return {"query": normalized, "results": results}
 
 
+@api_router.get("/map/catalog", deprecated=True, summary="Compatibility alias for /map/layers")
 @api_router.get("/map/layers")
 async def get_map_layers():
     """Return the allow-listed canonical spatial layers and their contracts."""
@@ -5103,7 +5109,7 @@ async def get_map_layers():
         logger.warning("Protection map-layer readiness check timed out")
         protection_layers = set()
     return {
-        "source": "aecs4u-stats PostgreSQL/PostGIS",
+        "source": "Source-owned PostgreSQL/PostGIS databases",
         "available": source.available,
         "layers": map_layer_catalog(include_protection_ids=protection_layers),
     }
@@ -5135,7 +5141,7 @@ async def get_map_metrics():
     """Return privacy-preserving diagnostics in local/debug deployments."""
     public_metrics = os.getenv("MAP_PUBLIC_METRICS", "").strip().lower() in {"1", "true", "yes", "on"}
     if not public_metrics:
-        raise HTTPException(status_code=404, detail="Not found")
+        raise HTTPException(status_code=404, detail="Not Found")
     return map_metrics.snapshot()
 
 
@@ -5478,8 +5484,8 @@ async def get_cadastral_boundary_tile(
 ):
     """
     Generate a map tile of actual cadastral boundary polygons. The canonical
-    source is the aecs4u-stats PostGIS database; FlatGeobuf files remain the
-    raster fallback when that source is unavailable.
+    source is the dedicated cadastral PostGIS database; FlatGeobuf files
+    remain the raster fallback when that source is unavailable.
 
     Unlike /tiles/datashader/{z}/{x}/{y}.png (a centroid density heatmap
     sourced from the cadastral DB), this reads real polygon geometry

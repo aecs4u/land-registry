@@ -40,8 +40,9 @@ def test_catalog_covers_every_allow_listed_spatial_relation():
         "spatial.protection_area",
         "lr_map.v_solar_potential_comuni_map",
         "lr_map.v_mef_income_comuni_map",
+        "anbsc_v2_ref.v_municipality_map",
         "agenziademanio.v_concession_map_features",
-        "public.r19__addresses",
+        "anncsu_v2_ref.v_address_map",
         "public.r19__corine_clc2018",
     } == tables
 
@@ -100,6 +101,11 @@ class _ConnectionSource:
         pass
 
 
+def _map_source_with_cadastral(connection):
+    regional = _ConnectionSource(connection)
+    return PostgresMapLayerSource(_ConnectionSource(connection), cadastral_connection_source=regional)
+
+
 
 def test_cadastral_catalog_does_not_hardcode_regional_coverage():
     parcels = get_map_layer("cadastral-parcels")
@@ -124,18 +130,16 @@ def test_boundary_tile_joins_unit_name_and_type():
     assert "geo.geo_unit" not in connection.sql
 
 
-def test_exact_reference_search_returns_feature_ids_and_uses_plain_index_columns():
+def test_exact_reference_search_uses_cadastral_identity_index():
     connection = _Connection(rows=[{"id": 7, "canonical_reference": "L781B016200.14", "national_cadastral_reference": None, "parcel": "14", "sheet": "162", "municipality_id": 11180, "municipality_name": "Verona"}])
-    source = PostgresMapLayerSource(_ConnectionSource(connection))
+    source = _map_source_with_cadastral(connection)
 
     rows = asyncio.run(source.search_parcels_by_reference("l781b016200.14", 10))
 
     assert rows[0]["id"] == 7
-    # Each reference column is matched in its own UNION branch so the lookup
-    # stays on the reference indexes even with stale planner statistics.
-    assert "WHERE canonical_reference = $1" in connection.sql
-    assert "WHERE national_cadastral_reference = $2" in connection.sql
-    assert "UNION" in connection.sql and " OR " not in connection.sql
+    assert "substr(md5('cadastral-parcels:'" in connection.sql
+    assert "national_cadastral_reference = $2" in connection.sql
+    assert "WHERE canonical_reference" not in connection.sql
     assert connection.params == ("L781B016200.14", "L781B016200.14", 10)
 
 
@@ -213,7 +217,7 @@ def test_point_lookup_returns_geojson_feature_from_canonical_source():
         "source_release": "2026-01",
         "geometry": '{"type":"Polygon","coordinates":[]}',
     })
-    source = PostgresMapLayerSource(_ConnectionSource(connection))
+    source = _map_source_with_cadastral(connection)
 
     result = asyncio.run(source.read_feature_at_point("cadastral-parcels", 42.07, 11.85))
 
@@ -237,12 +241,12 @@ def test_reference_lookup_returns_geojson_feature_from_canonical_source():
         "source_release": "2026-01",
         "geometry": '{"type":"Polygon","coordinates":[]}',
     })
-    source = PostgresMapLayerSource(_ConnectionSource(connection))
+    source = _map_source_with_cadastral(connection)
 
     result = asyncio.run(source.read_feature_by_reference("cadastral-parcels", "C773_002800.29"))
 
     assert result["properties"]["canonical_reference"] == "C773_002800.29"
-    assert "national_cadastral_reference = $1" in connection.sql
+    assert "national_cadastral_reference = $2" in connection.sql
     assert connection.params == ("C773_002800.29", "C773_002800.29")
 
 
@@ -252,15 +256,15 @@ def test_reference_lookup_uses_primary_key_when_feature_id_is_known():
         "canonical_reference": "C773_002800.29",
         "geometry": '{"type":"Polygon","coordinates":[]}',
     })
-    source = PostgresMapLayerSource(_ConnectionSource(connection))
+    source = _map_source_with_cadastral(connection)
 
     result = asyncio.run(source.read_feature_by_reference("cadastral-parcels", "C773_002800.29", feature_id=42))
 
     assert result["id"] == 42
     # The PK predicate keeps the lookup off the unindexed reference columns,
     # while the reference predicate rejects a stale or mismatched id.
-    assert "t.id = $1" in connection.sql
-    assert connection.params == (42, "C773_002800.29", "C773_002800.29")
+    assert "AND t.id = $3" in connection.sql
+    assert connection.params == ("C773_002800.29", "C773_002800.29", 42)
 
 
 @pytest.mark.asyncio
@@ -351,7 +355,7 @@ def test_adjacent_lookup_returns_neighboring_features_excluding_self():
         "source_release": "2026-01",
         "geometry": '{"type":"Polygon","coordinates":[]}',
     }])
-    source = PostgresMapLayerSource(_ConnectionSource(connection))
+    source = _map_source_with_cadastral(connection)
 
     features = asyncio.run(source.read_adjacent_features("cadastral-parcels", "C773_002800.29"))
 
@@ -435,10 +439,15 @@ def test_unknown_layer_is_rejected():
         raise AssertionError("unknown layer was accepted")
 
 
-def test_environment_accepts_sqlalchemy_postgres_dsn(monkeypatch):
+def test_source_database_requires_an_explicit_source_dsn(monkeypatch):
     monkeypatch.setenv("STATS_POSTGRES_ENABLE", "1")
     monkeypatch.setenv("STATS_POSTGRES_DSN", "postgresql+asyncpg://user:pass@localhost/db")
-    source = _AsyncpgConnectionSource.from_environment()
+    monkeypatch.delenv("AECS4U_SOURCE_ISTAT_DATABASE_URL", raising=False)
+    monkeypatch.delenv("ISTAT_POSTGRES_DSN", raising=False)
+    assert _AsyncpgConnectionSource.database_from_environment("istat") is None
+
+    monkeypatch.setenv("AECS4U_SOURCE_ISTAT_DATABASE_URL", "postgresql+asyncpg://user:pass@localhost/istat")
+    source = _AsyncpgConnectionSource.database_from_environment("istat")
     assert source is not None
     assert source.dsn.startswith("postgresql://")
 
@@ -481,12 +490,13 @@ async def test_poi_endpoint_accepts_comma_separated_categories():
 
 def test_adjacent_lookup_resolves_target_by_primary_key_when_known():
     connection = _Connection(rows=[])
-    source = PostgresMapLayerSource(_ConnectionSource(connection))
+    source = _map_source_with_cadastral(connection)
 
     asyncio.run(source.read_adjacent_features("cadastral-parcels", "C773_002800.29", feature_id=42))
 
-    assert "WHERE id = $1 AND" in connection.sql
-    assert connection.params == (42, "C773_002800.29", "C773_002800.29", 25)
+    assert "substr(md5('cadastral-parcels:'" in connection.sql
+    assert "AND id = $3" in connection.sql
+    assert connection.params == ("C773_002800.29", "C773_002800.29", 42, 25)
 
 
 def test_boundary_layer_carries_its_own_names_without_a_unit_join():
@@ -800,8 +810,29 @@ def test_market_zones_read_the_omi_source_table_directly():
 
     layer = get_map_layer("market-zones")
     assert layer.table == "zornade.zone_omi"
-    assert layer.fallback_tables == ()
+    assert not hasattr(layer, "fallback_tables")
     assert _DIRECT_LAYER_SOURCES["market-zones"] == ("omi", "zornade.zone_omi")
+
+
+def test_anbsc_layer_reads_the_export_schema_of_the_anbsc_database():
+    from land_registry.map_layers import _DIRECT_LAYER_SOURCES, _AsyncpgConnectionSource
+
+    layer = get_map_layer("anbsc-confiscated-assets")
+    # Only the stable export schema is read, never the internal anbsc_v2 tables.
+    assert layer.table == "anbsc_v2_ref.v_municipality_map"
+    assert _DIRECT_LAYER_SOURCES["anbsc-confiscated-assets"] == ("anbsc", layer.table)
+    # One point per ISTAT municipality: the integer ISTAT code is the feature id.
+    assert layer.kind == "point" and layer.id_column == "istat_code"
+    assert layer.id_column in layer.properties
+    # PostGIS lives in its own schema in the anbsc database (it has no public schema).
+    assert _AsyncpgConnectionSource.POSTGIS_SEARCH_PATHS["anbsc"] == "anbsc_v2_ref,postgis"
+    # Optional source: a deployment without the ANBSC database must not fail preflight.
+    assert layer.preflight_required is False and layer.sparse is True
+    public = layer.public()
+    assert public["default_color_mode"] == "asset-count"
+    assert [mode["id"] for mode in public["color_modes"]] == ["asset-count", "estimated-value"]
+    assert {mode["property"] for mode in public["color_modes"]} <= set(layer.properties)
+    assert "ANBSC" in public["source"]
 
 
 def test_egms_layer_offers_selectable_colour_modes():
@@ -832,7 +863,7 @@ def test_egms_layer_offers_selectable_colour_modes():
 
 def test_layers_without_colour_modes_keep_their_flat_or_legacy_styling():
     for layer in MAP_LAYERS:
-        if layer.id in {"surface-subsidence", "mef-irpef-income"}:
+        if layer.id in {"surface-subsidence", "mef-irpef-income", "anbsc-confiscated-assets"}:
             continue  # the layers that declare colour modes
         public = layer.public()
         assert public["color_modes"] == [] and public["default_color_mode"] == ""
@@ -877,20 +908,25 @@ def test_map_script_draws_the_chosen_colour_mode_and_keeps_it_in_the_link():
     assert "setPaintProperty(`fill-${layer.id}`, 'fill-color'" in script
 
 
-def test_anncsu_layer_reads_regional_tables_from_public_or_the_anncsu_schema():
-    from land_registry.map_layers import _AsyncpgConnectionSource, PostgresMapLayerSource
+def test_anncsu_layer_reads_the_export_schema_of_the_anncsu_database():
+    from land_registry.map_layers import _DIRECT_LAYER_SOURCES, _AsyncpgConnectionSource
 
-    def row(schema):
-        return {"region_code": 19, "address_table": "r19__addresses", "table_schema": schema,
-                "streets_exist": True, "provenance_exists": True}
-
-    union = PostgresMapLayerSource._anncsu_union_relation
-    assert 'FROM public."r19__addresses"' in union([row("public")])
-    assert 'FROM anncsu."r19__addresses"' in union([row("anncsu")])
-    assert 'LEFT JOIN anncsu."r19__streets"' in union([row("anncsu")])
-    assert 'anncsu."r19__anncsu_provenance"' in union([row("anncsu")])
-    assert 'FROM public."r19__addresses"' in union([{k: v for k, v in row("x").items() if k != "table_schema"}])
-    # Unknown schemas are never interpolated into SQL.
-    assert "evil" not in union([row("evil")])
-    # PostGIS may live in the same schema, so the source searches both.
-    assert _AsyncpgConnectionSource._ANNCSU_SEARCH_PATH == "public,anncsu"
+    layer = get_map_layer("anncsu-addresses")
+    # Only the stable export view is read: never the internal anncsu_v2 tables, the
+    # deprecated legacy schemas, or per-region tables.
+    assert layer.table == "anncsu_v2_ref.v_address_map"
+    assert _DIRECT_LAYER_SOURCES["anncsu-addresses"] == ("anncsu", layer.table)
+    assert layer.id_column == "access_id" and layer.id_column in layer.properties
+    assert layer.source_srid == 4258 and layer.kind == "point"
+    # PostGIS has its own schema in that database.
+    assert _AsyncpgConnectionSource.POSTGIS_SEARCH_PATHS["anncsu"] == "anncsu_v2_ref,postgis"
+    # A view has no GiST index of its own; the optional layer must not block preflight.
+    assert layer.require_gist_index is False and layer.preflight_required is False
+    # The dedicated ANNCSU connection and the region-table union are gone.
+    source = PostgresMapLayerSource(connection_source=object())
+    assert not hasattr(source, "anncsu_connection_source")
+    assert not hasattr(PostgresMapLayerSource, "_anncsu_union_relation")
+    assert not hasattr(_AsyncpgConnectionSource, "_ANNCSU_SEARCH_PATH")
+    # Dense low-zoom tiles cluster points; the grid snap must use the 5-argument form so
+    # it works where PostGIS's schema was renamed.
+    assert "ST_SnapToGrid(c.pt, 0, 0," in (Path(__file__).parents[1] / "land_registry" / "map_layers.py").read_text(encoding="utf-8")

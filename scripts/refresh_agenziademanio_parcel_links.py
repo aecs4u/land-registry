@@ -182,12 +182,10 @@ CREATE_STAGE_SQL = f"""
 
 
 def _database_dsns() -> tuple[str, str, str]:
-    from dotenv import dotenv_values
+    from land_registry.environment import load_environment
 
-    values = {
-        **dotenv_values(ROOT / ".env"),
-        **os.environ,
-    }
+    load_environment()
+    values = os.environ
 
     stats_dsn = next(
         (

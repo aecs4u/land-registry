@@ -48,15 +48,6 @@ from xml.etree import ElementTree
 from .source_catalog import find_source_catalog_entry
 
 try:
-    from dotenv import load_dotenv
-
-    # ``main.py`` imports the enrichment router before ``land_registry.config``
-    # loads .env, so this module must make its own DSN lookup deterministic.
-    load_dotenv(override=False)
-except ImportError:  # pragma: no cover - dotenv is an application dependency
-    pass
-
-try:
     from aecs4u_stats.cadastral import (
         cadastral_db_available,
         fogli_for_comune,

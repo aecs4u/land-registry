@@ -3,6 +3,8 @@
    summary of the user's parcel shortlist. Invoice, website and connected-account
    blocks are emptied because this app has no backing data for them. #}
 
+{% block title %}{{ _('Profile') }} · Land Registry{% endblock %}
+
 {% block profile_sidebar %}
 {% from "components/user_card.html" import user_profile_card %}
 {{ user_profile_card(user, show_badge=False, class="mb-4") }}

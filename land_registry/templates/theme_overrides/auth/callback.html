@@ -1,0 +1,52 @@
+{% extends "aecs4u_theme/auth/callback.html" %}
+
+{% block auth_page_title %}{{ _('Completing sign in') }} · Land Registry{% endblock %}
+
+{% block auth_extra_head %}
+  {{ super() }}
+  {% if clerk_enabled %}
+  <script
+      crossorigin="anonymous"
+      data-clerk-publishable-key="{{ publishable_key }}"
+      src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5.125.7/dist/clerk.browser.js"
+      integrity="sha384-xTSiC5q9fn6XYC+tqofnjiXQCkzjXWYX3I8IFNghDpueEFnqSf6NTxYXnXqA57JD"
+      type="text/javascript"></script>
+  {% endif %}
+  <link rel="icon" type="image/svg+xml" href="/static/land-registry-icon.svg">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/land-registry-icon-32.png">
+  <link rel="icon" type="image/vnd.microsoft.icon" href="/favicon.ico">
+  <link rel="apple-touch-icon" sizes="180x180" href="/static/land-registry-icon-180.png">
+  <link rel="manifest" href="/manifest.json">
+{% endblock %}
+
+{% block auth_header %}
+<div class="text-center mb-4">
+  <a href="/" class="d-inline-block mb-3">
+    <img src="{{ auth_logo_url | default(static_url_path ~ '/img/aecs4u.png') }}"
+         alt="{{ _('Land Registry') }}" height="56">
+  </a>
+  <h1 class="fw-bold fs-3 text-body">{{ _('Completing sign in') }}</h1>
+</div>
+{% endblock %}
+
+{% block auth_card %}
+<section class="auth-card p-4" role="status" aria-live="polite">
+  <div class="auth-loading text-center">
+    <div class="auth-spinner" aria-hidden="true"></div>
+    <h2 class="mt-4 fs-5">{{ _('Please wait while we finish signing you in.') }}</h2>
+  </div>
+</section>
+{% endblock %}
+
+{% block auth_footer %}{% endblock %}
+
+{% block auth_scripts %}
+<div id="authCallbackConfig"
+     data-next-url="{{ next_url | default('/map') }}"
+     data-login-url="/auth/login?lang={{ locale }}"
+     data-clerk-enabled="{{ 'true' if clerk_enabled else 'false' }}"
+     data-session-sync-url="/auth/clerk/session"
+     data-profile-cookie-url="/auth/profile-cookie"
+     hidden></div>
+<script src="{{ static_url_path|default('/static/aecs4u-theme') }}/js/auth-callback.js"></script>
+{% endblock %}

@@ -11,11 +11,13 @@ import os
 PAGE_KEYS = ("privacy", "terms", "help", "contact", "notifications")
 
 
+def _contact_email() -> str:
+    """Use an explicit legal contact override or AECS4U's published support address."""
+    return os.getenv("LEGAL_CONTACT_EMAIL", "").strip() or "support@aecs4u.com"
+
+
 def _contact_line(_) -> str:
-    email = os.getenv("LEGAL_CONTACT_EMAIL", "").strip()
-    if email:
-        return _("Write to {email} and we will reply as soon as we can.").format(email=email)
-    return _("Use the contact details published on the aecs4u.it website.")
+    return _("Write to {email} and we will reply as soon as we can.").format(email=_contact_email())
 
 
 def build_page(key: str, _) -> dict:
@@ -35,7 +37,7 @@ def build_page(key: str, _) -> dict:
                     _("We use a session cookie and a language-preference cookie. The light or dark theme is kept in browser storage. This application does not set advertising or analytics cookies."),
                 ]},
                 {"heading": _("Third-party services"), "paragraphs": [
-                    _("Basemap tiles are loaded from third-party tile providers, which see your IP address. Place and address searches that find no cadastral or address-registry match are forwarded by our server to OpenStreetMap Nominatim, which receives the text you searched for but not your IP address."),
+                    _("Basemap tiles are loaded directly from the provider you select (OpenStreetMap, Esri or Google; CARTO may appear when configured). These providers receive your IP address, browser request metadata and the map tile coordinates requested. The browser downloads some pinned application libraries from jsDelivr and unpkg; signed-in visitors who open the alternative API reference also download ReDoc from Redocly. These services receive your IP address and request metadata when an asset is requested. The application makes no third-party web-font requests and uses locally available fonts with system fallbacks. Place and address searches that find no cadastral or address-registry match are forwarded by our server to OpenStreetMap Nominatim, which receives the text you searched for but not your IP address."),
                 ]},
                 {"heading": _("Diagnostics"), "paragraphs": [
                     _("Request counts and latency buckets are recorded for the map endpoints. Search text and coordinates are not part of those metrics."),
@@ -87,7 +89,11 @@ def build_page(key: str, _) -> dict:
             "page_title": _("Contact"),
             "lead": _("Questions, corrections and data requests."),
             "sections": [
-                {"heading": _("Get in touch"), "paragraphs": [_contact_line(_)]},
+                {
+                    "heading": _("Get in touch"),
+                    "paragraphs": [_("Email our support team for questions, corrections and data requests.")],
+                    "email": _contact_email(),
+                },
             ],
         }
     if key == "notifications":

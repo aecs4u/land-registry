@@ -41,25 +41,34 @@ uv sync
 
 ### Configuration
 
-Copy the example environment file and customize as needed:
+Copy the example environment file for local overrides:
 
 ```bash
 cp .env.example .env
 ```
 
 Key configuration options:
-- **ENVIRONMENT**: Set to `development` or `production` (auto-detects if unset)
-- **CADASTRAL_USE_LOCAL_FILES**: Use local files (true) or S3 (false)
-- **PANEL_PANEL_PORT**: Panel server port (default: 5006)
-- **STORAGE_S3_BUCKET**: S3 bucket for cadastral data (production)
+- **ENVIRONMENT**: `development` by default; supported profiles are `testing`, `staging`, and `production`
+- **DATABASE_URL**: development and testing use separate local databases; staging inherits the production URL
+- **DEBUG** and **LOG_LEVEL**: derived from the selected profile
 
-See [.env.example](.env.example) for all available options.
+Shared settings live in `environments/shared.env`; non-secret profile defaults live in `environments/`.
+Private credentials belong in the ignored `.env.<profile>` files. Staging reads only `DATABASE_URL`
+from `.env.production` when no database URL is injected by the process.
+The development and testing PostgreSQL defaults expect `land_registry_dev` and
+`land_registry_test`; create them with `createdb land_registry_dev` and `createdb land_registry_test`.
+Development can use the SQLite/offline fallback by setting `DATABASE_URL=` in `.env.development`.
 
 ### Running the Application
 
 ```bash
 # Start the development server (fast shutdown)
 python run_dev.py
+
+# Choose another profile explicitly
+scripts/start.sh --env test
+scripts/start.sh --env staging
+scripts/start.sh --env production
 
 # Or use uvicorn directly
 uvicorn land_registry.main:app --reload --host 0.0.0.0 --port 8000
@@ -159,10 +168,10 @@ The data were extracted from [servizio cartografico dell'Agenzia delle Entrate](
 - `GET /api/v1/datashader/heatmap/{region}` - Full-region density heatmap
 
 ### Direct Map
-- `GET /api/v1/map/layers` - Allow-listed canonical map-layer catalog
+- `GET /api/v1/map/layers` - Allow-listed canonical map-layer catalog (`/api/v1/map/catalog` is a deprecated compatibility alias)
 - `GET /api/v1/map/layers/health` - Layer availability and coverage checks
-- `GET /api/v1/map/search` - Municipality and cadastral parcel search
-- `GET /api/v1/map/metrics` - Privacy-preserving map request diagnostics
+- `GET /api/v1/map/search` - Municipality and cadastral parcel search (`query=` or `q=`)
+- `GET /api/v1/map/metrics` - Privacy-preserving map request diagnostics (404 unless `MAP_PUBLIC_METRICS` is enabled)
 
 ### Health & Monitoring
 - `GET /health` - Application health check

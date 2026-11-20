@@ -1443,3 +1443,186 @@ msgstr "View asset details ({n})"
 
 msgid "Asset details unavailable."
 msgstr "Asset details unavailable."
+
+msgid "Search municipality or parcel"
+msgstr "Search municipality or parcel"
+
+msgid "Filter the attribute table"
+msgstr "Filter the attribute table"
+
+msgid "Total"
+msgstr "Total"
+
+msgid "Open"
+msgstr "Open"
+
+msgid "No parcels match the shortlist filters."
+msgstr "No parcels match the shortlist filters."
+
+msgid "Switch to light theme"
+msgstr "Switch to light theme"
+
+msgid "Switch to dark theme"
+msgstr "Switch to dark theme"
+
+msgid "Cadastral parcel data is not available right now. Other map layers may still be available."
+msgstr "Cadastral parcel data is not available right now. Other map layers may still be available."
+
+msgid "Not available right now"
+msgstr "Not available right now"
+
+msgid "API reference"
+msgstr "API reference"
+
+msgid "Land Registry API"
+msgstr "Land Registry API"
+
+msgid "Sign in to access your account."
+msgstr "Sign in to access your account."
+
+msgid "By continuing, you agree to our"
+msgstr "By continuing, you agree to our"
+
+msgid "Terms of Service"
+msgstr "Terms of Service"
+
+msgid "Privacy Policy"
+msgstr "Privacy Policy"
+
+msgid "and"
+msgstr "and"
+
+msgid "Create account"
+msgstr "Create account"
+
+msgid "Main navigation"
+msgstr "Main navigation"
+
+msgid "Sign out?"
+msgstr "Sign out?"
+
+msgid "Sign out of your Land Registry account."
+msgstr "Sign out of your Land Registry account."
+
+msgid "You will be signed out of this browser. You can sign in again at any time."
+msgstr "You will be signed out of this browser. You can sign in again at any time."
+
+msgid "Land Registry account"
+msgstr "Land Registry account"
+
+msgid "Cadastral data"
+msgstr "Cadastral data"
+
+msgid "Data catalog"
+msgstr "Data catalog"
+
+msgid "Cadastral data is temporarily unavailable"
+msgstr "Cadastral data is temporarily unavailable"
+
+msgid "The cadastral data catalog is temporarily unavailable."
+msgstr "The cadastral data catalog is temporarily unavailable."
+
+msgid "The cadastral structure catalog is not available in this environment. Please try again later or return to the map."
+msgstr "The cadastral structure catalog is not available in this environment. Please try again later or return to the map."
+
+msgid "Completing sign in"
+msgstr "Completing sign in"
+
+msgid "Please wait while we finish signing you in."
+msgstr "Please wait while we finish signing you in."
+
+msgid "Loading sign-in options…"
+msgstr "Loading sign-in options…"
+
+msgid "or sign in with email"
+msgstr "or sign in with email"
+
+msgid "Sign in with email"
+msgstr "Sign in with email"
+
+msgid "Don't have an account?"
+msgstr "Don't have an account?"
+
+msgid "Signing in…"
+msgstr "Signing in…"
+
+msgid "Sign-in successful."
+msgstr "Sign-in successful."
+
+msgid "Invalid credentials."
+msgstr "Invalid credentials."
+
+msgid "Connection error. Please try again."
+msgstr "Connection error. Please try again."
+
+msgid "Online sign-in is temporarily unavailable. Use the email and password option below."
+msgstr "Online sign-in is temporarily unavailable. Use the email and password option below."
+
+msgid "Session active as"
+msgstr "Session active as"
+
+msgid "Continue"
+msgstr "Continue"
+
+msgid "Switch account"
+msgstr "Switch account"
+
+msgid "Use email and password"
+msgstr "Use email and password"
+
+msgid "Sign in to your Land Registry account."
+msgstr "Sign in to your Land Registry account."
+
+msgid "The map link had invalid coordinates or zoom. A safe default view is shown."
+msgstr "The map link had invalid coordinates or zoom. A safe default view is shown."
+
+msgid "The service is temporarily unavailable. Please try again."
+msgstr "The service is temporarily unavailable. Please try again."
+
+msgid "Something went wrong. Please try again."
+msgstr "Something went wrong. Please try again."
+
+msgid "The map and your account are safe. Wait a moment, then try again."
+msgstr "The map and your account are safe. Wait a moment, then try again."
+
+msgid "Try again"
+msgstr "Try again"
+
+msgid "About this service"
+msgstr "About this service"
+
+msgid "Back to the service"
+msgstr "Back to the service"
+
+msgid "Information"
+msgstr "Information"
+
+msgid "Basemap tiles are loaded directly from the provider you select (OpenStreetMap, Esri or Google; CARTO may appear when configured). These providers receive your IP address, browser request metadata and the map tile coordinates requested. The browser downloads some pinned application libraries from jsDelivr and unpkg; signed-in visitors who open the alternative API reference also download ReDoc from Redocly. These services receive your IP address and request metadata when an asset is requested. The application makes no third-party web-font requests and uses locally available fonts with system fallbacks. Place and address searches that find no cadastral or address-registry match are forwarded by our server to OpenStreetMap Nominatim, which receives the text you searched for but not your IP address."
+msgstr "Basemap tiles are loaded directly from the provider you select (OpenStreetMap, Esri or Google; CARTO may appear when configured). These providers receive your IP address, browser request metadata and the map tile coordinates requested. The browser downloads some pinned application libraries from jsDelivr and unpkg; signed-in visitors who open the alternative API reference also download ReDoc from Redocly. These services receive your IP address and request metadata when an asset is requested. The application makes no third-party web-font requests and uses locally available fonts with system fallbacks. Place and address searches that find no cadastral or address-registry match are forwarded by our server to OpenStreetMap Nominatim, which receives the text you searched for but not your IP address."
+
+msgid "Create an account to use the Land Registry map and save parcels."
+msgstr "Create an account to use the Land Registry map and save parcels."
+
+#: land_registry/map_layers.py
+msgid "Confiscated assets (ANBSC)"
+msgstr "Confiscated assets (ANBSC)"
+
+#: land_registry/map_layers.py
+msgid "Municipality level only: ANBSC does not publish asset locations"
+msgstr "Municipality level only: ANBSC does not publish asset locations"
+
+#: land_registry/map_layers.py
+msgid "Confiscated assets"
+msgstr "Confiscated assets"
+
+#: land_registry/map_layers.py
+msgid "Number of confiscated properties and companies ANBSC lists in the municipality."
+msgstr "Number of confiscated properties and companies ANBSC lists in the municipality."
+
+#: land_registry/map_layers.py
+msgid "Estimated value of properties"
+msgstr "Estimated value of properties"
+
+#: land_registry/map_layers.py
+msgid "Sum of the estimated value of the municipality's confiscated properties. Companies carry no estimate."
+msgstr "Sum of the estimated value of the municipality's confiscated properties. Companies carry no estimate."

@@ -56,11 +56,11 @@ body.dark-mode {
 .landing-nav select {
   background: var(--clr-surface); color: var(--clr-text);
   border: 1px solid var(--clr-border); border-radius: 6px;
-  padding: .3rem .5rem; font-size: .85rem;
+  min-height: 44px; padding: .3rem .65rem; font-size: .9rem;
 }
 .landing-nav button {
   background: none; border: 1px solid var(--clr-border); border-radius: 6px;
-  color: var(--clr-text); width: 2rem; height: 2rem; cursor: pointer;
+  color: var(--clr-text); width: 44px; height: 44px; cursor: pointer;
   font-size: .95rem; line-height: 1;
 }
 .landing-nav button:hover { background: var(--clr-accent-light); }
@@ -224,6 +224,8 @@ footer {
 }
 footer a, .container p a { color: var(--clr-accent-strong, #1d4ed8); text-decoration: underline; }
 body.dark-mode footer a, body.dark-mode .container p a { color: #93c5fd; }
+.landing-footer-links { display: flex; flex-wrap: wrap; justify-content: center; gap: .25rem .5rem; margin-top: .75rem; }
+.landing-footer-links a { display: inline-flex; align-items: center; min-height: 44px; padding: .35rem .5rem; }
 .container p { max-width: 70ch; }
 
 /* ── Responsive ─────────────────────────────── */

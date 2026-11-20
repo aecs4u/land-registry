@@ -3302,7 +3302,7 @@ function initializeMap() {
 
     // Add minimap control
     if (typeof L.Control.MiniMap !== 'undefined') {
-        const osmUrl = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+        const osmUrl = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
         const osmAttrib = '© OpenStreetMap contributors';
         const miniMapLayer = new L.TileLayer(osmUrl, {minZoom: 0, maxZoom: 13, attribution: osmAttrib});
         const miniMap = new L.Control.MiniMap(miniMapLayer, {

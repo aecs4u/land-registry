@@ -46,6 +46,7 @@
     selectedAuctionSaleMarker: null,
     savedReference: null,
     basemapUserSelected: false,
+    themeBasemapBase: DEFAULT_BASEMAP,
     searchTimer: null,
     searchRequest: 0,
     addressRequest: 0,
@@ -75,6 +76,7 @@
     // Two independent signals that the map data source is down: the health
     // endpoint, and tiles that kept failing after their retries ran out.
     sourceHealthDown: false,
+    sourceHealthChecked: false,
     sourceTileDown: false,
     layerOpacity: new Map(),
     // layer id -> chosen colour-mode id, for layers whose catalog entry has ``color_modes``.
@@ -152,11 +154,14 @@
     };
     const open = () => {
       current = 0;
+      markSeen();
       // Closing returns to whatever opened the guide; on first load nothing did, so the search box.
       const origin = document.activeElement;
       returnFocusTo = origin && origin !== document.body && origin !== dialog && document.contains(origin)
         ? origin : ($('mapSearchInput') || opener);
       render();
+      const mobileSheet = window.matchMedia('(max-width: 700px)').matches;
+      dialog.classList.toggle('is-mobile-sheet', mobileSheet);
       if (typeof dialog.showModal === 'function') dialog.showModal();
       else dialog.setAttribute('open', '');
       next?.focus();
@@ -164,6 +169,7 @@
     const close = () => {
       if (typeof dialog.close === 'function') dialog.close();
       else dialog.removeAttribute('open');
+      dialog.classList.remove('is-mobile-sheet');
       markSeen();
     };
 
@@ -175,6 +181,7 @@
     finish?.addEventListener('click', close);
     dialog.addEventListener('close', () => {
       markSeen();
+      dialog.classList.remove('is-mobile-sheet');
       if (returnFocusTo && document.contains(returnFocusTo)) returnFocusTo.focus({ preventScroll: true });
     });
 
@@ -462,6 +469,8 @@
     const lat = Number(params.get('lat'));
     const lng = Number(params.get('lng'));
     const zoom = Number(params.get('zoom'));
+    const hasCoordinates = params.has('lat') || params.has('lng');
+    const validZoom = Number.isFinite(zoom) && zoom >= 5 && zoom <= 22;
     const requestedBasemap = params.get('basemap');
     const basemapSelector = $('basemapEngineSelect');
     const basemap = requestedBasemap && basemapSelector
@@ -470,18 +479,21 @@
     const layers = params.has('layers')
       ? params.get('layers').split(',').map((layerId) => layerId.trim()).filter(Boolean)
       : null;
-    const hasView = Number.isFinite(lat) && Number.isFinite(lng)
+    const hasView = params.has('lat') && params.has('lng') && Number.isFinite(lat) && Number.isFinite(lng)
       && lat >= ITALY_BOUNDS[0][1] && lat <= ITALY_BOUNDS[1][1]
       && lng >= ITALY_BOUNDS[0][0] && lng <= ITALY_BOUNDS[1][0];
     return {
       center: hasView ? [lng, lat] : DEFAULT_CENTER,
-      zoom: Number.isFinite(zoom) ? Math.min(22, Math.max(5, zoom)) : DEFAULT_ZOOM,
+      zoom: params.has('zoom') && validZoom ? zoom : DEFAULT_ZOOM,
       basemap,
       layers,
       parcel: params.get('parcel') || null,
       invalidParcel: Boolean(params.get('parcel') && !(/^[A-Z]\d{3}[A-Z]?\d{4}\d{2}\.\w+$/i.test(params.get('parcel')) || /^[A-Z]\d{3}[_-].+\..+$/.test(params.get('parcel')))),
       parcelId: /^\d+$/.test(params.get('parcel_id') || '') ? Number(params.get('parcel_id')) : null,
-      invalidView: params.has('lat') && params.has('lng') && Number.isFinite(lat) && Number.isFinite(lng) && !hasView,
+      invalidView: hasCoordinates && !hasView,
+      invalidCoordinates: hasCoordinates && (!params.has('lat') || !params.has('lng') || !Number.isFinite(lat) || !Number.isFinite(lng)),
+      outsideItaly: hasCoordinates && Number.isFinite(lat) && Number.isFinite(lng) && !hasView,
+      invalidZoom: params.has('zoom') && !validZoom,
       hasView,
     };
   }
@@ -561,7 +573,7 @@
         maxzoom: 19, background: '#3d3d3d', attribution: '© Esri, Maxar, Earthstar Geographics',
       },
       {
-        id: 'osm', base: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+        id: 'osm', base: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
         maxzoom: 19, displayMaxzoom: 22, background: '#e9e4d6', attribution: '© OpenStreetMap contributors',
       },
       {
@@ -1229,6 +1241,7 @@
     const input = document.createElement('input');
     input.type = 'checkbox';
     input.checked = initializingLayers ? state.defaultLayers.has(layer.id) : state.activeLayers.has(layer.id);
+    input.disabled = state.unavailableLayerIds.has(layer.id);
     const badges = document.createElement('small');
     badges.className = 'map-layer-badges';
     badges.hidden = true;
@@ -1484,7 +1497,7 @@
   function syncSelectAll() {
     const box = $('layersSelectAll');
     if (!box) return;
-    const inputs = overlayInputs();
+    const inputs = overlayInputs().filter((input) => !input.disabled);
     const on = inputs.filter((input) => input.checked).length;
     box.disabled = !inputs.length;
     box.checked = inputs.length > 0 && on === inputs.length;
@@ -1494,7 +1507,7 @@
   // Go through each layer's own change handler so adding the layer, visibility,
   // the administrative-boundary fallback and the URL all behave as for a manual click.
   function setAllOverlays(checked) {
-    overlayInputs().forEach((input) => {
+    overlayInputs().filter((input) => !input.disabled).forEach((input) => {
       if (input.checked === checked) return;
       input.checked = checked;
       input.dispatchEvent(new Event('change', { bubbles: true }));
@@ -1563,37 +1576,51 @@
       || !$('cadastralSheetPanel')?.hidden
       || !$('cadastralUrbanSectionPanel')?.hidden
       || !$('omiMarketZonePanel')?.hidden
-      || !$('maritimeConcessionPanel')?.hidden;
+      || !$('maritimeConcessionPanel')?.hidden
+      || !$('parcelShortlistCard')?.hidden
+      || !$('mapLayersCard')?.hidden;
     const bounds = map.getBounds?.();
     const parcels = state.catalog.find((layer) => layer.id === 'cadastral-parcels');
     const estimatedBounds = parcels?.estimated_bounds || parcels?.coverage_bounds;
     // While the source is down the catalog's coverage bounds say nothing about
     // what is published, so do not claim an area has no parcels.
     const sourceDown = state.sourceHealthDown || state.sourceTileDown;
+    const parcelsUnavailable = sourceDown || state.unavailableLayerIds.has('cadastral-parcels');
     const outsideCoverage = !sourceDown && viewportOutside(bounds, estimatedBounds);
     updateLayerBadges();
     updateColorLegends();
     const note = $('mapHelpNote');
     if (!note) return;
-    note.textContent = outsideCoverage
-      ? tr('Outside the estimated data extent; coverage may vary.')
-      : tr('Zoom in to see cadastral parcels');
-    note.hidden = panelOpen || (!outsideCoverage && !belowParcelZoom);
+    note.textContent = parcelsUnavailable
+      ? tr('Cadastral parcel data is not available right now. Other map layers may still be available.')
+      : outsideCoverage
+        ? tr('Outside the estimated data extent; coverage may vary.')
+        : tr('Zoom in to see cadastral parcels');
+    note.hidden = panelOpen || (!parcelsUnavailable && !outsideCoverage && !belowParcelZoom);
   }
 
   async function loadLayerHealth() {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
+    const markHealthUnavailable = () => {
+      state.sourceHealthChecked = true;
+      state.sourceHealthDown = true;
+      const status = $('mapStatus')?.textContent || '';
+      if (status === tr('Map ready') || status === 'Map ready') mapStatus('');
+      updateSourceBanner();
+    };
     try {
       const response = await fetch('/api/v1/map/layers/health', { signal: controller.signal });
-      if (!response.ok) return;
+      if (!response.ok) {
+        markHealthUnavailable();
+        return;
+      }
       const payload = await response.json();
+      state.sourceHealthChecked = true;
       state.sourceHealthDown = payload.available === false;
-      state.unavailableLayerIds = new Set(
-        payload.available === false
-          ? []
-          : (payload.layers || []).filter((health) => !health.available).map((health) => health.id),
-      );
+      const layerHealth = Array.isArray(payload.layers) ? payload.layers : [];
+      state.unavailableLayerIds = new Set(layerHealth.filter((health) => !health.available).map((health) => health.id));
+      let removedUnavailableLayer = false;
       [...state.tileErrors].forEach((sourceId) => {
         if (isKnownUnavailableTileSource(sourceId)) {
           state.tileErrors.delete(sourceId);
@@ -1603,10 +1630,22 @@
       });
       refreshSourceTileDown();
       updateParcelZoomAffordance();
-      (payload.layers || []).forEach((health) => {
+      layerHealth.forEach((health) => {
         const row = document.querySelector(`[data-layer-id="${CSS.escape(health.id)}"]`);
         const meta = row?.querySelector('.map-layer-meta');
         if (!meta) return;
+        const checkbox = row.querySelector('input[type="checkbox"]');
+        if (checkbox) {
+          checkbox.disabled = !health.available;
+          if (!health.available) {
+            checkbox.checked = false;
+            removedUnavailableLayer = Boolean(state.activeLayers?.delete(health.id)) || removedUnavailableLayer;
+            state.adminSubstituteAutoLayers.delete(health.id);
+            setLayerVisibility(health.id, false);
+            const opacity = row.querySelector('.map-layer-opacity');
+            if (opacity) opacity.hidden = true;
+          }
+        }
         const catalogLayer = state.catalog.find((layer) => layer.id === health.id);
         if (catalogLayer && health.source_database) {
           catalogLayer.source = `${health.source_database} PostgreSQL/PostGIS`;
@@ -1621,21 +1660,31 @@
         if (payload.available === false) meta.textContent = tr('Temporarily unavailable');
         else if (health.available && catalogLayer?.coverage === 'partial') meta.textContent = catalogLayer ? layerMetadata(catalogLayer) : tr('Partial coverage');
         else if (health.available) meta.textContent = `${tr('Available')}${metadata}`;
-        else if (health.relation_exists === false) meta.textContent = `${tr('Not available')}${metadata}`;
-        else meta.textContent = `${tr('Needs configuration')}${metadata}`;
+        else meta.textContent = `${tr('Not available right now')}${metadata}`;
         meta.hidden = !meta.textContent;
-        // Health is advisory: checks can fail independently, and readiness
-        // requirements such as a spatial index do not necessarily mean the
-        // map layer cannot be drawn. Keep catalog controls selectable and
-        // report availability in the row metadata instead of overriding the
-        // user's layer choices when this asynchronous check completes.
         if (catalogLayer) row.title = layerMetadata(catalogLayer);
       });
+      if (removedUnavailableLayer) writeSelectedLayersUrl();
+      const status = $('mapStatus')?.textContent || '';
+      const readyLabel = tr('Map ready');
+      if (state.sourceHealthDown || state.sourceTileDown) {
+        if (status === readyLabel || status === 'Map ready') mapStatus('');
+      } else if (state.mapReadyAnnounced && !status) {
+        mapStatus('Map ready');
+      }
+      if (!state.sourceHealthDown && !state.sourceTileDown && !state.tilesLoading && !state.tileErrors.size
+        && (state.map?.loaded() || state.fallbackMap)) {
+        state.mapReadyAnnounced = true;
+        mapStatus('Map ready');
+      }
       updateCoverageStatus();
+      syncSelectAll();
       updateLayerBadges();
       updateParcelZoomAffordance();
     } catch (_) {
-      // Health is advisory; the catalog and map remain usable without it.
+      // Do not claim the data layers are ready when their health could not be
+      // confirmed. The basemap remains usable and the banner offers a retry.
+      markHealthUnavailable();
     } finally { clearTimeout(timeout); }
   }
 
@@ -1856,7 +1905,7 @@
       // The panel script failed to load: identity is still useful.
       $('directParcelContent').textContent = [reference, municipality].filter(Boolean).join(' · ') || tr('Parcel details');
     }
-    $('legacyAnalysisLink').href = `/map-legacy?parcel=${encodeURIComponent(reference || '')}`;
+    $('legacyAnalysisLink').href = `/map?panel=table&parcel=${encodeURIComponent(reference || '')}`;
     const reportLink = $('parcelReportLink');
     const featureId = feature.id ?? props.id ?? null;
     const reportIdQuery = Number.isInteger(Number(featureId)) && Number(featureId) > 0
@@ -3373,7 +3422,7 @@
 
   function statusLabel(status) {
     const entry = state.shortlistStatuses.find((item) => String(item.value) === String(status));
-    return entry ? entry.label : status || '—';
+    return entry ? tr(entry.label || entry.value) : tr(status || '—');
   }
 
   function shortlistReference(item) {
@@ -3389,8 +3438,8 @@
     const select = $('shortlistStatusFilter');
     if (!select) return;
     const selected = select.value;
-    select.innerHTML = '<option value="">All</option>' + state.shortlistStatuses
-      .map((item) => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label || item.value)}</option>`)
+    select.innerHTML = `<option value="">${escapeHtml(tr('All'))}</option>` + state.shortlistStatuses
+      .map((item) => `<option value="${escapeHtml(item.value)}">${escapeHtml(tr(item.label || item.value))}</option>`)
       .join('');
     select.value = selected;
   }
@@ -3404,7 +3453,7 @@
       .map(([status, count]) => `${escapeHtml(statusLabel(status))}: ${count}`);
     const favorites = state.shortlistItems.filter((item) => item.is_favorite).length;
     if (favorites) parts.push(`★ ${favorites}`);
-    summaryEl.innerHTML = `Total ${summary.total || 0}${parts.length ? ` · ${parts.join(' · ')}` : ''}`;
+    summaryEl.innerHTML = `${escapeHtml(tr('Total'))} ${summary.total || 0}${parts.length ? ` · ${parts.join(' · ')}` : ''}`;
   }
 
   function filteredShortlistItems() {
@@ -3437,7 +3486,7 @@
     }
     const statusOptions = statuses.map((status) => {
       const value = String(status.value);
-      return `<option value="${escapeHtml(value)}"${value === itemStatus ? ' selected' : ''}>${escapeHtml(status.label || value)}</option>`;
+      return `<option value="${escapeHtml(value)}"${value === itemStatus ? ' selected' : ''}>${escapeHtml(tr(status.label || value))}</option>`;
     }).join('');
     const itemPriority = item.priority == null ? '' : String(item.priority);
     const priorityOptions = `<option value=""${itemPriority === '' ? ' selected' : ''}>${escapeHtml(tr('Unset'))}</option>`
@@ -3466,11 +3515,21 @@
     if (!list) return;
     const items = filteredShortlistItems();
     if (!items.length) {
-      list.innerHTML = '<p class="map-muted">No parcels match the shortlist filters.</p>';
+      list.innerHTML = `<p class="map-muted">${escapeHtml(tr('No parcels match the shortlist filters.'))}</p>`;
       return;
     }
     list.innerHTML = items.map((item) => {
       const reference = shortlistReference(item);
+      const itemLabel = String(item.label || '').trim();
+      const referenceIsRedundant = Boolean(itemLabel && reference
+        && itemLabel.toLocaleLowerCase().includes(String(reference).toLocaleLowerCase()));
+      const generatedParcelLabel = Boolean(reference
+        && itemLabel.toLocaleLowerCase() === `parcel ${reference}`.toLocaleLowerCase());
+      const shortlistTitle = generatedParcelLabel ? tr('Parcel') : (itemLabel || reference || tr('Saved parcel'));
+      const showReference = Boolean(reference && (generatedParcelLabel || (itemLabel && !referenceIsRedundant)));
+      const priorityValue = item.priority == null ? tr('Unset') : String(item.priority);
+      const priorityDisplay = item.priority == null ? '—' : String(item.priority);
+      const priorityLabel = `${tr('Priority')}: ${priorityValue}`;
       const tags = (item.tags || []).slice(0, 4).map((tag) => `<span>#${escapeHtml(tag)}</span>`).join('');
       const hazardTime = item.active_hazard?.issue_time || item.active_hazard?.observed_at;
       const rawFireDistance = item.active_hazard?.distance_km;
@@ -3490,11 +3549,11 @@
         <article class="shortlist-item" role="listitem">
           <div class="shortlist-item-header">
             <div>
-              <strong>${item.is_favorite ? '<span class="shortlist-favorite-mark" aria-hidden="true">★</span> ' : ''}${escapeHtml(item.label || reference || 'Saved parcel')}</strong>
-              <small>${escapeHtml(reference || 'No cadastral reference')}</small>
+              <strong>${item.is_favorite ? '<span class="shortlist-favorite-mark" aria-hidden="true">★</span> ' : ''}${escapeHtml(shortlistTitle)}</strong>
+              ${showReference ? `<small>${escapeHtml(reference)}</small>` : ''}
               ${hazard}
             </div>
-            <small>P${escapeHtml(item.priority ?? '—')}</small>
+            <span class="shortlist-priority" role="img" title="${escapeHtml(priorityLabel)}" aria-label="${escapeHtml(priorityLabel)}"><strong>${escapeHtml(priorityDisplay)}</strong></span>
           </div>
           <div class="shortlist-badges">
             <span>${escapeHtml(statusLabel(item.status))}</span>
@@ -3503,7 +3562,7 @@
           ${item.notes ? `<small>${escapeHtml(item.notes).slice(0, 180)}</small>` : ''}
           ${shortlistEditorHtml(item)}
           <div class="shortlist-item-actions">
-            <button type="button" data-shortlist-open="${escapeHtml(reference)}">Open</button>
+            <button type="button" data-shortlist-open="${escapeHtml(reference)}">${escapeHtml(tr('Open'))}</button>
             <button type="button" data-shortlist-favorite="${escapeHtml(item.id)}" aria-pressed="${item.is_favorite ? 'true' : 'false'}">${escapeHtml(item.is_favorite ? tr('Unfavourite') : tr('Favourite'))}</button>
           </div>
         </article>`;
@@ -4205,6 +4264,9 @@
     state.sourceTileDown = [...state.tileErrors].some((sourceId) =>
       !isKnownUnavailableTileSource(sourceId) && (tileRetry.attempts[sourceId] || 0) >= 2,
     );
+    const status = $('mapStatus')?.textContent || '';
+    if ((state.sourceHealthDown || state.sourceTileDown)
+      && (status === tr('Map ready') || status === 'Map ready')) mapStatus('');
     updateSourceBanner();
   }
 
@@ -4465,6 +4527,7 @@
       const payload = serviceDown ? {} : await response.json();
       if (requestId !== state.searchRequest) return;
       let results = payload.results || [];
+      let usedPlaceFallback = false;
       const hasPreciseHit = results.some((r) => r.kind === 'parcel' || r.kind === 'municipality'
         || (r.kind === 'address' && (r.match_level === 'address' || r.match_level === 'address_exponent_dropped')));
       if (!hasPreciseHit && explicit && !(/^[A-Z]\d{3}[A-Z]?\d{4}\d{2}(?:\.|$)/i.test(normalized) || /^[A-Z]\d{3}[_-].*\./i.test(normalized))) {
@@ -4473,7 +4536,11 @@
         // enforced there). Failures leave the cadastral results untouched.
         try {
           const placeResponse = await fetch(`/api/v1/map/geocode?query=${encodeURIComponent(normalized)}`, { signal: controller.signal });
-          if (placeResponse.ok) results = results.concat((await placeResponse.json()).results || []);
+          if (placeResponse.ok) {
+            const placeResults = (await placeResponse.json()).results || [];
+            usedPlaceFallback = placeResults.length > 0;
+            results = results.concat(placeResults);
+          }
         } catch (error) { if (error.name === 'AbortError') throw error; }
       }
       if (requestId !== state.searchRequest) return;
@@ -4490,14 +4557,34 @@
       });
       state.searchActiveIndex = results.length ? 0 : -1;
       renderSearchResults(results);
-      $('mapSearchStatus').textContent = results.length
-        ? (staleSearch ? tr('Showing recent search results while the service recovers.') : '')
+      const searchStatus = $('mapSearchStatus');
+      searchStatus.replaceChildren();
+      const statusMessage = results.length
+        ? (staleSearch
+          ? tr('Showing recent search results while the service recovers.')
+          : (usedPlaceFallback ? tr('Place results are from OpenStreetMap.') : ''))
         : (!serviceDown ? (explicit ? 'No result' : (state.sourceHealthDown ? 'Municipality and parcel search is unavailable — press Enter to search places' : 'No municipality or parcel match — press Enter to search places')) : 'Search service unavailable; try again.');
+      if (statusMessage) searchStatus.append(document.createTextNode(statusMessage));
+      if (serviceDown && !results.length) {
+        const retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'map-search-retry';
+        retry.textContent = tr(explicit ? 'Retry' : 'Search places');
+        retry.addEventListener('click', () => { void search(normalized, true); });
+        searchStatus.append(document.createTextNode(' '), retry);
+      }
     } catch (error) {
       // A newer search superseding this one is silent; a timeout is not.
       if (error.name === 'AbortError' && !(timedOut && requestId === state.searchRequest)) return;
       if (requestId === state.searchRequest) {
-        $('mapSearchStatus').textContent = timedOut ? tr('Search is taking too long. Try again.') : tr('Search unavailable');
+        const searchStatus = $('mapSearchStatus');
+        searchStatus.replaceChildren(document.createTextNode(timedOut ? tr('Search is taking too long. Try again.') : tr('Search unavailable')));
+        const retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'map-search-retry';
+        retry.textContent = tr('Retry');
+        retry.addEventListener('click', () => { void search(normalized, explicit); });
+        searchStatus.append(document.createTextNode(' '), retry);
       }
     } finally {
       task.finish();
@@ -7792,12 +7879,17 @@
     }
   }
 
-  // Only the mobile breakpoint (<=700px) hides .parcel-shortlist-card by
-  // default and reveals it as a bottom sheet via .mobile-open; on desktop/
-  // tablet it stays inline and this class has no visual effect.
+  // Keep the workspace closed until requested at every breakpoint. On mobile
+  // it opens as a bottom sheet; on wider screens it opens below its toggle.
   function setShortlistOpen(open) {
     const card = $('parcelShortlistCard');
     if (!card) return;
+    if (open) {
+      if ($('mapLayersCard')) $('mapLayersCard').hidden = true;
+      $('layersToggle')?.setAttribute('aria-expanded', 'false');
+      setBasemapPickerOpen(false);
+      setSisterBatchWindowOpen(false);
+    }
     card.classList.toggle('mobile-open', open);
     card.hidden = !open;
     document.querySelectorAll('.shortlist-toggle').forEach((toggle) => {
@@ -8144,7 +8236,11 @@
       const card = $('mapLayersCard');
       card.hidden = !card.hidden;
       $('layersToggle').setAttribute('aria-expanded', String(!card.hidden));
-      if (!card.hidden) { setBasemapPickerOpen(false); setSisterBatchWindowOpen(false); }
+      if (!card.hidden) {
+        setShortlistOpen(false);
+        setBasemapPickerOpen(false);
+        setSisterBatchWindowOpen(false);
+      }
     });
     $('basemapEngineSelect').addEventListener('change', (event) => {
       state.basemapUserSelected = true;
@@ -8172,22 +8268,21 @@
         );
       });
     } else {
-      document.querySelectorAll('.shortlist-toggle').forEach((toggle) => {
-        toggle.classList.add('is-collapsible');
-      });
       const close = $('shortlistCloseButton');
-      if (close) close.style.display = 'inline-block';
+      if (close) close.style.display = 'inline-grid';
     }
     $('themeToggle')?.addEventListener('click', () => {
       window.setTimeout(() => {
         state.dark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
         document.body.classList.toggle('direct-map-dark', state.dark);
         $('themeToggle')?.setAttribute('aria-pressed', String(state.dark));
-        const basemap = currentBasemap();
-        if (!state.basemapUserSelected && basemap !== (state.dark ? 'dark' : 'light')) {
+        syncThemeToggle();
+        if (!state.basemapUserSelected) {
+          const targetBasemap = state.dark ? 'dark' : state.themeBasemapBase;
+          if (currentBasemap() === targetBasemap) return;
           const selector = $('basemapEngineSelect');
-          if (selector) selector.value = state.dark ? 'dark' : 'light';
-          if (state.map || state.fallbackMap) switchBasemap(state.dark ? 'dark' : 'light');
+          if (selector) selector.value = targetBasemap;
+          if (state.map || state.fallbackMap) switchBasemap(targetBasemap);
         }
       }, 0);
     });
@@ -8314,9 +8409,25 @@
     try { window.localStorage.removeItem('cadastre_dark_mode'); } catch (_) { /* storage may be disabled */ }
     document.body.classList.toggle('direct-map-dark', state.dark);
     $('themeToggle')?.setAttribute('aria-pressed', String(state.dark));
+    syncThemeToggle();
     const selector = $('basemapEngineSelect');
     if (selector) selector.value = kind;
     writeBasemapUrl();
+  }
+
+  function syncThemeToggle() {
+    const button = $('themeToggle');
+    if (!button) return;
+    const action = tr(state.dark ? 'Switch to light theme' : 'Switch to dark theme');
+    button.setAttribute('aria-label', action);
+    button.title = action;
+    const icon = button.querySelector('i');
+    if (icon) {
+      icon.classList.toggle('fa-sun', state.dark);
+      icon.classList.toggle('fa-moon', !state.dark);
+    } else {
+      button.textContent = state.dark ? '☀' : '☾';
+    }
   }
 
   function loadScriptOnce(src, integrity) {
@@ -8390,9 +8501,10 @@
     renderAnalysisSelection();
     renderWorkbenchDrawings();
     renderParcelPvpNearbyMarkers();
-    if (restored.invalidView) mapStatus('Location outside Italy — showing Rome.', true);
+    if (restored.invalidCoordinates || restored.invalidZoom) mapStatus('The map link had invalid coordinates or zoom. A safe default view is shown.', true);
+    else if (restored.outsideItaly) mapStatus('Location outside Italy — showing Rome.', true);
     else if (restored.invalidParcel) mapStatus('Invalid parcel reference — selection was not loaded.', true);
-    else mapStatus(state.fallbackMap ? 'Map ready (raster mode)' : 'Map ready');
+    else mapStatus('');
     await loadCatalog();
     if ($('toggleSisterParcels')?.checked) toggleSisterParcelsOverlay();
     if ($('toggleNplAsteFlorioAssets')?.checked) toggleNplAsteFlorioOverlay();
@@ -8406,7 +8518,11 @@
     if (notice) mapStatus(tr(notice));
     if (salesOverlay.active) { void loadSalesGeoLayers(); void loadSalesOverlay(); }
     void loadShortlist();
-    void loadLayerHealth();
+    await loadLayerHealth();
+    if (state.fallbackMap && state.sourceHealthChecked && !state.sourceHealthDown && !state.sourceTileDown) {
+      state.mapReadyAnnounced = true;
+      mapStatus('Map ready');
+    }
     if (restored.parcel && !restored.invalidParcel) await loadParcelByReference(restored.parcel, false, restored.parcelId);
     restoreAddressMarkerFromUrl();
     if (restored.parcel && !restored.invalidParcel) return;
@@ -8429,11 +8545,12 @@
     state.pendingAddress = readAddressMarkerParams();
     state.preferences = await loadPreferences();
     const restored = urlState();
-    state.basemapUserSelected = Boolean(
-      restored.basemap
-      || (BASEMAPS.includes(state.preferences?.default_basemap) && state.preferences.default_basemap),
-    );
-    const basemap = restored.basemap || (BASEMAPS.includes(state.preferences?.default_basemap) ? state.preferences.default_basemap : (document.documentElement.getAttribute('data-bs-theme') === 'dark' ? 'dark' : DEFAULT_BASEMAP));
+    state.basemapUserSelected = Boolean(restored.basemap);
+    state.themeBasemapBase = BASEMAPS.includes(state.preferences?.default_basemap)
+      ? state.preferences.default_basemap
+      : DEFAULT_BASEMAP;
+    const currentThemeIsDark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
+    const basemap = restored.basemap || (currentThemeIsDark ? 'dark' : state.themeBasemapBase);
     if (Array.isArray(state.preferences?.default_layers)) state.defaultLayers = new Set(state.preferences.default_layers);
     if (restored.layers !== null) state.defaultLayers = new Set(restored.layers);
     applyInitialBasemap(basemap);
@@ -8484,7 +8601,7 @@
       // Sparse layers can only tell "nothing here" from "not drawn yet" once tiles have settled.
       // updateLayerBadges only rewrites a hint's text, so this does not re-render the map.
       if (state.activeLayers?.size) updateLayerBadges();
-      if (!state.mapReadyAnnounced && !state.tileErrors.size && !restored.invalidView && !restored.parcel) {
+      if (!state.mapReadyAnnounced && state.sourceHealthChecked && !state.tileErrors.size && !state.sourceHealthDown && !state.sourceTileDown && !restored.invalidView && !restored.parcel) {
         state.mapReadyAnnounced = true;
         mapStatus('Map ready');
       } else if ($('mapStatus')?.textContent === 'Loading map tiles…') {

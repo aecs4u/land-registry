@@ -1,21 +1,34 @@
 {% extends "base.html" %}
 
-{% block title %}{{ page_title }} · AECS4U{% endblock %}
+{% block title %}{{ page_title }} · Land Registry{% endblock %}
+{% block body_class %}data-sources-page{% endblock %}
+{% block extra_head %}
+{{ super() }}
+<link rel="canonical" href="{{ public_base_url }}/data-sources" />
+<meta property="og:url" content="{{ public_base_url }}/data-sources" />
+{% endblock %}
 
 {% block meta_description %}<meta name="description" content="{{ _('Every data provider behind the map, with its licence, attribution and the terms under which its data can be reused.') }}" />{% endblock %}
 
 {% block extra_css %}
 <style>
-  .data-source-page { max-width: 1040px; margin: 0 auto; padding: 28px 18px 56px; }
+  html:has(body.data-sources-page), body.data-sources-page { height: auto; min-height: 100%; overflow-x: visible; overflow-y: auto; }
+  body.data-sources-page .navbar-main :is(a, button, select) { min-height: 44px; }
+  body.data-sources-page .navbar-main .navbar-brand { display: inline-flex; align-items: center; }
+  body.data-sources-page .navbar-main :is(.sidebar-toggle, .theme-toggle, .nav-icon-btn, .user-menu-btn) { min-width: 44px; min-height: 44px; }
+  body.data-sources-page .site-footer a { display: inline-flex; min-height: 44px; align-items: center; }
+  .data-source-page { box-sizing: border-box; width: 100%; max-width: 1040px; min-width: 0; margin: 0 auto; padding: 28px 18px 56px; }
   .data-source-page h1 { margin: 10px 0 8px; }
   .data-source-lead { max-width: 75ch; color: var(--bs-secondary-color, #667085); }
-  .data-source-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 390px), 1fr)); gap: 14px; margin-top: 22px; }
-  .data-source-card { border: 1px solid var(--bs-border-color, #d0d5dd); border-radius: 12px; padding: 18px; background: var(--bs-body-bg, #fff); }
+  .data-source-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 390px), 1fr)); min-width: 0; gap: 14px; margin-top: 22px; }
+  .data-source-card { box-sizing: border-box; min-width: 0; border: 1px solid var(--bs-border-color, #d0d5dd); border-radius: 12px; padding: 18px; background: var(--bs-body-bg, #fff); }
   .data-source-card h2 { font-size: 1.1rem; margin: 0 0 12px; }
-  .data-source-card dl { display: grid; grid-template-columns: minmax(115px, .7fr) minmax(0, 1.5fr); gap: 7px 12px; margin: 0; }
+  .data-source-card dl { display: grid; grid-template-columns: minmax(0, .7fr) minmax(0, 1.5fr); gap: 7px 12px; margin: 0; }
   .data-source-card dt { color: var(--bs-secondary-color, #667085); font-weight: 600; }
   .data-source-card dd { margin: 0; overflow-wrap: anywhere; }
   .data-source-card a, .data-source-back { overflow-wrap: anywhere; }
+  .data-source-page a { display: inline-flex; max-width: 100%; min-width: 44px; min-height: 44px; align-items: center; }
+  .data-source-page a:focus-visible { outline: 3px solid #164a7c; outline-offset: 2px; }
   .data-source-review { font-size: .92rem; }
   .data-source-note { margin-top: 24px; padding: 14px 16px; border-left: 4px solid #4b7a9d; background: var(--bs-tertiary-bg, #f2f4f7); }
   .data-field-catalog { margin-top: 34px; }
@@ -25,7 +38,13 @@
   .data-field-table thead th { background: var(--bs-tertiary-bg, #f2f4f7); }
   .data-field-table tbody th { white-space: nowrap; }
   .data-field-table a { overflow-wrap: anywhere; }
-  @media (max-width: 520px) { .data-source-card dl { grid-template-columns: 1fr; gap: 2px; } .data-source-card dd { margin-bottom: 8px; } }
+  @media (max-width: 767.98px) {
+    .data-source-page { padding-inline: 14px; }
+    .data-source-list { grid-template-columns: minmax(0, 1fr); }
+    .data-field-table-wrap { width: 100%; min-width: 0; overscroll-behavior-inline: contain; }
+    .data-field-table { min-width: 880px; }
+  }
+  @media (max-width: 520px) { .data-source-card dl { grid-template-columns: minmax(0, 1fr); gap: 2px; } .data-source-card dd { margin-bottom: 8px; } }
 </style>
 {% endblock %}
 
@@ -36,7 +55,7 @@
 
 {% block content %}
 <main id="main-content" class="data-source-page">
-  <a class="data-source-back" href="/map">← {{ _('Back to the map') }}</a>
+  <a class="data-source-back" href="/landing">← {{ _('About this service') }}</a>
   <h1>{{ page_title }}</h1>
   <p class="data-source-lead">{{ _('Provider references, citations, attribution text and reuse terms maintained by the application.') }}</p>
   <p class="data-source-lead">{{ _('A named licence is shown only when the maintained register establishes one. A missing licence means that reuse terms have not been established here.') }}</p>

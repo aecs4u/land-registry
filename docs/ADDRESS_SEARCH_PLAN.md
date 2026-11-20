@@ -1,5 +1,12 @@
 # Address search development plan
 
+> **Update 2026-11-20 — data source.** Everything below that mentions the regional tables
+> (`rNN__streets`, `rNN__addresses`, the `anncsu`/`public` schema resolution and the
+> hand-built indexes) describes the original design. The lookup, the `anncsu-addresses` map
+> layer and the parcel panel now read the export schema `anncsu_v2_ref` of the `anncsu`
+> database (`v_street`, `v_address`, `v_address_map`, `v_region`, `v_dataset_release`): one
+> address table for all regions, typed columns, current ISTAT codes, no schema guessing and
+> no per-region indexes to create. The 50-address gold set still resolves exactly.
 Status: implemented (Phases 1-6) on 2026-11-09; see "Implementation notes" at the end for deviations. Owner: map team. Applies to the `/map` search box
 (`map_v2.html`, `static/map-v2.js` `search()`, `GET /api/v1/map/search`).
 

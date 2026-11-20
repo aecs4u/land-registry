@@ -74,7 +74,7 @@ def _call_with_hard_timeout(func, timeout, *args, **kwargs):
 
 
 class PostgresCadastralBoundarySource:
-    """Small read-only adapter over the canonical aecs4u-stats PostGIS DB."""
+    """Small read-only adapter over the dedicated cadastral PostGIS database."""
 
     TABLES = {
         "map": "spatial.cadastral_sheet",
@@ -94,43 +94,17 @@ class PostgresCadastralBoundarySource:
 
     @classmethod
     def from_environment(cls):
-        # Deliberately opt-in, DSN presence alone is NOT enough: a blocking
-        # psycopg2 call has been reproduced on this host freezing the *entire*
-        # process (even /health stops responding), immune to
-        # connect_timeout/statement_timeout, thread-join timeouts, and
-        # asyncio.wait_for alike (consistent with the call never releasing
-        # the GIL). Treating a configured DSN as authoritative silently
-        # reintroduces that freeze the moment STATS_POSTGRES_DSN is
-        # set (e.g. via .env) — require explicit STATS_POSTGRES_ENABLE=1
-        # until that's diagnosed/fixed, or Postgres access is moved behind
-        # real process isolation (a subprocess that can be SIGKILLed).
+        # Deliberately opt-in: a blocking psycopg2 call has been reproduced
+        # freezing the entire process. Only an explicit cadastral DSN can
+        # enable this legacy boundary reader; shared/app DSNs are not sources.
         if os.getenv("STATS_POSTGRES_ENABLE", "").strip().lower() not in ("1", "true", "yes", "on"):
             return None
-        # The cadastre may live in its own database (the stats one then has empty spatial.cadastral_* tables);
-        # map_layers.cadastral_from_environment already honours the same override for the vector layers.
-        dsn = os.getenv("CADASTRAL_POSTGRES_DSN")
+        dsn = (
+            os.getenv("AECS4U_SOURCE_CADASTRAL_DATABASE_URL")
+            or os.getenv("CADASTRAL_POSTGRES_DSN")
+        )
         if not dsn:
-            # aecs4u-stats is deprecated and its spatial.cadastral_* tables are empty: the stats DSN
-            # now supplies host and credentials only, and the database is the dedicated ``cadastral`` one
-            # (which publishes spatial.cadastral_sheet / spatial.cadastral_parcel).
-            base = (
-                os.getenv("STATS_POSTGRES_DSN")
-                or os.getenv("AECS4U_STATS_DATABASE_URL")
-                or os.getenv("AECS4U_STATS_SPATIAL_DATABASE_URL")
-            )
-            if base and base.startswith(("postgres://", "postgresql://", "postgresql+")):
-                from urllib.parse import urlsplit, urlunsplit
-
-                parts = urlsplit(base.replace("postgresql+asyncpg://", "postgresql://", 1))
-                dsn = urlunsplit(parts._replace(path="/cadastral"))
-        dsn = dsn or os.getenv("DATABASE_URL")
-        if not dsn:
-            try:
-                from aecs4u_stats.web.config import get_databases
-
-                dsn = get_databases()["spatial"].url
-            except (ImportError, KeyError, TypeError, AttributeError):
-                return None
+            return None
         if not dsn or not dsn.startswith(("postgres://", "postgresql://", "postgresql+")):
             return None
         try:
