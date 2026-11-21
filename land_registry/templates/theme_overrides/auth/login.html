@@ -73,6 +73,12 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/static/land-registry-icon-180.png">
   <link rel="manifest" href="/manifest.json">
   <link rel="stylesheet" href="{{ asset_url('css/auth.css') }}" />
+  {% if clerk_enabled and locale == 'it' %}
+  <link rel="modulepreload"
+        href="https://cdn.jsdelivr.net/npm/@clerk/localizations@3.37.11/dist/it-IT.mjs"
+        integrity="sha384-g9f04rLr5l8V1BEIL90EZnly2b0lVXukuxuivRn9/GotaPyQF/4PL2+7BndQLcn3"
+        crossorigin="anonymous">
+  {% endif %}
   <script>
     document.addEventListener('DOMContentLoaded', function () {
       const next = new URLSearchParams(window.location.search).get('next') || '/map';
@@ -157,7 +163,7 @@
     const options = { ui: { ClerkUI: globals.ClerkUI } };
     if ({{ locale | tojson }} === 'it') {
       try {
-        const italian = await import('https://cdn.jsdelivr.net/npm/@clerk/localizations@3.37.11/+esm');
+        const italian = await import('https://cdn.jsdelivr.net/npm/@clerk/localizations@3.37.11/dist/it-IT.mjs');
         options.localization = italian.itIT;
       } catch (_error) {
         showUnavailable();
