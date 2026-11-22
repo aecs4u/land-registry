@@ -209,6 +209,7 @@ class TestCadastralDataPage:
     @patch("land_registry.main.load_cadastral_structure")
     def test_returns_unavailable_page_when_no_data(self, mock_load, following_client):
         mock_load.return_value = None
+        following_client.cookies.set("lang", "en")
         response = following_client.get("/cadastral-data")
         assert response.status_code == 503
         assert "cadastral structure catalog is not available" in response.text.lower()
