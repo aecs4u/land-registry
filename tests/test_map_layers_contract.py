@@ -532,7 +532,7 @@ async def test_map_search_runs_parcel_lookup_on_reserved_search_pool():
     with patch.object(api_module, "ensure_map_search_source_warm", AsyncMock()) as warm_search, \
          patch.object(api_module, "get_map_layer_source", return_value=tile_source), \
          patch.object(api_module, "get_map_search_source", return_value=search_source):
-        result = await api_module.search_map(Response(), query="L781B016200.14", limit=10)
+        result = await api_module.search_map(Response(), query="L781B016200.14", q=None, limit=10)
 
     warm_search.assert_awaited_once()
     search_source.search_parcels_by_reference.assert_awaited_once_with("L781B016200.14", 10)
@@ -648,7 +648,7 @@ def test_map_pool_defaults_to_four_connections_and_honours_the_environment(monke
 def test_geojson_flag_filter_runs_in_the_database_for_parcel_flags():
     """Auction parcels are selected by SQL, not by downloading every parcel page."""
     connection = _Connection(rows=[])
-    source = PostgresMapLayerSource(_ConnectionSource(connection))
+    source = _map_source_with_cadastral(connection)
 
     asyncio.run(source.read_geojson("cadastral-parcels", (11.0, 45.4, 11.01, 45.41), 100, flag="is_auction_sale"))
 

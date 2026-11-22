@@ -22,15 +22,15 @@ MAIN = (ROOT / "land_registry/main.py").read_text(encoding="utf-8")
 OBSERVABILITY = (ROOT / "land_registry/map_observability.py").read_text(encoding="utf-8")
 
 
-def test_direct_map_has_one_authoritative_map_and_migration_escape_hatch():
+def test_direct_map_has_one_authoritative_map_and_table_action():
     assert 'id="directMap"' in TEMPLATE
     assert "new maplibregl.Map" in SCRIPT
-    assert 'href="/map-legacy"' in TEMPLATE
+    assert 'href="/map?panel=table"' in TEMPLATE
     assert 'id="legacyAnalysisLink"' in TEMPLATE
-    assert "`/map-legacy?parcel=" in SCRIPT
+    assert "`/map?panel=table&parcel=" in SCRIPT
     assert 'async def serve_map_shell' in MAIN
     assert 'return await serve_direct_map(request' in MAIN
-    assert '@app.get("/map-legacy"' in MAIN
+    assert '"/map-legacy",' in MAIN
 
 
 def test_direct_map_resolves_tiles_and_skips_signed_out_user_calls():
@@ -407,9 +407,10 @@ def _element_ids(template: str) -> list[str]:
 
 def test_standalone_and_theme_templates_define_the_same_map_controls():
     # The theme override is what /map renders when aecs4u-theme is installed;
-    # map_v2.html is the fallback. They are kept as separate files, so this
-    # guards against one gaining or losing a control the script depends on.
-    shell_only = {"themeButton", "sidebar-group-land-registry", "sidebar-group-account"}
+    # map_v2.html is the fallback. The theme supplies its own shell; the
+    # fallback declares a local theme toggle, and both pages keep the map
+    # controls and scripts in sync.
+    shell_only = {"themeToggle", "sidebar-group-land-registry", "sidebar-group-account"}
     # Both templates render the shortlist toggle, but each uses its own id for
     # its chrome (the script binds ``.shortlist-toggle``, not the id).
     toggle_ids = {"shortlistToggleFallback", "shortlistToggleTheme"}
@@ -697,7 +698,7 @@ def test_sister_batch_is_a_stand_alone_window_opened_from_the_control_stack():
 def test_parcel_selection_can_be_appended_to_an_existing_sister_list():
     for template in (TEMPLATE, THEME_TEMPLATE):
         assert 'id="sisterBatchAppendButton"' in template
-        assert 'id="sisterBatchAppendFile" accept=".md,text/markdown" hidden' in template
+        assert re.search(r'id="sisterBatchAppendFile"[^>]*accept=".md,text/markdown"[^>]*hidden', template)
     assert "function appendToSisterRunList(text, features)" in MAP_SCRIPT
     # Rows already in the list keep their ids (SISTER's resume key) and are not added twice.
     assert "if (existingIds.has(base)) return;" in MAP_SCRIPT

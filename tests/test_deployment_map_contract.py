@@ -13,10 +13,11 @@ def test_cloud_run_injects_and_verifies_canonical_map_database():
     assert "CADASTRAL_POSTGRES_DSN=LAND_REGISTRY_CADASTRAL_POSTGRES_DSN:latest" in workflow
     assert '--update-env-vars="' in workflow
     assert '--update-secrets="$SECRET_UPDATES"' in workflow
+    assert "--no-traffic" in workflow
     assert "/api/v1/map/layers/health" in workflow
-    # The map database is optional at deploy time (784ba73): a database outage
-    # must not fail or roll back a release, so readiness is reported as a
-    # warning and the health step no longer asserts on layer availability.
+    # Keep the previous revision serving unless the candidate can serve the
+    # required canonical cadastral layer.
     assert "/ready" in workflow
-    assert "::warning::" in workflow
+    assert "::error::/ready returned" in workflow
+    assert "--to-revisions=\"${{ steps.deploy.outputs.revision }}=100\"" in workflow
     assert 'assert d.get("available")' not in workflow

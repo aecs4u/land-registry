@@ -521,7 +521,7 @@ def test_sales_map_points_answers_503_while_the_snapshot_loads(monkeypatch):
     response = TestClient(app).get("/api/v1/sales/map-points?period=all&bbox=8,40,9,41")
     assert response.status_code == 503
     assert response.headers["retry-after"] == "10"
-    assert response.json()["detail"] == "Sales data is loading"
+    assert response.json()["detail"] == "Service temporarily unavailable"
 
 
 def test_failed_load_backs_off_instead_of_restarting_a_multi_minute_query(monkeypatch):

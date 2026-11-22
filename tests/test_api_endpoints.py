@@ -63,7 +63,7 @@ class TestCadastralStructureEndpoints:
 
         response = client.get("/api/v1/get-cadastral-structure/")
         assert response.status_code == 500
-        assert "Error loading cadastral structure" in response.json()["detail"]
+        assert response.json()["detail"] == "Internal server error"
 
     @patch("land_registry.main.load_cadastral_structure")
     def test_cadastral_data_html_endpoint(self, mock_load, authenticated_client, sample_cadastral_structure):

@@ -163,6 +163,7 @@ def test_cadastral_database_requires_an_explicit_dsn(monkeypatch):
 
     monkeypatch.setenv("AECS4U_SOURCE_CADASTRAL_DATABASE_URL", "postgresql+asyncpg://user:secret@localhost:5432/cadastral?sslmode=require")
     assert _AsyncpgConnectionSource.cadastral_from_environment().dsn == "postgresql://user:secret@localhost:5432/cadastral?sslmode=require"
+    monkeypatch.delenv("AECS4U_SOURCE_CADASTRAL_DATABASE_URL")
     monkeypatch.setenv("CADASTRAL_POSTGRES_DSN", "postgresql://other:secret@localhost/custom")
     assert _AsyncpgConnectionSource.cadastral_from_environment().dsn.endswith("/custom")
 

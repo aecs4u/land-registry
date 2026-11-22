@@ -242,7 +242,7 @@ class TestCorrectedS3Endpoints:
             response = client.get("/api/v1/s3-status/")
             assert response.status_code == 500
             data = response.json()
-            assert "Error checking S3 status" in data["detail"]
+            assert data["detail"] == "Internal server error"
 
 
 class TestCorrectedCadastralStructure:
@@ -285,4 +285,4 @@ class TestCorrectedCadastralStructure:
 
         response = client.get("/api/v1/get-cadastral-structure/")
         assert response.status_code == 500
-        assert "Error loading cadastral structure" in response.json()["detail"]
+        assert response.json()["detail"] == "Internal server error"

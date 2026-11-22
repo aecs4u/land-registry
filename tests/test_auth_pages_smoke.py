@@ -32,12 +32,7 @@ def test_missing_theme_template_is_not_a_debug_traceback(monkeypatch):
     "/omi/valuation",
     "/profile",
     "/settings",
-    "/privacy",
-    "/terms",
-    "/help",
-    "/contact",
     "/notifications",
-    "/data-sources",
     "/docs",
     "/redoc",
     "/openapi.json",
@@ -69,6 +64,11 @@ def test_landing_and_auth_flows_remain_public():
     assert client.get("/landing").status_code == 200
     assert client.get("/auth/login").status_code == 200
     assert client.get("/auth/register").status_code == 200
+
+
+@pytest.mark.parametrize("path", ["/privacy", "/terms", "/help", "/contact", "/data-sources"])
+def test_public_information_pages_remain_available_signed_out(path):
+    assert TestClient(app).get(path, follow_redirects=False).status_code == 200
 
 
 def test_html_api_views_for_poi_and_uploaded_maps_require_auth():

@@ -185,12 +185,13 @@ class TestNotFoundPage:
         response = client.get("/no-such-page", headers={"accept": "text/html,application/xhtml+xml"})
         assert response.status_code == 404
         assert "text/html" in response.headers["content-type"]
-        assert "<h1>" in response.text and 'href="/map"' in response.text
+        assert "<h1>" in response.text and 'href="/landing"' in response.text
 
-    def test_signed_out_browser_is_sent_to_login(self, client):
+    def test_signed_out_browser_gets_the_public_branded_404(self, client):
         response = client.get("/no-such-page", headers={"accept": "text/html,application/xhtml+xml"})
-        assert response.status_code == 302
-        assert response.headers["location"].startswith("/auth/login?next=")
+        assert response.status_code == 404
+        assert "text/html" in response.headers["content-type"]
+        assert 'href="/landing"' in response.text
 
     def test_api_and_json_clients_keep_the_json_body(self, client):
         assert client.get("/no-such-page").json() == {"detail": "Not Found"}
@@ -206,10 +207,11 @@ class TestNotFoundPage:
 
 class TestCadastralDataPage:
     @patch("land_registry.main.load_cadastral_structure")
-    def test_returns_404_when_no_data(self, mock_load, following_client):
+    def test_returns_unavailable_page_when_no_data(self, mock_load, following_client):
         mock_load.return_value = None
         response = following_client.get("/cadastral-data")
-        assert response.status_code == 404
+        assert response.status_code == 503
+        assert "cadastral structure catalog is not available" in response.text.lower()
 
     @patch("land_registry.main.load_cadastral_structure")
     def test_returns_html_with_data(self, mock_load, following_client):
@@ -360,7 +362,7 @@ class TestAdjacencyDataEndpoint:
     def test_returns_503(self, client):
         response = client.get("/api/v1/adjacency-data")
         assert response.status_code == 503
-        assert "not yet implemented" in response.json()["detail"].lower()
+        assert response.json()["detail"] == "Service temporarily unavailable"
 
 
 # ---------------------------------------------------------------------------
@@ -372,4 +374,4 @@ class TestMappingDataEndpoint:
     def test_returns_503(self, client):
         response = client.get("/api/v1/mapping-data")
         assert response.status_code == 503
-        assert "not yet implemented" in response.json()["detail"].lower()
+        assert response.json()["detail"] == "Service temporarily unavailable"

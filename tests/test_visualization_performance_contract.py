@@ -1,6 +1,7 @@
 """Contracts for the browser-side cadastral rendering performance path."""
 
 from pathlib import Path
+import re
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -175,20 +176,23 @@ def test_main_map_can_use_mvt_with_raster_fallback() -> None:
 def test_map_runtime_does_not_reload_leaflet_or_block_on_plugin_scripts() -> None:
     base = (ROOT / "land_registry/templates/base.html").read_text(encoding="utf-8")
 
-    assert "request.url.path != '/map'" in base
-    assert "leaflet@1.9.4/dist/leaflet.js\" defer" in base
+    assert "request.url.path in ['/', '/map-legacy']" in base
+    leaflet_script = re.search(
+        r'<script src="https://unpkg\.com/leaflet@1\.9\.4/dist/leaflet\.js"[^>]+>', base
+    )
+    assert leaflet_script and "defer" in leaflet_script.group(0)
     assert "leaflet-control-geocoder@4.0.0" in base
     assert "leaflet.markercluster@1.5.3" in base
     assert "leaflet-minimap@3.6.1" in base
     assert "leaflet.locatecontrol@0.90.1" in base
     assert "leaflet-search@4.0.0" in base
     assert "leaflet-rastercoords" not in base
-    assert "@clerk/clerk-js@latest" in base
+    assert "@clerk/clerk-js@5.125.7" in base
     assert "leaflet-treelayers" not in base
     assert "glify-browser.js" not in base
     assert "webgl-renderer.js" not in base
-    assert "{% if request.url.path != '/map' %}" in base
-    assert "{% else %}" in base
+    assert "{% if request.url.path in ['/', '/map-legacy'] %}" in base
+    assert "{% elif request.url.path == '/map' %}" in base
     assert "leaflet.draw.js\" defer" in base
     assert "leaflet.draw.css" in base
 
