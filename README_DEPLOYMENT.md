@@ -136,6 +136,12 @@ gcloud secrets create s3-secret-key --data-file=- <<< "your-secret-key"
 # Map layers do not derive source connections from STATS_POSTGRES_DSN.
 gcloud secrets create LAND_REGISTRY_CADASTRAL_POSTGRES_DSN --data-file=- <<< "postgresql://..."
 
+# Clerk configuration is stored in app-prefixed Secret Manager secrets. Use
+# values from the same Clerk instance for all three secrets:
+# LAND_REGISTRY_CLERK_PUBLISHABLE_KEY
+# LAND_REGISTRY_CLERK_SECRET_KEY
+# LAND_REGISTRY_CLERK_JWKS_URL
+
 # Grant Cloud Run access to secrets
 gcloud projects add-iam-policy-binding PROJECT_ID \
     --member="serviceAccount:SERVICE_ACCOUNT@PROJECT_ID.iam.gserviceaccount.com" \

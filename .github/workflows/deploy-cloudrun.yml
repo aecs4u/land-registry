@@ -85,8 +85,7 @@ jobs:
 
       - name: Validate production data and Clerk configuration
         env:
-          CLERK_PUBLISHABLE_KEY: ${{ vars.AECS4U_LAND_REGISTRY_CLERK_PUBLISHABLE_KEY }}
-          CLERK_JWKS_URL: ${{ vars.AECS4U_LAND_REGISTRY_CLERK_JWKS_URL }}
+          ALLOW_CLERK_TEST_KEYS: ${{ vars.ALLOW_CLERK_TEST_KEYS }}
         run: |
           set -euo pipefail
           gcloud secrets describe LAND_REGISTRY_CADASTRAL_POSTGRES_DSN \
@@ -94,18 +93,39 @@ jobs:
               echo "::error::Create Secret Manager secret LAND_REGISTRY_CADASTRAL_POSTGRES_DSN with the dedicated map-source DSN before deploying."
               exit 1
             }
+          gcloud secrets describe LAND_REGISTRY_CLERK_PUBLISHABLE_KEY \
+            --project="${{ env.GCP_PROJECT_ID }}" >/dev/null || {
+              echo "::error::Create Secret Manager secret LAND_REGISTRY_CLERK_PUBLISHABLE_KEY with the Clerk publishable key before deploying."
+              exit 1
+            }
+          gcloud secrets describe LAND_REGISTRY_CLERK_JWKS_URL \
+            --project="${{ env.GCP_PROJECT_ID }}" >/dev/null || {
+              echo "::error::Create Secret Manager secret LAND_REGISTRY_CLERK_JWKS_URL with the Clerk JWKS URL before deploying."
+              exit 1
+            }
+          CLERK_PUBLISHABLE_KEY=$(gcloud secrets versions access latest \
+            --secret=LAND_REGISTRY_CLERK_PUBLISHABLE_KEY \
+            --project="${{ env.GCP_PROJECT_ID }}")
+          CLERK_JWKS_URL=$(gcloud secrets versions access latest \
+            --secret=LAND_REGISTRY_CLERK_JWKS_URL \
+            --project="${{ env.GCP_PROJECT_ID }}")
+          echo "::add-mask::${CLERK_PUBLISHABLE_KEY}"
+          echo "::add-mask::${CLERK_JWKS_URL}"
           case "$CLERK_PUBLISHABLE_KEY" in
             pk_live_*) ;;
-            *) echo "::error::Production requires the pk_live Clerk publishable key in AECS4U_LAND_REGISTRY_CLERK_PUBLISHABLE_KEY."; exit 1 ;;
+            pk_test_*) [ "$ALLOW_CLERK_TEST_KEYS" = "true" ] || { echo "::error::Production requires the pk_live Clerk publishable key (set repo variable ALLOW_CLERK_TEST_KEYS=true to accept test-mode keys)."; exit 1; } ;;
+            *) echo "::error::LAND_REGISTRY_CLERK_PUBLISHABLE_KEY must contain a Clerk publishable key."; exit 1 ;;
           esac
           case "$CLERK_JWKS_URL" in
             https://*'/.well-known/jwks.json') ;;
-            *) echo "::error::Set AECS4U_LAND_REGISTRY_CLERK_JWKS_URL to the HTTPS JWKS endpoint for the production Clerk instance."; exit 1 ;;
+            *) echo "::error::LAND_REGISTRY_CLERK_JWKS_URL must contain the HTTPS JWKS endpoint for the Clerk instance."; exit 1 ;;
           esac
           case "$CLERK_JWKS_URL" in
             *.clerk.accounts.dev/*|*.clerk.dev/*)
-              echo "::error::Production cannot use a Clerk development-domain JWKS endpoint."
-              exit 1
+              if [ "$ALLOW_CLERK_TEST_KEYS" != "true" ]; then
+                echo "::error::Production cannot use a Clerk development-domain JWKS endpoint."
+                exit 1
+              fi
               ;;
           esac
           CLERK_SECRET_KEY=$(gcloud secrets versions access latest \
@@ -113,6 +133,7 @@ jobs:
             --project="${{ env.GCP_PROJECT_ID }}")
           case "$CLERK_SECRET_KEY" in
             sk_live_*) ;;
+            sk_test_*) [ "$ALLOW_CLERK_TEST_KEYS" = "true" ] || { unset CLERK_SECRET_KEY; echo "::error::LAND_REGISTRY_CLERK_SECRET_KEY must contain a production Clerk secret key."; exit 1; } ;;
             *) unset CLERK_SECRET_KEY; echo "::error::LAND_REGISTRY_CLERK_SECRET_KEY must contain a production Clerk secret key."; exit 1 ;;
           esac
           unset CLERK_SECRET_KEY
@@ -155,7 +176,7 @@ jobs:
         id: deploy
         run: |
           CLOUD_RUN_TAG="preflight-${{ steps.img.outputs.sha_short }}"
-          SECRET_UPDATES="SECRET_KEY=LAND_REGISTRY_SECRET_KEY:latest,SESSION_SECRET_KEY=LAND_REGISTRY_SESSION_SECRET_KEY:latest,DATABASE_URL=LAND_REGISTRY_DATABASE_URL:latest,CLERK_SECRET_KEY=LAND_REGISTRY_CLERK_SECRET_KEY:latest,LOGFIRE_TOKEN=LAND_REGISTRY_LOGFIRE_TOKEN:latest,CADASTRAL_POSTGRES_DSN=LAND_REGISTRY_CADASTRAL_POSTGRES_DSN:latest"
+          SECRET_UPDATES="SECRET_KEY=LAND_REGISTRY_SECRET_KEY:latest,SESSION_SECRET_KEY=LAND_REGISTRY_SESSION_SECRET_KEY:latest,DATABASE_URL=LAND_REGISTRY_DATABASE_URL:latest,CLERK_PUBLISHABLE_KEY=LAND_REGISTRY_CLERK_PUBLISHABLE_KEY:latest,CLERK_SECRET_KEY=LAND_REGISTRY_CLERK_SECRET_KEY:latest,CLERK_JWKS_URL=LAND_REGISTRY_CLERK_JWKS_URL:latest,LOGFIRE_TOKEN=LAND_REGISTRY_LOGFIRE_TOKEN:latest,CADASTRAL_POSTGRES_DSN=LAND_REGISTRY_CADASTRAL_POSTGRES_DSN:latest"
           gcloud run deploy ${{ env.SERVICE_NAME }} \
             --image=${{ env.IMAGE_BASE }}:sha-${{ steps.img.outputs.sha_short }} \
             --region=${{ env.GCP_REGION }} \
@@ -176,7 +197,7 @@ jobs:
             --timeout="${{ vars.CLOUDRUN_TIMEOUT || '300' }}" \
             --cpu-boost \
             --cpu-throttling \
-            --update-env-vars="ENVIRONMENT=production,LAND_REGISTRY_PUBLIC_BASE_URL=https://land-registry.aecs4u.com,STATS_POSTGRES_ENABLE=1,CLERK_PUBLISHABLE_KEY=${{ vars.AECS4U_LAND_REGISTRY_CLERK_PUBLISHABLE_KEY }},CLERK_JWKS_URL=${{ vars.AECS4U_LAND_REGISTRY_CLERK_JWKS_URL }}" \
+            --update-env-vars="ENVIRONMENT=production,LAND_REGISTRY_PUBLIC_BASE_URL=https://land-registry.aecs4u.com,STATS_POSTGRES_ENABLE=1" \
             --remove-env-vars="DEBUG,LOG_LEVEL,AUTH_MODE,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,STATS_POSTGRES_SOURCE_FALLBACK_ENABLE" \
             --update-secrets="$SECRET_UPDATES"
 
